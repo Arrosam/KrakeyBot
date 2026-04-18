@@ -142,6 +142,52 @@ async def test_heartbeat_with_connected_recall_nodes_does_not_crash():
     await runtime.close()
 
 
+async def test_self_can_dispatch_memory_recall_and_see_feedback():
+    """Self → [DECISION] 'recall about apple' → Hypothalamus → memory_recall
+    tentacle → tentacle_feedback in next heartbeat's stimuli."""
+    self_llm = ScriptedLLM([
+        # HB #1: Self decides to recall
+        "[DECISION]\nRecall what I know about apple.\n[HIBERNATE]\n1",
+        # HB #2: see recall result, take no further action
+        "[DECISION]\nNo action.\n[HIBERNATE]\n1",
+    ])
+    hypo_llm = ScriptedLLM([
+        json.dumps({
+            "tentacle_calls": [{"tentacle": "memory_recall",
+                                  "intent": "apple",
+                                  "params": {"query": "apple"},
+                                  "adrenalin": False}],
+            "memory_writes": [], "memory_updates": [], "sleep": False,
+        }),
+        json.dumps({"tentacle_calls": [], "memory_writes": [],
+                     "memory_updates": [], "sleep": False}),
+    ])
+    action_llm = ScriptedLLM([])
+
+    class MapEmbed:
+        async def __call__(self, text):
+            return [1.0, 0.0] if "apple" in text else [0.0, 1.0]
+
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=hypo_llm, action_llm=action_llm,
+        embedder=MapEmbed(),
+    )
+    # Pre-seed GM with an apple node so recall returns something concrete.
+    await runtime.gm.initialize()
+    await runtime.gm.insert_node(
+        name="apple", category="FACT", description="red fruit",
+        embedding=[1.0, 0.0],
+    )
+
+    await runtime.run(iterations=2)
+    await runtime.close()
+
+    # Heartbeat #2 must have shown a tentacle_feedback from memory_recall
+    joined = json.dumps(self_llm.calls[1], ensure_ascii=False)
+    assert "tentacle:memory_recall" in joined
+    assert "apple" in joined
+
+
 async def test_uncovered_stimulus_push_back_capped_at_one_retry():
     """Regression for the 'stimuli=5' bug: a user message with an empty GM
     finds no recall coverage. It must be pushed back at most ONCE, then

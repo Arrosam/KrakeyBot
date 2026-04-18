@@ -31,6 +31,7 @@ from src.runtime.stimulus_buffer import StimulusBuffer
 from src.self_agent import parse_self_output
 from src.sensories.cli_input import CliInputSensory
 from src.tentacles.action import ActionTentacle
+from src.tentacles.memory_recall import MemoryRecallTentacle
 
 
 class ChatLike(Protocol):
@@ -101,6 +102,9 @@ class Runtime:
             llm=deps.action_llm,
             max_context_tokens=self.config.tentacle.get("action", {})
                 .get("max_context_tokens", 4096),
+        ))
+        self.tentacles.register(MemoryRecallTentacle(
+            gm=self.gm, embedder=self.embedder,
         ))
 
         self.sensories = SensoryRegistry()

@@ -38,6 +38,14 @@ def test_dna_frames_self_as_digital_being_not_service_bot():
     assert "沉默是合法" in DNA or "No action" in DNA
 
 
+def test_dna_mentions_active_memory_recall():
+    """Self must know it can dispatch memory_recall to actively explore GM,
+    not just receive passive auto-recall."""
+    assert "memory_recall" in DNA
+    assert "主动" in DNA  # 主动回忆 / 主动记下
+    assert "反思" in DNA or "reflect" in DNA.lower()
+
+
 def test_dna_warns_about_self_vs_external_signals():
     """Regression for the 'Self echoes its own tentacle output as if user
     replied' bug. DNA must explain that tentacle_feedback in [STIMULUS]
