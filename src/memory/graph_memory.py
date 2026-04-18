@@ -8,11 +8,63 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any, Protocol
 
 import aiosqlite
 import sqlite_vec
+
+
+class AsyncChatLLM(Protocol):
+    async def chat(self, messages, **kwargs) -> str: ...
+
+
+EXPLICIT_WRITE_PROMPT = """Extract nodes and edges from the content below.
+
+## Content
+{content}
+
+## Existing nodes (reuse these names when relevant; do not duplicate)
+{existing}
+
+## Output (strict JSON, no commentary)
+{{
+  "nodes": [
+    {{"name": "short entity label",
+      "category": "FACT|RELATION|KNOWLEDGE|TARGET|FOCUS",
+      "description": "full description"}}
+  ],
+  "edges": [
+    {{"source_name": "name", "target_name": "name",
+      "predicate": "RELATED_TO|SERVES|DEPENDS_ON|INDUCES|SUMMARIZES|"
+                   "SUPPORTS|CONTRADICTS|FOLLOWS|CAUSES"}}
+  ]
+}}
+
+Rules:
+1. Extract only what is worth remembering. Skip small talk.
+2. Prefer reusing existing node names over creating duplicates.
+3. Respect predicate-type constraints (e.g. SERVES: FOCUS→TARGET).
+4. Graph must remain acyclic.
+"""
+
+
+_JSON_BLOCK_PATTERN = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def _parse_extraction_json(raw: str) -> dict[str, Any]:
+    text = raw.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        m = _JSON_BLOCK_PATTERN.search(raw)
+        if not m:
+            raise
+        return json.loads(m.group(0))
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -32,6 +84,16 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     if na == 0.0 or nb == 0.0:
         return 0.0
     return dot / (math.sqrt(na) * math.sqrt(nb))
+
+
+def _format_recall_for_prompt(recall: list[dict[str, Any]]) -> str:
+    if not recall:
+        return "(no prior nodes)"
+    lines = []
+    for r in recall:
+        lines.append(f"- [{r.get('name', '')}] ({r.get('category', '?')}) "
+                     f"— {r.get('description', '')}")
+    return "\n".join(lines)
 
 
 def _short_name(text: str, max_len: int = 80) -> str:
@@ -82,10 +144,12 @@ def _row_to_node(row: aiosqlite.Row) -> dict[str, Any]:
 
 class GraphMemory:
     def __init__(self, db_path: str | Path, embedder: AsyncEmbedder,
-                  *, auto_ingest_threshold: float = 0.92):
+                  *, auto_ingest_threshold: float = 0.92,
+                  extractor_llm: AsyncChatLLM | None = None):
         self.db_path = str(db_path)
         self._embedder = embedder
         self._auto_ingest_threshold = auto_ingest_threshold
+        self._extractor_llm = extractor_llm
         self._db: aiosqlite.Connection | None = None
 
     async def initialize(self) -> None:
@@ -358,6 +422,62 @@ class GraphMemory:
             source_heartbeat=source_heartbeat,
         )
         return {"created": True, "node_id": node_id}
+
+    # ---------- explicit write ----------
+
+    async def _find_by_name(self, name: str) -> int | None:
+        db = self._require()
+        async with db.execute(
+            "SELECT id FROM gm_nodes WHERE name = ? LIMIT 1", (name,)
+        ) as cur:
+            row = await cur.fetchone()
+            return int(row["id"]) if row else None
+
+    async def explicit_write(self, content: str, *,
+                               importance: str = "normal",
+                               recall_context: list[dict[str, Any]] | None = None,
+                               source_heartbeat: int | None = None
+                               ) -> dict[str, Any]:
+        """LLM-assisted write (DevSpec §7.5): ask the extractor LLM to parse
+        `content` into nodes + edges, upsert them, and insert edges with
+        cycle checking. Returns {"node_ids": [...]}.
+        """
+        if self._extractor_llm is None:
+            raise RuntimeError("explicit_write requires an extractor_llm")
+
+        existing_text = _format_recall_for_prompt(recall_context or [])
+        prompt = EXPLICIT_WRITE_PROMPT.format(content=content,
+                                                existing=existing_text)
+        raw = await self._extractor_llm.chat(
+            [{"role": "user", "content": prompt}]
+        )
+        parsed = _parse_extraction_json(raw)
+
+        imp_value = 2.0 if importance == "high" else 1.0
+        node_ids_by_name: dict[str, int] = {}
+        for n in parsed.get("nodes", []):
+            nid = await self.upsert_node({
+                "name": n["name"],
+                "category": n["category"],
+                "description": n.get("description", ""),
+                "source_type": "explicit",
+                "importance": imp_value,
+                "source_heartbeat": source_heartbeat,
+            })
+            node_ids_by_name[n["name"]] = nid
+
+        for e in parsed.get("edges", []):
+            src = node_ids_by_name.get(e.get("source_name"))
+            if src is None:
+                src = await self._find_by_name(e.get("source_name", ""))
+            tgt = node_ids_by_name.get(e.get("target_name"))
+            if tgt is None:
+                tgt = await self._find_by_name(e.get("target_name", ""))
+            if src is None or tgt is None or src == tgt:
+                continue
+            await self.insert_edge_with_cycle_check(src, tgt, e["predicate"])
+
+        return {"node_ids": list(node_ids_by_name.values())}
 
     # ---------- low-level escape hatch for tests ----------
 
