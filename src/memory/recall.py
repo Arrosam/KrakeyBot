@@ -144,7 +144,7 @@ class IncrementalRecall:
         self.reranker = reranker
         self.neighbor_depth = neighbor_depth
         self._vec_min_sim = vec_min_similarity
-        self._now = now or datetime.utcnow
+        self._now = now or datetime.now
         self.merged: dict[int, dict[str, Any]] = {}
         self.processed_stimuli: list[Any] = []
         self._per_stimulus_ids: list[set[int]] = []
