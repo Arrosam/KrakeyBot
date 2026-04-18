@@ -7,7 +7,6 @@ KnowledgeBase, and full Sleep.
 from __future__ import annotations
 
 import asyncio
-import sys
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Protocol
@@ -22,7 +21,7 @@ from src.models.config import Config, load_config
 from src.models.stimulus import Stimulus
 from src.prompt.builder import PromptBuilder, SlidingWindowRound
 from src.runtime.batch_tracker import BatchTrackerSensory
-from src.runtime.colors import cyan, green, yellow
+from src.runtime.heartbeat_logger import HeartbeatLogger
 from src.runtime.compact import compact_if_needed
 from src.runtime.fatigue import calculate_fatigue
 from src.runtime.hibernate import hibernate_with_recall
@@ -85,7 +84,8 @@ HARDCODED_SELF_MODEL: dict[str, Any] = {
 
 class Runtime:
     def __init__(self, deps: RuntimeDeps, *, hibernate_min: float | None = None,
-                 hibernate_max: float | None = None):
+                 hibernate_max: float | None = None,
+                 logger: HeartbeatLogger | None = None):
         self.config = deps.config
         self.self_llm = deps.self_llm
         self.compact_llm = deps.compact_llm
@@ -137,6 +137,7 @@ class Runtime:
         self._classify_tasks: list[asyncio.Task] = []
         self._last_node_count = 0
         self._last_edge_count = 0
+        self.log = logger or HeartbeatLogger()
 
     def _new_recall(self) -> IncrementalRecall:
         return IncrementalRecall(
@@ -173,6 +174,7 @@ class Runtime:
     async def _heartbeat(self) -> None:
         """Orchestration only. Each phase is its own method."""
         self.heartbeat_count += 1
+        self.log.set_heartbeat(self.heartbeat_count)
         stimuli = await self._phase_drain_and_seed_recall()
         counts = await self._phase_compute_fatigue()
         await self._phase_compact()
@@ -191,8 +193,7 @@ class Runtime:
 
     async def _phase_drain_and_seed_recall(self) -> list[Stimulus]:
         stimuli = self.buffer.drain()
-        print(f"[HB #{self.heartbeat_count}] stimuli={len(stimuli)} "
-              "(thinking...)", flush=True)
+        self.log.hb(f"stimuli={len(stimuli)} (thinking...)")
         assert self._recall is not None
         already = {id(s) for s in self._recall.processed_stimuli}
         new_for_recall = [s for s in stimuli if id(s) not in already]
@@ -212,16 +213,13 @@ class Runtime:
         edge_delta = edge_count - self._last_edge_count
         self._last_node_count = node_count
         self._last_edge_count = edge_count
-        print(
-            f"[HB #{self.heartbeat_count}] gm: nodes={node_count}"
-            f"{_delta_str(node_delta)}, edges={edge_count}"
-            f"{_delta_str(edge_delta)}, fatigue={pct}%",
-            flush=True,
+        self.log.hb(
+            f"gm: nodes={node_count}{_delta_str(node_delta)}, "
+            f"edges={edge_count}{_delta_str(edge_delta)}, fatigue={pct}%"
         )
         if pct >= self.config.fatigue.force_sleep_threshold:
-            print(f"[runtime] force-sleep threshold reached "
-                  f"(fatigue={pct}%); Sleep mode lands in Phase 2.",
-                  file=sys.stderr, flush=True)
+            self.log.hb_warn(f"force-sleep threshold reached (fatigue={pct}%);"
+                              " Sleep mode lands in Phase 2.")
         return _GMCounts(node_count=node_count, edge_count=edge_count,
                           fatigue_pct=pct, fatigue_hint=hint)
 
@@ -261,8 +259,7 @@ class Runtime:
                 [{"role": "user", "content": prompt}]
             )
         except Exception as e:  # noqa: BLE001
-            print(f"[HB #{self.heartbeat_count}] Self LLM error: {e}",
-                  flush=True)
+            self.log.hb(f"Self LLM error: {e}")
             await asyncio.sleep(self._min)
             return None
         return parse_self_output(raw)
@@ -276,15 +273,11 @@ class Runtime:
         ))
 
     def _phase_log_self_output(self, parsed) -> None:
-        decision_text = parsed.decision.strip() or "(none)"
-        print(cyan(f"[HB #{self.heartbeat_count}] decision: {decision_text}"),
-              flush=True)
+        self.log.hb_thought("decision", parsed.decision.strip() or "(none)")
         if parsed.thinking:
-            print(cyan(f"[HB #{self.heartbeat_count}] thinking: "
-                        f"{parsed.thinking.strip()}"), flush=True)
+            self.log.hb_thought("thinking", parsed.thinking)
         if parsed.note:
-            print(cyan(f"[HB #{self.heartbeat_count}] note: "
-                        f"{parsed.note.strip()}"), flush=True)
+            self.log.hb_thought("note", parsed.note)
 
     async def _phase_auto_ingest_feedback(self, stimuli) -> None:
         for s in stimuli:
@@ -295,7 +288,7 @@ class Runtime:
                     s.content, source_heartbeat=self.heartbeat_count,
                 )
             except Exception as e:  # noqa: BLE001
-                print(f"[runtime] auto_ingest error: {e}", flush=True)
+                self.log.runtime_error(f"auto_ingest error: {e}")
 
     async def _phase_apply_hypothalamus(self, parsed, recall_result) -> None:
         decision = parsed.decision.strip().lower()
@@ -306,8 +299,7 @@ class Runtime:
                 parsed.decision, self.tentacles.list_descriptions(),
             )
         except Exception as e:  # noqa: BLE001
-            print(f"[HB #{self.heartbeat_count}] Hypothalamus error: {e}",
-                  flush=True)
+            self.log.hb(f"Hypothalamus error: {e}")
             return
         self._log_hypo_summary(result)
         await self._dispatch_tentacle_calls(result.tentacle_calls)
@@ -326,8 +318,7 @@ class Runtime:
         else:
             interval = (parsed.hibernate_seconds
                         or self.config.hibernate.default_interval)
-        print(f"[HB #{self.heartbeat_count}] hibernate {interval}s",
-              flush=True)
+        self.log.hb(f"hibernate {interval}s")
         self._recall = self._new_recall()
         await hibernate_with_recall(
             interval, self.buffer, self._recall,
@@ -337,16 +328,14 @@ class Runtime:
     # ---------- hypothalamus side-effects ----------
 
     def _log_hypo_summary(self, result) -> None:
-        print(yellow(
-            f"[hypo] tentacle_calls={len(result.tentacle_calls)} "
+        self.log.hypo(
+            f"tentacle_calls={len(result.tentacle_calls)} "
             f"memory_writes={len(result.memory_writes)} "
             f"memory_updates={len(result.memory_updates)} "
             f"sleep={result.sleep}"
-        ), flush=True)
+        )
         if result.sleep:
-            print(yellow("[hypo] sleep requested "
-                          "(7-phase sleep lands in Phase 2)"),
-                  file=sys.stderr, flush=True)
+            self.log.hypo_warn("sleep requested (7-phase sleep lands in Phase 2)")
 
     async def _dispatch_tentacle_calls(self, calls) -> None:
         call_ids: list[str] = []
@@ -359,8 +348,7 @@ class Runtime:
 
     async def _apply_memory_writes(self, writes, recall_result) -> None:
         for w in writes:
-            print(yellow(f"[hypo] memory_write: "
-                           f"{w.get('content', '')[:80]}"), flush=True)
+            self.log.hypo(f"memory_write: {w.get('content', '')[:80]}")
             try:
                 await self.gm.explicit_write(
                     w["content"],
@@ -369,19 +357,18 @@ class Runtime:
                     source_heartbeat=self.heartbeat_count,
                 )
             except Exception as e:  # noqa: BLE001
-                print(f"[runtime] explicit_write error: {e}", flush=True)
+                self.log.runtime_error(f"explicit_write error: {e}")
 
     async def _apply_memory_updates(self, updates) -> None:
         for u in updates:
-            print(yellow(f"[hypo] memory_update: "
-                           f"{u.get('node_name')} → "
-                           f"{u.get('new_category')}"), flush=True)
+            self.log.hypo(f"memory_update: {u.get('node_name')} → "
+                           f"{u.get('new_category')}")
             try:
                 await self.gm.update_node_category(
                     u["node_name"], u["new_category"],
                 )
             except Exception as e:  # noqa: BLE001
-                print(f"[runtime] update_category error: {e}", flush=True)
+                self.log.runtime_error(f"update_category error: {e}")
 
     async def _dispatch(self, call: TentacleCall, call_id: str) -> None:
         try:
@@ -392,17 +379,18 @@ class Runtime:
                 content=f"Unknown tentacle: {call.tentacle}",
                 timestamp=datetime.now(), adrenalin=False,
             ))
-            print(f"[dispatch] unknown tentacle: {call.tentacle}", flush=True)
+            self.log.dispatch(f"unknown tentacle: {call.tentacle}")
             await self.batch_tracker.mark_completed(call_id)
             return
 
-        print(yellow(f"[dispatch] {call.tentacle} ← {call.intent!r}"
-                       f"{' (adrenalin)' if call.adrenalin else ''}"),
-              flush=True)
+        self.log.dispatch(
+            f"{call.tentacle} ← {call.intent!r}"
+            f"{' (adrenalin)' if call.adrenalin else ''}"
+        )
         try:
             stim = await tentacle.execute(call.intent, call.params)
         except Exception as e:  # noqa: BLE001
-            print(f"[dispatch] {call.tentacle} error: {e}", flush=True)
+            self.log.dispatch(f"{call.tentacle} error: {e}")
             await self.buffer.push(Stimulus(
                 type="system_event", source=f"tentacle:{call.tentacle}",
                 content=f"error: {e}", timestamp=datetime.now(),
@@ -413,8 +401,7 @@ class Runtime:
 
         if call.adrenalin and not stim.adrenalin:
             stim.adrenalin = True
-        # Bot's actual outward reply (chat) — green like a chat app message.
-        print(green(f"[{call.tentacle}] {stim.content}"), flush=True)
+        self.log.chat(call.tentacle, stim.content)
         await self.buffer.push(stim)
         await self.batch_tracker.mark_completed(call_id)
 
