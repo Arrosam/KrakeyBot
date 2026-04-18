@@ -17,6 +17,7 @@ from src.llm.client import LLMClient
 from src.models.config import Config, load_config
 from src.models.stimulus import Stimulus
 from src.prompt.builder import PromptBuilder, SlidingWindowRound
+from src.runtime.fatigue import fatigue_hint
 from src.runtime.hibernate import hibernate
 from src.runtime.stimulus_buffer import StimulusBuffer
 from src.self_agent import parse_self_output
@@ -180,11 +181,12 @@ class Runtime:
         await self.buffer.push(stim)
 
     def _status(self) -> dict[str, Any]:
+        pct = 0  # Phase-0: GM not yet wired; stays at 0 until Phase 1.
         return {
             "gm_node_count": 0,
             "gm_edge_count": 0,
-            "fatigue_pct": 0,
-            "fatigue_hint": "",
+            "fatigue_pct": pct,
+            "fatigue_hint": fatigue_hint(pct, self.config.fatigue.thresholds),
             "last_sleep_time": "never",
             "heartbeats_since_sleep": self.heartbeat_count,
             "tentacles": self.tentacles.list_descriptions(),
