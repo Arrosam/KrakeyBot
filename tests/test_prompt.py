@@ -15,7 +15,7 @@ def test_dna_has_all_sections():
 
 
 def test_builder_assembles_all_layers():
-    self_model = {"identity": {"name": "Klarky", "persona": "curious bot"}}
+    self_model = {"identity": {"name": "Krakey", "persona": "curious bot"}}
     status = {
         "gm_node_count": 12,
         "gm_edge_count": 5,
@@ -36,7 +36,7 @@ def test_builder_assembles_all_layers():
     prompt = PromptBuilder().build(self_model=self_model, status=status,
                                     recall=recall, window=window, stimuli=stimuli)
 
-    assert "Klarky" in prompt
+    assert "Krakey" in prompt
     assert "action" in prompt
     assert "hello" in prompt
     assert "hi" in prompt

@@ -16,12 +16,12 @@ def test_save_then_load_roundtrip(tmp_path):
     p = tmp_path / "sm.yaml"
     store = SelfModelStore(p)
     data = default_self_model()
-    data["identity"]["name"] = "Klarky"
+    data["identity"]["name"] = "Krakey"
     data["state"]["bootstrap_complete"] = True
     store.save(data)
 
     again = SelfModelStore(p).load()
-    assert again["identity"]["name"] == "Klarky"
+    assert again["identity"]["name"] == "Krakey"
     assert again["state"]["bootstrap_complete"] is True
 
 

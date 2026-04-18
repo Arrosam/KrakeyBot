@@ -39,7 +39,7 @@ class RuntimeDeps:
 
 
 HARDCODED_SELF_MODEL: dict[str, Any] = {
-    "identity": {"name": "Klarky", "persona": "nascent cognitive entity"},
+    "identity": {"name": "Krakey", "persona": "nascent cognitive entity"},
     "state": {"mood_baseline": "neutral", "energy_level": 1.0,
               "focus_topic": "", "is_sleeping": False,
               "bootstrap_complete": True},
