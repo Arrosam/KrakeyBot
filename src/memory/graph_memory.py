@@ -50,6 +50,49 @@ Rules:
 """
 
 
+CLASSIFY_PROMPT = """Classify each pending node into a category and optionally
+add relational edges to existing classified nodes.
+
+## Pending (choose one category per node)
+{pending}
+
+## Existing classified nodes (reference only — may be edge targets)
+{existing}
+
+## Output (strict JSON, no commentary)
+{{
+  "classifications": [
+    {{"node_id": <int>, "category": "FACT|RELATION|KNOWLEDGE|TARGET|FOCUS"}}
+  ],
+  "edges": [
+    {{"source_id": <int>, "target_id": <int>,
+      "predicate": "RELATED_TO|SERVES|DEPENDS_ON|INDUCES|SUMMARIZES|"
+                   "SUPPORTS|CONTRADICTS|FOLLOWS|CAUSES"}}
+  ]
+}}
+
+Rules:
+1. Classify every pending node.
+2. Edges optional; include only if clearly justified.
+3. Honor predicate/category constraints.
+4. Resulting graph must remain acyclic.
+"""
+
+
+def _format_pending(pending: list[dict[str, Any]]) -> str:
+    return "\n".join(
+        f"- id={p['id']}  name={p['name']!r}  desc={p['description']!r}"
+        for p in pending
+    ) or "(none)"
+
+
+def _format_existing(existing: list[dict[str, Any]]) -> str:
+    return "\n".join(
+        f"- id={e['id']}  ({e['category']}) name={e['name']!r}"
+        for e in existing
+    ) or "(none)"
+
+
 _JSON_BLOCK_PATTERN = re.compile(r"\{.*\}", re.DOTALL)
 
 
@@ -145,11 +188,17 @@ def _row_to_node(row: aiosqlite.Row) -> dict[str, Any]:
 class GraphMemory:
     def __init__(self, db_path: str | Path, embedder: AsyncEmbedder,
                   *, auto_ingest_threshold: float = 0.92,
-                  extractor_llm: AsyncChatLLM | None = None):
+                  extractor_llm: AsyncChatLLM | None = None,
+                  classifier_llm: AsyncChatLLM | None = None,
+                  classify_batch_size: int = 10,
+                  classify_existing_context: int = 30):
         self.db_path = str(db_path)
         self._embedder = embedder
         self._auto_ingest_threshold = auto_ingest_threshold
         self._extractor_llm = extractor_llm
+        self._classifier_llm = classifier_llm
+        self._classify_batch_size = classify_batch_size
+        self._classify_existing_context = classify_existing_context
         self._db: aiosqlite.Connection | None = None
 
     async def initialize(self) -> None:
@@ -478,6 +527,111 @@ class GraphMemory:
             await self.insert_edge_with_cycle_check(src, tgt, e["predicate"])
 
         return {"node_ids": list(node_ids_by_name.values())}
+
+    # ---------- category update + async classify ----------
+
+    async def update_node_category(self, node_name: str,
+                                      new_category: str) -> bool:
+        """Hypothalamus path: change category by name (e.g. TARGET → FACT).
+        Returns True if a row was updated, False if name not found.
+        """
+        db = self._require()
+        cur = await db.execute(
+            "UPDATE gm_nodes SET category=?, updated_at=CURRENT_TIMESTAMP "
+            "WHERE name=?", (new_category, node_name),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+    async def classify_and_link_pending(self) -> dict[str, int]:
+        """Background job (DevSpec §7.6): LLM-classify up to N auto-source
+        nodes that aren't yet classified, and optionally add edges between
+        them and existing classified nodes.
+        Returns counters: {"classified": n, "edges": m}.
+        """
+        if self._classifier_llm is None:
+            return {"classified": 0, "edges": 0}
+
+        db = self._require()
+        async with db.execute(
+            """
+            SELECT id, name, description FROM gm_nodes
+            WHERE source_type='auto'
+              AND (metadata IS NULL
+                   OR json_extract(metadata, '$.classified') IS NULL
+                   OR json_extract(metadata, '$.classified') = 0)
+            ORDER BY created_at ASC
+            LIMIT ?
+            """,
+            (self._classify_batch_size,),
+        ) as cur:
+            pending_rows = await cur.fetchall()
+
+        if not pending_rows:
+            return {"classified": 0, "edges": 0}
+
+        async with db.execute(
+            """
+            SELECT id, name, category, description FROM gm_nodes
+            WHERE json_extract(metadata, '$.classified') = 1
+            ORDER BY last_accessed DESC
+            LIMIT ?
+            """,
+            (self._classify_existing_context,),
+        ) as cur:
+            existing_rows = await cur.fetchall()
+
+        pending = [{"id": r["id"], "name": r["name"],
+                     "description": r["description"]} for r in pending_rows]
+        existing = [{"id": r["id"], "name": r["name"],
+                      "category": r["category"],
+                      "description": r["description"]} for r in existing_rows]
+
+        prompt = CLASSIFY_PROMPT.format(
+            pending=_format_pending(pending),
+            existing=_format_existing(existing),
+        )
+        raw = await self._classifier_llm.chat(
+            [{"role": "user", "content": prompt}]
+        )
+        parsed = _parse_extraction_json(raw)
+
+        classified_count = 0
+        for c in parsed.get("classifications", []):
+            node_id = c.get("node_id")
+            category = c.get("category")
+            if node_id is None or category is None:
+                continue
+            await db.execute(
+                """
+                UPDATE gm_nodes
+                SET category = ?,
+                    metadata = json_set(COALESCE(metadata, '{}'),
+                                         '$.classified', json('true')),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (category, node_id),
+            )
+            classified_count += 1
+        await db.commit()
+
+        edge_count = 0
+        for e in parsed.get("edges", []):
+            src = e.get("source_id")
+            tgt = e.get("target_id")
+            predicate = e.get("predicate")
+            if src is None or tgt is None or predicate is None or src == tgt:
+                continue
+            try:
+                await self.insert_edge_with_cycle_check(int(src), int(tgt),
+                                                          predicate)
+                edge_count += 1
+            except Exception:  # noqa: BLE001
+                # malformed ids or FK violation — skip silently (background job)
+                continue
+
+        return {"classified": classified_count, "edges": edge_count}
 
     # ---------- low-level escape hatch for tests ----------
 
