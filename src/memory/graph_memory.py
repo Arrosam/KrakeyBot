@@ -1,16 +1,44 @@
 """Graph Memory — middle-tier working memory (DevSpec §7).
 
-Phase 1.2a: init + basic node CRUD. Later sub-phases add upsert,
-cycle-checked edges, auto_ingest, explicit_write, classify.
+Phase 1.2a: init + basic node CRUD.
+Phase 1.2b: upsert + cycle-checked edges with RELATION bridge.
+Phase 1.2c: auto_ingest (embed + similarity dedup).
 """
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any, Protocol
 
 import aiosqlite
 import sqlite_vec
+
+
+def cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Cosine similarity of two equal-length vectors.
+
+    Returns 0.0 when either operand is a zero vector (avoids NaN).
+    """
+    if len(a) != len(b):
+        raise ValueError(f"vector length mismatch: {len(a)} vs {len(b)}")
+    dot = 0.0
+    na = 0.0
+    nb = 0.0
+    for x, y in zip(a, b):
+        dot += x * y
+        na += x * x
+        nb += y * y
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return dot / (math.sqrt(na) * math.sqrt(nb))
+
+
+def _short_name(text: str, max_len: int = 80) -> str:
+    stripped = " ".join(text.split())
+    if len(stripped) <= max_len:
+        return stripped
+    return stripped[: max_len - 1].rstrip() + "…"
 
 
 SCHEMA_PATH = Path(__file__).parent / "schemas.sql"
@@ -53,9 +81,11 @@ def _row_to_node(row: aiosqlite.Row) -> dict[str, Any]:
 
 
 class GraphMemory:
-    def __init__(self, db_path: str | Path, embedder: AsyncEmbedder):
+    def __init__(self, db_path: str | Path, embedder: AsyncEmbedder,
+                  *, auto_ingest_threshold: float = 0.92):
         self.db_path = str(db_path)
         self._embedder = embedder
+        self._auto_ingest_threshold = auto_ingest_threshold
         self._db: aiosqlite.Connection | None = None
 
     async def initialize(self) -> None:
@@ -269,6 +299,65 @@ class GraphMemory:
         )
         await db.commit()
         return {"bridged": False, "bridge_node_id": None}
+
+    # ---------- vector search ----------
+
+    async def _top_similar(self, query_vec: list[float], *,
+                             top_k: int = 1,
+                             min_similarity: float = 0.0
+                             ) -> list[tuple[dict[str, Any], float]]:
+        """Brute-force python-side cosine over rows with embedding != NULL.
+
+        Adequate for Phase 1 scale (≤ soft_limit nodes).
+        """
+        db = self._require()
+        async with db.execute(
+            "SELECT * FROM gm_nodes WHERE embedding IS NOT NULL"
+        ) as cur:
+            rows = await cur.fetchall()
+        scored: list[tuple[dict[str, Any], float]] = []
+        for row in rows:
+            node = _row_to_node(row)
+            sim = cosine_similarity(query_vec, node["embedding"])
+            if sim >= min_similarity:
+                scored.append((node, sim))
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[:top_k]
+
+    # ---------- auto_ingest ----------
+
+    async def auto_ingest(self, content: str,
+                            *, source_heartbeat: int | None = None
+                            ) -> dict[str, Any]:
+        """Zero-LLM write (DevSpec §7.5). Embed content; if a similar node
+        exists (cosine ≥ threshold), bump its importance; otherwise insert
+        a new FACT node. Returns {"created": bool, "node_id": int}.
+        """
+        db = self._require()
+        embedding = await self._embedder(content)
+        matches = await self._top_similar(
+            embedding, top_k=1, min_similarity=self._auto_ingest_threshold,
+        )
+        if matches:
+            node, _sim = matches[0]
+            new_imp = float(node["importance"]) + 0.5
+            await db.execute(
+                "UPDATE gm_nodes SET importance=?, updated_at=CURRENT_TIMESTAMP "
+                "WHERE id=?",
+                (new_imp, node["id"]),
+            )
+            await db.commit()
+            return {"created": False, "node_id": node["id"]}
+
+        node_id = await self.insert_node(
+            name=_short_name(content),
+            category="FACT",
+            description=content,
+            embedding=embedding,
+            source_type="auto",
+            source_heartbeat=source_heartbeat,
+        )
+        return {"created": True, "node_id": node_id}
 
     # ---------- low-level escape hatch for tests ----------
 
