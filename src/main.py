@@ -22,7 +22,7 @@ from src.models.config import Config, load_config
 from src.models.stimulus import Stimulus
 from src.prompt.builder import PromptBuilder, SlidingWindowRound
 from src.runtime.batch_tracker import BatchTrackerSensory
-from src.runtime.colors import cyan, green
+from src.runtime.colors import cyan, green, yellow
 from src.runtime.compact import compact_if_needed
 from src.runtime.fatigue import calculate_fatigue
 from src.runtime.hibernate import hibernate_with_recall
@@ -260,9 +260,17 @@ class Runtime:
                 result = None
 
             if result is not None:
+                # Single-line Hypothalamus translation summary in yellow.
+                print(yellow(
+                    f"[hypo] tentacle_calls={len(result.tentacle_calls)} "
+                    f"memory_writes={len(result.memory_writes)} "
+                    f"memory_updates={len(result.memory_updates)} "
+                    f"sleep={result.sleep}"
+                ), flush=True)
+
                 if result.sleep:
-                    print("[runtime] sleep requested "
-                          "(7-phase sleep lands in Phase 2)",
+                    print(yellow("[hypo] sleep requested "
+                                  "(7-phase sleep lands in Phase 2)"),
                           file=sys.stderr, flush=True)
 
                 # Dispatch tentacle calls + register batch
@@ -275,6 +283,9 @@ class Runtime:
                     self.batch_tracker.register_batch(call_ids)
 
                 for w in result.memory_writes:
+                    print(yellow(f"[hypo] memory_write: "
+                                   f"{w.get('content', '')[:80]}"),
+                          flush=True)
                     try:
                         await self.gm.explicit_write(
                             w["content"],
@@ -287,6 +298,9 @@ class Runtime:
                               flush=True)
 
                 for u in result.memory_updates:
+                    print(yellow(f"[hypo] memory_update: "
+                                   f"{u.get('node_name')} → "
+                                   f"{u.get('new_category')}"), flush=True)
                     try:
                         await self.gm.update_node_category(
                             u["node_name"], u["new_category"],
@@ -328,8 +342,9 @@ class Runtime:
             await self.batch_tracker.mark_completed(call_id)
             return
 
-        print(f"[dispatch] {call.tentacle} ← {call.intent!r}"
-              f"{' (adrenalin)' if call.adrenalin else ''}", flush=True)
+        print(yellow(f"[dispatch] {call.tentacle} ← {call.intent!r}"
+                       f"{' (adrenalin)' if call.adrenalin else ''}"),
+              flush=True)
         try:
             stim = await tentacle.execute(call.intent, call.params)
         except Exception as e:  # noqa: BLE001

@@ -21,6 +21,14 @@ def test_disabled_returns_plain_text(monkeypatch):
     monkeypatch.setattr(colors, "_ENABLED", False)
     assert colors.cyan("hi") == "hi"
     assert colors.green("hi") == "hi"
+    assert colors.yellow("hi") == "hi"
+
+
+def test_yellow_wraps_when_enabled(monkeypatch):
+    monkeypatch.setattr(colors, "_ENABLED", True)
+    out = colors.yellow("hypo")
+    assert "hypo" in out
+    assert out.endswith("\033[0m")
 
 
 def test_no_color_env_disables(monkeypatch):

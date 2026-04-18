@@ -17,6 +17,7 @@ import sys
 _RESET = "\033[0m"
 _CYAN = "\033[36m"
 _GREEN = "\033[32m"
+_YELLOW = "\033[33m"
 
 
 def _compute_enabled() -> bool:
@@ -41,3 +42,7 @@ def cyan(text: str) -> str:
 
 def green(text: str) -> str:
     return f"{_GREEN}{text}{_RESET}" if _ENABLED else text
+
+
+def yellow(text: str) -> str:
+    return f"{_YELLOW}{text}{_RESET}" if _ENABLED else text
