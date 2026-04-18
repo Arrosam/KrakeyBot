@@ -121,6 +121,8 @@ class Runtime:
 
         self._recall: IncrementalRecall | None = None
         self._classify_tasks: list[asyncio.Task] = []
+        self._last_node_count = 0
+        self._last_edge_count = 0
 
     def _new_recall(self) -> IncrementalRecall:
         return IncrementalRecall(
@@ -173,6 +175,16 @@ class Runtime:
             node_count=node_count,
             soft_limit=self.config.fatigue.gm_node_soft_limit,
             thresholds=self.config.fatigue.thresholds,
+        )
+        node_delta = node_count - self._last_node_count
+        edge_delta = edge_count - self._last_edge_count
+        self._last_node_count = node_count
+        self._last_edge_count = edge_count
+        print(
+            f"[HB #{self.heartbeat_count}] gm: nodes={node_count}"
+            f"{_delta_str(node_delta)}, edges={edge_count}"
+            f"{_delta_str(edge_delta)}, fatigue={pct}%",
+            flush=True,
         )
         if pct >= self.config.fatigue.force_sleep_threshold:
             print(f"[runtime] force-sleep threshold reached "
@@ -375,6 +387,14 @@ class Runtime:
             "heartbeats_since_sleep": self.heartbeat_count,
             "tentacles": self.tentacles.list_descriptions(),
         }
+
+
+def _delta_str(delta: int) -> str:
+    if delta > 0:
+        return f" (+{delta})"
+    if delta < 0:
+        return f" ({delta})"
+    return ""
 
 
 def _summarize_stimuli(stimuli: list[Stimulus]) -> str:
