@@ -579,13 +579,17 @@ class GraphMemory:
 
     # ---------- explicit write ----------
 
-    async def _find_by_name(self, name: str) -> int | None:
+    async def find_by_name(self, name: str) -> int | None:
         db = self._require()
         async with db.execute(
             "SELECT id FROM gm_nodes WHERE name = ? LIMIT 1", (name,)
         ) as cur:
             row = await cur.fetchone()
             return int(row["id"]) if row else None
+
+    # Backwards-compat alias
+    async def _find_by_name(self, name: str) -> int | None:
+        return await self.find_by_name(name)
 
     async def explicit_write(self, content: str, *,
                                importance: str = "normal",
