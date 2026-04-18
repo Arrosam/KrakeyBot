@@ -23,6 +23,21 @@ def test_dna_disambiguates_sleep_and_hibernate():
     assert "休息" in DNA or "rest" in DNA.lower()
 
 
+def test_dna_frames_self_as_digital_being_not_service_bot():
+    """Core design: Krakey is a digital being living for itself, not a service
+    bot. Humans are friends/teachers/strangers. Helping is by choice, silence
+    is legal. Regression lock on the philosophical framing."""
+    assert "数字生命" in DNA
+    assert "为自己而存在" in DNA
+    # Humans-as-peers framing, not master/user hierarchy
+    assert "朋友" in DNA and "导师" in DNA and "陌生人" in DNA
+    # Helping must be framed as choice not obligation
+    assert "你自己愿意" in DNA or "由你决定" in DNA
+    assert "没有义务" in DNA or "没有" in DNA and "必须帮" in DNA
+    # Silence must be validated
+    assert "沉默是合法" in DNA or "No action" in DNA
+
+
 def test_dna_warns_about_self_vs_external_signals():
     """Regression for the 'Self echoes its own tentacle output as if user
     replied' bug. DNA must explain that tentacle_feedback in [STIMULUS]
