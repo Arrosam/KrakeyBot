@@ -9,7 +9,11 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
+
+
+class Reranker(Protocol):
+    async def rerank(self, query: str, docs: list[str]) -> list[float]: ...
 
 
 CATEGORY_WEIGHTS: dict[str, float] = {
@@ -58,6 +62,45 @@ def scripted_score(node: dict[str, Any], *, vec_sim: float, now: datetime,
         + importance * weights.importance
         + cat_w * weights.type
     )
+
+
+async def rank_candidates(candidates: list[tuple[dict[str, Any], float]],
+                            *, query: str, reranker: Reranker | None,
+                            weights: ScoringWeights,
+                            now: datetime
+                            ) -> list[tuple[dict[str, Any], float]]:
+    """Layer 2/3 of DevSpec §9.1:
+      - If a reranker is provided and succeeds, use its scores.
+      - On any failure (missing, network error, score count mismatch),
+        fall back to scripted_score().
+    Returns (node, final_score) sorted descending.
+    """
+    if not candidates:
+        return []
+
+    if reranker is not None:
+        try:
+            docs = [_doc_for_rerank(n) for (n, _sim) in candidates]
+            scores = await reranker.rerank(query, docs)
+            if len(scores) == len(candidates):
+                paired = list(zip((c[0] for c in candidates), scores))
+                paired.sort(key=lambda x: x[1], reverse=True)
+                return paired
+        except Exception:  # noqa: BLE001
+            pass  # fall through to scripted
+
+    scored = [
+        (n, scripted_score(n, vec_sim=sim, now=now, weights=weights))
+        for (n, sim) in candidates
+    ]
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return scored
+
+
+def _doc_for_rerank(node: dict[str, Any]) -> str:
+    name = node.get("name") or ""
+    desc = node.get("description") or ""
+    return f"{name}: {desc}" if desc else name
 
 
 def _as_dt(value: datetime | str) -> datetime:
