@@ -495,6 +495,8 @@ class GraphMemory:
                                 ) -> list[dict[str, Any]]:
         """Return edges whose both endpoints are within `node_ids`, with
         source/target node names included for prompt rendering.
+
+        Keys match DevSpec §3.6 Layer-2 renderer: source, target, predicate.
         """
         if not node_ids:
             return []
@@ -503,8 +505,8 @@ class GraphMemory:
         async with db.execute(
             f"""
             SELECT e.predicate AS predicate,
-                   na.id AS source_id, na.name AS source_name,
-                   nb.id AS target_id, nb.name AS target_name
+                   na.id AS source_id, na.name AS source,
+                   nb.id AS target_id, nb.name AS target
             FROM gm_edges AS e
             JOIN gm_nodes AS na ON na.id = e.node_a
             JOIN gm_nodes AS nb ON nb.id = e.node_b

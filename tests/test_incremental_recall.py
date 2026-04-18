@@ -195,7 +195,7 @@ async def test_finalize_includes_edges_among_selected(tmp_path):
     result = await r.finalize()
     assert len(result.edges) == 1
     e = result.edges[0]
-    assert {e["source_name"], e["target_name"]} == {"apple", "fruit"}
+    assert {e["source"], e["target"]} == {"apple", "fruit"}
     await gm.close()
 
 

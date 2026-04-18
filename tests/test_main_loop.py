@@ -100,6 +100,48 @@ async def test_adrenalin_inheritance_from_hypothalamus():
     assert tentacle_stims[0].adrenalin is True  # inherited
 
 
+async def test_heartbeat_with_connected_recall_nodes_does_not_crash():
+    """Regression: when GM has edges between recalled nodes, _layer_recall
+    must render them without raising KeyError.
+    """
+    self_llm = ScriptedLLM([
+        "[DECISION]\nNo action.\n[HIBERNATE]\n1",
+    ])
+    hypo_llm = ScriptedLLM([])
+    action_llm = ScriptedLLM([])
+
+    # Embedder maps text → specific vec so recall hits our seeded nodes.
+    class MapEmbedder:
+        async def __call__(self, text):
+            if "apple" in text:
+                return [1.0, 0.0]
+            return [0.0, 1.0]
+
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=hypo_llm, action_llm=action_llm,
+        embedder=MapEmbedder(),
+    )
+    # Initialize GM first so we can seed it before running.
+    await runtime.gm.initialize()
+    a = await runtime.gm.insert_node(name="apple", category="FACT",
+                                       description="red fruit",
+                                       embedding=[1.0, 0.0])
+    f = await runtime.gm.insert_node(name="fruit", category="KNOWLEDGE",
+                                       description="category of foods",
+                                       embedding=[0.99, 0.14])
+    await runtime.gm.insert_edge_with_cycle_check(a, f, "RELATED_TO")
+
+    # Seed a user stimulus that embeds close to apple → recall finds both,
+    # plus the edge between them, exercising the builder's edge rendering.
+    await runtime.buffer.push(Stimulus(
+        type="user_message", source="sensory:cli_input",
+        content="tell me about apple", timestamp=datetime.now(),
+        adrenalin=True,
+    ))
+    await runtime.run(iterations=1)
+    await runtime.close()
+
+
 async def test_uncovered_stimulus_push_back_capped_at_one_retry():
     """Regression for the 'stimuli=5' bug: a user message with an empty GM
     finds no recall coverage. It must be pushed back at most ONCE, then

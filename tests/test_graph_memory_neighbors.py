@@ -53,7 +53,7 @@ async def test_get_edges_among_returns_only_internal_edges(tmp_path):
     edges = await gm.get_edges_among([a, b])
     assert len(edges) == 1
     e = edges[0]
-    assert {e["source_name"], e["target_name"]} == {"a", "b"}
+    assert {e["source"], e["target"]} == {"a", "b"}
     assert e["predicate"] == "RELATED_TO"
     await gm.close()
 
