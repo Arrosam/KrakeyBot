@@ -5,7 +5,8 @@ from datetime import datetime
 
 import pytest
 
-from src.main import Runtime, RuntimeDeps, build_runtime_with_fakes
+from src.main import Runtime, RuntimeDeps
+from tests._runtime_helpers import build_runtime_with_fakes
 from src.models.stimulus import Stimulus
 from src.runtime.stimulus_buffer import StimulusBuffer
 

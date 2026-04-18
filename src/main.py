@@ -405,73 +405,7 @@ def _summarize_stimuli(stimuli: list[Stimulus]) -> str:
     return " | ".join(f"{s.source}: {s.content[:60]}" for s in stimuli)
 
 
-# ---------------- builders ----------------
-
-class _NullEmbedder:
-    async def __call__(self, text: str) -> list[float]:
-        return [0.0]
-
-
-class _ScriptedLLM:
-    def __init__(self, responses=None):
-        self._responses = list(responses or [])
-
-    async def chat(self, messages, **kwargs):
-        if not self._responses:
-            return ""
-        return self._responses.pop(0)
-
-
-def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
-                              action_llm: ChatLike,
-                              compact_llm: ChatLike | None = None,
-                              classify_llm: ChatLike | None = None,
-                              embedder: AsyncEmbedder | None = None,
-                              reranker: Reranker | None = None,
-                              hibernate_min: float = 0.01,
-                              hibernate_max: float = 5.0,
-                              gm_path: str = ":memory:") -> Runtime:
-    """Test helper: in-memory config + injectable LLMs/embedder.
-
-    CLI sensory is disabled; BatchTracker is always on (built in).
-    """
-    from src.models.config import (
-        Config, FatigueSection, GraphMemorySection, HibernateSection,
-        KnowledgeBaseSection, LLMSection, SafetySection, SleepSection,
-        SlidingWindowSection,
-    )
-
-    cfg = Config(
-        llm=LLMSection(providers={}, roles={}),
-        hibernate=HibernateSection(min_interval=1, max_interval=60,
-                                    default_interval=1),
-        fatigue=FatigueSection(gm_node_soft_limit=200,
-                                force_sleep_threshold=120,
-                                thresholds={}),
-        sliding_window=SlidingWindowSection(max_tokens=4096),
-        graph_memory=GraphMemorySection(
-            db_path=gm_path, auto_ingest_similarity_threshold=0.9,
-            recall_per_stimulus_k=5, max_recall_nodes=20,
-            neighbor_expand_depth=1,
-        ),
-        knowledge_base=KnowledgeBaseSection(dir=""),
-        sensory={"cli_input": {"enabled": False, "default_adrenalin": True}},
-        tentacle={"action": {"enabled": True, "max_context_tokens": 4096,
-                              "sandboxed": True}},
-        sleep=SleepSection(max_duration_seconds=7200),
-        safety=SafetySection(gm_node_hard_limit=500,
-                               max_consecutive_no_action=50),
-    )
-    deps = RuntimeDeps(
-        config=cfg, self_llm=self_llm, hypo_llm=hypo_llm,
-        action_llm=action_llm,
-        compact_llm=compact_llm or _ScriptedLLM(),
-        classify_llm=classify_llm or _ScriptedLLM(),
-        embedder=embedder or _NullEmbedder(),
-        reranker=reranker,
-    )
-    return Runtime(deps, hibernate_min=hibernate_min,
-                     hibernate_max=hibernate_max)
+# ---------------- production builder ----------------
 
 
 def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
