@@ -156,6 +156,120 @@ class GraphMemory:
         )
         await db.commit()
 
+    # ---------- upsert ----------
+
+    async def upsert_node(self, node: dict[str, Any]) -> int:
+        """Same (name, category) → update description/embedding + bump importance.
+        Otherwise → new insert. Returns the node id.
+        """
+        db = self._require()
+        name = node["name"]
+        category = node["category"]
+        async with db.execute(
+            "SELECT id, importance FROM gm_nodes WHERE name=? AND category=?",
+            (name, category),
+        ) as cur:
+            row = await cur.fetchone()
+
+        if row is None:
+            return await self.insert_node(
+                name=name,
+                category=category,
+                description=node.get("description", ""),
+                embedding=node.get("embedding"),
+                importance=node.get("importance", 1.0),
+                source_type=node.get("source_type", "auto"),
+                source_heartbeat=node.get("source_heartbeat"),
+                metadata=node.get("metadata"),
+            )
+
+        node_id = row["id"]
+        new_importance = float(row["importance"]) + 0.5
+        desc = node.get("description")
+        emb = node.get("embedding")
+        sets = ["importance = ?", "updated_at = CURRENT_TIMESTAMP"]
+        params: list[Any] = [new_importance]
+        if desc is not None:
+            sets.append("description = ?")
+            params.append(desc)
+        if emb is not None:
+            sets.append("embedding = ?")
+            params.append(_encode_embedding(emb))
+        params.append(node_id)
+        await db.execute(
+            f"UPDATE gm_nodes SET {', '.join(sets)} WHERE id = ?", params,
+        )
+        await db.commit()
+        return node_id
+
+    # ---------- cycle-safe edges ----------
+
+    async def would_create_cycle(self, a: int, b: int) -> bool:
+        """Undirected connectivity check (DevSpec §7.7)."""
+        if a == b:
+            return True
+        db = self._require()
+        async with db.execute(
+            """
+            WITH RECURSIVE walk(nid, visited) AS (
+                SELECT ?, CAST(? AS TEXT)
+                UNION ALL
+                SELECT CASE WHEN e.node_a = w.nid THEN e.node_b ELSE e.node_a END,
+                       w.visited || ',' ||
+                       CAST(CASE WHEN e.node_a = w.nid THEN e.node_b
+                                 ELSE e.node_a END AS TEXT)
+                FROM walk w
+                JOIN gm_edges e ON (e.node_a = w.nid OR e.node_b = w.nid)
+                WHERE INSTR(
+                    ',' || w.visited || ',',
+                    ',' || CAST(CASE WHEN e.node_a = w.nid THEN e.node_b
+                                     ELSE e.node_a END AS TEXT) || ','
+                ) = 0
+            )
+            SELECT 1 FROM walk WHERE nid = ? LIMIT 1
+            """,
+            (a, str(a), b),
+        ) as cur:
+            row = await cur.fetchone()
+            return row is not None
+
+    async def insert_edge_with_cycle_check(self, src: int, tgt: int,
+                                             predicate: str) -> dict[str, Any]:
+        """Normalize (a<b), check cycle; if cycle, insert a RELATION bridge
+        node and link src→bridge→tgt instead. Returns info dict.
+        """
+        if src == tgt:
+            raise ValueError("self-loop edges not allowed")
+        a, b = (src, tgt) if src < tgt else (tgt, src)
+        db = self._require()
+
+        if await self.would_create_cycle(a, b):
+            bridge_id = await self.insert_node(
+                name=f"bridge_{a}_{b}_{predicate}",
+                category="RELATION",
+                description=f"Bridge between nodes {a} and {b} ({predicate}).",
+                source_type="auto",
+            )
+            a1, b1 = (min(a, bridge_id), max(a, bridge_id))
+            a2, b2 = (min(b, bridge_id), max(b, bridge_id))
+            await db.execute(
+                "INSERT INTO gm_edges(node_a, node_b, predicate) VALUES(?, ?, ?)",
+                (a1, b1, predicate),
+            )
+            await db.execute(
+                "INSERT INTO gm_edges(node_a, node_b, predicate) VALUES(?, ?, ?)",
+                (a2, b2, predicate),
+            )
+            await db.commit()
+            return {"bridged": True, "bridge_node_id": bridge_id}
+
+        await db.execute(
+            "INSERT INTO gm_edges(node_a, node_b, predicate) VALUES(?, ?, ?)",
+            (a, b, predicate),
+        )
+        await db.commit()
+        return {"bridged": False, "bridge_node_id": None}
+
     # ---------- low-level escape hatch for tests ----------
 
     async def raw_fetchone(self, sql: str, params: tuple = ()):
