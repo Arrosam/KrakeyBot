@@ -39,7 +39,16 @@ SYSTEM_PROMPT = """# Hypothalamus — 行动翻译器
 3. "目标完成"/"任务结束"/"已完成" → memory_updates (TARGET→FACT)
 4. 紧迫感 ("快"/"急"/"有人在等") → adrenalin: true
 5. "无行动"/"No action" → 空 tentacle_calls
-6. "进入睡眠"/"Sleep" → sleep: true
+6. **sleep 与 hibernate 的区分 (重要, 不要混淆)**:
+   - **sleep: true** 仅当 Self 明确表达要进入"完整睡眠模式" /
+     "7-phase sleep" / "enter sleep mode" 这种**重大动作**时
+     (会触发: 聚类 + KB 迁移 + FOCUS 清理 + Index 重建).
+   - **sleep: false** 即使 Self 说 "rest a bit" / "休息片刻" / "睡 N 秒" /
+     "hibernate longer" / "pause" / "wait" / "take a break" / "idle" —
+     这些都是 hibernate 间隔调节, **不是** sleep 模式.
+     Hibernate 长度由 Self 用 [HIBERNATE] tag 直接控制, 不经过你翻译.
+   - 如有疑问 → sleep: false. 只有看到"进入睡眠 / 睡眠模式 / sleep mode" 这类
+     **明确、完整**的措辞才 sleep: true.
 7. 多个行动 → 多个 tentacle_calls (并发)
 """
 

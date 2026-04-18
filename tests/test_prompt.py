@@ -14,6 +14,15 @@ def test_dna_has_all_sections():
     assert "Caveman" in DNA or "精简" in DNA
 
 
+def test_dna_disambiguates_sleep_and_hibernate():
+    """Regression: DNA must warn Self that Sleep ≠ Hibernate to avoid false sleep requests."""
+    assert "Hibernate" in DNA and "Sleep" in DNA
+    # Must contain the fatigue gate so low-fatigue does not trigger sleep
+    assert "75%" in DNA or "50%" in DNA
+    # Must explicitly warn against ambiguous rest/休息 wording
+    assert "休息" in DNA or "rest" in DNA.lower()
+
+
 def test_builder_assembles_all_layers():
     self_model = {"identity": {"name": "Krakey", "persona": "curious bot"}}
     status = {

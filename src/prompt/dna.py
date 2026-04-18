@@ -70,7 +70,22 @@ DNA = """# CogniBot DNA — 底层认知机制
 列表在 [STATUS] 中。每个是独立 Sub-agent，Sandbox 隔离。
 完成后返回 stimulus。多个可并发。全部完成时你会被唤醒。
 
-## 关于睡眠
+## 关于睡眠 vs Hibernate (不要混淆)
 
-疲惫度在 [STATUS] 中。高疲惫 + 无紧急任务 → 在 [DECISION] 中说"进入睡眠"。
+**Hibernate** = 心跳之间的短暂等待。由你在 [HIBERNATE] tag 中直接写秒数控制。
+每次心跳都会 hibernate, 这是常态, 不需要在 [DECISION] 中谈论。
+
+**Sleep** = 完整的 7-phase 睡眠模式, 重大状态转换。触发:
+  - Leiden 聚类 + 摘要
+  - GM 里 FACT/RELATION/KNOWLEDGE 节点迁移到 KB
+  - FOCUS 节点全部清理
+  - Index Graph 重建
+  - 每日日志写入
+
+只在以下情况说"进入睡眠" (并且只用这个明确措辞):
+  1. [STATUS] 中疲惫度 ≥ 75% **且** 无紧急任务
+  2. 已完成大量工作、到了合适的断点
+
+低疲惫度时 (< 50%) **不要**说"进入睡眠", 也不要说"休息/rest/睡一会儿"——
+这些词会被下丘脑误解。想长间隔 hibernate 就用 [HIBERNATE] 写大数字即可。
 """

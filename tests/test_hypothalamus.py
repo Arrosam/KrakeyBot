@@ -104,6 +104,23 @@ async def test_system_prompt_includes_tentacle_list():
     assert "action" in joined
 
 
+async def test_system_prompt_disambiguates_sleep_vs_hibernate():
+    """Regression: prompt must tell LLM that 'rest/睡 N 秒/hibernate' ≠ sleep mode."""
+    llm = MockLLM(json.dumps({
+        "tentacle_calls": [], "memory_writes": [], "memory_updates": [],
+        "sleep": False,
+    }))
+    await Hypothalamus(llm=llm).translate("anything", _tentacles())
+    system_content = llm.last_messages[0]["content"]
+    # Must mention the distinction and the dangerous near-synonyms
+    assert "hibernate" in system_content.lower()
+    assert "sleep" in system_content.lower()
+    # Must explicitly list ambiguous phrases to exclude
+    low = system_content.lower()
+    assert "rest" in low or "休息" in system_content
+    assert "pause" in low or "睡 n 秒" in low or "睡 n 秒" in system_content
+
+
 async def test_stateless_each_call_independent():
     llm = MockLLM(json.dumps({
         "tentacle_calls": [], "memory_writes": [], "memory_updates": [],
