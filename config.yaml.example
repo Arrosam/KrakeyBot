@@ -1,0 +1,76 @@
+# Copy this file to `config.yaml` and fill in real values.
+# `config.yaml` is gitignored — never commit real API keys.
+#
+# api_key fields support ${ENV_VAR} substitution at load time, so you
+# can leave the placeholders as-is and export env vars instead:
+#   export ONE_API_KEY=sk-...
+#   export SILICONFLOW_API_KEY=sk-...
+
+llm:
+  providers:
+    One API:
+      type: "openai_compatible"
+      base_url: "http://your-endpoint:port"
+      api_key: "${ONE_API_KEY}"
+      models:
+        - name: "astron"
+          capabilities: ["chat"]
+        - name: "astron-low"
+          capabilities: ["chat"]
+    SiliconFlow:
+      type: "openai_compatible"
+      base_url: "https://api.siliconflow.cn"
+      api_key: "${SILICONFLOW_API_KEY}"
+      models:
+        - name: "BAAI/bge-m3"
+          capabilities: ["embedding"]
+        - name: "BAAI/bge-reranker-v2-m3"
+          capabilities: ["rerank"]
+
+  roles:
+    self:             { provider: "One API",      model: "astron" }
+    hypothalamus:     { provider: "One API",      model: "astron" }
+    compact:          { provider: "One API",      model: "astron-low" }
+    tentacle_default: { provider: "One API",      model: "astron-low" }
+    embedding:        { provider: "SiliconFlow",  model: "BAAI/bge-m3" }
+    reranker:         { provider: "SiliconFlow",  model: "BAAI/bge-reranker-v2-m3" }
+
+hibernate:
+  min_interval: 2
+  max_interval: 300
+  default_interval: 10
+
+fatigue:
+  gm_node_soft_limit: 200
+  force_sleep_threshold: 120
+  thresholds:
+    50:  "（不繁忙时可以睡眠）"
+    75:  "（疲劳，需要主动睡眠）"
+    100: "（非常疲劳，需要立即找到睡眠的机会）"
+
+sliding_window:
+  max_tokens: 4096
+
+graph_memory:
+  db_path: "workspace/data/graph_memory.sqlite"
+  auto_ingest_similarity_threshold: 0.92
+  recall_per_stimulus_k: 5
+  max_recall_nodes: 20
+  neighbor_expand_depth: 1
+
+knowledge_base:
+  dir: "workspace/data/knowledge_bases"
+
+sensory:
+  cli_input: { enabled: true, default_adrenalin: true }
+  timer:     { enabled: true, default_adrenalin: false }
+
+tentacle:
+  action: { enabled: true, max_context_tokens: 4096, sandboxed: true }
+
+sleep:
+  max_duration_seconds: 7200
+
+safety:
+  gm_node_hard_limit: 500
+  max_consecutive_no_action: 50

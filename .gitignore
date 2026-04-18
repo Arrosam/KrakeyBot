@@ -1,3 +1,6 @@
+# Local config holds API keys — never commit.
+config.yaml
+
 .venv/
 __pycache__/
 *.pyc
