@@ -129,6 +129,17 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (math.sqrt(na) * math.sqrt(nb))
 
 
+_FTS_TOKEN = re.compile(r"\w+", re.UNICODE)
+
+
+def _build_fts_query(text: str) -> str | None:
+    tokens = _FTS_TOKEN.findall(text or "")
+    if not tokens:
+        return None
+    quoted = [f'"{t}"' for t in tokens]
+    return " OR ".join(quoted)
+
+
 def _format_recall_for_prompt(recall: list[dict[str, Any]]) -> str:
     if not recall:
         return "(no prior nodes)"
@@ -442,6 +453,32 @@ class GraphMemory:
     async def _top_similar(self, query_vec, *, top_k=1, min_similarity=0.0):
         return await self.vec_search(query_vec, top_k=top_k,
                                        min_similarity=min_similarity)
+
+    # ---------- FTS5 fallback search ----------
+
+    async def fts_search(self, query: str, *,
+                           top_k: int = 5) -> list[dict[str, Any]]:
+        """Full-text search fallback used when embeddings are unavailable.
+
+        Tokens are sanitized so MATCH never sees FTS5 operators.
+        """
+        fts_query = _build_fts_query(query)
+        if fts_query is None:
+            return []
+        db = self._require()
+        async with db.execute(
+            """
+            SELECT gm_nodes.*
+            FROM gm_nodes
+            JOIN gm_nodes_fts ON gm_nodes_fts.rowid = gm_nodes.id
+            WHERE gm_nodes_fts MATCH ?
+            ORDER BY rank
+            LIMIT ?
+            """,
+            (fts_query, top_k),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [_row_to_node(r) for r in rows]
 
     # ---------- auto_ingest ----------
 
