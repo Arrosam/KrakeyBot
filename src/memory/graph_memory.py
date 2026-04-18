@@ -454,6 +454,68 @@ class GraphMemory:
         return await self.vec_search(query_vec, top_k=top_k,
                                        min_similarity=min_similarity)
 
+    # ---------- neighbor expansion + edges among a set ----------
+
+    async def get_neighbor_keywords(self, node_ids: list[int], *,
+                                      depth: int = 1) -> dict[int, list[str]]:
+        """For each node in `node_ids`, return a de-duplicated list of
+        neighbor names (names only, as keyword hints per DevSpec §9.3).
+        Phase 1 supports depth=1.
+        """
+        if not node_ids:
+            return {}
+        db = self._require()
+        placeholders = ",".join("?" * len(node_ids))
+        async with db.execute(
+            f"""
+            SELECT center.id AS center_id, neighbor.name AS neighbor_name
+            FROM gm_nodes AS center
+            JOIN gm_edges AS e
+              ON (e.node_a = center.id OR e.node_b = center.id)
+            JOIN gm_nodes AS neighbor
+              ON neighbor.id = CASE WHEN e.node_a = center.id
+                                    THEN e.node_b ELSE e.node_a END
+            WHERE center.id IN ({placeholders})
+            """,
+            list(node_ids),
+        ) as cur:
+            rows = await cur.fetchall()
+
+        out: dict[int, list[str]] = {nid: [] for nid in node_ids}
+        seen: dict[int, set[str]] = {nid: set() for nid in node_ids}
+        for row in rows:
+            cid = row["center_id"]
+            name = row["neighbor_name"]
+            if name not in seen[cid]:
+                seen[cid].add(name)
+                out[cid].append(name)
+        return out
+
+    async def get_edges_among(self, node_ids: list[int]
+                                ) -> list[dict[str, Any]]:
+        """Return edges whose both endpoints are within `node_ids`, with
+        source/target node names included for prompt rendering.
+        """
+        if not node_ids:
+            return []
+        db = self._require()
+        placeholders = ",".join("?" * len(node_ids))
+        async with db.execute(
+            f"""
+            SELECT e.predicate AS predicate,
+                   na.id AS source_id, na.name AS source_name,
+                   nb.id AS target_id, nb.name AS target_name
+            FROM gm_edges AS e
+            JOIN gm_nodes AS na ON na.id = e.node_a
+            JOIN gm_nodes AS nb ON nb.id = e.node_b
+            WHERE e.node_a IN ({placeholders})
+              AND e.node_b IN ({placeholders})
+            """,
+            list(node_ids) + list(node_ids),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
     # ---------- FTS5 fallback search ----------
 
     async def fts_search(self, query: str, *,
