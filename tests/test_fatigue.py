@@ -1,6 +1,6 @@
 import pytest
 
-from src.runtime.fatigue import fatigue_hint
+from src.runtime.fatigue import calculate_fatigue, fatigue_hint
 
 
 THRESHOLDS = {
@@ -51,3 +51,45 @@ def test_unordered_dict_still_works():
     assert fatigue_hint(60, d) == "a"
     assert fatigue_hint(80, d) == "b"
     assert fatigue_hint(200, d) == "c"
+
+
+# ----- calculate_fatigue -----
+
+def test_calculate_fatigue_zero_nodes():
+    pct, hint = calculate_fatigue(node_count=0, soft_limit=200,
+                                     thresholds=THRESHOLDS)
+    assert pct == 0
+    assert "精力充沛" in hint
+
+
+def test_calculate_fatigue_scales_with_node_count():
+    pct1, _ = calculate_fatigue(node_count=50, soft_limit=200, thresholds={})
+    pct2, _ = calculate_fatigue(node_count=150, soft_limit=200, thresholds={})
+    assert pct1 == 25
+    assert pct2 == 75
+
+
+def test_calculate_fatigue_can_exceed_100():
+    pct, _ = calculate_fatigue(node_count=300, soft_limit=200, thresholds={})
+    assert pct == 150
+
+
+def test_calculate_fatigue_soft_limit_zero_safe():
+    # Avoid division by zero — treat as 0%
+    pct, hint = calculate_fatigue(node_count=10, soft_limit=0, thresholds={})
+    assert pct == 0
+
+
+def test_calculate_fatigue_at_threshold_shows_matching_hint():
+    _, hint = calculate_fatigue(node_count=100, soft_limit=200,
+                                   thresholds=THRESHOLDS)
+    # 50% → 50-threshold hint
+    assert hint == THRESHOLDS[50]
+
+
+def test_calculate_fatigue_at_force_threshold():
+    pct, hint = calculate_fatigue(node_count=240, soft_limit=200,
+                                     thresholds=THRESHOLDS)
+    assert pct == 120
+    # highest threshold applies
+    assert hint == THRESHOLDS[100]
