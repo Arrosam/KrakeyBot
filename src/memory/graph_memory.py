@@ -415,13 +415,14 @@ class GraphMemory:
 
     # ---------- vector search ----------
 
-    async def _top_similar(self, query_vec: list[float], *,
-                             top_k: int = 1,
-                             min_similarity: float = 0.0
-                             ) -> list[tuple[dict[str, Any], float]]:
+    async def vec_search(self, query_vec: list[float], *,
+                           top_k: int = 5,
+                           min_similarity: float = 0.0
+                           ) -> list[tuple[dict[str, Any], float]]:
         """Brute-force python-side cosine over rows with embedding != NULL.
 
-        Adequate for Phase 1 scale (≤ soft_limit nodes).
+        Adequate for Phase 1 scale (≤ soft_limit nodes). Returns
+        (node_dict, similarity) pairs sorted descending by similarity.
         """
         db = self._require()
         async with db.execute(
@@ -436,6 +437,11 @@ class GraphMemory:
                 scored.append((node, sim))
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:top_k]
+
+    # Backwards-compat alias used by auto_ingest
+    async def _top_similar(self, query_vec, *, top_k=1, min_similarity=0.0):
+        return await self.vec_search(query_vec, top_k=top_k,
+                                       min_similarity=min_similarity)
 
     # ---------- auto_ingest ----------
 
