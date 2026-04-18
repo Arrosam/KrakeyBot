@@ -22,6 +22,7 @@ from src.models.config import Config, load_config
 from src.models.stimulus import Stimulus
 from src.prompt.builder import PromptBuilder, SlidingWindowRound
 from src.runtime.batch_tracker import BatchTrackerSensory
+from src.runtime.colors import cyan, green
 from src.runtime.compact import compact_if_needed
 from src.runtime.fatigue import calculate_fatigue
 from src.runtime.hibernate import hibernate_with_recall
@@ -224,8 +225,16 @@ class Runtime:
         ))
 
         snippet = parsed.decision.strip().replace("\n", " ")[:120]
-        print(f"[HB #{self.heartbeat_count}] decision: {snippet or '(none)'}",
-              flush=True)
+        print(cyan(f"[HB #{self.heartbeat_count}] decision: "
+                    f"{snippet or '(none)'}"), flush=True)
+        if parsed.thinking:
+            think_snip = parsed.thinking.strip().replace("\n", " ")[:120]
+            print(cyan(f"[HB #{self.heartbeat_count}] thinking: "
+                        f"{think_snip}"), flush=True)
+        if parsed.note:
+            note_snip = parsed.note.strip().replace("\n", " ")[:120]
+            print(cyan(f"[HB #{self.heartbeat_count}] note: {note_snip}"),
+                  flush=True)
 
         # Tentacle feedback → auto_ingest
         for s in stimuli:
@@ -335,7 +344,8 @@ class Runtime:
 
         if call.adrenalin and not stim.adrenalin:
             stim.adrenalin = True
-        print(f"[{call.tentacle}] {stim.content}", flush=True)
+        # Bot's actual outward reply (chat) — green like a chat app message.
+        print(green(f"[{call.tentacle}] {stim.content}"), flush=True)
         await self.buffer.push(stim)
         await self.batch_tracker.mark_completed(call_id)
 
