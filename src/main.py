@@ -53,6 +53,11 @@ class RuntimeDeps:
     reader: Callable[[], Awaitable[str | None]] | None = None
 
 
+MAX_RECALL_RETRIES = 1
+"""Cap on uncovered stimulus re-tries to prevent infinite pushback loops
+when GM has no related nodes yet (e.g. first-ever user message)."""
+
+
 HARDCODED_SELF_MODEL: dict[str, Any] = {
     "identity": {"name": "Krakey", "persona": "nascent cognitive entity"},
     "state": {"mood_baseline": "neutral", "energy_level": 1.0,
@@ -180,9 +185,15 @@ class Runtime:
         await compact_if_needed(self.window, self.gm, self.compact_llm,
                                  recall_fn=_recall_fn)
 
-        # Finalize recall
+        # Finalize recall. Uncovered stimuli get one re-try: pushed back with
+        # metadata["recall_retries"] bumped, capped at MAX_RECALL_RETRIES so
+        # no-match stimuli (e.g. first user message with empty GM) never loop.
         recall_result = await self._recall.finalize()
         for s in recall_result.uncovered_stimuli:
+            retries = s.metadata.get("recall_retries", 0)
+            if retries >= MAX_RECALL_RETRIES:
+                continue
+            s.metadata["recall_retries"] = retries + 1
             await self.buffer.push(s)
 
         # Build prompt with fresh status/recall

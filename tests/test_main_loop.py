@@ -100,6 +100,37 @@ async def test_adrenalin_inheritance_from_hypothalamus():
     assert tentacle_stims[0].adrenalin is True  # inherited
 
 
+async def test_uncovered_stimulus_push_back_capped_at_one_retry():
+    """Regression for the 'stimuli=5' bug: a user message with an empty GM
+    finds no recall coverage. It must be pushed back at most ONCE, then
+    dropped — otherwise it loops every heartbeat forever.
+    """
+    self_llm = ScriptedLLM([
+        "[DECISION]\nNo action.\n[HIBERNATE]\n1",  # HB #1
+        "[DECISION]\nNo action.\n[HIBERNATE]\n1",  # HB #2
+        "[DECISION]\nNo action.\n[HIBERNATE]\n1",  # HB #3
+    ])
+    hypo_llm = ScriptedLLM([])
+    action_llm = ScriptedLLM([])
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=hypo_llm, action_llm=action_llm,
+    )
+
+    # Seed one user stimulus that will never match (GM empty).
+    orig = Stimulus(
+        type="user_message", source="sensory:cli_input",
+        content="hello", timestamp=datetime.now(), adrenalin=True,
+    )
+    await runtime.buffer.push(orig)
+
+    await runtime.run(iterations=3)
+    await runtime.close()
+
+    # After 3 heartbeats, the original stim should have retry_count exactly 1
+    # (pushed back once, then dropped). Buffer should not keep re-accumulating it.
+    assert orig.metadata.get("recall_retries") == 1
+
+
 async def test_tentacle_feedback_auto_ingested_to_gm():
     """Phase 1: tentacle_feedback stimuli seen on next heartbeat get
     auto_ingested into Graph Memory."""
