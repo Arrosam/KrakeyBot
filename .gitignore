@@ -1,0 +1,15 @@
+# Local config holds API keys — never commit.
+config.yaml
+
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+*.egg-info/
+workspace/data/
+workspace/logs/
+*.sqlite
+*.sqlite-journal
+.env
