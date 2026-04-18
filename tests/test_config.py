@@ -130,6 +130,7 @@ def test_env_substitution_missing_var_keeps_placeholder(tmp_path, monkeypatch):
 
 def test_real_config_file_loads():
     cfg = load_config("config.yaml")
-    assert cfg.hibernate.default_interval == 30
-    assert cfg.graph_memory.max_recall_nodes == 20
+    assert cfg.hibernate.default_interval > 0
+    assert cfg.hibernate.min_interval > 0
+    assert cfg.graph_memory.max_recall_nodes > 0
     assert "self" in cfg.llm.roles

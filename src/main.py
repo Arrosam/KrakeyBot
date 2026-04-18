@@ -97,6 +97,9 @@ class Runtime:
         self.heartbeat_count += 1
         stimuli = self.buffer.drain()
 
+        print(f"[HB #{self.heartbeat_count}] stimuli={len(stimuli)} "
+              f"(thinking...)", flush=True)
+
         prompt = self.builder.build(
             self_model=self.self_model,
             status=self._status(),
@@ -104,7 +107,12 @@ class Runtime:
             window=list(self.window),
             stimuli=stimuli,
         )
-        raw = await self.self_llm.chat([{"role": "user", "content": prompt}])
+        try:
+            raw = await self.self_llm.chat([{"role": "user", "content": prompt}])
+        except Exception as e:  # noqa: BLE001
+            print(f"[HB #{self.heartbeat_count}] Self LLM error: {e}", flush=True)
+            await asyncio.sleep(self._min)
+            return
         parsed = parse_self_output(raw)
 
         self.window.append(SlidingWindowRound(
@@ -114,18 +122,29 @@ class Runtime:
             note_text=parsed.note,
         ))
 
+        snippet = parsed.decision.strip().replace("\n", " ")[:120]
+        print(f"[HB #{self.heartbeat_count}] decision: {snippet or '(none)'}",
+              flush=True)
+
         decision = parsed.decision.strip().lower()
         if decision and decision not in ("no action", "无行动"):
             tentacle_descs = self.tentacles.list_descriptions()
-            result = await self.hypothalamus.translate(parsed.decision, tentacle_descs)
-            if result.sleep:
-                # Phase-0: no sleep mechanism yet; log and continue.
-                print("[runtime] sleep requested (not implemented in Phase 0)",
-                      file=sys.stderr)
-            for call in result.tentacle_calls:
-                asyncio.create_task(self._dispatch(call))
+            try:
+                result = await self.hypothalamus.translate(parsed.decision, tentacle_descs)
+            except Exception as e:  # noqa: BLE001
+                print(f"[HB #{self.heartbeat_count}] Hypothalamus error: {e}",
+                      flush=True)
+                result = None
+
+            if result is not None:
+                if result.sleep:
+                    print("[runtime] sleep requested (not implemented in Phase 0)",
+                          file=sys.stderr, flush=True)
+                for call in result.tentacle_calls:
+                    asyncio.create_task(self._dispatch(call))
 
         interval = parsed.hibernate_seconds or self.config.hibernate.default_interval
+        print(f"[HB #{self.heartbeat_count}] hibernate {interval}s", flush=True)
         await hibernate(interval, self.buffer,
                         min_interval=self._min, max_interval=self._max)
 
@@ -138,9 +157,22 @@ class Runtime:
                 content=f"Unknown tentacle: {call.tentacle}",
                 timestamp=datetime.now(), adrenalin=False,
             ))
+            print(f"[dispatch] unknown tentacle: {call.tentacle}", flush=True)
             return
 
-        stim = await tentacle.execute(call.intent, call.params)
+        print(f"[dispatch] {call.tentacle} ← {call.intent!r}"
+              f"{' (adrenalin)' if call.adrenalin else ''}", flush=True)
+        try:
+            stim = await tentacle.execute(call.intent, call.params)
+        except Exception as e:  # noqa: BLE001
+            print(f"[dispatch] {call.tentacle} error: {e}", flush=True)
+            await self.buffer.push(Stimulus(
+                type="system_event", source=f"tentacle:{call.tentacle}",
+                content=f"error: {e}", timestamp=datetime.now(),
+                adrenalin=call.adrenalin,
+            ))
+            return
+
         # Adrenalin inheritance (DevSpec §4.4)
         if call.adrenalin and not stim.adrenalin:
             stim.adrenalin = True
