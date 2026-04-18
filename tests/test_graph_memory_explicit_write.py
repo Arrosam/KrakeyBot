@@ -28,6 +28,22 @@ async def _gm(tmp_path, llm):
     return gm
 
 
+async def test_explicit_nodes_marked_classified(tmp_path):
+    """Phase 1 fix: explicit nodes already have category set, so they should
+    be flagged classified=1 to keep classify_and_link_pending from spinning
+    on them and to make stats clearer.
+    """
+    llm = ScriptedLLM(json.dumps({
+        "nodes": [{"name": "n", "category": "FACT", "description": ""}],
+        "edges": [],
+    }))
+    gm = await _gm(tmp_path, llm)
+    res = await gm.explicit_write("x")
+    node = await gm.get_node(res["node_ids"][0])
+    assert node["metadata"].get("classified") is True
+    await gm.close()
+
+
 async def test_writes_single_node_from_llm(tmp_path):
     llm = ScriptedLLM(json.dumps({
         "nodes": [{"name": "User likes tea", "category": "FACT",

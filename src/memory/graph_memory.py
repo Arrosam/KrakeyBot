@@ -150,6 +150,26 @@ def _format_recall_for_prompt(recall: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+_MIN_INGEST_CHARS = 4
+"""Below this length, auto_ingest treats content as noise and skips it."""
+
+
+def _is_meaningful(content: str) -> bool:
+    """Reject pure-symbol / emoji / whitespace blobs ("✓", "...", "❤️").
+
+    Need at least one alphanumeric char (Unicode letters + digits count, so
+    Chinese/Cyrillic/etc. work) AND total length above the floor.
+    """
+    if content is None:
+        return False
+    stripped = content.strip()
+    if len(stripped) < _MIN_INGEST_CHARS:
+        # tiny strings (e.g., "hi", "ok") are still skipped: too low signal
+        # for a memory node.
+        return False
+    return any(ch.isalnum() for ch in stripped)
+
+
 def _short_name(text: str, max_len: int = 80) -> str:
     stripped = " ".join(text.split())
     if len(stripped) <= max_len:
@@ -389,8 +409,13 @@ class GraphMemory:
 
     async def insert_edge_with_cycle_check(self, src: int, tgt: int,
                                              predicate: str) -> dict[str, Any]:
-        """Normalize (a<b), check cycle; if cycle, insert a RELATION bridge
-        node and link src→bridge→tgt instead. Returns info dict.
+        """Normalize (a<b) and skip the edge if it would close a cycle.
+
+        Phase 1 took out the procedural bridge-node mechanism: each generated
+        bridge could itself become part of a fresh cycle, leading to runaway
+        chains (bridge_X_Y → bridge_Y_Z → ...). Skipping is information-lossy
+        but preserves the acyclic invariant cheaply. A future phase may
+        reintroduce LLM-extracted *semantic* intermediate nodes.
         """
         if src == tgt:
             raise ValueError("self-loop edges not allowed")
@@ -398,31 +423,20 @@ class GraphMemory:
         db = self._require()
 
         if await self.would_create_cycle(a, b):
-            bridge_id = await self.insert_node(
-                name=f"bridge_{a}_{b}_{predicate}",
-                category="RELATION",
-                description=f"Bridge between nodes {a} and {b} ({predicate}).",
-                source_type="auto",
-            )
-            a1, b1 = (min(a, bridge_id), max(a, bridge_id))
-            a2, b2 = (min(b, bridge_id), max(b, bridge_id))
-            await db.execute(
-                "INSERT INTO gm_edges(node_a, node_b, predicate) VALUES(?, ?, ?)",
-                (a1, b1, predicate),
-            )
-            await db.execute(
-                "INSERT INTO gm_edges(node_a, node_b, predicate) VALUES(?, ?, ?)",
-                (a2, b2, predicate),
-            )
-            await db.commit()
-            return {"bridged": True, "bridge_node_id": bridge_id}
+            return {"skipped": True, "reason": "would create cycle"}
 
-        await db.execute(
-            "INSERT INTO gm_edges(node_a, node_b, predicate) VALUES(?, ?, ?)",
-            (a, b, predicate),
-        )
+        try:
+            await db.execute(
+                "INSERT INTO gm_edges(node_a, node_b, predicate) "
+                "VALUES(?, ?, ?)",
+                (a, b, predicate),
+            )
+        except Exception:  # noqa: BLE001
+            # Most likely a UNIQUE violation on (a,b,predicate) — same edge
+            # already there. Treat as a no-op skip rather than raise.
+            return {"skipped": True, "reason": "duplicate edge"}
         await db.commit()
-        return {"bridged": False, "bridge_node_id": None}
+        return {"skipped": False}
 
     # ---------- vector search ----------
 
@@ -551,8 +565,11 @@ class GraphMemory:
                             ) -> dict[str, Any]:
         """Zero-LLM write (DevSpec §7.5). Embed content; if a similar node
         exists (cosine ≥ threshold), bump its importance; otherwise insert
-        a new FACT node. Returns {"created": bool, "node_id": int}.
+        a new FACT node. Returns {"created": bool, "node_id": int|None,
+        "skipped": bool}.
         """
+        if not _is_meaningful(content):
+            return {"created": False, "node_id": None, "skipped": True}
         db = self._require()
         embedding = await self._embedder(content)
         matches = await self._top_similar(
@@ -623,7 +640,11 @@ class GraphMemory:
                 "source_type": "explicit",
                 "importance": imp_value,
                 "source_heartbeat": source_heartbeat,
+                "metadata": {"classified": True},
             })
+            # upsert_node only writes metadata for fresh inserts; force-merge
+            # so an existing node also picks up the flag.
+            await self.set_metadata(nid, {"classified": True})
             node_ids_by_name[n["name"]] = nid
 
         for e in parsed.get("edges", []):

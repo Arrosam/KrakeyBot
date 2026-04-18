@@ -110,28 +110,63 @@ async def test_auto_ingest_node_name_is_short(tmp_path):
 async def test_auto_ingest_respects_similarity_threshold(tmp_path):
     # two vectors with cosine ~0.90 < 0.92 → should NOT dedupe
     embed = MappingEmbedder({
-        "foo": [1.0, 0.0],
-        "bar": [0.9, 0.436],  # cos ≈ 0.9
+        "fooooo": [1.0, 0.0],
+        "barrrr": [0.9, 0.436],  # cos ≈ 0.9
     })
     gm = GraphMemory(tmp_path / "gm.sqlite", embedder=embed,
                       auto_ingest_threshold=0.92)
     await gm.initialize()
-    await gm.auto_ingest("foo")
-    await gm.auto_ingest("bar")
+    await gm.auto_ingest("fooooo")
+    await gm.auto_ingest("barrrr")
     assert await gm.count_nodes() == 2
+    await gm.close()
+
+
+async def test_auto_ingest_skips_too_short_content(tmp_path):
+    embed = MappingEmbedder({})  # never called
+    gm = GraphMemory(tmp_path / "gm.sqlite", embedder=embed)
+    await gm.initialize()
+    result = await gm.auto_ingest("hi")  # 2 chars
+    assert result["skipped"] is True
+    assert result["created"] is False
+    assert await gm.count_nodes() == 0
+    assert embed.calls == []  # didn't even embed
+    await gm.close()
+
+
+async def test_auto_ingest_skips_pure_symbols(tmp_path):
+    """Regression: '✓' / emoji / pure punctuation must not enter GM."""
+    embed = MappingEmbedder({})
+    gm = GraphMemory(tmp_path / "gm.sqlite", embedder=embed)
+    await gm.initialize()
+    for content in ("✓", "✅", "...", "!!!", "    ", "❤️🎉"):
+        result = await gm.auto_ingest(content)
+        assert result["skipped"] is True, f"should skip {content!r}"
+    assert await gm.count_nodes() == 0
+    await gm.close()
+
+
+async def test_auto_ingest_keeps_short_alphanumeric(tmp_path):
+    """A short but informative string like 'NZX50' should still pass."""
+    embed = MappingEmbedder({"NZX50": [1.0, 0.0]})
+    gm = GraphMemory(tmp_path / "gm.sqlite", embedder=embed)
+    await gm.initialize()
+    result = await gm.auto_ingest("NZX50")
+    assert result["created"] is True
+    assert await gm.count_nodes() == 1
     await gm.close()
 
 
 async def test_auto_ingest_accepts_explicit_threshold(tmp_path):
     # Same vectors, but lower threshold → should dedupe
     embed = MappingEmbedder({
-        "foo": [1.0, 0.0],
-        "bar": [0.9, 0.436],
+        "fooooo": [1.0, 0.0],
+        "barrrr": [0.9, 0.436],
     })
     gm = GraphMemory(tmp_path / "gm.sqlite", embedder=embed,
                       auto_ingest_threshold=0.85)
     await gm.initialize()
-    await gm.auto_ingest("foo")
-    await gm.auto_ingest("bar")
+    await gm.auto_ingest("fooooo")
+    await gm.auto_ingest("barrrr")
     assert await gm.count_nodes() == 1
     await gm.close()

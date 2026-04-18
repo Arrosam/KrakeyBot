@@ -236,17 +236,15 @@ class Runtime:
             note_text=parsed.note,
         ))
 
-        snippet = parsed.decision.strip().replace("\n", " ")[:120]
-        print(cyan(f"[HB #{self.heartbeat_count}] decision: "
-                    f"{snippet or '(none)'}"), flush=True)
+        decision_text = parsed.decision.strip() or "(none)"
+        print(cyan(f"[HB #{self.heartbeat_count}] decision: {decision_text}"),
+              flush=True)
         if parsed.thinking:
-            think_snip = parsed.thinking.strip().replace("\n", " ")[:120]
             print(cyan(f"[HB #{self.heartbeat_count}] thinking: "
-                        f"{think_snip}"), flush=True)
+                        f"{parsed.thinking.strip()}"), flush=True)
         if parsed.note:
-            note_snip = parsed.note.strip().replace("\n", " ")[:120]
-            print(cyan(f"[HB #{self.heartbeat_count}] note: {note_snip}"),
-                  flush=True)
+            print(cyan(f"[HB #{self.heartbeat_count}] note: "
+                        f"{parsed.note.strip()}"), flush=True)
 
         # Tentacle feedback → auto_ingest
         for s in stimuli:
