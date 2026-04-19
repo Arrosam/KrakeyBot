@@ -94,3 +94,8 @@ sleep:
 safety:
   gm_node_hard_limit: 500
   max_consecutive_no_action: 50
+
+dashboard:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8765

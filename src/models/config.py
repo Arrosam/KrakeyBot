@@ -89,6 +89,13 @@ class SafetySection:
 
 
 @dataclass
+class DashboardSection:
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = 8765
+
+
+@dataclass
 class Config:
     llm: LLMSection
     hibernate: HibernateSection
@@ -100,6 +107,7 @@ class Config:
     tentacle: dict[str, dict[str, Any]]
     sleep: SleepSection
     safety: SafetySection
+    dashboard: DashboardSection = field(default_factory=DashboardSection)
 
 
 def _substitute_env(value: Any) -> Any:
@@ -176,6 +184,16 @@ def load_config(path: str | Path = "config.yaml") -> Config:
             gm_node_hard_limit=raw["safety"]["gm_node_hard_limit"],
             max_consecutive_no_action=raw["safety"]["max_consecutive_no_action"],
         ),
+        dashboard=_build_dashboard(raw.get("dashboard")),
+    )
+
+
+def _build_dashboard(raw: dict[str, Any] | None) -> DashboardSection:
+    raw = raw or {}
+    return DashboardSection(
+        enabled=bool(raw.get("enabled", False)),
+        host=str(raw.get("host", "127.0.0.1")),
+        port=int(raw.get("port", 8765)),
     )
 
 

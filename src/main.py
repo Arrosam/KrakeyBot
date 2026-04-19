@@ -15,6 +15,7 @@ from src.bootstrap import (
     BOOTSTRAP_PROMPT, detect_bootstrap_complete, load_genesis,
     load_self_model_or_default, parse_self_model_update,
 )
+from src.dashboard.server import DashboardServer, create_app as create_dashboard_app
 from src.hypothalamus import Hypothalamus, TentacleCall
 from src.models.self_model import SelfModelStore
 from src.interfaces.sensory import SensoryRegistry
@@ -203,6 +204,7 @@ class Runtime:
         self.log = logger or HeartbeatLogger()
         self.sleep_log_dir = "workspace/logs"
         self.events = event_bus or EventBus()
+        self._dashboard: DashboardServer | None = None
 
     def _new_recall(self) -> IncrementalRecall:
         return IncrementalRecall(
@@ -217,6 +219,7 @@ class Runtime:
     async def run(self, iterations: int | None = None) -> None:
         await self.gm.initialize()
         await self.sensories.start_all(self.buffer)
+        await self._maybe_start_dashboard()
         self._recall = self._new_recall()
         try:
             count = 0
@@ -233,9 +236,42 @@ class Runtime:
                 t.cancel()
 
     async def close(self) -> None:
-        """Shut down persistent resources (GM + open KBs). Idempotent."""
+        """Shut down persistent resources (Dashboard + GM + open KBs)."""
+        if self._dashboard is not None:
+            try:
+                await self._dashboard.stop()
+            except Exception as e:  # noqa: BLE001
+                self.log.runtime_error(f"dashboard stop error: {e}")
+            self._dashboard = None
         await self.kb_registry.close_all()
         await self.gm.close()
+
+    async def _maybe_start_dashboard(self) -> None:
+        cfg = getattr(self.config, "dashboard", None)
+        # Config object may not have dashboard yet; fall back to a dict-style
+        # access via the extra dict (added later).
+        if cfg is None:
+            return
+        if not cfg.enabled:
+            return
+        try:
+            self._dashboard = DashboardServer(
+                create_dashboard_app(runtime=self),
+                host=cfg.host, port=cfg.port,
+            )
+            await self._dashboard.start()
+            self.log.hb(
+                f"dashboard listening on http://{cfg.host}:{self._dashboard.port}"
+            )
+        except OSError as e:
+            self.log.runtime_error(
+                f"dashboard failed to start (port {cfg.port} in use? {e}); "
+                "runtime continues without dashboard"
+            )
+            self._dashboard = None
+        except Exception as e:  # noqa: BLE001
+            self.log.runtime_error(f"dashboard startup error: {e}")
+            self._dashboard = None
 
     async def _heartbeat(self) -> None:
         """Orchestration only. Each phase is its own method.
