@@ -9,9 +9,8 @@ __pycache__/
 .pytest_cache/
 .coverage
 *.egg-info/
-workspace/data/
-workspace/logs/
-workspace/self_model.yaml
+workspace/
+!workspace/GENESIS.md
 *.sqlite
 *.sqlite-journal
 .env

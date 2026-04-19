@@ -5,6 +5,7 @@ Import from tests as: `from tests._runtime_helpers import build_runtime_with_fak
 """
 from __future__ import annotations
 
+import tempfile
 from typing import Protocol
 
 from src.main import Runtime, RuntimeDeps
@@ -43,8 +44,15 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
                               hibernate_min: float = 0.01,
                               hibernate_max: float = 5.0,
                               gm_path: str = ":memory:",
+                              kb_dir: str | None = None,
                               skip_bootstrap: bool = True) -> Runtime:
-    """In-memory Runtime with injectable doubles. CLI sensory disabled."""
+    """In-memory Runtime with injectable doubles. CLI sensory disabled.
+
+    `kb_dir` defaults to a fresh `tempfile.mkdtemp()` so KB files written
+    during sleep migration never touch the production workspace.
+    """
+    if kb_dir is None:
+        kb_dir = tempfile.mkdtemp(prefix="krakey_test_kb_")
     from src.models.config import (
         Config, FatigueSection, GraphMemorySection, HibernateSection,
         KnowledgeBaseSection, LLMSection, SafetySection, SleepSection,
@@ -64,7 +72,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
             recall_per_stimulus_k=5, max_recall_nodes=20,
             neighbor_expand_depth=1,
         ),
-        knowledge_base=KnowledgeBaseSection(dir=""),
+        knowledge_base=KnowledgeBaseSection(dir=kb_dir),
         sensory={"cli_input": {"enabled": False, "default_adrenalin": True}},
         tentacle={"action": {"enabled": True, "max_context_tokens": 4096,
                               "sandboxed": True}},
