@@ -1,19 +1,25 @@
 """Graph Memory — middle-tier working memory (DevSpec §7).
 
-Phase 1.2a: init + basic node CRUD.
-Phase 1.2b: upsert + cycle-checked edges with RELATION bridge.
-Phase 1.2c: auto_ingest (embed + similarity dedup).
+Connection / vector / FTS helpers live in `src/memory/_db.py` and are
+shared with KnowledgeBase. This module owns the GM-specific schema usage,
+LLM-driven writers (auto_ingest, explicit_write, classify), and
+cycle-safe edge insertion.
 """
 from __future__ import annotations
 
 import json
-import math
 import re
 from pathlib import Path
 from typing import Any, Protocol
 
 import aiosqlite
-import sqlite_vec
+
+from src.memory._db import (
+    SCHEMA_PATH, apply_schema, build_fts_query, cosine_similarity,
+    decode_embedding as _decode_embedding,
+    encode_embedding as _encode_embedding,
+    open_db_with_vec,
+)
 
 
 class AsyncChatLLM(Protocol):
@@ -110,34 +116,9 @@ def _parse_extraction_json(raw: str) -> dict[str, Any]:
         return json.loads(m.group(0))
 
 
-def cosine_similarity(a: list[float], b: list[float]) -> float:
-    """Cosine similarity of two equal-length vectors.
-
-    Returns 0.0 when either operand is a zero vector (avoids NaN).
-    """
-    if len(a) != len(b):
-        raise ValueError(f"vector length mismatch: {len(a)} vs {len(b)}")
-    dot = 0.0
-    na = 0.0
-    nb = 0.0
-    for x, y in zip(a, b):
-        dot += x * y
-        na += x * x
-        nb += y * y
-    if na == 0.0 or nb == 0.0:
-        return 0.0
-    return dot / (math.sqrt(na) * math.sqrt(nb))
-
-
-_FTS_TOKEN = re.compile(r"\w+", re.UNICODE)
-
-
 def _build_fts_query(text: str) -> str | None:
-    tokens = _FTS_TOKEN.findall(text or "")
-    if not tokens:
-        return None
-    quoted = [f'"{t}"' for t in tokens]
-    return " OR ".join(quoted)
+    """Backwards-compat alias — moved to src.memory._db.build_fts_query."""
+    return build_fts_query(text)
 
 
 def _format_recall_for_prompt(recall: list[dict[str, Any]]) -> str:
@@ -177,23 +158,8 @@ def _short_name(text: str, max_len: int = 80) -> str:
     return stripped[: max_len - 1].rstrip() + "…"
 
 
-SCHEMA_PATH = Path(__file__).parent / "schemas.sql"
-
-
 class AsyncEmbedder(Protocol):
     async def __call__(self, text: str) -> list[float]: ...
-
-
-def _encode_embedding(vec: list[float] | None) -> bytes | None:
-    if vec is None:
-        return None
-    return json.dumps(list(vec)).encode("utf-8")
-
-
-def _decode_embedding(blob: bytes | None) -> list[float] | None:
-    if blob is None:
-        return None
-    return json.loads(blob.decode("utf-8"))
 
 
 def _row_to_node(row: aiosqlite.Row) -> dict[str, Any]:
@@ -235,16 +201,8 @@ class GraphMemory:
     async def initialize(self) -> None:
         if self._db is not None:
             return
-        db = await aiosqlite.connect(self.db_path)
-        db.row_factory = aiosqlite.Row
-        await db.enable_load_extension(True)
-        await db.load_extension(sqlite_vec.loadable_path())
-        await db.enable_load_extension(False)
-        await db.execute("PRAGMA foreign_keys = ON")
-        schema = SCHEMA_PATH.read_text(encoding="utf-8")
-        await db.executescript(schema)
-        await db.commit()
-        self._db = db
+        self._db = await open_db_with_vec(self.db_path)
+        await apply_schema(self._db)
 
     async def close(self) -> None:
         if self._db is not None:

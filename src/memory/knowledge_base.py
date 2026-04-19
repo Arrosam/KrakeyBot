@@ -11,43 +11,20 @@ queries them via vec_search → FTS5 fallback (same pattern as GM).
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any, Protocol
 
 import aiosqlite
-import sqlite_vec
 
-from src.memory.graph_memory import (
-    GraphMemory, SCHEMA_PATH, _decode_embedding, _encode_embedding,
-    cosine_similarity,
+from src.memory._db import (
+    apply_schema, build_fts_query, cosine_similarity, decode_embedding,
+    encode_embedding, open_db_with_vec,
 )
+from src.memory.graph_memory import GraphMemory
 
 
 class AsyncEmbedder(Protocol):
     async def __call__(self, text: str) -> list[float]: ...
-
-
-# --- helpers shared with GraphMemory; lifted into _db.py during refactor A ---
-
-_FTS_TOKEN = re.compile(r"\w+", re.UNICODE)
-
-
-def _build_fts_query(text: str) -> str | None:
-    tokens = _FTS_TOKEN.findall(text or "")
-    if not tokens:
-        return None
-    return " OR ".join(f'"{t}"' for t in tokens)
-
-
-async def _open_db_with_vec(path: str | Path) -> aiosqlite.Connection:
-    db = await aiosqlite.connect(str(path))
-    db.row_factory = aiosqlite.Row
-    await db.enable_load_extension(True)
-    await db.load_extension(sqlite_vec.loadable_path())
-    await db.enable_load_extension(False)
-    await db.execute("PRAGMA foreign_keys = ON")
-    return db
 
 
 def _row_to_entry(row: aiosqlite.Row) -> dict[str, Any]:
@@ -57,7 +34,7 @@ def _row_to_entry(row: aiosqlite.Row) -> dict[str, Any]:
         "content": row["content"],
         "source": row["source"],
         "tags": json.loads(tags_raw) if tags_raw else [],
-        "embedding": _decode_embedding(row["embedding"]),
+        "embedding": decode_embedding(row["embedding"]),
         "importance": row["importance"],
         "created_at": row["created_at"],
         "last_accessed": row["last_accessed"],
@@ -83,10 +60,8 @@ class KnowledgeBase:
         if self._db is not None:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = await _open_db_with_vec(self.path)
-        schema = SCHEMA_PATH.read_text(encoding="utf-8")
-        await self._db.executescript(schema)
-        await self._db.commit()
+        self._db = await open_db_with_vec(self.path)
+        await apply_schema(self._db)
 
     async def close(self) -> None:
         if self._db is not None:
@@ -111,7 +86,7 @@ class KnowledgeBase:
             "importance) VALUES(?, ?, ?, ?, ?)",
             (content, source,
              json.dumps(tags) if tags else None,
-             _encode_embedding(embedding),
+             encode_embedding(embedding),
              importance),
         )
         await db.commit()
@@ -186,7 +161,7 @@ class KnowledgeBase:
 
     async def fts_search(self, query: str, *,
                            top_k: int = 5) -> list[dict[str, Any]]:
-        fts_q = _build_fts_query(query)
+        fts_q = build_fts_query(query)
         if fts_q is None:
             return []
         db = self._require()

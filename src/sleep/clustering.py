@@ -12,9 +12,8 @@ from typing import Any, Protocol
 import igraph as ig
 import leidenalg as la
 
-from src.memory.graph_memory import (
-    GraphMemory, _encode_embedding, _row_to_node,
-)
+from src.memory._db import encode_embedding
+from src.memory.graph_memory import GraphMemory, _row_to_node
 
 
 COMMUNITY_SUMMARY_PROMPT = """以下是一组紧密相关的记忆节点 (Sleep 聚类发现):
@@ -118,7 +117,7 @@ async def _persist_community(gm: GraphMemory, summary: str,
     cur = await db.execute(
         "INSERT INTO gm_communities(name, summary, summary_embedding, "
         "member_count) VALUES(?, ?, ?, ?)",
-        (summary[:80], summary, _encode_embedding(embedding),
+        (summary[:80], summary, encode_embedding(embedding),
          len(member_ids)),
     )
     cid = cur.lastrowid
