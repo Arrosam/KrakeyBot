@@ -5,7 +5,7 @@
 
 ---
 
-## 当前阶段: **Phase 2 — 完整生命周期**
+## 当前阶段: **Phase 3 — 扩展能力**
 
 ### 已实现
 
@@ -56,11 +56,20 @@
 - **Voluntary Sleep** — Self 说"进入睡眠模式" → Hypothalamus `sleep:true` → 同样 7 phase + 醒来推清爽 stimulus
 - **共享持久化层** — `src/memory/_db.py` 提取 GM/KB 共用的 sqlite-vec / cosine / FTS5 / embedding 编解码
 
+**Phase 3（扩展能力）**
+- **Override 命令** — `/status` `/memory_stats` `/sleep` `/wake` `/kill` 在 CLI 输入时被 runtime 拦截, 不经 Self
+- **Search Tentacle** — DuckDuckGo (ddgs)，无需 API key；内部输出 (Self 决定是否转告用户)
+- **Telegram Sensory + ReplyTentacle** — 双向：getUpdates 长轮询拉消息推 buffer; sendMessage 出站；同一 HttpTelegramClient 共用
+- **Coding Tentacle** — Python / shell 子进程 + 超时 (默认禁用; 不是真沙盒)
+- **GUI Control Tentacle** — PyAutoGUI 鼠标 / 键盘 / 截图 / 屏幕尺寸 (默认禁用; 鼠标拖到屏幕角可中断)
+- **GM 性能跑分** — `python scripts/bench_gm.py` 测各规模延迟, 推荐 `gm_node_soft_limit` 值
+- **Tentacle.is_internal 标志** — 区分"对外说话" (绿) vs "Self 内部参考" (紫); memory_recall / search / coding / gui_control 都是 internal
+
 ### 尚未实现（留给后续 Phase）
 
-| 功能 | Phase |
-|------|-------|
-| Telegram Sensory / 更多 Tentacles / Override 命令 / Dashboard | 3 |
+| 功能 | 说明 |
+|------|------|
+| 可视化 Dashboard | 浏览器看 GM 图 + 心跳流; 设计待讨论 |
 
 ---
 
@@ -241,6 +250,22 @@ sqlite3 workspace/data/graph_memory.sqlite \
 4. `explicit` 节点出现 → Self 说过"记住..."
 
 如果第 1 项一直 `+0`：tentacle 没回馈 / embedder 报错。看终端有无 `[runtime] auto_ingest error:`。
+
+---
+
+## Phase 3 验收标准
+
+| # | 检查项 | 怎么验证 |
+|---|---|---|
+| 1 | `/status` 返回 runtime + GM 状态 | CLI 输入 `/status` → 终端打印 `name=Krakey heartbeats=N gm_nodes=M ...` |
+| 2 | `/memory_stats` 返回分类计数 + KB 列表 | CLI 输入 `/memory_stats` |
+| 3 | `/sleep` 立即触发 7-phase 睡眠 | CLI 输入 `/sleep` → 终端打 `sleep started` → GM 节点重组 |
+| 4 | `/kill` 优雅退出 | CLI 输入 `/kill` → runtime 退出 |
+| 5 | Search Tentacle 真返回结果 | Self 派 `tentacle:search` → 紫色 `[search] Search results for ...` |
+| 6 | Telegram 双向 | 配 `bot_token` + `default_chat_id` → 在 Telegram 给 Krakey 发消息 → 终端 stimulus 显示 → Self 用 `telegram_reply` 回复, 你在 Telegram 收到 |
+| 7 | Coding Tentacle 执行 | `enabled: true` 后, Self 派 coding tentacle 跑 `print('hello')` → 紫色 `[coding] exit=0 stdout: hello` |
+| 8 | GUI Tentacle 真控屏 (有风险) | `enabled: true` + 派 `screenshot` → `workspace/screenshots/*.png` 出现 |
+| 9 | 性能跑分 | `python scripts/bench_gm.py --sizes 100 200 500 --target-ms 100` → 输出推荐 soft_limit |
 
 ---
 
