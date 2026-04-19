@@ -95,6 +95,73 @@ async def test_includes_neighbors_and_edges(tmp_path):
     await gm.close()
 
 
+async def test_recall_follows_kb_index_node(tmp_path):
+    """When a recalled GM node carries metadata is_kb_index=true, the
+    tentacle should also pull top entries from that KB."""
+    from src.memory.knowledge_base import KBRegistry
+
+    embed = MapEmbedder({"astronomy": [1.0, 0.0]})
+    gm = await _gm(tmp_path, embed)
+
+    # GM index node pointing to KB
+    await gm.insert_node(
+        name="astronomy KB", category="KNOWLEDGE",
+        description="Index of astronomy knowledge.",
+        embedding=[1.0, 0.0],
+        metadata={"is_kb_index": True, "kb_id": "astronomy"},
+    )
+
+    reg = KBRegistry(gm, kb_dir=tmp_path / "kbs", embedder=embed)
+    kb = await reg.create_kb("astronomy", name="Astronomy")
+    await kb.write_entry("Sun is a yellow dwarf star",
+                          embedding=[0.95, 0.31])
+
+    from src.tentacles.memory_recall import MemoryRecallTentacle
+    t = MemoryRecallTentacle(gm=gm, embedder=embed, kb_registry=reg)
+    stim = await t.execute("astronomy", {})
+
+    assert "astronomy KB" in stim.content
+    assert "Sun is a yellow dwarf star" in stim.content
+    await reg.close_all()
+    await gm.close()
+
+
+async def test_recall_with_kb_id_param_queries_that_kb_directly(tmp_path):
+    """Self → params={'kb_id': 'X', 'query': '...'} bypasses GM and
+    queries KB X directly."""
+    from src.memory.knowledge_base import KBRegistry
+
+    embed = MapEmbedder({"sun": [1.0, 0.0]})
+    gm = await _gm(tmp_path, embed)
+    reg = KBRegistry(gm, kb_dir=tmp_path / "kbs", embedder=embed)
+    kb = await reg.create_kb("astronomy", name="Astronomy")
+    await kb.write_entry("Sun mass: 2e30 kg", embedding=[1.0, 0.0])
+    await kb.write_entry("Earth orbits Sun", embedding=[0.95, 0.31])
+
+    from src.tentacles.memory_recall import MemoryRecallTentacle
+    t = MemoryRecallTentacle(gm=gm, embedder=embed, kb_registry=reg)
+    stim = await t.execute("look up sun in astronomy",
+                              {"kb_id": "astronomy", "query": "sun"})
+
+    assert "Sun mass: 2e30" in stim.content or "Earth orbits Sun" in stim.content
+    await reg.close_all()
+    await gm.close()
+
+
+async def test_recall_without_kb_registry_still_works(tmp_path):
+    """Tentacle constructed without kb_registry behaves like Phase 1."""
+    embed = MapEmbedder({"x": [1.0, 0.0]})
+    gm = await _gm(tmp_path, embed)
+    await gm.insert_node(name="apple", category="FACT", description="",
+                          embedding=[1.0, 0.0])
+
+    from src.tentacles.memory_recall import MemoryRecallTentacle
+    t = MemoryRecallTentacle(gm=gm, embedder=embed)  # no kb_registry
+    stim = await t.execute("x", {})
+    assert "apple" in stim.content
+    await gm.close()
+
+
 async def test_top_k_param_caps_results(tmp_path):
     embed = MapEmbedder({"q": [1.0, 0.0]})
     gm = await _gm(tmp_path, embed)

@@ -21,6 +21,7 @@ from src.interfaces.sensory import SensoryRegistry
 from src.interfaces.tentacle import TentacleRegistry
 from src.llm.client import LLMClient
 from src.memory.graph_memory import GraphMemory
+from src.memory.knowledge_base import KBRegistry
 from src.memory.recall import IncrementalRecall, Reranker
 from src.models.config import Config, load_config
 from src.models.stimulus import Stimulus
@@ -102,6 +103,12 @@ class Runtime:
             classifier_llm=deps.classify_llm,
         )
 
+        self.kb_registry = KBRegistry(
+            self.gm,
+            kb_dir=self.config.knowledge_base.dir or "workspace/data/knowledge_bases",
+            embedder=deps.embedder,
+        )
+
         self.tentacles = TentacleRegistry()
         self.tentacles.register(ActionTentacle(
             llm=deps.action_llm,
@@ -110,6 +117,7 @@ class Runtime:
         ))
         self.tentacles.register(MemoryRecallTentacle(
             gm=self.gm, embedder=self.embedder,
+            kb_registry=self.kb_registry,
         ))
 
         self.sensories = SensoryRegistry()
@@ -172,7 +180,8 @@ class Runtime:
                 t.cancel()
 
     async def close(self) -> None:
-        """Shut down persistent resources (GM connection). Idempotent."""
+        """Shut down persistent resources (GM + open KBs). Idempotent."""
+        await self.kb_registry.close_all()
         await self.gm.close()
 
     async def _heartbeat(self) -> None:
