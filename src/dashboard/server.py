@@ -15,6 +15,7 @@ import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 
+from src.dashboard.events_ws import EventBroadcaster
 from src.dashboard.web_chat import WebChatHistory
 
 
@@ -26,6 +27,7 @@ def create_app(
     runtime: Any | None,
     web_chat_history: WebChatHistory | None = None,
     on_user_message: Callable[[str], Awaitable[None]] | None = None,
+    event_broadcaster: EventBroadcaster | None = None,
 ) -> FastAPI:
     """Build the FastAPI app.
 
@@ -51,7 +53,34 @@ def create_app(
     if web_chat_history is not None:
         _attach_chat_ws(app, web_chat_history, on_user_message)
 
+    if event_broadcaster is not None:
+        _attach_events_ws(app, event_broadcaster)
+
     return app
+
+
+def _attach_events_ws(app: FastAPI, broadcaster: EventBroadcaster) -> None:
+
+    @app.websocket("/ws/events")
+    async def events_ws(ws: WebSocket):  # noqa: ANN201
+        await ws.accept()
+        await ws.send_json({"kind": "history",
+                              "events": broadcaster.recent()})
+
+        async def _send(msg):
+            await ws.send_json(msg)
+
+        broadcaster.add_socket(_send)
+        try:
+            while True:
+                # Just keep the socket alive; events are server-pushed.
+                await ws.receive_text()
+        except WebSocketDisconnect:
+            pass
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            broadcaster.remove_socket(_send)
 
 
 def _attach_chat_ws(

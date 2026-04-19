@@ -15,6 +15,7 @@ from src.bootstrap import (
     BOOTSTRAP_PROMPT, detect_bootstrap_complete, load_genesis,
     load_self_model_or_default, parse_self_model_update,
 )
+from src.dashboard.events_ws import EventBroadcaster
 from src.dashboard.server import DashboardServer, create_app as create_dashboard_app
 from src.dashboard.web_chat import WebChatHistory
 from src.hypothalamus import Hypothalamus, TentacleCall
@@ -271,11 +272,13 @@ class Runtime:
             ))
 
         try:
+            broadcaster = EventBroadcaster(self.events)
             self._dashboard = DashboardServer(
                 create_dashboard_app(
                     runtime=self,
                     web_chat_history=self.web_chat_history,
                     on_user_message=_on_user_message,
+                    event_broadcaster=broadcaster,
                 ),
                 host=cfg.host, port=cfg.port,
             )
