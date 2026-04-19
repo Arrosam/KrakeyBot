@@ -11,7 +11,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Protocol
 
+from src.bootstrap import (
+    BOOTSTRAP_PROMPT, detect_bootstrap_complete, load_genesis,
+    load_self_model_or_default, parse_self_model_update,
+)
 from src.hypothalamus import Hypothalamus, TentacleCall
+from src.models.self_model import SelfModelStore
 from src.interfaces.sensory import SensoryRegistry
 from src.interfaces.tentacle import TentacleRegistry
 from src.llm.client import LLMClient
@@ -52,6 +57,8 @@ class RuntimeDeps:
     embedder: AsyncEmbedder
     reranker: Reranker | None = None
     reader: Callable[[], Awaitable[str | None]] | None = None
+    self_model_path: str | None = None      # default: workspace/self_model.yaml
+    genesis_path: str | None = None         # default: workspace/GENESIS.md
 
 
 MAX_RECALL_RETRIES = 1
@@ -69,23 +76,11 @@ class _GMCounts:
     fatigue_hint: str
 
 
-HARDCODED_SELF_MODEL: dict[str, Any] = {
-    "identity": {"name": "Krakey", "persona": "nascent cognitive entity"},
-    "state": {"mood_baseline": "neutral", "energy_level": 1.0,
-              "focus_topic": "", "is_sleeping": False,
-              "bootstrap_complete": True},
-    "goals": {"active": [], "completed": []},
-    "relationships": {"users": []},
-    "statistics": {"total_heartbeats": 0, "total_sleep_cycles": 0,
-                   "uptime_hours": 0.0, "first_boot": "",
-                   "last_heartbeat": "", "last_sleep": ""},
-}
-
-
 class Runtime:
     def __init__(self, deps: RuntimeDeps, *, hibernate_min: float | None = None,
                  hibernate_max: float | None = None,
-                 logger: HeartbeatLogger | None = None):
+                 logger: HeartbeatLogger | None = None,
+                 is_bootstrap_override: bool | None = None):
         self.config = deps.config
         self.self_llm = deps.self_llm
         self.compact_llm = deps.compact_llm
@@ -127,7 +122,16 @@ class Runtime:
         self.batch_tracker = BatchTrackerSensory()
         self.sensories.register(self.batch_tracker)
 
-        self.self_model = dict(HARDCODED_SELF_MODEL)
+        # Self-model + Bootstrap state (Phase 2.1)
+        sm_path = deps.self_model_path or "workspace/self_model.yaml"
+        gen_path = deps.genesis_path or "workspace/GENESIS.md"
+        self._self_model_store = SelfModelStore(sm_path)
+        self._genesis_text = load_genesis(gen_path)
+        self.self_model, detected_bootstrap = load_self_model_or_default(sm_path)
+        self.is_bootstrap = (is_bootstrap_override
+                              if is_bootstrap_override is not None
+                              else detected_bootstrap)
+
         self.heartbeat_count = 0
         self._stop = False
         self._min = hibernate_min if hibernate_min is not None else self.config.hibernate.min_interval
@@ -184,6 +188,8 @@ class Runtime:
             return  # Self LLM error already logged + slept
         self._phase_save_round(parsed, stimuli)
         self._phase_log_self_output(parsed)
+        if self.is_bootstrap:
+            self._phase_apply_bootstrap_signals(parsed)
         await self._phase_auto_ingest_feedback(stimuli)
         await self._phase_apply_hypothalamus(parsed, recall_result)
         self._phase_schedule_classify()
@@ -254,6 +260,9 @@ class Runtime:
             window=self.window.get_rounds(),
             stimuli=stimuli,
         )
+        if self.is_bootstrap:
+            prompt = (BOOTSTRAP_PROMPT.format(genesis_text=self._genesis_text)
+                      + "\n\n" + prompt)
         try:
             raw = await self.self_llm.chat(
                 [{"role": "user", "content": prompt}]
@@ -271,6 +280,22 @@ class Runtime:
             decision_text=parsed.decision,
             note_text=parsed.note,
         ))
+
+    def _phase_apply_bootstrap_signals(self, parsed) -> None:
+        """During Bootstrap, parse Self's NOTE for self-model JSON updates
+        and the 'bootstrap complete' marker."""
+        note = parsed.note or ""
+        update = parse_self_model_update(note)
+        if update:
+            self.self_model = self._self_model_store.update(update)
+            self.log.hb(f"bootstrap: self-model updated "
+                          f"({list(update.keys())})")
+        if detect_bootstrap_complete(note):
+            self.self_model = self._self_model_store.update(
+                {"state": {"bootstrap_complete": True}}
+            )
+            self.is_bootstrap = False
+            self.log.hb("bootstrap: complete — entering normal operation")
 
     def _phase_log_self_output(self, parsed) -> None:
         self.log.hb_thought("decision", parsed.decision.strip() or "(none)")
@@ -313,7 +338,10 @@ class Runtime:
         )
 
     async def _phase_hibernate(self, parsed, recall_result) -> None:
-        if recall_result.uncovered_stimuli:
+        if self.is_bootstrap:
+            # DevSpec §12.2 — bootstrap heartbeat is fixed 10s
+            interval = 10
+        elif recall_result.uncovered_stimuli:
             interval = self.config.hibernate.min_interval
         else:
             interval = (parsed.hibernate_seconds

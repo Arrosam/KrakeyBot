@@ -42,7 +42,8 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
                               reranker: Reranker | None = None,
                               hibernate_min: float = 0.01,
                               hibernate_max: float = 5.0,
-                              gm_path: str = ":memory:") -> Runtime:
+                              gm_path: str = ":memory:",
+                              skip_bootstrap: bool = True) -> Runtime:
     """In-memory Runtime with injectable doubles. CLI sensory disabled."""
     from src.models.config import (
         Config, FatigueSection, GraphMemorySection, HibernateSection,
@@ -79,5 +80,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         embedder=embedder or NullEmbedder(),
         reranker=reranker,
     )
-    return Runtime(deps, hibernate_min=hibernate_min,
-                     hibernate_max=hibernate_max)
+    return Runtime(
+        deps, hibernate_min=hibernate_min, hibernate_max=hibernate_max,
+        is_bootstrap_override=False if skip_bootstrap else None,
+    )

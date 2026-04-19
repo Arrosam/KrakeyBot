@@ -6,6 +6,7 @@ from datetime import datetime
 import pytest
 
 from src.main import Runtime, RuntimeDeps
+from src.models.self_model import SelfModelStore, default_self_model
 from tests._runtime_helpers import build_runtime_with_fakes
 from src.models.stimulus import Stimulus
 from src.runtime.stimulus_buffer import StimulusBuffer
@@ -141,6 +142,46 @@ async def test_heartbeat_with_connected_recall_nodes_does_not_crash():
     ))
     await runtime.run(iterations=1)
     await runtime.close()
+
+
+async def test_bootstrap_self_model_update_and_completion(tmp_path):
+    """Phase 2.1 end-to-end: Self in Bootstrap mode writes a <self-model>
+    update and signals 'bootstrap complete' in [NOTE]; runtime persists the
+    update to self_model.yaml and flips bootstrap_complete=True."""
+    sm_path = tmp_path / "self_model.yaml"
+
+    # HB #1: partial self-model update
+    # HB #2: bootstrap complete signal
+    self_llm = ScriptedLLM([
+        ('[DECISION]\nNo action.\n'
+         '[NOTE]\n<self-model>{"identity":{"name":"Krakey",'
+         '"persona":"curious"}}</self-model>'),
+        ('[DECISION]\nNo action.\n'
+         '[NOTE]\nBootstrap complete'),
+    ])
+    hypo_llm = ScriptedLLM([])
+    action_llm = ScriptedLLM([])
+
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=hypo_llm, action_llm=action_llm,
+        skip_bootstrap=False,
+    )
+    # Override the self-model path to the tmp file
+    runtime._self_model_store = SelfModelStore(sm_path)
+    runtime.self_model = default_self_model()
+    runtime.is_bootstrap = True
+    # Tighten hibernate so the test isn't slow (bootstrap forces 10s default,
+    # but max_interval=5 from fakes already clamps it).
+    runtime._max = 0.1
+
+    await runtime.run(iterations=2)
+    await runtime.close()
+
+    saved = SelfModelStore(sm_path).load()
+    assert saved["identity"]["name"] == "Krakey"
+    assert saved["identity"]["persona"] == "curious"
+    assert saved["state"]["bootstrap_complete"] is True
+    assert runtime.is_bootstrap is False
 
 
 async def test_self_can_dispatch_memory_recall_and_see_feedback():
