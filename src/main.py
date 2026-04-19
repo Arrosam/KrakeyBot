@@ -28,6 +28,9 @@ from src.models.stimulus import Stimulus
 from src.prompt.builder import PromptBuilder, SlidingWindowRound
 from src.runtime.batch_tracker import BatchTrackerSensory
 from src.runtime.heartbeat_logger import HeartbeatLogger
+from src.runtime.override_commands import (
+    OverrideAction, handle_override, parse_override,
+)
 from src.sleep.sleep_manager import enter_sleep_mode
 from src.runtime.compact import compact_if_needed
 from src.runtime.fatigue import calculate_fatigue
@@ -192,10 +195,23 @@ class Runtime:
         Sleep can short-circuit the heartbeat at two points:
           - immediately after fatigue compute (force-sleep at threshold)
           - after Hypothalamus translation if Self requested 'enter sleep'
+        Override commands (/kill, /sleep) can also short-circuit.
         """
         self.heartbeat_count += 1
         self.log.set_heartbeat(self.heartbeat_count)
         stimuli = await self._phase_drain_and_seed_recall()
+
+        # Override commands run out-of-band (Self never sees /<cmd>).
+        stimuli, override_action = await self._phase_handle_overrides(stimuli)
+        if override_action is OverrideAction.KILL:
+            return
+        if override_action is OverrideAction.SLEEP:
+            await self._perform_sleep(
+                "manual /sleep override",
+                wake_msg="完成了一次手动触发的睡眠。",
+            )
+            return
+
         counts = await self._phase_compute_fatigue()
 
         if counts.fatigue_pct >= self.config.fatigue.force_sleep_threshold:
@@ -229,6 +245,40 @@ class Runtime:
         await self._phase_hibernate(parsed, recall_result)
 
     # ---------- heartbeat phases ----------
+
+    async def _phase_handle_overrides(
+        self, stimuli: list[Stimulus],
+    ) -> tuple[list[Stimulus], "OverrideAction | None"]:
+        """Scan drained stimuli for /<cmd>. Each match is consumed (Self
+        never sees it) and executed out-of-band. Returns the filtered
+        stimulus list + the highest-priority action triggered (KILL > SLEEP)."""
+        filtered: list[Stimulus] = []
+        triggered: OverrideAction | None = None
+        for s in stimuli:
+            if s.type != "user_message":
+                filtered.append(s)
+                continue
+            cmd = parse_override(s.content)
+            if cmd is None:
+                filtered.append(s)
+                continue
+            result = await handle_override(cmd, self)
+            self.log.hb(f"override /{cmd}: {result.output}")
+            if result.action is OverrideAction.KILL:
+                triggered = OverrideAction.KILL
+                self._stop = True
+                break
+            if (result.action is OverrideAction.SLEEP
+                    and triggered is not OverrideAction.KILL):
+                triggered = OverrideAction.SLEEP
+            # Self can still see informational overrides as system events
+            if result.action is OverrideAction.NONE:
+                await self.buffer.push(Stimulus(
+                    type="system_event", source="system:override",
+                    content=f"/{cmd}: {result.output}",
+                    timestamp=datetime.now(), adrenalin=False,
+                ))
+        return filtered, triggered
 
     async def _phase_drain_and_seed_recall(self) -> list[Stimulus]:
         stimuli = self.buffer.drain()

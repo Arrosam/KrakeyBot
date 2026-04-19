@@ -268,6 +268,89 @@ async def test_bootstrap_self_model_update_and_completion(tmp_path):
     assert runtime.is_bootstrap is False
 
 
+async def test_override_kill_stops_runtime():
+    self_llm = ScriptedLLM([
+        # Heartbeat 1 should hit /kill before reaching Self.
+        "[DECISION]\nNo action.\n[HIBERNATE]\n1",
+    ])
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]), action_llm=ScriptedLLM([]),
+    )
+    await runtime.buffer.push(Stimulus(
+        type="user_message", source="sensory:cli_input",
+        content="/kill", timestamp=datetime.now(), adrenalin=True,
+    ))
+    await runtime.run(iterations=5)  # should exit before this many iterations
+    await runtime.close()
+    # Self LLM never called — kill short-circuited
+    assert self_llm.calls == []
+
+
+async def test_override_status_pushes_system_event_for_self(tmp_path):
+    """Override result lands in buffer, visible on the *next* heartbeat."""
+    self_llm = ScriptedLLM([
+        "[DECISION]\nNo action.\n[HIBERNATE]\n1",  # HB #1: handles /status
+        "[DECISION]\nNo action.\n[HIBERNATE]\n1",  # HB #2: sees system_event
+    ])
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]), action_llm=ScriptedLLM([]),
+    )
+    await runtime.buffer.push(Stimulus(
+        type="user_message", source="sensory:cli_input",
+        content="/status", timestamp=datetime.now(), adrenalin=True,
+    ))
+    await runtime.run(iterations=2)
+    await runtime.close()
+
+    joined = json.dumps(self_llm.calls[1], ensure_ascii=False)
+    assert "system:override" in joined
+    assert "/status" in joined or "heartbeats=" in joined
+
+
+async def test_override_sleep_triggers_full_sleep(tmp_path):
+    sleep_llm = ScriptedLLM(["summary"] * 5)
+    runtime = build_runtime_with_fakes(
+        self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
+        action_llm=ScriptedLLM([]), compact_llm=sleep_llm,
+    )
+    runtime.sleep_log_dir = str(tmp_path / "logs")
+    runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
+    runtime.self_model = default_self_model()
+    await runtime.gm.initialize()
+    await runtime.gm.insert_node(
+        name="apple", category="FACT", description="red fruit",
+        embedding=[1.0, 0.0],
+    )
+    await runtime.buffer.push(Stimulus(
+        type="user_message", source="sensory:cli_input",
+        content="/sleep", timestamp=datetime.now(), adrenalin=True,
+    ))
+    await runtime.run(iterations=1)
+    # Inspect before close (close shuts down the GM connection).
+    assert await runtime.gm.list_nodes(category="FACT") == []
+    assert runtime.self_model["statistics"]["total_sleep_cycles"] == 1
+    await runtime.close()
+
+
+async def test_override_normal_text_passes_through_to_self():
+    """Sanity: non-/cmd messages still reach Self normally."""
+    self_llm = ScriptedLLM([
+        "[DECISION]\nNo action.\n[HIBERNATE]\n1",
+    ])
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]), action_llm=ScriptedLLM([]),
+    )
+    await runtime.buffer.push(Stimulus(
+        type="user_message", source="sensory:cli_input",
+        content="hello there", timestamp=datetime.now(), adrenalin=True,
+    ))
+    await runtime.run(iterations=1)
+    await runtime.close()
+    # Self saw "hello there" in its prompt
+    joined = json.dumps(self_llm.calls[0], ensure_ascii=False)
+    assert "hello there" in joined
+
+
 async def test_memory_recall_renders_via_internal_not_chat(tmp_path):
     """Visual contract: memory_recall output must NOT be styled as Krakey's
     outward chat (green). Goes through logger.internal (magenta) instead."""
