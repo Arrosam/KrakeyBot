@@ -27,6 +27,12 @@ from src.models.config import Config, load_config
 from src.models.stimulus import Stimulus
 from src.prompt.builder import PromptBuilder, SlidingWindowRound
 from src.runtime.batch_tracker import BatchTrackerSensory
+from src.runtime.event_bus import (
+    DecisionEvent, DispatchEvent, EventBus, GMStatsEvent, HeartbeatStartEvent,
+    HibernateEvent, HypothalamusEvent, NoteEvent, PromptBuiltEvent,
+    SleepDoneEvent, SleepStartEvent, StimuliQueuedEvent, TentacleResultEvent,
+    ThinkingEvent,
+)
 from src.runtime.heartbeat_logger import HeartbeatLogger
 from src.runtime.override_commands import (
     OverrideAction, handle_override, parse_override,
@@ -90,7 +96,8 @@ class Runtime:
     def __init__(self, deps: RuntimeDeps, *, hibernate_min: float | None = None,
                  hibernate_max: float | None = None,
                  logger: HeartbeatLogger | None = None,
-                 is_bootstrap_override: bool | None = None):
+                 is_bootstrap_override: bool | None = None,
+                 event_bus: EventBus | None = None):
         self.config = deps.config
         self.self_llm = deps.self_llm
         self.compact_llm = deps.compact_llm
@@ -195,6 +202,7 @@ class Runtime:
         self._last_edge_count = 0
         self.log = logger or HeartbeatLogger()
         self.sleep_log_dir = "workspace/logs"
+        self.events = event_bus or EventBus()
 
     def _new_recall(self) -> IncrementalRecall:
         return IncrementalRecall(
@@ -323,6 +331,14 @@ class Runtime:
     async def _phase_drain_and_seed_recall(self) -> list[Stimulus]:
         stimuli = self.buffer.drain()
         self.log.hb(f"stimuli={len(stimuli)} (thinking...)")
+        self.events.publish(HeartbeatStartEvent(
+            heartbeat_id=self.heartbeat_count, stimulus_count=len(stimuli),
+        ))
+        self.events.publish(StimuliQueuedEvent(stimuli=[
+            {"type": s.type, "source": s.source, "content": s.content,
+             "adrenalin": s.adrenalin, "ts": s.timestamp.isoformat()}
+            for s in stimuli
+        ]))
         assert self._recall is not None
         already = {id(s) for s in self._recall.processed_stimuli}
         new_for_recall = [s for s in stimuli if id(s) not in already]
@@ -349,6 +365,10 @@ class Runtime:
         if pct >= self.config.fatigue.force_sleep_threshold:
             self.log.hb_warn(f"force-sleep threshold reached (fatigue={pct}%);"
                               " Sleep mode lands in Phase 2.")
+        self.events.publish(GMStatsEvent(
+            heartbeat_id=self.heartbeat_count,
+            node_count=node_count, edge_count=edge_count, fatigue_pct=pct,
+        ))
         return _GMCounts(node_count=node_count, edge_count=edge_count,
                           fatigue_pct=pct, fatigue_hint=hint)
 
@@ -386,6 +406,10 @@ class Runtime:
         if self.is_bootstrap:
             prompt = (BOOTSTRAP_PROMPT.format(genesis_text=self._genesis_text)
                       + "\n\n" + prompt)
+        self.events.publish(PromptBuiltEvent(
+            heartbeat_id=self.heartbeat_count,
+            layers={"full_prompt": prompt},
+        ))
         try:
             raw = await self.self_llm.chat(
                 [{"role": "user", "content": prompt}]
@@ -421,11 +445,22 @@ class Runtime:
             self.log.hb("bootstrap: complete — entering normal operation")
 
     def _phase_log_self_output(self, parsed) -> None:
-        self.log.hb_thought("decision", parsed.decision.strip() or "(none)")
+        decision_text = parsed.decision.strip() or "(none)"
+        self.log.hb_thought("decision", decision_text)
+        self.events.publish(DecisionEvent(
+            heartbeat_id=self.heartbeat_count, text=decision_text,
+        ))
         if parsed.thinking:
             self.log.hb_thought("thinking", parsed.thinking)
+            self.events.publish(ThinkingEvent(
+                heartbeat_id=self.heartbeat_count,
+                text=parsed.thinking.strip(),
+            ))
         if parsed.note:
             self.log.hb_thought("note", parsed.note)
+            self.events.publish(NoteEvent(
+                heartbeat_id=self.heartbeat_count, text=parsed.note.strip(),
+            ))
 
     async def _phase_auto_ingest_feedback(self, stimuli) -> None:
         for s in stimuli:
@@ -473,6 +508,9 @@ class Runtime:
             interval = (parsed.hibernate_seconds
                         or self.config.hibernate.default_interval)
         self.log.hb(f"hibernate {interval}s")
+        self.events.publish(HibernateEvent(
+            heartbeat_id=self.heartbeat_count, interval_seconds=interval,
+        ))
         self._recall = self._new_recall()
         await hibernate_with_recall(
             interval, self.buffer, self._recall,
@@ -485,6 +523,7 @@ class Runtime:
         """Run 7-phase Sleep, persist self-model bookkeeping, push wake-up
         stimulus, reset incremental recall (GM state changed)."""
         self.log.hb(f"sleep started — {reason}")
+        self.events.publish(SleepStartEvent(reason=reason))
         try:
             stats = await enter_sleep_mode(
                 self.gm, self.kb_registry, self.sensories,
@@ -494,6 +533,7 @@ class Runtime:
         except Exception as e:  # noqa: BLE001
             self.log.hb(f"sleep failed: {e}")
             return
+        self.events.publish(SleepDoneEvent(stats=stats))
         self.log.hb(
             f"sleep done: facts_migrated={stats['facts_migrated']}, "
             f"focus_cleared={stats['focus_cleared']}, "
@@ -530,6 +570,13 @@ class Runtime:
             f"memory_updates={len(result.memory_updates)} "
             f"sleep={result.sleep}"
         )
+        self.events.publish(HypothalamusEvent(
+            heartbeat_id=self.heartbeat_count,
+            tentacle_calls_count=len(result.tentacle_calls),
+            memory_writes_count=len(result.memory_writes),
+            memory_updates_count=len(result.memory_updates),
+            sleep_requested=result.sleep,
+        ))
 
     async def _dispatch_tentacle_calls(self, calls) -> None:
         call_ids: list[str] = []
@@ -581,6 +628,10 @@ class Runtime:
             f"{call.tentacle} ← {call.intent!r}"
             f"{' (adrenalin)' if call.adrenalin else ''}"
         )
+        self.events.publish(DispatchEvent(
+            heartbeat_id=self.heartbeat_count, tentacle=call.tentacle,
+            intent=call.intent, adrenalin=call.adrenalin,
+        ))
         try:
             stim = await tentacle.execute(call.intent, call.params)
         except Exception as e:  # noqa: BLE001
@@ -599,6 +650,10 @@ class Runtime:
             self.log.internal(call.tentacle, stim.content)
         else:
             self.log.chat(call.tentacle, stim.content)
+        self.events.publish(TentacleResultEvent(
+            tentacle=call.tentacle, content=stim.content,
+            is_internal=tentacle.is_internal,
+        ))
         await self.buffer.push(stim)
         await self.batch_tracker.mark_completed(call_id)
 
