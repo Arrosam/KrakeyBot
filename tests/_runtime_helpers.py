@@ -52,6 +52,10 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     """
     if kb_dir is None:
         kb_dir = tempfile.mkdtemp(prefix="krakey_test_kb_")
+    # Same isolation pattern for the web chat JSONL: without overriding,
+    # main.py falls back to "workspace/data/web_chat.jsonl" — the production
+    # path — and pytest writes test fixture messages into the real chat log.
+    chat_dir = tempfile.mkdtemp(prefix="krakey_test_chat_")
     from src.models.config import (
         Config, DashboardSection, FatigueSection, GraphMemorySection,
         HibernateSection, KnowledgeBaseSection, LLMSection, SafetySection,
@@ -73,7 +77,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         ),
         knowledge_base=KnowledgeBaseSection(dir=kb_dir),
         sensory={},
-        tentacle={},
+        tentacle={"web_chat": {"history_path": f"{chat_dir}/chat.jsonl"}},
         sleep=SleepSection(max_duration_seconds=7200),
         safety=SafetySection(gm_node_hard_limit=500,
                                max_consecutive_no_action=50),

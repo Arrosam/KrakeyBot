@@ -406,6 +406,61 @@ const settingsToast = $("#settings-toast");
 // Mutable working copy of config; all widgets bind here.
 let cfgState = null;
 
+// Defaults to seed missing sections so toggles/numbers don't read as
+// "unset" and mislead the user into thinking the runtime is off.
+const SECTION_DEFAULTS = {
+  hibernate: { min_interval: 2, max_interval: 300, default_interval: 10 },
+  fatigue: { gm_node_soft_limit: 1000, force_sleep_threshold: 1200, thresholds: {} },
+  sliding_window: { max_tokens: 4096 },
+  graph_memory: {
+    db_path: "workspace/data/graph_memory.sqlite",
+    auto_ingest_similarity_threshold: 0.92,
+    recall_per_stimulus_k: 5, max_recall_nodes: 20, neighbor_expand_depth: 1,
+  },
+  knowledge_base: { dir: "workspace/data/knowledge_bases" },
+  sleep: { max_duration_seconds: 7200 },
+  safety: { gm_node_hard_limit: 1200, max_consecutive_no_action: 100 },
+  dashboard: { enabled: true, host: "127.0.0.1", port: 8765 },
+};
+
+// Hover tooltip text per "section.field" key.
+const HELP = {
+  "hibernate.min_interval": "睡眠最短间隔（秒）。Self 用 [HIBERNATE] N 控制每跳间隔, 但不会低于这个值。",
+  "hibernate.max_interval": "睡眠最长间隔（秒）。即使 Self 要求 hibernate 更久, 也不会超过这个值。",
+  "hibernate.default_interval": "Self 没指定时的默认 hibernate 间隔（秒）。",
+  "fatigue.gm_node_soft_limit": "GM 节点软上限。fatigue% = nodes / soft_limit * 100。Self 看到 fatigue% 决定是否主动睡眠。",
+  "fatigue.force_sleep_threshold": "强制睡眠阈值（fatigue%）。超过这个值, runtime 不等 Self 同意直接进 sleep。",
+  "sliding_window.max_tokens": "滑动上下文窗口最大 token 数。超过则压缩旧 round 为 summary。",
+  "graph_memory.db_path": "GM SQLite 文件路径。",
+  "graph_memory.auto_ingest_similarity_threshold": "stimulus auto_ingest 的相似度阈值 (0-1)。低于则当作新节点入 GM。",
+  "graph_memory.recall_per_stimulus_k": "每条 stimulus 召回的 top-K 节点数。",
+  "graph_memory.max_recall_nodes": "单次 prompt 中召回节点的总数上限。",
+  "graph_memory.neighbor_expand_depth": "召回时邻居展开深度（沿 edges 走几跳）。",
+  "knowledge_base.dir": "KB SQLite 文件目录, sleep migration 会写到这里。",
+  "sleep.max_duration_seconds": "单次 sleep 最长允许时长（秒）, 防 sleep 卡死。",
+  "safety.gm_node_hard_limit": "GM 节点硬上限。超过则 sleep 拒绝继续添加节点（防爆炸）。",
+  "safety.max_consecutive_no_action": "Self 连续 'No action' 多少次后视为僵死, runtime 触发 sleep 自救。",
+  "dashboard.enabled": "Web UI 总开关。关掉这个 = 下次启动后没有浏览器界面, 只剩日志。",
+  "dashboard.host": "监听地址。127.0.0.1 = 仅本机; 0.0.0.0 = 局域网可访问（不安全）。",
+  "dashboard.port": "监听端口。",
+  "provider.type": "Provider 实现类型。目前只支持 openai_compatible。",
+  "provider.base_url": "API 根 URL（不含 /v1 等后缀, LLMClient 会自动加）。",
+  "provider.api_key": "API 密钥。可填 ${ENV_VAR} 占位符从环境变量读取。",
+  "model.name": "模型 ID, 与 provider 的 API 一致。",
+  "model.capabilities": "模型能力标签。仅供后续路由参考, 当前不强制校验。",
+  "role.provider": "为该 role 选一个 provider。",
+  "role.model": "在选定 provider 下选一个 model。",
+  "sensory.enabled": "是否启用此 sensory 通道。",
+  "sensory.default_adrenalin": "该 sensory 推送的 stimulus 默认是否激活肾上腺素 (打断 hibernate)。",
+  "tentacle.enabled": "是否注册此 tentacle 给 Hypothalamus 使用。",
+  "tentacle.max_results": "搜索结果数上限。",
+  "tentacle.sandbox_dir": "代码 / 文件操作的工作目录。",
+  "tentacle.timeout_seconds": "子进程超时（秒）。",
+  "tentacle.max_output_chars": "stdout/stderr 截断字符数。",
+  "tentacle.screenshot_dir": "GUI 截图保存目录。",
+  "tentacle.history_path": "Web chat 持久化 JSONL 路径。",
+};
+
 // Fixed numeric/string dataclass schemas — drives generic renderer.
 const SCHEMAS = {
   hibernate: [
@@ -469,24 +524,27 @@ function renderSettingsForm() {
   ensure(llm, "roles", () => ({}));
   settingsForm.appendChild(renderLLMSection(llm));
 
-  // Generic sections
+  // Generic sections (each seeded from SECTION_DEFAULTS so missing fields
+  // pre-populate to runtime defaults instead of looking "off"/empty)
+  ensureSection("hibernate");
   settingsForm.appendChild(renderGenericSection("hibernate", "Hibernate",
-    ensure(cfgState, "hibernate", () => ({})), SCHEMAS.hibernate));
+    cfgState.hibernate, SCHEMAS.hibernate));
 
-  // Fatigue: scalars + thresholds dict
-  const fatigue = ensure(cfgState, "fatigue", () => ({ thresholds: {} }));
-  ensure(fatigue, "thresholds", () => ({}));
+  ensureSection("fatigue");
   const fatSec = renderGenericSection("fatigue", "Fatigue",
-    fatigue, SCHEMAS.fatigue_scalars);
-  fatSec.querySelector(".body").appendChild(renderFatigueThresholds(fatigue));
+    cfgState.fatigue, SCHEMAS.fatigue_scalars);
+  fatSec.querySelector(".body").appendChild(renderFatigueThresholds(cfgState.fatigue));
   settingsForm.appendChild(fatSec);
 
+  ensureSection("sliding_window");
   settingsForm.appendChild(renderGenericSection("sliding_window", "Sliding Window",
-    ensure(cfgState, "sliding_window", () => ({})), SCHEMAS.sliding_window));
+    cfgState.sliding_window, SCHEMAS.sliding_window));
+  ensureSection("graph_memory");
   settingsForm.appendChild(renderGenericSection("graph_memory", "Graph Memory",
-    ensure(cfgState, "graph_memory", () => ({})), SCHEMAS.graph_memory));
+    cfgState.graph_memory, SCHEMAS.graph_memory));
+  ensureSection("knowledge_base");
   settingsForm.appendChild(renderGenericSection("knowledge_base", "Knowledge Base",
-    ensure(cfgState, "knowledge_base", () => ({})), SCHEMAS.knowledge_base));
+    cfgState.knowledge_base, SCHEMAS.knowledge_base));
 
   settingsForm.appendChild(renderDictSection("sensory", "Sensory",
     ensure(cfgState, "sensory", () => ({})),
@@ -495,17 +553,28 @@ function renderSettingsForm() {
     ensure(cfgState, "tentacle", () => ({})),
     { defaultEntry: () => ({ enabled: true }) }));
 
+  ensureSection("sleep");
   settingsForm.appendChild(renderGenericSection("sleep", "Sleep",
-    ensure(cfgState, "sleep", () => ({})), SCHEMAS.sleep));
+    cfgState.sleep, SCHEMAS.sleep));
+  ensureSection("safety");
   settingsForm.appendChild(renderGenericSection("safety", "Safety",
-    ensure(cfgState, "safety", () => ({})), SCHEMAS.safety));
+    cfgState.safety, SCHEMAS.safety));
+  ensureSection("dashboard");
   settingsForm.appendChild(renderGenericSection("dashboard", "Dashboard",
-    ensure(cfgState, "dashboard", () => ({})), SCHEMAS.dashboard));
+    cfgState.dashboard, SCHEMAS.dashboard));
 }
 
 function ensure(obj, key, factory) {
   if (obj[key] == null) obj[key] = factory();
   return obj[key];
+}
+
+function ensureSection(key) {
+  const defaults = SECTION_DEFAULTS[key] || {};
+  if (cfgState[key] == null) cfgState[key] = {};
+  for (const [k, v] of Object.entries(defaults)) {
+    if (cfgState[key][k] == null) cfgState[key][k] = v;
+  }
 }
 
 function makeSection(title) {
@@ -523,16 +592,26 @@ function renderGenericSection(key, title, target, schema) {
   const sec = makeSection(title);
   const body = sec.querySelector(".body");
   for (const [field, type] of schema) {
-    body.appendChild(renderRow(field, target, field, type));
+    body.appendChild(renderRow(field, target, field, type, `${key}.${field}`));
   }
   return sec;
 }
 
-function renderRow(label, target, key, type) {
+const SAFETY_CONFIRMS = {
+  "dashboard.enabled":
+    "关掉这个 = 下次重启后没有 Web UI, 只剩日志。确定？",
+};
+
+function renderRow(label, target, key, type, helpPath) {
   const row = document.createElement("div");
   row.className = "cfg-row";
   const lab = document.createElement("label");
   lab.textContent = label;
+  if (helpPath && HELP[helpPath]) {
+    lab.title = HELP[helpPath];
+    lab.style.cursor = "help";
+    lab.style.borderBottom = "1px dotted var(--muted)";
+  }
   row.appendChild(lab);
 
   let widget;
@@ -540,9 +619,15 @@ function renderRow(label, target, key, type) {
   if (type === "bool") {
     widget = document.createElement("span");
     widget.className = "toggle" + (val ? " on" : "");
+    if (helpPath && HELP[helpPath]) widget.title = HELP[helpPath];
     widget.addEventListener("click", () => {
-      target[key] = !target[key];
-      widget.classList.toggle("on", !!target[key]);
+      const wasOn = !!target[key];
+      const willBeOn = !wasOn;
+      if (wasOn && !willBeOn && helpPath && SAFETY_CONFIRMS[helpPath]) {
+        if (!confirm(SAFETY_CONFIRMS[helpPath])) return;
+      }
+      target[key] = willBeOn;
+      widget.classList.toggle("on", willBeOn);
     });
   } else if (type === "number" || type === "number_float") {
     widget = document.createElement("input");
@@ -565,6 +650,7 @@ function renderRow(label, target, key, type) {
     widget.value = val == null ? "" : val;
     widget.addEventListener("input", () => { target[key] = widget.value; });
   }
+  if (helpPath && HELP[helpPath] && type !== "bool") widget.title = HELP[helpPath];
   row.appendChild(widget);
   return row;
 }
@@ -709,9 +795,9 @@ function renderProviderBlock(pname, prov, llm) {
   h.appendChild(actions);
   block.appendChild(h);
 
-  block.appendChild(renderRow("type", prov, "type", "text"));
-  block.appendChild(renderRow("base_url", prov, "base_url", "text"));
-  block.appendChild(renderRow("api_key", prov, "api_key", "password"));
+  block.appendChild(renderRow("type", prov, "type", "text", "provider.type"));
+  block.appendChild(renderRow("base_url", prov, "base_url", "text", "provider.base_url"));
+  block.appendChild(renderRow("api_key", prov, "api_key", "password", "provider.api_key"));
 
   // Models list
   const modBlock = document.createElement("div");
@@ -770,34 +856,62 @@ function renderCapabilitiesMulti(model) {
       chip.appendChild(x);
       wrap.appendChild(chip);
     }
-    const sel = document.createElement("select");
-    const placeholder = document.createElement("option");
-    placeholder.value = ""; placeholder.textContent = "+ add…";
-    sel.appendChild(placeholder);
     const taken = new Set(model.capabilities);
-    for (const cap of KNOWN_CAPABILITIES) {
-      if (taken.has(cap)) continue;
-      const opt = document.createElement("option");
-      opt.value = cap; opt.textContent = cap;
-      sel.appendChild(opt);
-    }
-    const customOpt = document.createElement("option");
-    customOpt.value = "__custom__"; customOpt.textContent = "+ custom…";
-    sel.appendChild(customOpt);
-    sel.addEventListener("change", () => {
-      let v = sel.value;
-      if (!v) return;
-      if (v === "__custom__") {
-        v = (prompt("custom capability:") || "").trim();
-        if (!v || taken.has(v)) { sel.value = ""; return; }
+    const items = KNOWN_CAPABILITIES
+      .filter((c) => !taken.has(c))
+      .map((c) => ({ value: c, label: c }));
+    items.push({ value: "__custom__", label: "+ custom…", custom: true });
+    wrap.appendChild(mkDropdown("+ add…", items, (v) => {
+      let chosen = v;
+      if (chosen === "__custom__") {
+        chosen = (prompt("custom capability:") || "").trim();
+        if (!chosen || taken.has(chosen)) return;
       }
-      model.capabilities.push(v);
+      model.capabilities.push(chosen);
       repaint();
-    });
-    wrap.appendChild(sel);
+    }));
   }
   repaint();
   return wrap;
+}
+
+// ---------------- Custom dropdown widget ----------------
+
+let _ddOpen = null;
+document.addEventListener("click", (ev) => {
+  if (_ddOpen && !_ddOpen.contains(ev.target)) {
+    _ddOpen.querySelector(".dd-menu").classList.add("hidden");
+    _ddOpen = null;
+  }
+});
+
+function mkDropdown(triggerLabel, items, onPick) {
+  const dd = document.createElement("div");
+  dd.className = "dd";
+  const trig = document.createElement("button");
+  trig.type = "button"; trig.className = "dd-trigger"; trig.textContent = triggerLabel;
+  const menu = document.createElement("div");
+  menu.className = "dd-menu hidden";
+  for (const it of items) {
+    const el = document.createElement("div");
+    el.className = "dd-item" + (it.custom ? " custom" : "");
+    el.textContent = it.label;
+    el.addEventListener("click", () => {
+      menu.classList.add("hidden"); _ddOpen = null;
+      onPick(it.value);
+    });
+    menu.appendChild(el);
+  }
+  trig.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    if (_ddOpen && _ddOpen !== dd) {
+      _ddOpen.querySelector(".dd-menu").classList.add("hidden");
+    }
+    menu.classList.toggle("hidden");
+    _ddOpen = menu.classList.contains("hidden") ? null : dd;
+  });
+  dd.appendChild(trig); dd.appendChild(menu);
+  return dd;
 }
 
 function renderRoleRow(rname, roles, providers) {
@@ -904,7 +1018,9 @@ function renderDictEntry(name, entry, parent) {
     if (typeof v === "boolean") type = "bool";
     else if (typeof v === "number") type = Number.isInteger(v) ? "number" : "number_float";
     else type = "text";
-    block.appendChild(renderRow(k, entry, k, type));
+    // Generic per-section help: e.g. tentacle.<key> applies regardless of entry name
+    const sectionKey = parent === cfgState.sensory ? "sensory" : "tentacle";
+    block.appendChild(renderRow(k, entry, k, type, `${sectionKey}.${k}`));
   }
   return block;
 }
