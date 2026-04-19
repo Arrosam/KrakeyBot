@@ -43,6 +43,15 @@ def create_app(
                     version="0.1",
                     docs_url=None, redoc_url=None)
 
+    @app.middleware("http")
+    async def _no_cache_static(request, call_next):
+        resp = await call_next(request)
+        path = request.url.path
+        if path.startswith("/static/") or path == "/":
+            resp.headers["Cache-Control"] = "no-store, must-revalidate"
+            resp.headers["Pragma"] = "no-cache"
+        return resp
+
     if _STATIC_DIR.exists():
         app.mount("/static",
                     StaticFiles(directory=str(_STATIC_DIR)),
