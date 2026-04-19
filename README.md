@@ -5,7 +5,7 @@
 
 ---
 
-## 当前阶段: **Phase 1 — 记忆系统**
+## 当前阶段: **Phase 2 — 完整生命周期**
 
 ### 已实现
 
@@ -37,11 +37,29 @@
 - **hibernate_with_recall** — hibernate 期间 `peek_unrecalled` 喂给 IncrementalRecall 预加载
 - **主循环** — §6.4 完整顺序：drain → incremental add → compact → finalize → uncovered 退回 → Self → auto_ingest feedback → Hypothalamus → classify (async) → hibernate with recall
 
+**Phase 2（完整生命周期）**
+- **Bootstrap** — 首次启动读 GENESIS.md + 4 阶段 Self-Model 填充：
+  - `<self-model>{...}</self-model>` 标签（在 [NOTE] 中）→ runtime 深度合并到 self_model.yaml
+  - Bootstrap 期间心跳固定 10s
+  - Self 在 [NOTE] 写 `bootstrap complete` → 进入正常运行
+- **Knowledge Base 集群** — 每个 KB = 独立 SQLite (`workspace/data/knowledge_bases/*.sqlite`)，含 entries + edges + FTS5；GM 中的 `kb_registry` 表追踪所有 KB
+- **memory_recall 跟随 KB 索引** — Self 调 `memory_recall` 命中 KB 索引节点 (metadata `is_kb_index=true`) → 自动从该 KB 拉相关 entries；也支持 `params={"kb_id": "X"}` 直查 KB
+- **7-phase Sleep** — 完整生命周期转换：
+  1. 暂停非紧急 Sensory（保留 adrenalin 监听）
+  2. **Leiden 聚类** (igraph + leidenalg) → 社区摘要 + embedding
+  3. FACT/RELATION/KNOWLEDGE 节点按社区迁入 KB（含同社区边）
+  4. 已完成 TARGET → FACT → 已迁；未完成 TARGET 留在 GM
+  5. FOCUS 全部清理
+  6. 重建 GM Index Graph：每 KB 一个 KNOWLEDGE 索引节点 + LLM 提取跨 KB 边
+  7. 写每日 sleep 日志 (`workspace/logs/sleep-YYYY-MM-DD.jsonl`)
+- **Force Sleep** — fatigue ≥ `force_sleep_threshold` 自动触发 sleep + 醒来推 "之前因过于疲劳昏睡过去了" stimulus
+- **Voluntary Sleep** — Self 说"进入睡眠模式" → Hypothalamus `sleep:true` → 同样 7 phase + 醒来推清爽 stimulus
+- **共享持久化层** — `src/memory/_db.py` 提取 GM/KB 共用的 sqlite-vec / cosine / FTS5 / embedding 编解码
+
 ### 尚未实现（留给后续 Phase）
 
 | 功能 | Phase |
 |------|-------|
-| Bootstrap 首次启动 / Knowledge Base 集群 / 7-phase Sleep | 2 |
 | Telegram Sensory / 更多 Tentacles / Override 命令 / Dashboard | 3 |
 
 ---
@@ -223,6 +241,21 @@ sqlite3 workspace/data/graph_memory.sqlite \
 4. `explicit` 节点出现 → Self 说过"记住..."
 
 如果第 1 项一直 `+0`：tentacle 没回馈 / embedder 报错。看终端有无 `[runtime] auto_ingest error:`。
+
+---
+
+## Phase 2 验收标准
+
+| # | 检查项 | 怎么验证 |
+|---|--------|----------|
+| 1 | 首次启动进入 Bootstrap | 删 `workspace/self_model.yaml` → `python main.py` → Self 读 GENESIS → `<self-model>` 更新 → 写 "bootstrap complete" |
+| 2 | Bootstrap 完成后 self_model.yaml 非空 | `cat workspace/self_model.yaml` → identity / goals 已填 |
+| 3 | 长对话触发 Sleep（自愿） | Self 累积疲惫后说 "进入睡眠模式" → 终端打 `sleep started` → `workspace/data/knowledge_bases/` 出现 KB 文件 |
+| 4 | Sleep 后 GM 主要剩 TARGET + KB 索引节点 | `sqlite3 workspace/data/graph_memory.sqlite "SELECT category, COUNT(*) FROM gm_nodes GROUP BY category"` → FACT/RELATION 大幅减少，KNOWLEDGE 含 KB 索引 |
+| 5 | 醒来后能 recall 到 KB | 提某个迁移过的话题 → `[GRAPH MEMORY]` 含 KB 索引节点 + memory_recall 拉出 KB entries |
+| 6 | 强制 Sleep | 改 `config.yaml` 把 `gm_node_soft_limit` 设小 (如 5) → 几次心跳后达 120% → 自动 sleep + 醒来含 "昏睡" stimulus |
+| 7 | 主动 KB 浏览 | Self 说 "回忆 KB 'community_X'" → tentacle dispatch memory_recall with kb_id → 返回该 KB entries |
+| 8 | sleep 日志 | `cat workspace/logs/sleep-*.jsonl` 看见迁移 / 聚类 / 索引数据 |
 
 ---
 
