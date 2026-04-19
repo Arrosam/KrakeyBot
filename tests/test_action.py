@@ -40,13 +40,46 @@ async def test_context_inflation_triggers_summary_and_reset():
 
     stim = await tentacle.execute("do some very long piece of work here", {})
     assert "summary" in stim.content.lower()
-    # context must reset after summary
-    assert tentacle.context == []
+    # context resets to fresh state — system prompt only, no user/assistant
+    assert len(tentacle.context) == 1
+    assert tentacle.context[0]["role"] == "system"
 
 
 async def test_normal_execute_appends_to_context():
     llm = MockLLM(["replyA"])
     tentacle = ActionTentacle(llm=llm, max_context_tokens=4096)
     await tentacle.execute("hi", {})
+    # context: [system, user, assistant]
+    assert tentacle.context[0]["role"] == "system"
     assert tentacle.context[-1]["role"] == "assistant"
     assert tentacle.context[-1]["content"] == "replyA"
+
+
+async def test_system_prompt_injected_at_start():
+    """Regression: without a system prompt, the LLM behaves like a generic
+    chatbot and refuses 'I cannot operate your local system'."""
+    from src.tentacles.action import ACTION_SYSTEM_PROMPT
+    llm = MockLLM(["ok"])
+    tentacle = ActionTentacle(llm=llm)
+    await tentacle.execute("greet user", {})
+    msgs = llm.calls[0]
+    assert msgs[0]["role"] == "system"
+    assert "Krakey" in msgs[0]["content"]
+    assert "不要拒绝" in msgs[0]["content"] or "do not refuse" in msgs[0]["content"].lower()
+    assert msgs[0]["content"] == ACTION_SYSTEM_PROMPT
+
+
+async def test_system_prompt_re_added_after_summary_reset():
+    """Token-bloat path resets context — must keep system prompt in the
+    fresh context so subsequent calls stay framed."""
+    llm = MockLLM(["summary text", "next reply"])
+    tentacle = ActionTentacle(llm=llm, max_context_tokens=5)  # tiny
+
+    # Force the summary path
+    await tentacle.execute("a long enough intent to overflow tokens", {})
+    # Context was reset; should still have system at index 0
+    assert tentacle.context[0]["role"] == "system"
+
+    await tentacle.execute("hi", {})
+    # Last call's messages must again start with system
+    assert llm.calls[-1][0]["role"] == "system"

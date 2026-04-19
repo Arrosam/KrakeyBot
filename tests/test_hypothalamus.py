@@ -84,6 +84,27 @@ async def test_sleep_decision():
     assert result.sleep is True
 
 
+async def test_handles_trailing_comma_lenient_parse():
+    """Regression: real LLMs often emit trailing commas; sanitizer must
+    fix them rather than crash the heartbeat."""
+    bad = ('{"tentacle_calls": [{"tentacle": "action", "intent": "x",'
+           ' "params": {}, "adrenalin": false,}], "memory_writes": [],'
+           ' "memory_updates": [], "sleep": false,}')
+    llm = MockLLM(bad)
+    result = await Hypothalamus(llm=llm).translate("anything", _tentacles())
+    assert len(result.tentacle_calls) == 1
+
+
+async def test_handles_smart_quotes_lenient_parse():
+    """LLM emits Unicode curly quotes → must normalize to straight."""
+    bad = ('{\u201ctentacle_calls\u201d: [], \u201cmemory_writes\u201d: [],'
+           ' \u201cmemory_updates\u201d: [], \u201csleep\u201d: false}')
+    llm = MockLLM(bad)
+    result = await Hypothalamus(llm=llm).translate("anything", _tentacles())
+    assert result.tentacle_calls == []
+    assert result.sleep is False
+
+
 async def test_handles_markdown_fenced_json():
     llm = MockLLM("```json\n" + json.dumps({
         "tentacle_calls": [], "memory_writes": [], "memory_updates": [],
