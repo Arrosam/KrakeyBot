@@ -88,7 +88,6 @@ async def test_runtime_publishes_phase_events():
     self_llm = ScriptedLLM(["[DECISION]\nNo action.\n[HIBERNATE]\n1"])
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
-        action_llm=ScriptedLLM([]),
     )
     runtime.events = bus
     await runtime.run(iterations=1)

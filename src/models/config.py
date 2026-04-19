@@ -90,7 +90,7 @@ class SafetySection:
 
 @dataclass
 class DashboardSection:
-    enabled: bool = False
+    enabled: bool = True
     host: str = "127.0.0.1"
     port: int = 8765
 
@@ -191,7 +191,7 @@ def load_config(path: str | Path = "config.yaml") -> Config:
 def _build_dashboard(raw: dict[str, Any] | None) -> DashboardSection:
     raw = raw or {}
     return DashboardSection(
-        enabled=bool(raw.get("enabled", False)),
+        enabled=bool(raw.get("enabled", True)),
         host=str(raw.get("host", "127.0.0.1")),
         port=int(raw.get("port", 8765)),
     )

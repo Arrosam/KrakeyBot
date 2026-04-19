@@ -9,7 +9,7 @@ from typing import Any
 @dataclass
 class Stimulus:
     type: str                # user_message | tentacle_feedback | batch_complete | system_event
-    source: str              # sensory:cli | tentacle:action | sensory:batch_tracker
+    source: str              # sensory:cli | tentacle:web_chat_reply | sensory:batch_tracker
     content: str
     timestamp: datetime
     adrenalin: bool = False

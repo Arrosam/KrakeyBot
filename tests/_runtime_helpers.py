@@ -36,7 +36,6 @@ class ScriptedLLM:
 
 
 def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
-                              action_llm: ChatLike,
                               compact_llm: ChatLike | None = None,
                               classify_llm: ChatLike | None = None,
                               embedder: AsyncEmbedder | None = None,
@@ -54,9 +53,9 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     if kb_dir is None:
         kb_dir = tempfile.mkdtemp(prefix="krakey_test_kb_")
     from src.models.config import (
-        Config, FatigueSection, GraphMemorySection, HibernateSection,
-        KnowledgeBaseSection, LLMSection, SafetySection, SleepSection,
-        SlidingWindowSection,
+        Config, DashboardSection, FatigueSection, GraphMemorySection,
+        HibernateSection, KnowledgeBaseSection, LLMSection, SafetySection,
+        SleepSection, SlidingWindowSection,
     )
 
     cfg = Config(
@@ -74,15 +73,14 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         ),
         knowledge_base=KnowledgeBaseSection(dir=kb_dir),
         sensory={"cli_input": {"enabled": False, "default_adrenalin": True}},
-        tentacle={"action": {"enabled": True, "max_context_tokens": 4096,
-                              "sandboxed": True}},
+        tentacle={},
         sleep=SleepSection(max_duration_seconds=7200),
         safety=SafetySection(gm_node_hard_limit=500,
                                max_consecutive_no_action=50),
+        dashboard=DashboardSection(enabled=False),
     )
     deps = RuntimeDeps(
         config=cfg, self_llm=self_llm, hypo_llm=hypo_llm,
-        action_llm=action_llm,
         compact_llm=compact_llm or ScriptedLLM(),
         classify_llm=classify_llm or ScriptedLLM(),
         embedder=embedder or NullEmbedder(),

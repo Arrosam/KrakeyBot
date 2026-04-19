@@ -26,41 +26,35 @@ class ScriptedLLM:
         return self._responses.pop(0)
 
 
-async def test_single_iteration_user_message_triggers_action_tentacle():
-    # Self: replies with intent to use action tentacle
+async def test_single_iteration_user_message_triggers_tentacle_dispatch():
     self_llm = ScriptedLLM([
         "[THINKING]\nuser said hello. reply.\n"
-        "[DECISION]\nUse action tentacle to greet the user.\n"
+        "[DECISION]\nUse web_chat_reply to greet the user.\n"
         "[HIBERNATE]\n1"
     ])
-    # Hypothalamus: one action call, non-urgent
     hypo_llm = ScriptedLLM([json.dumps({
-        "tentacle_calls": [{"tentacle": "action", "intent": "Greet user",
-                            "params": {}, "adrenalin": False}],
+        "tentacle_calls": [{"tentacle": "web_chat_reply",
+                            "intent": "Hi there!",
+                            "params": {"text": "Hi there!"},
+                            "adrenalin": False}],
         "memory_writes": [], "memory_updates": [], "sleep": False,
     })])
-    # Action tentacle: canned reply
-    action_llm = ScriptedLLM(["Hi there!"])
 
-    runtime = build_runtime_with_fakes(self_llm=self_llm, hypo_llm=hypo_llm,
-                                        action_llm=action_llm)
+    runtime = build_runtime_with_fakes(self_llm=self_llm, hypo_llm=hypo_llm)
 
-    # Seed a user stimulus before starting
     await runtime.buffer.push(Stimulus(
         type="user_message", source="sensory:cli_input",
         content="hello", timestamp=datetime.now(), adrenalin=True,
     ))
 
-    # Run exactly one heartbeat
     await runtime.run(iterations=1)
 
-    # Action must have been called with greeting intent
-    assert len(action_llm.calls) == 1
     # Wait for tentacle task to complete and push feedback
     await asyncio.sleep(0.05)
     remaining = runtime.buffer.drain()
     contents = [s.content for s in remaining]
-    assert any("Hi there!" in c for c in contents)
+    # web_chat_reply returns scripted "Sent to web chat (N chars)."
+    assert any("Sent to web chat" in c for c in contents)
 
 
 async def test_no_action_decision_runs_no_tentacle():
@@ -71,12 +65,12 @@ async def test_no_action_decision_runs_no_tentacle():
         "tentacle_calls": [], "memory_writes": [], "memory_updates": [],
         "sleep": False,
     })])
-    action_llm = ScriptedLLM(["should not be called"])
 
-    runtime = build_runtime_with_fakes(self_llm=self_llm, hypo_llm=hypo_llm,
-                                        action_llm=action_llm)
+    runtime = build_runtime_with_fakes(self_llm=self_llm, hypo_llm=hypo_llm)
     await runtime.run(iterations=1)
-    assert action_llm.calls == []
+    await asyncio.sleep(0.05)
+    stims = runtime.buffer.drain()
+    assert [s for s in stims if s.type == "tentacle_feedback"] == []
 
 
 async def test_adrenalin_inheritance_from_hypothalamus():
@@ -84,17 +78,15 @@ async def test_adrenalin_inheritance_from_hypothalamus():
         "[DECISION]\nAct fast, user waiting.\n[HIBERNATE]\n1"
     ])
     hypo_llm = ScriptedLLM([json.dumps({
-        "tentacle_calls": [{"tentacle": "action", "intent": "go",
-                            "params": {}, "adrenalin": True}],
+        "tentacle_calls": [{"tentacle": "web_chat_reply",
+                            "intent": "go", "params": {"text": "go"},
+                            "adrenalin": True}],
         "memory_writes": [], "memory_updates": [], "sleep": False,
     })])
-    action_llm = ScriptedLLM(["done"])
 
-    runtime = build_runtime_with_fakes(self_llm=self_llm, hypo_llm=hypo_llm,
-                                        action_llm=action_llm)
+    runtime = build_runtime_with_fakes(self_llm=self_llm, hypo_llm=hypo_llm)
     await runtime.run(iterations=1)
 
-    # Wait for dispatch
     await asyncio.sleep(0.05)
     stims = runtime.buffer.drain()
     tentacle_stims = [s for s in stims if s.type == "tentacle_feedback"]
@@ -110,7 +102,6 @@ async def test_heartbeat_with_connected_recall_nodes_does_not_crash():
         "[DECISION]\nNo action.\n[HIBERNATE]\n1",
     ])
     hypo_llm = ScriptedLLM([])
-    action_llm = ScriptedLLM([])
 
     # Embedder maps text → specific vec so recall hits our seeded nodes.
     class MapEmbedder:
@@ -120,7 +111,7 @@ async def test_heartbeat_with_connected_recall_nodes_does_not_crash():
             return [0.0, 1.0]
 
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm, action_llm=action_llm,
+        self_llm=self_llm, hypo_llm=hypo_llm,
         embedder=MapEmbedder(),
     )
     # Initialize GM first so we can seed it before running.
@@ -154,14 +145,13 @@ async def test_voluntary_sleep_via_hypothalamus_runs_full_sleep(tmp_path):
         json.dumps({"tentacle_calls": [], "memory_writes": [],
                      "memory_updates": [], "sleep": True}),
     ])
-    action_llm = ScriptedLLM([])
     # Compact LLM doubles as the community-summary + KB-relations LLM
     sleep_llm = ScriptedLLM([
         "summary",  # community summary
         json.dumps({"edges": []}),  # KB relations (when 1 KB, not called)
     ])
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm, action_llm=action_llm,
+        self_llm=self_llm, hypo_llm=hypo_llm,
         compact_llm=sleep_llm,
     )
     runtime.sleep_log_dir = str(tmp_path / "logs")
@@ -196,10 +186,9 @@ async def test_force_sleep_when_fatigue_exceeds_threshold(tmp_path):
     immediately and pushes the special '昏睡' stimulus."""
     self_llm = ScriptedLLM([])  # never reached
     hypo_llm = ScriptedLLM([])
-    action_llm = ScriptedLLM([])
     sleep_llm = ScriptedLLM(["summary"] * 10)
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm, action_llm=action_llm,
+        self_llm=self_llm, hypo_llm=hypo_llm,
         compact_llm=sleep_llm,
     )
     runtime.sleep_log_dir = str(tmp_path / "logs")
@@ -244,10 +233,9 @@ async def test_bootstrap_self_model_update_and_completion(tmp_path):
          '[NOTE]\nBootstrap complete'),
     ])
     hypo_llm = ScriptedLLM([])
-    action_llm = ScriptedLLM([])
 
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm, action_llm=action_llm,
+        self_llm=self_llm, hypo_llm=hypo_llm,
         skip_bootstrap=False,
     )
     # Override the self-model path to the tmp file
@@ -274,7 +262,7 @@ async def test_override_kill_stops_runtime():
         "[DECISION]\nNo action.\n[HIBERNATE]\n1",
     ])
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=ScriptedLLM([]), action_llm=ScriptedLLM([]),
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]),
     )
     await runtime.buffer.push(Stimulus(
         type="user_message", source="sensory:cli_input",
@@ -293,7 +281,7 @@ async def test_override_status_pushes_system_event_for_self(tmp_path):
         "[DECISION]\nNo action.\n[HIBERNATE]\n1",  # HB #2: sees system_event
     ])
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=ScriptedLLM([]), action_llm=ScriptedLLM([]),
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]),
     )
     await runtime.buffer.push(Stimulus(
         type="user_message", source="sensory:cli_input",
@@ -311,7 +299,7 @@ async def test_override_sleep_triggers_full_sleep(tmp_path):
     sleep_llm = ScriptedLLM(["summary"] * 5)
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
-        action_llm=ScriptedLLM([]), compact_llm=sleep_llm,
+        compact_llm=sleep_llm,
     )
     runtime.sleep_log_dir = str(tmp_path / "logs")
     runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
@@ -338,7 +326,7 @@ async def test_override_normal_text_passes_through_to_self():
         "[DECISION]\nNo action.\n[HIBERNATE]\n1",
     ])
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=ScriptedLLM([]), action_llm=ScriptedLLM([]),
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]),
     )
     await runtime.buffer.push(Stimulus(
         type="user_message", source="sensory:cli_input",
@@ -369,7 +357,6 @@ async def test_memory_recall_renders_via_internal_not_chat(tmp_path):
         json.dumps({"tentacle_calls": [], "memory_writes": [],
                      "memory_updates": [], "sleep": False}),
     ])
-    action_llm = ScriptedLLM([])
 
     class StubLogger:
         def __init__(self):
@@ -397,7 +384,7 @@ async def test_memory_recall_renders_via_internal_not_chat(tmp_path):
             return [1.0, 0.0]
 
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm, action_llm=action_llm,
+        self_llm=self_llm, hypo_llm=hypo_llm,
         embedder=MapEmbed(),
     )
     runtime.log = spy
@@ -435,14 +422,13 @@ async def test_self_can_dispatch_memory_recall_and_see_feedback():
         json.dumps({"tentacle_calls": [], "memory_writes": [],
                      "memory_updates": [], "sleep": False}),
     ])
-    action_llm = ScriptedLLM([])
 
     class MapEmbed:
         async def __call__(self, text):
             return [1.0, 0.0] if "apple" in text else [0.0, 1.0]
 
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm, action_llm=action_llm,
+        self_llm=self_llm, hypo_llm=hypo_llm,
         embedder=MapEmbed(),
     )
     # Pre-seed GM with an apple node so recall returns something concrete.
@@ -472,9 +458,8 @@ async def test_uncovered_stimulus_push_back_capped_at_one_retry():
         "[DECISION]\nNo action.\n[HIBERNATE]\n1",  # HB #3
     ])
     hypo_llm = ScriptedLLM([])
-    action_llm = ScriptedLLM([])
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm, action_llm=action_llm,
+        self_llm=self_llm, hypo_llm=hypo_llm,
     )
 
     # Seed one user stimulus that will never match (GM empty).
@@ -496,24 +481,24 @@ async def test_tentacle_feedback_auto_ingested_to_gm():
     """Phase 1: tentacle_feedback stimuli seen on next heartbeat get
     auto_ingested into Graph Memory."""
     self_llm = ScriptedLLM([
-        # HB #1: user says hi → dispatch action
-        "[DECISION]\nUse action to greet.\n[HIBERNATE]\n1",
-        # HB #2: see action feedback → no more work
+        "[DECISION]\nUse web_chat_reply to greet.\n[HIBERNATE]\n1",
         "[DECISION]\nNo action.\n[HIBERNATE]\n1",
     ])
     hypo_llm = ScriptedLLM([
-        json.dumps({"tentacle_calls": [{"tentacle": "action",
-                                         "intent": "greet",
-                                         "params": {}, "adrenalin": False}],
+        json.dumps({"tentacle_calls": [{
+            "tentacle": "web_chat_reply",
+            "intent": "Hello! Nice to meet you.",
+            "params": {"text": "Hello! Nice to meet you."},
+            "adrenalin": False,
+        }],
                      "memory_writes": [], "memory_updates": [],
                      "sleep": False}),
         json.dumps({"tentacle_calls": [], "memory_writes": [],
                      "memory_updates": [], "sleep": False}),
     ])
-    action_llm = ScriptedLLM(["Hello! Nice to meet you."])
 
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm, action_llm=action_llm,
+        self_llm=self_llm, hypo_llm=hypo_llm,
     )
 
     await runtime.buffer.push(Stimulus(
@@ -521,31 +506,31 @@ async def test_tentacle_feedback_auto_ingested_to_gm():
         content="hi", timestamp=datetime.now(), adrenalin=True,
     ))
     await runtime.run(iterations=2)
-    # Graph Memory must now contain at least one node originating from the
-    # action tentacle's feedback.
     nodes = await runtime.gm.list_nodes()
     contents = [n["description"] for n in nodes]
-    assert any("nice to meet" in c.lower() for c in contents), contents
+    # web_chat_reply's feedback "Sent to web chat (N chars)." gets auto_ingested
+    assert any("sent to web chat" in c.lower() for c in contents), contents
 
 
 async def test_batch_complete_stimulus_wakes_next_heartbeat():
     """After dispatch, BatchTracker fires a batch_complete adrenalin
     stimulus that Self sees on the subsequent heartbeat."""
     self_llm = ScriptedLLM([
-        "[DECISION]\nUse action.\n[HIBERNATE]\n60",  # long interval
+        "[DECISION]\nUse web_chat_reply.\n[HIBERNATE]\n60",  # long interval
         "[DECISION]\nNo action.\n[HIBERNATE]\n1",
     ])
     hypo_llm = ScriptedLLM([
-        json.dumps({"tentacle_calls": [{"tentacle": "action", "intent": "x",
-                                         "params": {}, "adrenalin": False}],
+        json.dumps({"tentacle_calls": [{"tentacle": "web_chat_reply",
+                                         "intent": "x",
+                                         "params": {"text": "x"},
+                                         "adrenalin": False}],
                      "memory_writes": [], "memory_updates": [],
                      "sleep": False}),
         json.dumps({"tentacle_calls": [], "memory_writes": [],
                      "memory_updates": [], "sleep": False}),
     ])
-    action_llm = ScriptedLLM(["done"])
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm, action_llm=action_llm,
+        self_llm=self_llm, hypo_llm=hypo_llm,
         hibernate_min=0.01, hibernate_max=5.0,
     )
 
@@ -573,7 +558,6 @@ async def test_explicit_write_from_hypothalamus_memory_writes():
             "memory_updates": [], "sleep": False,
         })
     ])
-    action_llm = ScriptedLLM([])
     # Classify/extractor LLM used by explicit_write
     extract_llm = ScriptedLLM([json.dumps({
         "nodes": [{"name": "user pref verbose",
@@ -583,7 +567,7 @@ async def test_explicit_write_from_hypothalamus_memory_writes():
     })])
 
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm, action_llm=action_llm,
+        self_llm=self_llm, hypo_llm=hypo_llm,
         classify_llm=extract_llm,
     )
 
@@ -609,9 +593,8 @@ async def test_hibernate_interrupts_on_adrenalin_stimulus():
         json.dumps({"tentacle_calls": [], "memory_writes": [],
                     "memory_updates": [], "sleep": False}),
     ])
-    action_llm = ScriptedLLM([])
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm, action_llm=action_llm,
+        self_llm=self_llm, hypo_llm=hypo_llm,
         hibernate_min=0.01, hibernate_max=5.0)
 
     # Push adrenalin stimulus just after first iteration enters hibernate

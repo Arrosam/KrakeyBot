@@ -51,7 +51,6 @@ from src.runtime.stimulus_buffer import StimulusBuffer
 from src.self_agent import parse_self_output
 from src.sensories.cli_input import CliInputSensory
 from src.sensories.telegram import HttpTelegramClient, TelegramSensory
-from src.tentacles.action import ActionTentacle
 from src.tentacles.coding import CodingTentacle, SubprocessRunner
 from src.tentacles.gui_control import GuiControlTentacle, PyAutoGUIBackend
 from src.tentacles.memory_recall import MemoryRecallTentacle
@@ -73,7 +72,6 @@ class RuntimeDeps:
     config: Config
     self_llm: ChatLike
     hypo_llm: ChatLike
-    action_llm: ChatLike
     compact_llm: ChatLike
     classify_llm: ChatLike
     embedder: AsyncEmbedder
@@ -134,11 +132,6 @@ class Runtime:
         )
 
         self.tentacles = TentacleRegistry()
-        self.tentacles.register(ActionTentacle(
-            llm=deps.action_llm,
-            max_context_tokens=self.config.tentacle.get("action", {})
-                .get("max_context_tokens", 4096),
-        ))
         self.tentacles.register(MemoryRecallTentacle(
             gm=self.gm, embedder=self.embedder,
             kb_registry=self.kb_registry,
@@ -773,7 +766,6 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
     cfg = load_config(config_path)
     self_role = cfg.llm.roles["self"]
     hypo_role = cfg.llm.roles["hypothalamus"]
-    tentacle_role = cfg.llm.roles["tentacle_default"]
     compact_role = cfg.llm.roles.get("compact", self_role)
     embedding_role = cfg.llm.roles["embedding"]
 
@@ -781,8 +773,6 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
                            self_role.model)
     hypo_llm = LLMClient(cfg.llm.providers[hypo_role.provider],
                            hypo_role.model)
-    action_llm = LLMClient(cfg.llm.providers[tentacle_role.provider],
-                            tentacle_role.model)
     compact_llm = LLMClient(cfg.llm.providers[compact_role.provider],
                               compact_role.model)
     classify_llm = compact_llm  # reuse
@@ -807,7 +797,7 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
 
     deps = RuntimeDeps(
         config=cfg, self_llm=self_llm, hypo_llm=hypo_llm,
-        action_llm=action_llm, compact_llm=compact_llm,
+        compact_llm=compact_llm,
         classify_llm=classify_llm, embedder=embedder, reranker=reranker,
         config_path=str(config_path),
     )
