@@ -16,6 +16,7 @@ from src.bootstrap import (
     load_self_model_or_default, parse_self_model_update,
 )
 from src.dashboard.server import DashboardServer, create_app as create_dashboard_app
+from src.dashboard.web_chat import WebChatHistory
 from src.hypothalamus import Hypothalamus, TentacleCall
 from src.models.self_model import SelfModelStore
 from src.interfaces.sensory import SensoryRegistry
@@ -53,6 +54,7 @@ from src.tentacles.gui_control import GuiControlTentacle, PyAutoGUIBackend
 from src.tentacles.memory_recall import MemoryRecallTentacle
 from src.tentacles.search import DDGSBackend, SearchTentacle
 from src.tentacles.telegram_reply import TelegramReplyTentacle
+from src.tentacles.web_chat_reply import WebChatTentacle
 
 
 class ChatLike(Protocol):
@@ -159,6 +161,14 @@ class Runtime:
                                               "workspace/screenshots"),
             ))
 
+        # Web chat (always wired — Self can write to history even if no
+        # browser is connected; messages persist for next viewer)
+        web_chat_cfg = self.config.tentacle.get("web_chat", {})
+        chat_path = web_chat_cfg.get("history_path",
+                                        "workspace/data/web_chat.jsonl")
+        self.web_chat_history = WebChatHistory(chat_path)
+        self.tentacles.register(WebChatTentacle(history=self.web_chat_history))
+
         self.sensories = SensoryRegistry()
         if self.config.sensory.get("cli_input", {}).get("enabled", False):
             self.sensories.register(CliInputSensory(
@@ -248,15 +258,25 @@ class Runtime:
 
     async def _maybe_start_dashboard(self) -> None:
         cfg = getattr(self.config, "dashboard", None)
-        # Config object may not have dashboard yet; fall back to a dict-style
-        # access via the extra dict (added later).
-        if cfg is None:
+        if cfg is None or not cfg.enabled:
             return
-        if not cfg.enabled:
-            return
+
+        async def _on_user_message(text: str) -> None:
+            # Web user message → push as a normal user_message stimulus
+            await self.buffer.push(Stimulus(
+                type="user_message", source="sensory:web_chat",
+                content=text, timestamp=datetime.now(),
+                adrenalin=True,
+                metadata={"channel": "web_chat"},
+            ))
+
         try:
             self._dashboard = DashboardServer(
-                create_dashboard_app(runtime=self),
+                create_dashboard_app(
+                    runtime=self,
+                    web_chat_history=self.web_chat_history,
+                    on_user_message=_on_user_message,
+                ),
                 host=cfg.host, port=cfg.port,
             )
             await self._dashboard.start()

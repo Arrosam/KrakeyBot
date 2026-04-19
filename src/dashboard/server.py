@@ -9,19 +9,30 @@ from __future__ import annotations
 import asyncio
 import socket
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
+
+from src.dashboard.web_chat import WebChatHistory
 
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
 
-def create_app(*, runtime: Any | None) -> FastAPI:
-    """Build the FastAPI app. `runtime` is the live Runtime instance (used
-    by later REST endpoints); None is allowed for tests of the skeleton."""
+def create_app(
+    *,
+    runtime: Any | None,
+    web_chat_history: WebChatHistory | None = None,
+    on_user_message: Callable[[str], Awaitable[None]] | None = None,
+) -> FastAPI:
+    """Build the FastAPI app.
+
+    `runtime` is the live Runtime (used by REST endpoints, may be None in
+    skeleton tests). `web_chat_history` + `on_user_message` are needed for
+    the /ws/chat endpoint (also optional for narrow tests).
+    """
     app = FastAPI(title="Krakey Dashboard",
                     version="0.1",
                     docs_url=None, redoc_url=None)
@@ -37,7 +48,52 @@ def create_app(*, runtime: Any | None) -> FastAPI:
             return HTMLResponse(_FALLBACK_INDEX, status_code=200)
         return FileResponse(index_path, media_type="text/html")
 
+    if web_chat_history is not None:
+        _attach_chat_ws(app, web_chat_history, on_user_message)
+
     return app
+
+
+def _attach_chat_ws(
+    app: FastAPI,
+    history: WebChatHistory,
+    on_user_message: Callable[[str], Awaitable[None]] | None,
+) -> None:
+
+    @app.websocket("/ws/chat")
+    async def chat_ws(ws: WebSocket):  # noqa: ANN201
+        await ws.accept()
+        # 1. push full chat history on connect
+        await ws.send_json({"kind": "history",
+                              "messages": history.all_messages()})
+
+        # 2. subscribe to live broadcasts
+        async def _send(msg):
+            try:
+                await ws.send_json({"kind": "message", "message": msg})
+            except Exception:  # noqa: BLE001
+                # client gone — let the recv loop catch it on next round
+                pass
+
+        history.subscribe(_send)
+        try:
+            while True:
+                data = await ws.receive_json()
+                text = (data.get("text") or "").strip()
+                if not text:
+                    continue
+                await history.append("user", text)
+                if on_user_message is not None:
+                    try:
+                        await on_user_message(text)
+                    except Exception:  # noqa: BLE001
+                        pass
+        except WebSocketDisconnect:
+            pass
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            history.unsubscribe(_send)
 
 
 class DashboardServer:

@@ -87,6 +87,9 @@ tentacle:
     # driving the screen.
     enabled: false
     screenshot_dir: "workspace/screenshots"
+  web_chat:
+    # Persistent JSONL of all dashboard chat messages (both directions).
+    history_path: "workspace/data/web_chat.jsonl"
 
 sleep:
   max_duration_seconds: 7200
