@@ -733,6 +733,8 @@ function renderProviderBlock(pname, prov, llm) {
   return block;
 }
 
+const KNOWN_CAPABILITIES = ["chat", "embedding", "rerank", "vision", "tool_use"];
+
 function renderModelRow(prov, idx) {
   const m = prov.models[idx];
   const row = document.createElement("div");
@@ -741,16 +743,61 @@ function renderModelRow(prov, idx) {
   nameIn.type = "text"; nameIn.value = m.name || "";
   nameIn.placeholder = "model name";
   nameIn.addEventListener("input", () => { m.name = nameIn.value; });
-  const capIn = document.createElement("input");
-  capIn.type = "text";
-  capIn.value = (m.capabilities || []).join(",");
-  capIn.placeholder = "capabilities (comma)";
-  capIn.addEventListener("input", () => {
-    m.capabilities = capIn.value.split(",").map((s) => s.trim()).filter(Boolean);
-  });
+  row.appendChild(nameIn);
+  row.appendChild(renderCapabilitiesMulti(m));
   const del = mkBtn("×", () => { prov.models.splice(idx, 1); renderSettingsForm(); }, "danger");
-  row.appendChild(nameIn); row.appendChild(capIn); row.appendChild(del);
+  row.appendChild(del);
   return row;
+}
+
+function renderCapabilitiesMulti(model) {
+  if (!Array.isArray(model.capabilities)) model.capabilities = [];
+  const wrap = document.createElement("div");
+  wrap.className = "cap-multi";
+
+  function repaint() {
+    wrap.innerHTML = "";
+    for (const cap of model.capabilities) {
+      const chip = document.createElement("span");
+      chip.className = "cap-chip";
+      chip.appendChild(document.createTextNode(cap));
+      const x = document.createElement("span");
+      x.className = "x"; x.textContent = "×";
+      x.addEventListener("click", () => {
+        model.capabilities = model.capabilities.filter((c) => c !== cap);
+        repaint();
+      });
+      chip.appendChild(x);
+      wrap.appendChild(chip);
+    }
+    const sel = document.createElement("select");
+    const placeholder = document.createElement("option");
+    placeholder.value = ""; placeholder.textContent = "+ add…";
+    sel.appendChild(placeholder);
+    const taken = new Set(model.capabilities);
+    for (const cap of KNOWN_CAPABILITIES) {
+      if (taken.has(cap)) continue;
+      const opt = document.createElement("option");
+      opt.value = cap; opt.textContent = cap;
+      sel.appendChild(opt);
+    }
+    const customOpt = document.createElement("option");
+    customOpt.value = "__custom__"; customOpt.textContent = "+ custom…";
+    sel.appendChild(customOpt);
+    sel.addEventListener("change", () => {
+      let v = sel.value;
+      if (!v) return;
+      if (v === "__custom__") {
+        v = (prompt("custom capability:") || "").trim();
+        if (!v || taken.has(v)) { sel.value = ""; return; }
+      }
+      model.capabilities.push(v);
+      repaint();
+    });
+    wrap.appendChild(sel);
+  }
+  repaint();
+  return wrap;
 }
 
 function renderRoleRow(rname, roles, providers) {
