@@ -55,13 +55,50 @@ body {
 header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 16px;
   padding: 6px 12px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
 
-.tabs { display: flex; gap: 4px; }
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 12px;
+  border-right: 1px solid var(--border);
+}
+.brand-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  object-fit: cover;
+  display: block;
+}
+.brand-logo.placeholder {
+  background: linear-gradient(135deg, var(--cyan), var(--magenta));
+  color: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 18px;
+  font-family: ui-monospace, "Consolas", monospace;
+}
+.brand-text { display: flex; flex-direction: column; line-height: 1.1; }
+.brand-name {
+  font-size: 13px;
+  font-weight: bold;
+  color: var(--text);
+  letter-spacing: 0.5px;
+}
+.brand-tag {
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.3px;
+}
+
+.tabs { display: flex; gap: 4px; flex: 1; }
 
 .tab-btn {
   background: transparent;
