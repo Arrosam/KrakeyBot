@@ -42,6 +42,7 @@ from src.sensories.cli_input import CliInputSensory
 from src.sensories.telegram import HttpTelegramClient, TelegramSensory
 from src.tentacles.action import ActionTentacle
 from src.tentacles.coding import CodingTentacle, SubprocessRunner
+from src.tentacles.gui_control import GuiControlTentacle, PyAutoGUIBackend
 from src.tentacles.memory_recall import MemoryRecallTentacle
 from src.tentacles.search import DDGSBackend, SearchTentacle
 from src.tentacles.telegram_reply import TelegramReplyTentacle
@@ -141,6 +142,13 @@ class Runtime:
                                               "workspace/sandbox"),
                 timeout_seconds=coding_cfg.get("timeout_seconds", 30),
                 max_output_chars=coding_cfg.get("max_output_chars", 4000),
+            ))
+        gui_cfg = self.config.tentacle.get("gui_control", {})
+        if gui_cfg.get("enabled", False):
+            self.tentacles.register(GuiControlTentacle(
+                backend=PyAutoGUIBackend(),
+                screenshot_dir=gui_cfg.get("screenshot_dir",
+                                              "workspace/screenshots"),
             ))
 
         self.sensories = SensoryRegistry()

@@ -80,6 +80,13 @@ tentacle:
     sandbox_dir: "workspace/sandbox"
     timeout_seconds: 30
     max_output_chars: 4000
+  gui_control:
+    # WARNING: gives Krakey real mouse/keyboard + screenshot of your desktop.
+    # PyAutoGUI fail-safe (slam cursor into a screen corner) aborts at any
+    # time. Disabled by default; enable only when you actually want Krakey
+    # driving the screen.
+    enabled: false
+    screenshot_dir: "workspace/screenshots"
 
 sleep:
   max_duration_seconds: 7200
