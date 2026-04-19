@@ -10,7 +10,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Protocol
+from typing import Any, Protocol
 
 from src.bootstrap import (
     BOOTSTRAP_PROMPT, detect_bootstrap_complete, load_genesis,
@@ -49,7 +49,6 @@ from src.runtime.hibernate import hibernate_with_recall
 from src.runtime.sliding_window import SlidingWindow
 from src.runtime.stimulus_buffer import StimulusBuffer
 from src.self_agent import parse_self_output
-from src.sensories.cli_input import CliInputSensory
 from src.sensories.telegram import HttpTelegramClient, TelegramSensory
 from src.tentacles.coding import CodingTentacle, SubprocessRunner
 from src.tentacles.gui_control import GuiControlTentacle, PyAutoGUIBackend
@@ -76,7 +75,6 @@ class RuntimeDeps:
     classify_llm: ChatLike
     embedder: AsyncEmbedder
     reranker: Reranker | None = None
-    reader: Callable[[], Awaitable[str | None]] | None = None
     self_model_path: str | None = None      # default: workspace/self_model.yaml
     genesis_path: str | None = None         # default: workspace/GENESIS.md
     config_path: str | None = None          # default: config.yaml — for dashboard
@@ -168,12 +166,6 @@ class Runtime:
         self.tentacles.register(WebChatTentacle(history=self.web_chat_history))
 
         self.sensories = SensoryRegistry()
-        if self.config.sensory.get("cli_input", {}).get("enabled", False):
-            self.sensories.register(CliInputSensory(
-                default_adrenalin=self.config.sensory["cli_input"]
-                    .get("default_adrenalin", True),
-                reader=deps.reader,
-            ))
         tg_cfg = self.config.sensory.get("telegram", {})
         if tg_cfg.get("enabled", False):
             tg_token = tg_cfg.get("bot_token") or ""
