@@ -144,6 +144,90 @@ async def test_heartbeat_with_connected_recall_nodes_does_not_crash():
     await runtime.close()
 
 
+async def test_voluntary_sleep_via_hypothalamus_runs_full_sleep(tmp_path):
+    """Self → 'enter sleep' → Hypothalamus sleep:true → enter_sleep_mode
+    runs end-to-end; FACT migrates to KB; wake-up stimulus pushed."""
+    self_llm = ScriptedLLM([
+        "[DECISION]\n进入睡眠模式\n[HIBERNATE]\n1",
+    ])
+    hypo_llm = ScriptedLLM([
+        json.dumps({"tentacle_calls": [], "memory_writes": [],
+                     "memory_updates": [], "sleep": True}),
+    ])
+    action_llm = ScriptedLLM([])
+    # Compact LLM doubles as the community-summary + KB-relations LLM
+    sleep_llm = ScriptedLLM([
+        "summary",  # community summary
+        json.dumps({"edges": []}),  # KB relations (when 1 KB, not called)
+    ])
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=hypo_llm, action_llm=action_llm,
+        compact_llm=sleep_llm,
+    )
+    runtime.sleep_log_dir = str(tmp_path / "logs")
+    # Isolate self-model from production workspace/self_model.yaml
+    runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
+    runtime.self_model = default_self_model()
+    # Pre-seed a FACT so sleep has something to migrate
+    await runtime.gm.initialize()
+    await runtime.gm.insert_node(
+        name="apple", category="FACT", description="red fruit",
+        embedding=[1.0, 0.0],
+    )
+
+    await runtime.run(iterations=1)
+
+    # FACT migrated → no longer in GM
+    facts = await runtime.gm.list_nodes(category="FACT")
+    assert facts == []
+    # KB created with 1 entry
+    kbs = await runtime.kb_registry.list_kbs()
+    assert len(kbs) == 1
+    # Wake-up stimulus pushed
+    drained = runtime.buffer.drain()
+    assert any(s.source == "system:sleep" for s in drained)
+    # self-model bookkeeping
+    assert runtime.self_model["statistics"]["total_sleep_cycles"] == 1
+    await runtime.close()
+
+
+async def test_force_sleep_when_fatigue_exceeds_threshold(tmp_path):
+    """When GM exceeds force_sleep_threshold, runtime triggers sleep
+    immediately and pushes the special '昏睡' stimulus."""
+    self_llm = ScriptedLLM([])  # never reached
+    hypo_llm = ScriptedLLM([])
+    action_llm = ScriptedLLM([])
+    sleep_llm = ScriptedLLM(["summary"] * 10)
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=hypo_llm, action_llm=action_llm,
+        compact_llm=sleep_llm,
+    )
+    runtime.sleep_log_dir = str(tmp_path / "logs")
+    # Crank fatigue dial: tiny soft_limit, low force threshold
+    runtime.config.fatigue.gm_node_soft_limit = 5
+    runtime.config.fatigue.force_sleep_threshold = 100
+    # Pre-seed enough nodes to push fatigue ≥ 100%
+    await runtime.gm.initialize()
+    for i in range(6):
+        await runtime.gm.insert_node(
+            name=f"n{i}", category="FACT", description=f"fact {i}",
+            embedding=[1.0, 0.01 * i],
+        )
+
+    await runtime.run(iterations=1)
+
+    # Self LLM should have NOT been called (force-sleep short-circuited)
+    assert self_llm.calls == []
+    # Wake-up stimulus is the special '昏睡' message
+    drained = runtime.buffer.drain()
+    wake = [s for s in drained if s.source == "system:sleep"]
+    assert len(wake) == 1
+    assert "昏睡" in wake[0].content
+    # FACTs migrated
+    assert await runtime.gm.list_nodes(category="FACT") == []
+    await runtime.close()
+
+
 async def test_bootstrap_self_model_update_and_completion(tmp_path):
     """Phase 2.1 end-to-end: Self in Bootstrap mode writes a <self-model>
     update and signals 'bootstrap complete' in [NOTE]; runtime persists the

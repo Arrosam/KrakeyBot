@@ -28,6 +28,7 @@ from src.models.stimulus import Stimulus
 from src.prompt.builder import PromptBuilder, SlidingWindowRound
 from src.runtime.batch_tracker import BatchTrackerSensory
 from src.runtime.heartbeat_logger import HeartbeatLogger
+from src.sleep.sleep_manager import enter_sleep_mode
 from src.runtime.compact import compact_if_needed
 from src.runtime.fatigue import calculate_fatigue
 from src.runtime.hibernate import hibernate_with_recall
@@ -150,6 +151,7 @@ class Runtime:
         self._last_node_count = 0
         self._last_edge_count = 0
         self.log = logger or HeartbeatLogger()
+        self.sleep_log_dir = "workspace/logs"
 
     def _new_recall(self) -> IncrementalRecall:
         return IncrementalRecall(
@@ -185,11 +187,24 @@ class Runtime:
         await self.gm.close()
 
     async def _heartbeat(self) -> None:
-        """Orchestration only. Each phase is its own method."""
+        """Orchestration only. Each phase is its own method.
+
+        Sleep can short-circuit the heartbeat at two points:
+          - immediately after fatigue compute (force-sleep at threshold)
+          - after Hypothalamus translation if Self requested 'enter sleep'
+        """
         self.heartbeat_count += 1
         self.log.set_heartbeat(self.heartbeat_count)
         stimuli = await self._phase_drain_and_seed_recall()
         counts = await self._phase_compute_fatigue()
+
+        if counts.fatigue_pct >= self.config.fatigue.force_sleep_threshold:
+            await self._perform_sleep(
+                f"force-sleep at fatigue {counts.fatigue_pct}%",
+                wake_msg="之前因过于疲劳昏睡过去了。",
+            )
+            return
+
         await self._phase_compact()
         recall_result = await self._phase_finalize_recall_and_pushback()
         parsed = await self._phase_run_self(stimuli, recall_result, counts)
@@ -200,7 +215,16 @@ class Runtime:
         if self.is_bootstrap:
             self._phase_apply_bootstrap_signals(parsed)
         await self._phase_auto_ingest_feedback(stimuli)
-        await self._phase_apply_hypothalamus(parsed, recall_result)
+        sleep_requested = await self._phase_apply_hypothalamus(
+            parsed, recall_result,
+        )
+        if sleep_requested:
+            await self._perform_sleep(
+                "voluntary sleep requested by Self",
+                wake_msg=("完成了一次完整睡眠 (聚类 + KB 迁移 + Index 重建)。"
+                          "醒来感觉清爽一些。"),
+            )
+            return
         self._phase_schedule_classify()
         await self._phase_hibernate(parsed, recall_result)
 
@@ -324,21 +348,24 @@ class Runtime:
             except Exception as e:  # noqa: BLE001
                 self.log.runtime_error(f"auto_ingest error: {e}")
 
-    async def _phase_apply_hypothalamus(self, parsed, recall_result) -> None:
+    async def _phase_apply_hypothalamus(self, parsed, recall_result) -> bool:
+        """Returns True iff Self requested sleep (caller should short-circuit
+        and run _perform_sleep)."""
         decision = parsed.decision.strip().lower()
         if not decision or decision in ("no action", "无行动"):
-            return
+            return False
         try:
             result = await self.hypothalamus.translate(
                 parsed.decision, self.tentacles.list_descriptions(),
             )
         except Exception as e:  # noqa: BLE001
             self.log.hb(f"Hypothalamus error: {e}")
-            return
+            return False
         self._log_hypo_summary(result)
         await self._dispatch_tentacle_calls(result.tentacle_calls)
         await self._apply_memory_writes(result.memory_writes, recall_result)
         await self._apply_memory_updates(result.memory_updates)
+        return bool(result.sleep)
 
     def _phase_schedule_classify(self) -> None:
         """Background classify+link doesn't block the heartbeat."""
@@ -362,6 +389,48 @@ class Runtime:
             min_interval=self._min, max_interval=self._max,
         )
 
+    # ---------- sleep ----------
+
+    async def _perform_sleep(self, reason: str, *, wake_msg: str) -> None:
+        """Run 7-phase Sleep, persist self-model bookkeeping, push wake-up
+        stimulus, reset incremental recall (GM state changed)."""
+        self.log.hb(f"sleep started — {reason}")
+        try:
+            stats = await enter_sleep_mode(
+                self.gm, self.kb_registry, self.sensories,
+                llm=self.compact_llm, embedder=self.embedder,
+                log_dir=self.sleep_log_dir,
+            )
+        except Exception as e:  # noqa: BLE001
+            self.log.hb(f"sleep failed: {e}")
+            return
+        self.log.hb(
+            f"sleep done: facts_migrated={stats['facts_migrated']}, "
+            f"focus_cleared={stats['focus_cleared']}, "
+            f"kbs={stats['kbs_created']}, index_nodes={stats['index_nodes']}"
+        )
+
+        # Self-model bookkeeping
+        cycles = (self.self_model.get("statistics", {})
+                   .get("total_sleep_cycles", 0)) + 1
+        self.self_model = self._self_model_store.update({
+            "state": {"is_sleeping": False},
+            "statistics": {
+                "total_sleep_cycles": cycles,
+                "last_sleep": datetime.now().isoformat(),
+            },
+        })
+
+        # Wake-up stimulus
+        await self.buffer.push(Stimulus(
+            type="system_event", source="system:sleep",
+            content=wake_msg, timestamp=datetime.now(),
+            adrenalin=False,
+        ))
+
+        # GM changed underneath us — start a fresh recall
+        self._recall = self._new_recall()
+
     # ---------- hypothalamus side-effects ----------
 
     def _log_hypo_summary(self, result) -> None:
@@ -371,8 +440,6 @@ class Runtime:
             f"memory_updates={len(result.memory_updates)} "
             f"sleep={result.sleep}"
         )
-        if result.sleep:
-            self.log.hypo_warn("sleep requested (7-phase sleep lands in Phase 2)")
 
     async def _dispatch_tentacle_calls(self, calls) -> None:
         call_ids: list[str] = []
