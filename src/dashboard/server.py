@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 
 from src.dashboard.events_ws import EventBroadcaster
@@ -56,7 +56,106 @@ def create_app(
     if event_broadcaster is not None:
         _attach_events_ws(app, event_broadcaster)
 
+    _attach_memory_routes(app, runtime)
+
     return app
+
+
+# ---------------- Memory browser (read-only) ----------------
+
+
+def _attach_memory_routes(app: FastAPI, runtime: Any | None) -> None:
+    def _runtime_or_503():
+        if runtime is None or not hasattr(runtime, "gm"):
+            raise HTTPException(status_code=503,
+                                  detail="runtime not available")
+        return runtime
+
+    @app.get("/api/gm/nodes")
+    async def gm_nodes(
+        category: str | None = None,
+        limit: int = Query(default=200, ge=1, le=2000),
+    ):  # noqa: ANN201
+        rt = _runtime_or_503()
+        nodes = await rt.gm.list_nodes(category=category, limit=limit)
+        return {"count": len(nodes),
+                "nodes": [_serialize_node(n) for n in nodes]}
+
+    @app.get("/api/gm/edges")
+    async def gm_edges(limit: int = Query(default=500, ge=1, le=5000)):  # noqa: ANN201
+        rt = _runtime_or_503()
+        # Pull all edges (Phase-1 small scale); cap with limit on output
+        db = rt.gm._require()  # noqa: SLF001
+        async with db.execute(
+            "SELECT na.name AS source, e.predicate AS predicate, "
+            "nb.name AS target FROM gm_edges e "
+            "JOIN gm_nodes na ON na.id=e.node_a "
+            "JOIN gm_nodes nb ON nb.id=e.node_b "
+            "ORDER BY e.id ASC LIMIT ?", (limit,),
+        ) as cur:
+            rows = await cur.fetchall()
+        edges = [{"source": r["source"], "target": r["target"],
+                  "predicate": r["predicate"]} for r in rows]
+        return {"count": len(edges), "edges": edges}
+
+    @app.get("/api/gm/stats")
+    async def gm_stats():  # noqa: ANN201
+        rt = _runtime_or_503()
+        total_nodes = await rt.gm.count_nodes()
+        total_edges = await rt.gm.count_edges()
+        db = rt.gm._require()  # noqa: SLF001
+        async with db.execute(
+            "SELECT category, COUNT(*) FROM gm_nodes GROUP BY category"
+        ) as cur:
+            cat_rows = await cur.fetchall()
+        async with db.execute(
+            "SELECT source_type, COUNT(*) FROM gm_nodes GROUP BY source_type"
+        ) as cur:
+            src_rows = await cur.fetchall()
+        return {
+            "total_nodes": total_nodes,
+            "total_edges": total_edges,
+            "by_category": {r[0]: r[1] for r in cat_rows},
+            "by_source": {r[0]: r[1] for r in src_rows},
+        }
+
+    @app.get("/api/kbs")
+    async def kbs():  # noqa: ANN201
+        rt = _runtime_or_503()
+        return {"kbs": await rt.kb_registry.list_kbs()}
+
+    @app.get("/api/kb/{kb_id}/entries")
+    async def kb_entries(kb_id: str,
+                            limit: int = Query(default=200, ge=1, le=2000)):  # noqa: ANN201
+        rt = _runtime_or_503()
+        try:
+            kb = await rt.kb_registry.open_kb(kb_id)
+        except KeyError:
+            raise HTTPException(status_code=404,
+                                  detail=f"KB {kb_id!r} not found")
+        db = kb._require()  # noqa: SLF001
+        async with db.execute(
+            "SELECT id, content, source, tags, importance, created_at "
+            "FROM kb_entries WHERE is_active = 1 ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ) as cur:
+            rows = await cur.fetchall()
+        import json as _json
+        entries = []
+        for r in rows:
+            tags = _json.loads(r["tags"]) if r["tags"] else []
+            entries.append({"id": r["id"], "content": r["content"],
+                              "source": r["source"], "tags": tags,
+                              "importance": r["importance"],
+                              "created_at": r["created_at"]})
+        return {"kb_id": kb_id, "count": len(entries), "entries": entries}
+
+
+def _serialize_node(n: dict[str, Any]) -> dict[str, Any]:
+    """Trim raw embedding from API response; keep its presence as a flag."""
+    out = {k: v for k, v in n.items() if k != "embedding"}
+    out["has_embedding"] = n.get("embedding") is not None
+    return out
 
 
 def _attach_events_ws(app: FastAPI, broadcaster: EventBroadcaster) -> None:
