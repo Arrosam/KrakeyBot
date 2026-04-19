@@ -67,6 +67,7 @@ sensory:
 
 tentacle:
   action: { enabled: true, max_context_tokens: 4096, sandboxed: true }
+  search: { enabled: true, max_results: 5 }
 
 sleep:
   max_duration_seconds: 7200

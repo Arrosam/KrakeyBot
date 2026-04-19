@@ -41,6 +41,7 @@ from src.self_agent import parse_self_output
 from src.sensories.cli_input import CliInputSensory
 from src.tentacles.action import ActionTentacle
 from src.tentacles.memory_recall import MemoryRecallTentacle
+from src.tentacles.search import DDGSBackend, SearchTentacle
 
 
 class ChatLike(Protocol):
@@ -123,6 +124,12 @@ class Runtime:
             gm=self.gm, embedder=self.embedder,
             kb_registry=self.kb_registry,
         ))
+        if self.config.tentacle.get("search", {}).get("enabled", True):
+            self.tentacles.register(SearchTentacle(
+                backend=DDGSBackend(),
+                max_results=self.config.tentacle.get("search", {})
+                    .get("max_results", 5),
+            ))
 
         self.sensories = SensoryRegistry()
         if self.config.sensory.get("cli_input", {}).get("enabled", False):
