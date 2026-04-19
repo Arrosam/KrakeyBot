@@ -39,9 +39,11 @@ from src.runtime.sliding_window import SlidingWindow
 from src.runtime.stimulus_buffer import StimulusBuffer
 from src.self_agent import parse_self_output
 from src.sensories.cli_input import CliInputSensory
+from src.sensories.telegram import HttpTelegramClient, TelegramSensory
 from src.tentacles.action import ActionTentacle
 from src.tentacles.memory_recall import MemoryRecallTentacle
 from src.tentacles.search import DDGSBackend, SearchTentacle
+from src.tentacles.telegram_reply import TelegramReplyTentacle
 
 
 class ChatLike(Protocol):
@@ -137,6 +139,19 @@ class Runtime:
                 default_adrenalin=self.config.sensory["cli_input"]
                     .get("default_adrenalin", True),
                 reader=deps.reader,
+            ))
+        tg_cfg = self.config.sensory.get("telegram", {})
+        if tg_cfg.get("enabled", False):
+            tg_token = tg_cfg.get("bot_token") or ""
+            allowed = tg_cfg.get("allowed_chat_ids") or None
+            tg_client = HttpTelegramClient(token=tg_token)
+            self.sensories.register(TelegramSensory(
+                client=tg_client,
+                allowed_chat_ids=set(allowed) if allowed else None,
+            ))
+            default_chat = tg_cfg.get("default_chat_id")
+            self.tentacles.register(TelegramReplyTentacle(
+                client=tg_client, default_chat_id=default_chat,
             ))
         self.batch_tracker = BatchTrackerSensory()
         self.sensories.register(self.batch_tracker)

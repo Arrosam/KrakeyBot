@@ -64,6 +64,11 @@ knowledge_base:
 sensory:
   cli_input: { enabled: true, default_adrenalin: true }
   timer:     { enabled: true, default_adrenalin: false }
+  telegram:
+    enabled: false
+    bot_token: "${TELEGRAM_BOT_TOKEN}"   # https://core.telegram.org/bots#how-do-i-create-a-bot
+    allowed_chat_ids: []                 # whitelist; empty = anyone (not recommended)
+    default_chat_id: null                # for outbound when intent has no chat_id
 
 tentacle:
   action: { enabled: true, max_context_tokens: 4096, sandboxed: true }
