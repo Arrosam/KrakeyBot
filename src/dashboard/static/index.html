@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Krakey Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="thoughts">💭 Inner Thoughts</button>
+      <button class="tab-btn" data-tab="chat">💬 Chat</button>
+      <button class="tab-btn" data-tab="memory">🧠 Memory</button>
+      <button class="tab-btn" data-tab="settings">⚙️ Settings</button>
+    </nav>
+    <div class="status-bar" id="status-bar">— connecting —</div>
+  </header>
+
+  <main>
+    <!-- INNER THOUGHTS -->
+    <section id="tab-thoughts" class="tab-panel active">
+      <div class="thoughts-grid">
+        <div class="panel cyan">
+          <h3>Thinking (内心独白)</h3>
+          <div class="scroll" id="thinking-stream"></div>
+        </div>
+        <div class="panel cyan">
+          <h3>Decision (决策)</h3>
+          <div class="scroll" id="decision-stream"></div>
+        </div>
+      </div>
+      <div class="thoughts-grid">
+        <div class="panel yellow">
+          <h3>Hypothalamus (派发)</h3>
+          <div class="scroll small" id="hypo-stream"></div>
+        </div>
+        <div class="panel">
+          <h3>Pending Stimuli</h3>
+          <ul id="stim-list" class="scroll small"></ul>
+        </div>
+      </div>
+      <details class="prompt-collapser">
+        <summary>Latest prompt (heartbeat <span id="prompt-hb">—</span>) — click to expand</summary>
+        <pre id="latest-prompt">(no prompt yet)</pre>
+      </details>
+    </section>
+
+    <!-- CHAT -->
+    <section id="tab-chat" class="tab-panel">
+      <div class="chat-meta" id="chat-meta">— connecting —</div>
+      <div id="chat-history"></div>
+      <form id="chat-form" autocomplete="off">
+        <input id="chat-input" type="text" placeholder="对 Krakey 说点什么..." />
+        <button type="submit">Send</button>
+      </form>
+    </section>
+
+    <!-- MEMORY -->
+    <section id="tab-memory" class="tab-panel">
+      <nav class="sub-nav">
+        <button class="mem-btn active" data-mem="stats">📊 Stats</button>
+        <button class="mem-btn" data-mem="nodes">📍 GM Nodes</button>
+        <button class="mem-btn" data-mem="edges">↔ GM Edges</button>
+        <button class="mem-btn" data-mem="kbs">📚 KBs</button>
+      </nav>
+      <div id="mem-content" class="scroll">— loading —</div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="tab-settings" class="tab-panel">
+      <p class="hint">编辑 config.yaml。保存后需手动重启才生效。
+        每次启动会自动备份到 <code>workspace/backups/</code>。</p>
+      <textarea id="settings-text" rows="32" spellcheck="false"></textarea>
+      <div class="settings-actions">
+        <button id="settings-save">💾 Save</button>
+        <button id="settings-restart" class="danger">🔄 Restart Krakey</button>
+        <span id="settings-toast"></span>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

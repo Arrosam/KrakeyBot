@@ -14,6 +14,7 @@ from typing import Any, Awaitable, Callable
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from src.dashboard.events_ws import EventBroadcaster
 from src.dashboard.web_chat import WebChatHistory
@@ -40,6 +41,11 @@ def create_app(
     app = FastAPI(title="Krakey Dashboard",
                     version="0.1",
                     docs_url=None, redoc_url=None)
+
+    if _STATIC_DIR.exists():
+        app.mount("/static",
+                    StaticFiles(directory=str(_STATIC_DIR)),
+                    name="static")
 
     @app.get("/api/health")
     async def health():  # noqa: ANN201
