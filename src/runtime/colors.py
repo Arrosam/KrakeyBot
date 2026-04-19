@@ -18,6 +18,7 @@ _RESET = "\033[0m"
 _CYAN = "\033[36m"
 _GREEN = "\033[32m"
 _YELLOW = "\033[33m"
+_MAGENTA = "\033[35m"
 
 
 def _compute_enabled() -> bool:
@@ -46,3 +47,7 @@ def green(text: str) -> str:
 
 def yellow(text: str) -> str:
     return f"{_YELLOW}{text}{_RESET}" if _ENABLED else text
+
+
+def magenta(text: str) -> str:
+    return f"{_MAGENTA}{text}{_RESET}" if _ENABLED else text

@@ -55,6 +55,11 @@ class MemoryRecallTentacle(Tentacle):
     def sandboxed(self) -> bool:
         return True
 
+    @property
+    def is_internal(self) -> bool:
+        # Recall results feed Self's next heartbeat; never reach the user.
+        return True
+
     async def execute(self, intent: str,
                         params: dict[str, Any]) -> Stimulus:
         assert self._gm is not None and self._embedder is not None

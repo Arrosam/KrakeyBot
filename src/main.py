@@ -505,7 +505,10 @@ class Runtime:
 
         if call.adrenalin and not stim.adrenalin:
             stim.adrenalin = True
-        self.log.chat(call.tentacle, stim.content)
+        if tentacle.is_internal:
+            self.log.internal(call.tentacle, stim.content)
+        else:
+            self.log.chat(call.tentacle, stim.content)
         await self.buffer.push(stim)
         await self.batch_tracker.mark_completed(call_id)
 

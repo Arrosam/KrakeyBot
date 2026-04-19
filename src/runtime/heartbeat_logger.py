@@ -2,16 +2,18 @@
 
 Owns ALL print/colour decisions so Runtime stays focused on orchestration.
 - white (default): runtime/system events, hibernate, GM stats
-- cyan:   Self's inner monologue (decision/thinking/note)
-- yellow: Hypothalamus translation + dispatch
-- green:  Bot's outward chat replies
-- stderr: only for warnings (force_sleep, sleep-requested)
+- cyan:    Self's inner monologue (decision/thinking/note)
+- yellow:  Hypothalamus translation + dispatch
+- magenta: internal tentacle returns (memory_recall etc. — not chat)
+- green:   Bot's outward chat replies (the only thing the human reads as
+           Krakey's voice)
+- stderr:  only for warnings (force_sleep, sleep-requested)
 """
 from __future__ import annotations
 
 import sys
 
-from src.runtime.colors import cyan, green, yellow
+from src.runtime.colors import cyan, green, magenta, yellow
 
 
 class HeartbeatLogger:
@@ -48,6 +50,13 @@ class HeartbeatLogger:
 
     def dispatch(self, msg: str) -> None:
         print(yellow(f"[dispatch] {msg}"), flush=True)
+
+    # --- internal tentacle returns (magenta) ---
+
+    def internal(self, sender: str, content: str) -> None:
+        """For tentacles whose output is for Self only, not user-facing
+        chat (e.g. memory_recall results)."""
+        print(magenta(f"[{sender}] {content}"), flush=True)
 
     # --- bot outward chat (green) ---
 
