@@ -126,3 +126,48 @@ async def test_post_restart_503_when_no_callback():
     async with _client() as c:
         r = await c.post("/api/restart")
     assert r.status_code == 503
+
+
+# ---------------- Structured POST + upload ----------------
+
+async def test_post_settings_accepts_structured_parsed(tmp_path):
+    p = tmp_path / "config.yaml"
+    p.write_text("a: 1\n", encoding="utf-8")
+    async with _client(config_path=p) as c:
+        r = await c.post("/api/settings",
+                            json={"parsed": {"a": 2, "nested": {"k": "v"}},
+                                   "backup_dir": str(tmp_path / "bk")})
+    assert r.status_code == 200
+    written = p.read_text(encoding="utf-8")
+    assert yaml.safe_load(written) == {"a": 2, "nested": {"k": "v"}}
+
+
+async def test_post_settings_requires_parsed_or_raw(tmp_path):
+    p = tmp_path / "config.yaml"
+    p.write_text("a: 1\n", encoding="utf-8")
+    async with _client(config_path=p) as c:
+        r = await c.post("/api/settings", json={})
+    assert r.status_code == 400
+
+
+async def test_upload_endpoint_saves_files_and_serves_them(tmp_path, monkeypatch):
+    # Re-point the upload dir at tmp so we don't litter the repo workspace.
+    import src.dashboard.server as srv
+    monkeypatch.setattr(srv, "_UPLOAD_DIR", tmp_path / "uploads")
+
+    async with _client() as c:
+        files = [("files", ("hello.txt", b"hi there", "text/plain"))]
+        r = await c.post("/api/chat/upload", files=files)
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body["files"]) == 1
+        f = body["files"][0]
+        assert f["name"] == "hello.txt"
+        assert f["type"] == "text/plain"
+        assert f["size"] == 8
+        assert f["url"].startswith("/uploads/")
+
+        # And the served file is fetchable
+        r2 = await c.get(f["url"])
+        assert r2.status_code == 200
+        assert r2.content == b"hi there"

@@ -7,4 +7,5 @@ leidenalg>=0.10
 ddgs>=9.0
 pyautogui>=0.9
 fastapi>=0.115
+python-multipart>=0.0.9
 uvicorn[standard]>=0.30

@@ -39,13 +39,21 @@ class WebChatHistory:
     def all_messages(self) -> list[dict[str, Any]]:
         return list(self._cache)
 
-    async def append(self, sender: str, content: str) -> dict[str, Any]:
-        """Persist + broadcast a message. Returns the persisted record."""
-        msg = {
+    async def append(self, sender: str, content: str,
+                       attachments: list[dict[str, Any]] | None = None
+                       ) -> dict[str, Any]:
+        """Persist + broadcast a message. Returns the persisted record.
+
+        `attachments`: optional list of {name, url, type, size} dicts as
+        returned by /api/chat/upload.
+        """
+        msg: dict[str, Any] = {
             "sender": sender,
             "content": content,
             "ts": datetime.now().isoformat(),
         }
+        if attachments:
+            msg["attachments"] = attachments
         self._cache.append(msg)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as f:

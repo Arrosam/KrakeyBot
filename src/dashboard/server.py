@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import (FastAPI, File, HTTPException, Query, UploadFile,
+                       WebSocket, WebSocketDisconnect)
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -66,8 +67,45 @@ def create_app(
 
     _attach_memory_routes(app, runtime)
     _attach_settings_routes(app, config_path, on_restart)
+    _attach_upload_route(app)
 
     return app
+
+
+_UPLOAD_DIR = Path("workspace/data/uploads")
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MiB per file
+
+
+def _attach_upload_route(app: FastAPI) -> None:
+    @app.post("/api/chat/upload")
+    async def upload(files: list[UploadFile] = File(...)):  # noqa: ANN201
+        _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        from datetime import datetime as _dt
+        out = []
+        for f in files:
+            data = await f.read()
+            if len(data) > _MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413,
+                    detail=f"{f.filename}: exceeds {_MAX_UPLOAD_BYTES} bytes")
+            stamp = _dt.now().strftime("%Y%m%d-%H%M%S-%f")
+            safe = "".join(c for c in (f.filename or "file")
+                           if c.isalnum() or c in "._-")
+            dest = _UPLOAD_DIR / f"{stamp}_{safe}"
+            dest.write_bytes(data)
+            out.append({
+                "name": f.filename or safe,
+                "url": f"/uploads/{dest.name}",
+                "type": f.content_type or "application/octet-stream",
+                "size": len(data),
+            })
+        return {"files": out}
+
+    @app.get("/uploads/{filename}")
+    async def serve_upload(filename: str):  # noqa: ANN201
+        path = _UPLOAD_DIR / filename
+        if not path.exists() or not path.is_file():
+            raise HTTPException(status_code=404, detail="not found")
+        return FileResponse(path)
 
 
 # ---------------- Memory browser (read-only) ----------------
@@ -197,20 +235,26 @@ def _attach_settings_routes(app: FastAPI, config_path: Path | None,
         if config_path is None:
             raise HTTPException(status_code=503,
                                   detail="config_path not provided")
-        new_raw = payload.get("raw")
-        if new_raw is None or not isinstance(new_raw, str):
-            raise HTTPException(status_code=400,
-                                  detail="missing or invalid 'raw' field")
-        # Validate YAML before touching disk
-        try:
-            _yaml.safe_load(new_raw)
-        except _yaml.YAMLError as e:
-            raise HTTPException(status_code=400,
-                                  detail=f"invalid YAML: {e}")
-        # Backup existing config first
+        # Accept either structured `parsed` (new form-based) or `raw` YAML.
+        if "parsed" in payload and payload["parsed"] is not None:
+            try:
+                new_raw = _yaml.safe_dump(payload["parsed"], allow_unicode=True,
+                                           sort_keys=False)
+            except _yaml.YAMLError as e:
+                raise HTTPException(status_code=400,
+                                      detail=f"cannot serialize: {e}")
+        else:
+            new_raw = payload.get("raw")
+            if new_raw is None or not isinstance(new_raw, str):
+                raise HTTPException(status_code=400,
+                                      detail="missing 'parsed' or 'raw' field")
+            try:
+                _yaml.safe_load(new_raw)
+            except _yaml.YAMLError as e:
+                raise HTTPException(status_code=400,
+                                      detail=f"invalid YAML: {e}")
         backup_dir = payload.get("backup_dir") or "workspace/backups"
         backup_path = backup_config(config_path, backup_dir)
-        # Write
         Path(config_path).write_text(new_raw, encoding="utf-8")
         return {
             "status": "saved",
@@ -281,12 +325,13 @@ def _attach_chat_ws(
             while True:
                 data = await ws.receive_json()
                 text = (data.get("text") or "").strip()
-                if not text:
+                attachments = data.get("attachments") or []
+                if not text and not attachments:
                     continue
-                await history.append("user", text)
+                await history.append("user", text, attachments=attachments)
                 if on_user_message is not None:
                     try:
-                        await on_user_message(text)
+                        await on_user_message(text, attachments)
                     except Exception:  # noqa: BLE001
                         pass
         except WebSocketDisconnect:

@@ -209,6 +209,7 @@ main {
   display: flex;
   gap: 8px;
   padding-top: 8px;
+  align-items: flex-end;
 }
 #chat-input {
   flex: 1;
@@ -219,6 +220,10 @@ main {
   color: var(--text);
   font-family: inherit;
   font-size: 13px;
+  resize: none;
+  overflow-y: auto;
+  max-height: 240px;
+  line-height: 1.4;
 }
 #chat-input:focus { outline: none; border-color: var(--cyan); }
 #chat-form button {
@@ -229,8 +234,45 @@ main {
   color: var(--bg);
   font-weight: bold;
   cursor: pointer;
+  white-space: nowrap;
 }
 #chat-form button:hover { filter: brightness(1.1); }
+#chat-attach-btn {
+  background: var(--panel);
+  color: var(--cyan);
+  border: 1px solid var(--border);
+  font-size: 16px;
+  padding: 6px 10px;
+}
+#chat-attach-btn:hover { background: var(--panel-2); }
+
+#chat-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0;
+}
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--cyan);
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--text);
+}
+.attach-chip .x {
+  cursor: pointer;
+  color: var(--red);
+  font-weight: bold;
+  padding: 0 2px;
+}
+.bubble .attachments { margin-top: 4px; display: flex; flex-direction: column; gap: 4px; }
+.bubble .attachments img { max-width: 240px; max-height: 240px; border-radius: 4px; display: block; }
+.bubble .attachments a { color: var(--cyan); font-size: 11px; text-decoration: none; }
+.bubble .attachments a:hover { text-decoration: underline; }
 
 /* ---------------- memory ---------------- */
 
@@ -308,18 +350,123 @@ table.mem-table th { color: var(--cyan); font-weight: normal; }
   color: var(--muted);
   margin: 0 0 8px;
 }
-#settings-text {
-  width: 100%;
+
+#settings-form {
+  flex: 1;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 6px;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.cfg-section {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 12px;
+  background: var(--panel-2);
+}
+.cfg-section > h3 {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--cyan);
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.cfg-section > .body { padding: 10px; }
+
+.cfg-row {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.cfg-row > label {
+  color: var(--muted);
+  font-family: inherit;
+}
+.cfg-row input[type="text"],
+.cfg-row input[type="number"],
+.cfg-row input[type="password"],
+.cfg-row select,
+.cfg-row textarea {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 3px;
   color: var(--text);
   font-family: inherit;
   font-size: 12px;
-  padding: 8px;
-  resize: vertical;
+  padding: 4px 6px;
+  width: 100%;
 }
-#settings-text:focus { outline: none; border-color: var(--cyan); }
+.cfg-row input:focus, .cfg-row select:focus, .cfg-row textarea:focus {
+  outline: none; border-color: var(--cyan);
+}
+.cfg-row textarea { resize: vertical; min-height: 40px; font-family: ui-monospace, "Consolas", monospace; }
+
+/* Toggle switch */
+.toggle {
+  display: inline-block;
+  width: 38px;
+  height: 20px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  position: relative;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--muted);
+  border-radius: 50%;
+  transition: left 0.15s, background 0.15s;
+}
+.toggle.on { background: var(--cyan); border-color: var(--cyan); }
+.toggle.on::after { left: 20px; background: var(--bg); }
+
+.subblock {
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+  margin: 6px 0 10px;
+}
+.subblock > h4 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  color: var(--magenta);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.subblock > h4 .actions { margin-left: auto; display: flex; gap: 4px; }
+
+.btn-mini {
+  padding: 2px 8px;
+  background: var(--panel);
+  border: 1px solid var(--cyan);
+  color: var(--cyan);
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+}
+.btn-mini.danger { border-color: var(--red); color: var(--red); }
+.btn-mini:hover { background: var(--panel-2); }
+
+.model-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 6px;
+  margin-bottom: 4px;
+}
 .settings-actions {
   display: flex;
   align-items: center;

@@ -261,13 +261,29 @@ class Runtime:
         if cfg is None or not cfg.enabled:
             return
 
-        async def _on_user_message(text: str) -> None:
-            # Web user message → push as a normal user_message stimulus
+        async def _on_user_message(text: str,
+                                     attachments: list[dict] | None = None) -> None:
+            # Web user message → push as a normal user_message stimulus.
+            # Attachments rendered as text notice so Self knows about them
+            # (vision/binary handling lives behind that).
+            content = text
+            if attachments:
+                lines = [text] if text else []
+                for a in attachments:
+                    name = a.get("name", "file")
+                    typ = a.get("type", "")
+                    size = a.get("size", 0)
+                    url = a.get("url", "")
+                    lines.append(f"[附件: {name} ({typ}, {size} bytes) {url}]")
+                content = "\n".join(lines)
+            md: dict = {"channel": "web_chat"}
+            if attachments:
+                md["attachments"] = attachments
             await self.buffer.push(Stimulus(
                 type="user_message", source="sensory:web_chat",
-                content=text, timestamp=datetime.now(),
+                content=content, timestamp=datetime.now(),
                 adrenalin=True,
-                metadata={"channel": "web_chat"},
+                metadata=md,
             ))
 
         def _on_restart() -> None:

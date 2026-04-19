@@ -160,13 +160,38 @@ function fmtTime(iso) {
 function renderChatMessage(msg) {
   const div = document.createElement("div");
   div.className = "bubble " + (msg.sender === "user" ? "user" : "krakey");
-  div.appendChild(document.createTextNode(msg.content));
+  if (msg.content) {
+    div.appendChild(document.createTextNode(msg.content));
+  }
+  if (msg.attachments && msg.attachments.length) {
+    const wrap = document.createElement("div");
+    wrap.className = "attachments";
+    for (const a of msg.attachments) {
+      if ((a.type || "").startsWith("image/")) {
+        const img = document.createElement("img");
+        img.src = a.url; img.alt = a.name;
+        wrap.appendChild(img);
+      }
+      const link = document.createElement("a");
+      link.href = a.url; link.target = "_blank";
+      link.textContent = `📎 ${a.name} (${formatBytes(a.size)})`;
+      wrap.appendChild(link);
+    }
+    div.appendChild(wrap);
+  }
   const ts = document.createElement("span");
   ts.className = "ts";
   ts.textContent = fmtTime(msg.ts);
   div.appendChild(ts);
   chatHistory.appendChild(div);
   chatHistory.scrollTop = chatHistory.scrollHeight;
+}
+
+function formatBytes(n) {
+  if (n == null) return "?";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
 }
 
 function connectChat() {
@@ -191,12 +216,71 @@ function connectChat() {
 }
 connectChat();
 
+// ---------- chat input: auto-expand + Enter/Shift+Enter ----------
+
+function autoResize() {
+  chatInput.style.height = "auto";
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 240) + "px";
+}
+chatInput.addEventListener("input", autoResize);
+chatInput.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
+    ev.preventDefault();
+    chatForm.requestSubmit();
+  }
+});
+
+// ---------- attachments staging ----------
+
+const attachBtn = $("#chat-attach-btn");
+const fileInput = $("#chat-file");
+const attachStrip = $("#chat-attachments");
+let pendingAttachments = []; // [{name, url, type, size}]
+
+attachBtn.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", async () => {
+  const files = Array.from(fileInput.files || []);
+  fileInput.value = "";
+  if (!files.length) return;
+  const fd = new FormData();
+  for (const f of files) fd.append("files", f, f.name);
+  try {
+    const r = await fetch("/api/chat/upload", { method: "POST", body: fd });
+    const body = await r.json();
+    if (!r.ok) { alert("upload failed: " + (body.detail || r.statusText)); return; }
+    pendingAttachments.push(...body.files);
+    renderAttachStrip();
+  } catch (e) {
+    alert("upload network: " + e);
+  }
+});
+
+function renderAttachStrip() {
+  attachStrip.innerHTML = "";
+  pendingAttachments.forEach((a, i) => {
+    const chip = document.createElement("span");
+    chip.className = "attach-chip";
+    chip.appendChild(document.createTextNode(`📎 ${a.name} (${formatBytes(a.size)})`));
+    const x = document.createElement("span");
+    x.className = "x"; x.textContent = "×"; x.title = "remove";
+    x.addEventListener("click", () => {
+      pendingAttachments.splice(i, 1);
+      renderAttachStrip();
+    });
+    chip.appendChild(x);
+    attachStrip.appendChild(chip);
+  });
+}
+
 chatForm.addEventListener("submit", (ev) => {
   ev.preventDefault();
   const text = chatInput.value.trim();
-  if (!text || !chatWS || chatWS.readyState !== 1) return;
-  chatWS.send(JSON.stringify({ text }));
+  if ((!text && !pendingAttachments.length) || !chatWS || chatWS.readyState !== 1) return;
+  chatWS.send(JSON.stringify({ text, attachments: pendingAttachments }));
   chatInput.value = "";
+  autoResize();
+  pendingAttachments = [];
+  renderAttachStrip();
 });
 
 // ============== MEMORY ==============
@@ -314,24 +398,468 @@ async function loadKBEntries(kbid) {
 
 loadMemory("stats");
 
-// ============== SETTINGS ==============
+// ============== SETTINGS (form-based) ==============
 
-const settingsText = $("#settings-text");
+const settingsForm = $("#settings-form");
 const settingsToast = $("#settings-toast");
+
+// Mutable working copy of config; all widgets bind here.
+let cfgState = null;
+
+// Fixed numeric/string dataclass schemas — drives generic renderer.
+const SCHEMAS = {
+  hibernate: [
+    ["min_interval", "number"],
+    ["max_interval", "number"],
+    ["default_interval", "number"],
+  ],
+  fatigue_scalars: [
+    ["gm_node_soft_limit", "number"],
+    ["force_sleep_threshold", "number"],
+  ],
+  sliding_window: [
+    ["max_tokens", "number"],
+  ],
+  graph_memory: [
+    ["db_path", "text"],
+    ["auto_ingest_similarity_threshold", "number_float"],
+    ["recall_per_stimulus_k", "number"],
+    ["max_recall_nodes", "number"],
+    ["neighbor_expand_depth", "number"],
+  ],
+  knowledge_base: [
+    ["dir", "text"],
+  ],
+  sleep: [
+    ["max_duration_seconds", "number"],
+  ],
+  safety: [
+    ["gm_node_hard_limit", "number"],
+    ["max_consecutive_no_action", "number"],
+  ],
+  dashboard: [
+    ["enabled", "bool"],
+    ["host", "text"],
+    ["port", "number"],
+  ],
+};
 
 async function loadSettings() {
   settingsToast.textContent = "";
+  settingsForm.innerHTML = "loading...";
   try {
     const r = await fetch("/api/settings");
     if (r.status === 503) {
-      settingsText.value = "(settings endpoint not wired — config_path not provided to dashboard)";
+      settingsForm.innerHTML = "<i>(config_path not provided to dashboard)</i>";
       return;
     }
     const data = await r.json();
-    settingsText.value = data.raw;
+    cfgState = data.parsed || {};
+    renderSettingsForm();
   } catch (e) {
-    settingsText.value = "error loading: " + e;
+    settingsForm.innerHTML = "error loading: " + escapeHtml(String(e));
   }
+}
+
+function renderSettingsForm() {
+  settingsForm.innerHTML = "";
+  // LLM
+  const llm = ensure(cfgState, "llm", () => ({ providers: {}, roles: {} }));
+  ensure(llm, "providers", () => ({}));
+  ensure(llm, "roles", () => ({}));
+  settingsForm.appendChild(renderLLMSection(llm));
+
+  // Generic sections
+  settingsForm.appendChild(renderGenericSection("hibernate", "Hibernate",
+    ensure(cfgState, "hibernate", () => ({})), SCHEMAS.hibernate));
+
+  // Fatigue: scalars + thresholds dict
+  const fatigue = ensure(cfgState, "fatigue", () => ({ thresholds: {} }));
+  ensure(fatigue, "thresholds", () => ({}));
+  const fatSec = renderGenericSection("fatigue", "Fatigue",
+    fatigue, SCHEMAS.fatigue_scalars);
+  fatSec.querySelector(".body").appendChild(renderFatigueThresholds(fatigue));
+  settingsForm.appendChild(fatSec);
+
+  settingsForm.appendChild(renderGenericSection("sliding_window", "Sliding Window",
+    ensure(cfgState, "sliding_window", () => ({})), SCHEMAS.sliding_window));
+  settingsForm.appendChild(renderGenericSection("graph_memory", "Graph Memory",
+    ensure(cfgState, "graph_memory", () => ({})), SCHEMAS.graph_memory));
+  settingsForm.appendChild(renderGenericSection("knowledge_base", "Knowledge Base",
+    ensure(cfgState, "knowledge_base", () => ({})), SCHEMAS.knowledge_base));
+
+  settingsForm.appendChild(renderDictSection("sensory", "Sensory",
+    ensure(cfgState, "sensory", () => ({})),
+    { defaultEntry: () => ({ enabled: true }) }));
+  settingsForm.appendChild(renderDictSection("tentacle", "Tentacle",
+    ensure(cfgState, "tentacle", () => ({})),
+    { defaultEntry: () => ({ enabled: true }) }));
+
+  settingsForm.appendChild(renderGenericSection("sleep", "Sleep",
+    ensure(cfgState, "sleep", () => ({})), SCHEMAS.sleep));
+  settingsForm.appendChild(renderGenericSection("safety", "Safety",
+    ensure(cfgState, "safety", () => ({})), SCHEMAS.safety));
+  settingsForm.appendChild(renderGenericSection("dashboard", "Dashboard",
+    ensure(cfgState, "dashboard", () => ({})), SCHEMAS.dashboard));
+}
+
+function ensure(obj, key, factory) {
+  if (obj[key] == null) obj[key] = factory();
+  return obj[key];
+}
+
+function makeSection(title) {
+  const sec = document.createElement("div");
+  sec.className = "cfg-section";
+  const h = document.createElement("h3");
+  h.textContent = title;
+  const body = document.createElement("div");
+  body.className = "body";
+  sec.appendChild(h); sec.appendChild(body);
+  return sec;
+}
+
+function renderGenericSection(key, title, target, schema) {
+  const sec = makeSection(title);
+  const body = sec.querySelector(".body");
+  for (const [field, type] of schema) {
+    body.appendChild(renderRow(field, target, field, type));
+  }
+  return sec;
+}
+
+function renderRow(label, target, key, type) {
+  const row = document.createElement("div");
+  row.className = "cfg-row";
+  const lab = document.createElement("label");
+  lab.textContent = label;
+  row.appendChild(lab);
+
+  let widget;
+  const val = target[key];
+  if (type === "bool") {
+    widget = document.createElement("span");
+    widget.className = "toggle" + (val ? " on" : "");
+    widget.addEventListener("click", () => {
+      target[key] = !target[key];
+      widget.classList.toggle("on", !!target[key]);
+    });
+  } else if (type === "number" || type === "number_float") {
+    widget = document.createElement("input");
+    widget.type = "number";
+    if (type === "number_float") widget.step = "any";
+    widget.value = val == null ? "" : val;
+    widget.addEventListener("input", () => {
+      const v = widget.value;
+      if (v === "") { delete target[key]; return; }
+      target[key] = type === "number_float" ? parseFloat(v) : parseInt(v, 10);
+    });
+  } else if (type === "password") {
+    widget = document.createElement("input");
+    widget.type = "password";
+    widget.value = val == null ? "" : val;
+    widget.addEventListener("input", () => { target[key] = widget.value; });
+  } else {
+    widget = document.createElement("input");
+    widget.type = "text";
+    widget.value = val == null ? "" : val;
+    widget.addEventListener("input", () => { target[key] = widget.value; });
+  }
+  row.appendChild(widget);
+  return row;
+}
+
+function renderFatigueThresholds(fatigue) {
+  const block = document.createElement("div");
+  block.className = "subblock";
+  const h = document.createElement("h4");
+  h.appendChild(document.createTextNode("thresholds (% → hint)"));
+  const actions = document.createElement("span");
+  actions.className = "actions";
+  const addBtn = mkBtn("+ add", () => {
+    let key = 0;
+    while (key in fatigue.thresholds) key += 25;
+    fatigue.thresholds[key] = "";
+    redraw();
+  });
+  actions.appendChild(addBtn);
+  h.appendChild(actions);
+  block.appendChild(h);
+
+  function redraw() {
+    [...block.querySelectorAll(".cfg-row")].forEach((r) => r.remove());
+    for (const k of Object.keys(fatigue.thresholds).sort((a, b) => +a - +b)) {
+      const row = document.createElement("div");
+      row.className = "cfg-row";
+      const keyIn = document.createElement("input");
+      keyIn.type = "number"; keyIn.value = k; keyIn.style.maxWidth = "80px";
+      const valIn = document.createElement("input");
+      valIn.type = "text"; valIn.value = fatigue.thresholds[k];
+      const del = mkBtn("×", () => { delete fatigue.thresholds[k]; redraw(); }, "danger");
+      keyIn.addEventListener("change", () => {
+        const newK = parseInt(keyIn.value, 10);
+        if (Number.isNaN(newK) || String(newK) === k) return;
+        fatigue.thresholds[newK] = fatigue.thresholds[k];
+        delete fatigue.thresholds[k];
+        redraw();
+      });
+      valIn.addEventListener("input", () => { fatigue.thresholds[k] = valIn.value; });
+      const wrap = document.createElement("div");
+      wrap.style.display = "grid";
+      wrap.style.gridTemplateColumns = "80px 1fr auto";
+      wrap.style.gap = "6px";
+      wrap.appendChild(keyIn); wrap.appendChild(valIn); wrap.appendChild(del);
+      row.appendChild(document.createElement("label"));
+      row.appendChild(wrap);
+      block.appendChild(row);
+    }
+  }
+  redraw();
+  return block;
+}
+
+function mkBtn(text, onClick, cls = "") {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "btn-mini" + (cls ? " " + cls : "");
+  b.textContent = text;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+// ---------------- LLM section ----------------
+
+function renderLLMSection(llm) {
+  const sec = makeSection("LLM");
+  const body = sec.querySelector(".body");
+
+  // Providers
+  const provHead = document.createElement("h4");
+  provHead.style.cssText = "color:var(--magenta);font-size:11px;margin:0 0 6px";
+  provHead.appendChild(document.createTextNode("Providers"));
+  const addProv = mkBtn("+ add provider", () => {
+    let name = prompt("Provider name (unique key):");
+    if (!name) return;
+    name = name.trim();
+    if (!name || llm.providers[name]) { alert("invalid or exists"); return; }
+    llm.providers[name] = {
+      type: "openai_compatible", base_url: "", api_key: "", models: [],
+    };
+    renderSettingsForm();
+  });
+  const headWrap = document.createElement("div");
+  headWrap.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:6px";
+  headWrap.appendChild(provHead); headWrap.appendChild(addProv);
+  body.appendChild(headWrap);
+
+  for (const [pname, prov] of Object.entries(llm.providers || {})) {
+    body.appendChild(renderProviderBlock(pname, prov, llm));
+  }
+
+  // Roles
+  const rolesHead = document.createElement("h4");
+  rolesHead.style.cssText = "color:var(--magenta);font-size:11px;margin:12px 0 6px";
+  rolesHead.appendChild(document.createTextNode("Roles"));
+  const addRole = mkBtn("+ add role", () => {
+    const name = prompt("Role name (e.g. self / hypothalamus):");
+    if (!name) return;
+    if (llm.roles[name]) { alert("exists"); return; }
+    const provNames = Object.keys(llm.providers);
+    if (!provNames.length) { alert("add a provider first"); return; }
+    llm.roles[name] = { provider: provNames[0], model: "" };
+    renderSettingsForm();
+  });
+  const rolesHeadWrap = document.createElement("div");
+  rolesHeadWrap.style.cssText = "display:flex;align-items:center;gap:8px;margin:12px 0 6px";
+  rolesHeadWrap.appendChild(rolesHead); rolesHeadWrap.appendChild(addRole);
+  body.appendChild(rolesHeadWrap);
+
+  for (const rname of Object.keys(llm.roles || {})) {
+    body.appendChild(renderRoleRow(rname, llm.roles, llm.providers));
+  }
+
+  return sec;
+}
+
+function renderProviderBlock(pname, prov, llm) {
+  const block = document.createElement("div");
+  block.className = "subblock";
+  const h = document.createElement("h4");
+  h.appendChild(document.createTextNode(pname));
+  const actions = document.createElement("span");
+  actions.className = "actions";
+  const renameBtn = mkBtn("rename", () => {
+    const nn = prompt("New name:", pname);
+    if (!nn || nn === pname) return;
+    if (llm.providers[nn]) { alert("exists"); return; }
+    llm.providers[nn] = llm.providers[pname];
+    delete llm.providers[pname];
+    // Update roles referencing old name
+    for (const r of Object.values(llm.roles || {})) {
+      if (r.provider === pname) r.provider = nn;
+    }
+    renderSettingsForm();
+  });
+  const delBtn = mkBtn("delete", () => {
+    if (!confirm(`delete provider "${pname}"?`)) return;
+    delete llm.providers[pname];
+    renderSettingsForm();
+  }, "danger");
+  actions.appendChild(renameBtn); actions.appendChild(delBtn);
+  h.appendChild(actions);
+  block.appendChild(h);
+
+  block.appendChild(renderRow("type", prov, "type", "text"));
+  block.appendChild(renderRow("base_url", prov, "base_url", "text"));
+  block.appendChild(renderRow("api_key", prov, "api_key", "password"));
+
+  // Models list
+  const modBlock = document.createElement("div");
+  modBlock.style.cssText = "margin-top:6px";
+  const modHead = document.createElement("div");
+  modHead.style.cssText = "display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);margin-bottom:4px";
+  modHead.appendChild(document.createTextNode("models"));
+  const addModel = mkBtn("+ add model", () => {
+    if (!Array.isArray(prov.models)) prov.models = [];
+    prov.models.push({ name: "", capabilities: ["chat"] });
+    renderSettingsForm();
+  });
+  modHead.appendChild(addModel);
+  modBlock.appendChild(modHead);
+  for (let i = 0; i < (prov.models || []).length; i++) {
+    modBlock.appendChild(renderModelRow(prov, i));
+  }
+  block.appendChild(modBlock);
+  return block;
+}
+
+function renderModelRow(prov, idx) {
+  const m = prov.models[idx];
+  const row = document.createElement("div");
+  row.className = "model-row";
+  const nameIn = document.createElement("input");
+  nameIn.type = "text"; nameIn.value = m.name || "";
+  nameIn.placeholder = "model name";
+  nameIn.addEventListener("input", () => { m.name = nameIn.value; });
+  const capIn = document.createElement("input");
+  capIn.type = "text";
+  capIn.value = (m.capabilities || []).join(",");
+  capIn.placeholder = "capabilities (comma)";
+  capIn.addEventListener("input", () => {
+    m.capabilities = capIn.value.split(",").map((s) => s.trim()).filter(Boolean);
+  });
+  const del = mkBtn("×", () => { prov.models.splice(idx, 1); renderSettingsForm(); }, "danger");
+  row.appendChild(nameIn); row.appendChild(capIn); row.appendChild(del);
+  return row;
+}
+
+function renderRoleRow(rname, roles, providers) {
+  const row = document.createElement("div");
+  row.className = "cfg-row";
+  const lab = document.createElement("label");
+  lab.textContent = rname;
+  row.appendChild(lab);
+
+  const wrap = document.createElement("div");
+  wrap.style.cssText = "display:grid;grid-template-columns:1fr 1fr auto;gap:6px";
+
+  const provSel = document.createElement("select");
+  for (const pname of Object.keys(providers || {})) {
+    const opt = document.createElement("option");
+    opt.value = pname; opt.textContent = pname;
+    provSel.appendChild(opt);
+  }
+  provSel.value = roles[rname].provider || "";
+
+  const modSel = document.createElement("select");
+  function refreshModels() {
+    modSel.innerHTML = "";
+    const prov = providers[provSel.value];
+    const models = (prov && prov.models) || [];
+    if (!models.length) {
+      const opt = document.createElement("option");
+      opt.value = ""; opt.textContent = "(no models)"; modSel.appendChild(opt);
+    } else {
+      for (const m of models) {
+        const opt = document.createElement("option");
+        opt.value = m.name; opt.textContent = m.name;
+        modSel.appendChild(opt);
+      }
+    }
+    if (roles[rname].model && [...modSel.options].some(o => o.value === roles[rname].model)) {
+      modSel.value = roles[rname].model;
+    } else {
+      roles[rname].model = modSel.value;
+    }
+  }
+  provSel.addEventListener("change", () => {
+    roles[rname].provider = provSel.value;
+    refreshModels();
+  });
+  modSel.addEventListener("change", () => { roles[rname].model = modSel.value; });
+  refreshModels();
+
+  const del = mkBtn("×", () => { delete roles[rname]; renderSettingsForm(); }, "danger");
+
+  wrap.appendChild(provSel); wrap.appendChild(modSel); wrap.appendChild(del);
+  row.appendChild(wrap);
+  return row;
+}
+
+// ---------------- Generic dict section (sensory / tentacle) ----------------
+
+function renderDictSection(key, title, target, opts) {
+  const sec = makeSection(title);
+  const body = sec.querySelector(".body");
+  const headWrap = document.createElement("div");
+  headWrap.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:6px";
+  const addBtn = mkBtn("+ add entry", () => {
+    const name = prompt(`${title} entry key:`);
+    if (!name) return;
+    if (target[name]) { alert("exists"); return; }
+    target[name] = opts.defaultEntry();
+    renderSettingsForm();
+  });
+  headWrap.appendChild(addBtn);
+  body.appendChild(headWrap);
+
+  for (const [name, entry] of Object.entries(target)) {
+    body.appendChild(renderDictEntry(name, entry, target));
+  }
+  return sec;
+}
+
+function renderDictEntry(name, entry, parent) {
+  const block = document.createElement("div");
+  block.className = "subblock";
+  const h = document.createElement("h4");
+  h.appendChild(document.createTextNode(name));
+  const actions = document.createElement("span");
+  actions.className = "actions";
+  const addField = mkBtn("+ field", () => {
+    const fname = prompt("field name:");
+    if (!fname || fname in entry) return;
+    entry[fname] = "";
+    renderSettingsForm();
+  });
+  const del = mkBtn("delete", () => {
+    if (!confirm(`delete "${name}"?`)) return;
+    delete parent[name];
+    renderSettingsForm();
+  }, "danger");
+  actions.appendChild(addField); actions.appendChild(del);
+  h.appendChild(actions);
+  block.appendChild(h);
+
+  for (const k of Object.keys(entry)) {
+    const v = entry[k];
+    let type;
+    if (typeof v === "boolean") type = "bool";
+    else if (typeof v === "number") type = Number.isInteger(v) ? "number" : "number_float";
+    else type = "text";
+    block.appendChild(renderRow(k, entry, k, type));
+  }
+  return block;
 }
 
 function showToast(text, ok = true) {
@@ -341,15 +869,16 @@ function showToast(text, ok = true) {
 }
 
 $("#settings-save").addEventListener("click", async () => {
+  if (cfgState == null) { showToast("✗ nothing to save", false); return; }
   try {
     const r = await fetch("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ raw: settingsText.value }),
+      body: JSON.stringify({ parsed: cfgState }),
     });
     const body = await r.json();
     if (r.ok) {
-      showToast(`✓ saved (backup: ${body.backup || "n/a"}). Click Restart for changes to take effect.`);
+      showToast(`✓ saved (backup: ${body.backup || "n/a"}). Restart for changes to take effect.`);
     } else {
       showToast(`✗ save failed: ${body.detail || r.statusText}`, false);
     }
