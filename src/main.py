@@ -41,6 +41,7 @@ from src.self_agent import parse_self_output
 from src.sensories.cli_input import CliInputSensory
 from src.sensories.telegram import HttpTelegramClient, TelegramSensory
 from src.tentacles.action import ActionTentacle
+from src.tentacles.coding import CodingTentacle, SubprocessRunner
 from src.tentacles.memory_recall import MemoryRecallTentacle
 from src.tentacles.search import DDGSBackend, SearchTentacle
 from src.tentacles.telegram_reply import TelegramReplyTentacle
@@ -131,6 +132,15 @@ class Runtime:
                 backend=DDGSBackend(),
                 max_results=self.config.tentacle.get("search", {})
                     .get("max_results", 5),
+            ))
+        coding_cfg = self.config.tentacle.get("coding", {})
+        if coding_cfg.get("enabled", False):
+            self.tentacles.register(CodingTentacle(
+                runner=SubprocessRunner(),
+                sandbox_dir=coding_cfg.get("sandbox_dir",
+                                              "workspace/sandbox"),
+                timeout_seconds=coding_cfg.get("timeout_seconds", 30),
+                max_output_chars=coding_cfg.get("max_output_chars", 4000),
             ))
 
         self.sensories = SensoryRegistry()

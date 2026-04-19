@@ -73,6 +73,13 @@ sensory:
 tentacle:
   action: { enabled: true, max_context_tokens: 4096, sandboxed: true }
   search: { enabled: true, max_results: 5 }
+  coding:
+    # WARNING: NOT a real security sandbox — code runs with your user's privs.
+    # Disabled by default. Enable only on machines you control.
+    enabled: false
+    sandbox_dir: "workspace/sandbox"
+    timeout_seconds: 30
+    max_output_chars: 4000
 
 sleep:
   max_duration_seconds: 7200
