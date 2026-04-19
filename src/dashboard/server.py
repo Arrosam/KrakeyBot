@@ -28,6 +28,8 @@ def create_app(
     web_chat_history: WebChatHistory | None = None,
     on_user_message: Callable[[str], Awaitable[None]] | None = None,
     event_broadcaster: EventBroadcaster | None = None,
+    config_path: Path | None = None,
+    on_restart: Callable[[], None] | None = None,
 ) -> FastAPI:
     """Build the FastAPI app.
 
@@ -57,6 +59,7 @@ def create_app(
         _attach_events_ws(app, event_broadcaster)
 
     _attach_memory_routes(app, runtime)
+    _attach_settings_routes(app, config_path, on_restart)
 
     return app
 
@@ -156,6 +159,70 @@ def _serialize_node(n: dict[str, Any]) -> dict[str, Any]:
     out = {k: v for k, v in n.items() if k != "embedding"}
     out["has_embedding"] = n.get("embedding") is not None
     return out
+
+
+# ---------------- Settings (read + write + restart) ----------------
+
+
+def _attach_settings_routes(app: FastAPI, config_path: Path | None,
+                              on_restart: Callable[[], None] | None) -> None:
+    from fastapi import Body
+    import yaml as _yaml
+
+    from src.models.config_backup import backup_config
+
+    @app.get("/api/settings")
+    async def get_settings():  # noqa: ANN201
+        if config_path is None:
+            raise HTTPException(status_code=503,
+                                  detail="config_path not provided")
+        if not Path(config_path).exists():
+            raise HTTPException(status_code=404,
+                                  detail=f"config not found: {config_path}")
+        raw = Path(config_path).read_text(encoding="utf-8")
+        try:
+            parsed = _yaml.safe_load(raw)
+        except _yaml.YAMLError:
+            parsed = None
+        return {"path": str(config_path), "raw": raw, "parsed": parsed}
+
+    @app.post("/api/settings")
+    async def post_settings(payload: dict = Body(...)):  # noqa: ANN201
+        if config_path is None:
+            raise HTTPException(status_code=503,
+                                  detail="config_path not provided")
+        new_raw = payload.get("raw")
+        if new_raw is None or not isinstance(new_raw, str):
+            raise HTTPException(status_code=400,
+                                  detail="missing or invalid 'raw' field")
+        # Validate YAML before touching disk
+        try:
+            _yaml.safe_load(new_raw)
+        except _yaml.YAMLError as e:
+            raise HTTPException(status_code=400,
+                                  detail=f"invalid YAML: {e}")
+        # Backup existing config first
+        backup_dir = payload.get("backup_dir") or "workspace/backups"
+        backup_path = backup_config(config_path, backup_dir)
+        # Write
+        Path(config_path).write_text(new_raw, encoding="utf-8")
+        return {
+            "status": "saved",
+            "backup": str(backup_path) if backup_path else None,
+            "restart_required": True,
+        }
+
+    @app.post("/api/restart")
+    async def restart():  # noqa: ANN201
+        if on_restart is None:
+            raise HTTPException(status_code=503,
+                                  detail="restart not wired")
+        try:
+            on_restart()
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(status_code=500,
+                                  detail=f"restart failed: {e}")
+        return {"status": "restarting"}
 
 
 def _attach_events_ws(app: FastAPI, broadcaster: EventBroadcaster) -> None:

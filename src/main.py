@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Protocol
 
 from src.bootstrap import (
@@ -27,6 +28,7 @@ from src.memory.graph_memory import GraphMemory
 from src.memory.knowledge_base import KBRegistry
 from src.memory.recall import IncrementalRecall, Reranker
 from src.models.config import Config, load_config
+from src.models.config_backup import backup_config
 from src.models.stimulus import Stimulus
 from src.prompt.builder import PromptBuilder, SlidingWindowRound
 from src.runtime.batch_tracker import BatchTrackerSensory
@@ -79,6 +81,8 @@ class RuntimeDeps:
     reader: Callable[[], Awaitable[str | None]] | None = None
     self_model_path: str | None = None      # default: workspace/self_model.yaml
     genesis_path: str | None = None         # default: workspace/GENESIS.md
+    config_path: str | None = None          # default: config.yaml — for dashboard
+    backup_dir: str | None = None           # default: workspace/backups
 
 
 MAX_RECALL_RETRIES = 1
@@ -216,6 +220,16 @@ class Runtime:
         self.sleep_log_dir = "workspace/logs"
         self.events = event_bus or EventBus()
         self._dashboard: DashboardServer | None = None
+        self._config_path = deps.config_path  # for dashboard settings page
+        self._backup_dir = deps.backup_dir or "workspace/backups"
+
+        # Snapshot config.yaml on every startup so a bad save can be rolled
+        # back from workspace/backups/.
+        if self._config_path:
+            try:
+                backup_config(self._config_path, self._backup_dir)
+            except Exception as e:  # noqa: BLE001
+                self.log.runtime_error(f"config backup failed: {e}")
 
     def _new_recall(self) -> IncrementalRecall:
         return IncrementalRecall(
@@ -271,6 +285,13 @@ class Runtime:
                 metadata={"channel": "web_chat"},
             ))
 
+        def _on_restart() -> None:
+            """Re-exec process so a new instance picks up edited config."""
+            import os as _os
+            import sys as _sys
+            self.log.hb("restart requested via dashboard — re-execing")
+            _os.execv(_sys.executable, [_sys.executable, *_sys.argv])
+
         try:
             broadcaster = EventBroadcaster(self.events)
             self._dashboard = DashboardServer(
@@ -279,6 +300,8 @@ class Runtime:
                     web_chat_history=self.web_chat_history,
                     on_user_message=_on_user_message,
                     event_broadcaster=broadcaster,
+                    config_path=Path(self._config_path) if self._config_path else None,
+                    on_restart=_on_restart,
                 ),
                 host=cfg.host, port=cfg.port,
             )
@@ -786,6 +809,7 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
         config=cfg, self_llm=self_llm, hypo_llm=hypo_llm,
         action_llm=action_llm, compact_llm=compact_llm,
         classify_llm=classify_llm, embedder=embedder, reranker=reranker,
+        config_path=str(config_path),
     )
     return Runtime(deps)
 
