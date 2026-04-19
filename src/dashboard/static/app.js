@@ -609,8 +609,6 @@ function renderRow(label, target, key, type, helpPath) {
   lab.textContent = label;
   if (helpPath && HELP[helpPath]) {
     lab.title = HELP[helpPath];
-    lab.style.cursor = "help";
-    lab.style.borderBottom = "1px dotted var(--muted)";
   }
   row.appendChild(lab);
 
