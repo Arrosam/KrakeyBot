@@ -14,7 +14,7 @@ from typing import Any, Protocol
 
 SYSTEM_PROMPT = """# Hypothalamus — 行动翻译器
 
-你是 CogniBot 的下丘脑。将 Self 的自然语言决策翻译为结构化指令。
+你是 KrakeyBot 的下丘脑。将 Self 的自然语言决策翻译为结构化指令。
 
 ## 可用 Tentacles
 {tentacle_list}

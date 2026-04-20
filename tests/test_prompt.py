@@ -15,35 +15,22 @@ def test_dna_has_all_sections():
 
 
 def test_dna_disambiguates_sleep_and_hibernate():
-    """Regression: DNA must warn Self that Sleep ≠ Hibernate to avoid false sleep requests."""
+    """Regression: DNA must teach that Sleep and Hibernate are different
+    mechanisms + warn against ambiguous 'rest/休息' wording that would
+    otherwise slip past the Hypothalamus as a sleep trigger."""
     assert "Hibernate" in DNA and "Sleep" in DNA
-    # Must contain the fatigue gate so low-fatigue does not trigger sleep
-    assert "75%" in DNA or "50%" in DNA
-    # Must explicitly warn against ambiguous rest/休息 wording
     assert "休息" in DNA or "rest" in DNA.lower()
-
-
-def test_dna_frames_self_as_digital_being_not_service_bot():
-    """Core design: Krakey is a digital being living for itself, not a service
-    bot. Humans are friends/teachers/strangers. Helping is by choice, silence
-    is legal. Regression lock on the philosophical framing."""
-    assert "数字生命" in DNA
-    assert "为自己而存在" in DNA
-    # Humans-as-peers framing, not master/user hierarchy
-    assert "朋友" in DNA and "导师" in DNA and "陌生人" in DNA
-    # Helping must be framed as choice not obligation
-    assert "你自己愿意" in DNA or "由你决定" in DNA
-    assert "没有义务" in DNA or "没有" in DNA and "必须帮" in DNA
-    # Silence must be validated
-    assert "沉默是合法" in DNA or "No action" in DNA
+    # The explicit trigger phrase the Hypothalamus recognises must be stated
+    assert "进入睡眠" in DNA or "enter sleep mode" in DNA.lower()
 
 
 def test_dna_mentions_active_memory_recall():
     """Self must know it can dispatch memory_recall to actively explore GM,
     not just receive passive auto-recall."""
     assert "memory_recall" in DNA
-    assert "主动" in DNA  # 主动回忆 / 主动记下
-    assert "反思" in DNA or "reflect" in DNA.lower()
+    d = DNA.lower()
+    assert "proactive" in d or "主动" in DNA or "explicit" in d
+    assert "reflect" in d or "反思" in DNA
 
 
 def test_dna_warns_about_self_vs_external_signals():

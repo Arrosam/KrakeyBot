@@ -1,7 +1,7 @@
-# CogniBot (KrakeyBot)
+# KrakeyBot
 
 > 以持续心跳维持"存在"的自主认知 Agent。
-> 完整设计见 [`CogniBot_DevSpec_v2.1.md`](CogniBot_DevSpec_v2.1.md)，实现路线见 [`CogniBot_Checklist.md`](CogniBot_Checklist.md)。
+> 完整设计见 [`KrakeyBot_DevSpec_v2.1.md`](KrakeyBot_DevSpec_v2.1.md)，实现路线见 [`KrakeyBot_Checklist.md`](KrakeyBot_Checklist.md)。
 
 ---
 

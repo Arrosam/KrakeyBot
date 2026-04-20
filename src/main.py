@@ -1,4 +1,4 @@
-"""CogniBot entrypoint + main heartbeat loop (DevSpec §6.4).
+"""KrakeyBot entrypoint + main heartbeat loop (DevSpec §6.4).
 
 Phase 1 wiring: GraphMemory + IncrementalRecall + SlidingWindow + compact +
 fatigue calc + BatchTracker + async classify. Phase 2 will add Bootstrap,

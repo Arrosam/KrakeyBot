@@ -1,4 +1,4 @@
-"""Root launcher: `python main.py` starts the CogniBot heartbeat loop.
+"""Root launcher: `python main.py` starts the KrakeyBot heartbeat loop.
 
 Self-bootstrapping: if runtime deps are missing it creates `.venv`,
 pip-installs `requirements.txt`, and re-launches in that interpreter.
