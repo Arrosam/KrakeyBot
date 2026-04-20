@@ -188,6 +188,11 @@ class Runtime:
         self._self_model_store = SelfModelStore(sm_path)
         self._genesis_text = load_genesis(gen_path)
         self.self_model, detected_bootstrap = load_self_model_or_default(sm_path)
+        # Provisional value used by tests that bypass run() / data probe.
+        # Re-derived from GM+KB emptiness once gm.initialize() runs (see
+        # _refine_bootstrap_from_data). The override flag pins the value
+        # so test-only Runtimes can still force a mode.
+        self._bootstrap_overridden = is_bootstrap_override is not None
         self.is_bootstrap = (is_bootstrap_override
                               if is_bootstrap_override is not None
                               else detected_bootstrap)
@@ -228,6 +233,7 @@ class Runtime:
 
     async def run(self, iterations: int | None = None) -> None:
         await self.gm.initialize()
+        await self._refine_bootstrap_from_data()
         await self.sensories.start_all(self.buffer)
         await self._maybe_start_dashboard()
         self._recall = self._new_recall()
@@ -244,6 +250,30 @@ class Runtime:
             pending = [t for t in self._classify_tasks if not t.done()]
             for t in pending:
                 t.cancel()
+
+    async def _refine_bootstrap_from_data(self) -> None:
+        """Bootstrap fires only when the workspace is genuinely empty —
+        zero GM nodes AND zero (active or archived) KBs. Otherwise the
+        agent already has lived experience and shouldn't re-read GENESIS,
+        regardless of what self_model.yaml says about bootstrap_complete.
+
+        Override path (`is_bootstrap_override` in __init__) wins for tests.
+        """
+        if hasattr(self, "_bootstrap_overridden") and self._bootstrap_overridden:
+            return
+        try:
+            n_nodes = await self.gm.count_nodes()
+        except Exception:  # noqa: BLE001
+            n_nodes = 0
+        try:
+            kbs = await self.kb_registry.list_kbs(include_archived=True)
+        except Exception:  # noqa: BLE001
+            kbs = []
+        empty = n_nodes == 0 and len(kbs) == 0
+        self.is_bootstrap = empty and not self.self_model.get(
+            "state", {}).get("bootstrap_complete", False)
+        if self.is_bootstrap:
+            self.log.hb("bootstrap mode: empty GM + KBs → injecting GENESIS")
 
     async def close(self) -> None:
         """Shut down persistent resources (Dashboard + GM + open KBs)."""

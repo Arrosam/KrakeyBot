@@ -9,7 +9,7 @@ __pycache__/
 .pytest_cache/
 .coverage
 *.egg-info/
-workspace/
+workspace/*
 !workspace/GENESIS.md
 *.sqlite
 *.sqlite-journal
