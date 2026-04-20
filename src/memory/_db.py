@@ -21,8 +21,16 @@ SCHEMA_PATH = Path(__file__).parent / "schemas.sql"
 
 
 async def open_db_with_vec(path: str | Path) -> aiosqlite.Connection:
-    """Open an aiosqlite connection, load sqlite-vec, enable FK + Row factory."""
-    db = await aiosqlite.connect(str(path))
+    """Open an aiosqlite connection, load sqlite-vec, enable FK + Row factory.
+
+    Auto-creates the parent directory so a fresh / factory-reset workspace
+    boots without requiring the user to pre-mkdir workspace/data/ etc.
+    Skipped for in-memory connections.
+    """
+    s = str(path)
+    if s != ":memory:" and not s.startswith("file::memory:"):
+        Path(s).parent.mkdir(parents=True, exist_ok=True)
+    db = await aiosqlite.connect(s)
     db.row_factory = aiosqlite.Row
     await db.enable_load_extension(True)
     await db.load_extension(sqlite_vec.loadable_path())
