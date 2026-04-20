@@ -80,6 +80,25 @@ class KnowledgeBaseSection:
 @dataclass
 class SleepSection:
     max_duration_seconds: int
+    # Communities below this size stay in GM (don't get migrated to a KB).
+    # Default 2 = skip pure singletons.
+    min_community_size: int = 2
+    # KB consolidation: pairwise-merge active KBs whose index vectors
+    # (mean of member entry embeddings) are at least this cosine-close.
+    kb_consolidation_threshold: float = 0.85
+    # When active KB count exceeds this, archive the least-important
+    # `kb_archive_pct` percent (importance = entry_count * mean importance).
+    # Archived KBs keep their files + entries on disk and their index
+    # vector in kb_registry — they just lose their GM index node so they
+    # stop bloating recall.
+    kb_index_max: int = 30
+    kb_archive_pct: int = 10
+    # When sleep would create a fresh KB for a new community, first compare
+    # the community summary embedding against archived KBs' index vectors;
+    # if the cosine similarity to one is at least this, revive that
+    # archived KB and write the new entries into it instead. Models the
+    # "forgot a topic, then re-encountered it" relearning shortcut.
+    kb_revive_threshold: float = 0.80
 
 
 @dataclass
@@ -179,12 +198,23 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         knowledge_base=KnowledgeBaseSection(dir=raw["knowledge_base"]["dir"]),
         sensory=raw.get("sensory") or {},
         tentacle=raw.get("tentacle") or {},
-        sleep=SleepSection(max_duration_seconds=raw["sleep"]["max_duration_seconds"]),
+        sleep=_build_sleep(raw["sleep"]),
         safety=SafetySection(
             gm_node_hard_limit=raw["safety"]["gm_node_hard_limit"],
             max_consecutive_no_action=raw["safety"]["max_consecutive_no_action"],
         ),
         dashboard=_build_dashboard(raw.get("dashboard")),
+    )
+
+
+def _build_sleep(raw: dict[str, Any]) -> SleepSection:
+    return SleepSection(
+        max_duration_seconds=raw["max_duration_seconds"],
+        min_community_size=int(raw.get("min_community_size", 2)),
+        kb_consolidation_threshold=float(raw.get("kb_consolidation_threshold", 0.85)),
+        kb_index_max=int(raw.get("kb_index_max", 30)),
+        kb_archive_pct=int(raw.get("kb_archive_pct", 10)),
+        kb_revive_threshold=float(raw.get("kb_revive_threshold", 0.80)),
     )
 
 

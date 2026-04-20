@@ -142,3 +142,106 @@ async def test_node_without_community_skipped(tmp_path):
     assert len(remaining) == 1
     await reg.close_all()
     await gm.close()
+
+
+# ---------------- min_community_size ----------------
+
+async def test_singleton_skipped_when_min_size_2(tmp_path):
+    gm, reg = await _setup(tmp_path)
+    # Single isolated node → community of size 1
+    n = await gm.insert_node(name="lone", category="FACT",
+                                description="alone", embedding=[1.0, 0.0])
+    await run_leiden_clustering(gm, llm=CountingLLM(), embedder=FixedEmbed())
+
+    stats = await migrate_gm_to_kb(gm, reg, min_community_size=2)
+    assert stats["migrated_nodes"] == 0
+    assert stats["skipped_small_community"] == 1
+    # Node still in GM (NOT migrated)
+    assert (await gm.list_nodes(category="FACT"))[0]["id"] == n
+
+
+async def test_singleton_migrated_when_min_size_1(tmp_path):
+    gm, reg = await _setup(tmp_path)
+    await gm.insert_node(name="lone", category="FACT",
+                            description="alone", embedding=[1.0, 0.0])
+    await run_leiden_clustering(gm, llm=CountingLLM(), embedder=FixedEmbed())
+    stats = await migrate_gm_to_kb(gm, reg, min_community_size=1)
+    assert stats["migrated_nodes"] == 1
+    assert stats["skipped_small_community"] == 0
+
+
+# ---------------- KB revive on archived match ----------------
+
+async def test_migration_revives_archived_kb_on_summary_cosine_match(tmp_path):
+    """When a new community's summary embedding matches an archived KB's
+    stored index vector, migration should reactivate the archive instead
+    of creating a new community_X KB.
+    """
+    gm, reg = await _setup(tmp_path)
+    # 1) Pre-existing archived KB with known index vector
+    old = await reg.create_kb("astro_old", name="Old Astro",
+                                 description="ancient")
+    await reg.set_index_embedding("astro_old", [1.0, 0.0])
+    await reg.set_archived("astro_old", True)
+
+    # 2) Stage a community whose summary_embedding is highly similar.
+    #    Easiest path: insert a community row directly + map a node to it.
+    db = gm._require()  # noqa: SLF001
+    from src.memory._db import encode_embedding
+    cur = await db.execute(
+        "INSERT INTO gm_communities(name, summary, summary_embedding, "
+        "member_count) VALUES(?, ?, ?, 1)",
+        ("new astro", "new astro related stuff",
+         encode_embedding([1.0, 0.001])),
+    )
+    cid = cur.lastrowid
+    n = await gm.insert_node(name="star", category="FACT",
+                                description="luminous body",
+                                embedding=[1.0, 0.0])
+    await db.execute(
+        "INSERT INTO gm_node_communities(node_id, community_id) VALUES(?, ?)",
+        (n, cid),
+    )
+    await db.commit()
+
+    stats = await migrate_gm_to_kb(gm, reg, min_community_size=1,
+                                       revive_threshold=0.95)
+    assert stats["kbs_revived"] == 1
+    assert stats["kbs_created"] == 0
+
+    # The revived KB ('astro_old') should now hold the new entry
+    active = await reg.list_kbs(include_archived=False)
+    assert {k["kb_id"] for k in active} == {"astro_old"}
+    kb = await reg.open_kb("astro_old")
+    assert await kb.count_entries() == 1
+
+
+async def test_migration_creates_new_kb_when_no_archive_matches(tmp_path):
+    gm, reg = await _setup(tmp_path)
+    await reg.create_kb("astro_old", name="Old")
+    await reg.set_index_embedding("astro_old", [1.0, 0.0])
+    await reg.set_archived("astro_old", True)
+
+    # New community embedding is orthogonal → no match
+    db = gm._require()  # noqa: SLF001
+    from src.memory._db import encode_embedding
+    cur = await db.execute(
+        "INSERT INTO gm_communities(name, summary, summary_embedding, "
+        "member_count) VALUES(?, ?, ?, 1)",
+        ("biology", "cells and DNA", encode_embedding([0.0, 1.0])),
+    )
+    cid = cur.lastrowid
+    n = await gm.insert_node(name="cell", category="FACT", description="x",
+                                embedding=[0.0, 1.0])
+    await db.execute(
+        "INSERT INTO gm_node_communities(node_id, community_id) VALUES(?, ?)",
+        (n, cid),
+    )
+    await db.commit()
+
+    stats = await migrate_gm_to_kb(gm, reg, min_community_size=1,
+                                       revive_threshold=0.95)
+    assert stats["kbs_revived"] == 0
+    assert stats["kbs_created"] == 1
+    active_ids = {k["kb_id"] for k in await reg.list_kbs()}
+    assert f"community_{cid}" in active_ids

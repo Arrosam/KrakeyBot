@@ -608,10 +608,16 @@ class Runtime:
         self.log.hb(f"sleep started — {reason}")
         self.events.publish(SleepStartEvent(reason=reason))
         try:
+            sl = self.config.sleep
             stats = await enter_sleep_mode(
                 self.gm, self.kb_registry, self.sensories,
                 llm=self.compact_llm, embedder=self.embedder,
                 log_dir=self.sleep_log_dir,
+                min_community_size=sl.min_community_size,
+                kb_consolidation_threshold=sl.kb_consolidation_threshold,
+                kb_index_max=sl.kb_index_max,
+                kb_archive_pct=sl.kb_archive_pct,
+                kb_revive_threshold=sl.kb_revive_threshold,
             )
         except Exception as e:  # noqa: BLE001
             self.log.hb(f"sleep failed: {e}")

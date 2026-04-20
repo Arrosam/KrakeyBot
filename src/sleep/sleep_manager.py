@@ -17,6 +17,7 @@ from src.memory.graph_memory import GraphMemory
 from src.memory.knowledge_base import KBRegistry
 from src.sleep.clustering import run_leiden_clustering
 from src.sleep.index_rebuild import rebuild_index_graph
+from src.sleep.kb_lifecycle import archive_excess_kbs, consolidate_kbs
 from src.sleep.migration import migrate_gm_to_kb
 
 
@@ -32,6 +33,11 @@ async def enter_sleep_mode(
     gm: GraphMemory, reg: KBRegistry, sensories: SensoryRegistry,
     *, llm: AsyncChatLLM, embedder: AsyncEmbedder,
     log_dir: str | Path = "workspace/logs",
+    min_community_size: int = 1,
+    kb_consolidation_threshold: float = 0.85,
+    kb_index_max: int = 30,
+    kb_archive_pct: int = 10,
+    kb_revive_threshold: float = 0.80,
 ) -> dict[str, Any]:
     """Run all 7 phases. Returns summary stats."""
 
@@ -44,12 +50,29 @@ async def enter_sleep_mode(
         # Phase 2: cluster + summarize
         communities = await run_leiden_clustering(
             gm, llm=llm, embedder=embedder,
+            min_size=min_community_size,
         )
 
         # Phase 3 (+ implicit Phase 4): migrate FACT/RELATION/KNOWLEDGE
         # (incl. completed-TARGETs-now-FACT) into KB.
         before_targets = await _count(gm, "TARGET")
-        migrate_stats = await migrate_gm_to_kb(gm, reg)
+        migrate_stats = await migrate_gm_to_kb(
+            gm, reg,
+            min_community_size=min_community_size,
+            revive_threshold=kb_revive_threshold,
+        )
+
+        # Phase 3.5: consolidate KBs whose index vectors are cosine-close.
+        # Done after migration so newly-added entries inform the merge.
+        consolidate_stats = await consolidate_kbs(
+            reg, threshold=kb_consolidation_threshold,
+        )
+
+        # Phase 3.6: archive excess KBs (drop GM index node, keep file).
+        archive_stats = await archive_excess_kbs(
+            reg, gm, max_count=kb_index_max,
+            archive_pct=kb_archive_pct,
+        )
 
         # Phase 4: explicit no-op (completed targets already migrated; open
         # targets stay in GM untouched).
@@ -58,7 +81,7 @@ async def enter_sleep_mode(
         # Phase 5: clear FOCUS
         focus_cleared = await _delete_category(gm, "FOCUS")
 
-        # Phase 6: rebuild Index Graph
+        # Phase 6: rebuild Index Graph (only active KBs get GM nodes)
         idx_stats = await rebuild_index_graph(
             gm, reg, llm=llm, embedder=embedder,
         )
@@ -71,7 +94,12 @@ async def enter_sleep_mode(
             "facts_migrated": migrate_stats["migrated_nodes"],
             "edges_migrated": migrate_stats["migrated_edges"],
             "kbs_created": migrate_stats["kbs_created"],
+            "kbs_revived": migrate_stats["kbs_revived"],
             "skipped_no_community": migrate_stats["skipped_no_community"],
+            "skipped_small_community": migrate_stats["skipped_small_community"],
+            "kbs_merged": consolidate_stats["merged"],
+            "kbs_archived": archive_stats["archived"],
+            "kbs_active_after": archive_stats["active_after"],
             "focus_cleared": focus_cleared,
             "targets_preserved": targets_preserved,
             "targets_before": before_targets,

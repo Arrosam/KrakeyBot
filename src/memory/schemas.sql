@@ -80,14 +80,16 @@ CREATE TABLE IF NOT EXISTS gm_node_communities (
 );
 
 CREATE TABLE IF NOT EXISTS kb_registry (
-    kb_id       TEXT    PRIMARY KEY,
-    name        TEXT    NOT NULL,
-    path        TEXT    NOT NULL,
-    description TEXT,
-    topics      TEXT,                        -- JSON array
-    entry_count INTEGER  DEFAULT 0,
-    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+    kb_id           TEXT    PRIMARY KEY,
+    name            TEXT    NOT NULL,
+    path            TEXT    NOT NULL,
+    description     TEXT,
+    topics          TEXT,                        -- JSON array
+    entry_count     INTEGER  DEFAULT 0,
+    is_archived     INTEGER  DEFAULT 0,          -- BOOLEAN: archived KBs lose GM index node
+    index_embedding BLOB,                        -- mean of member entry embeddings; used for revive cosine match
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 -- =============================================================

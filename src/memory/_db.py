@@ -33,11 +33,33 @@ async def open_db_with_vec(path: str | Path) -> aiosqlite.Connection:
 
 async def apply_schema(db: aiosqlite.Connection,
                           schema_text: str | None = None) -> None:
-    """Run the bundled schemas.sql (or a provided SQL string) and commit."""
+    """Run the bundled schemas.sql (or a provided SQL string) and commit.
+
+    Also runs in-place ALTER TABLE for columns added after a DB was first
+    created — SQLite has no `ADD COLUMN IF NOT EXISTS`, so we PRAGMA-check
+    each evolving column and add it on demand. Keep this list small and
+    only for additive changes.
+    """
     if schema_text is None:
         schema_text = SCHEMA_PATH.read_text(encoding="utf-8")
     await db.executescript(schema_text)
+    await _ensure_columns(db, "kb_registry", {
+        "is_archived": "INTEGER DEFAULT 0",
+        "index_embedding": "BLOB",
+    })
     await db.commit()
+
+
+async def _ensure_columns(db: aiosqlite.Connection, table: str,
+                            columns: dict[str, str]) -> None:
+    async with db.execute(f"PRAGMA table_info({table})") as cur:
+        existing = {row[1] for row in await cur.fetchall()}
+    if not existing:
+        # Table doesn't exist in this DB (e.g. KB-only file) — nothing to do
+        return
+    for col, ddl in columns.items():
+        if col not in existing:
+            await db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
 
 
 # ---------------- vector helpers ----------------

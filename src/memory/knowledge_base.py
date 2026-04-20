@@ -231,12 +231,17 @@ class KBRegistry:
         self._open[kb_id] = kb
         return kb
 
-    async def list_kbs(self) -> list[dict[str, Any]]:
+    async def list_kbs(self, *, include_archived: bool = False
+                          ) -> list[dict[str, Any]]:
         gm_db = self.gm._require()  # noqa: SLF001
-        async with gm_db.execute(
+        sql = (
             "SELECT kb_id, name, path, description, topics, entry_count, "
-            "created_at, updated_at FROM kb_registry"
-        ) as cur:
+            "is_archived, index_embedding, created_at, updated_at "
+            "FROM kb_registry"
+        )
+        if not include_archived:
+            sql += " WHERE COALESCE(is_archived, 0) = 0"
+        async with gm_db.execute(sql) as cur:
             rows = await cur.fetchall()
         out = []
         for r in rows:
@@ -247,10 +252,51 @@ class KBRegistry:
                 "description": r["description"],
                 "topics": json.loads(r["topics"]) if r["topics"] else [],
                 "entry_count": r["entry_count"],
+                "is_archived": bool(r["is_archived"]),
+                "index_embedding": decode_embedding(r["index_embedding"]),
                 "created_at": r["created_at"],
                 "updated_at": r["updated_at"],
             })
         return out
+
+    async def set_archived(self, kb_id: str, archived: bool) -> None:
+        gm_db = self.gm._require()  # noqa: SLF001
+        await gm_db.execute(
+            "UPDATE kb_registry SET is_archived = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE kb_id = ?",
+            (1 if archived else 0, kb_id),
+        )
+        await gm_db.commit()
+
+    async def set_index_embedding(self, kb_id: str,
+                                     embedding: list[float] | None) -> None:
+        gm_db = self.gm._require()  # noqa: SLF001
+        await gm_db.execute(
+            "UPDATE kb_registry SET index_embedding = ? WHERE kb_id = ?",
+            (encode_embedding(embedding), kb_id),
+        )
+        await gm_db.commit()
+
+    async def delete_kb(self, kb_id: str) -> None:
+        """Drop a KB completely: registry row, on-disk file, and any open
+        connection. Caller is responsible for moving entries out first if
+        they want to preserve them (consolidation does this)."""
+        kb = self._open.pop(kb_id, None)
+        if kb is not None:
+            await kb.close()
+        gm_db = self.gm._require()  # noqa: SLF001
+        async with gm_db.execute(
+            "SELECT path FROM kb_registry WHERE kb_id = ?", (kb_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            return
+        await gm_db.execute("DELETE FROM kb_registry WHERE kb_id = ?", (kb_id,))
+        await gm_db.commit()
+        try:
+            Path(row["path"]).unlink()
+        except (OSError, FileNotFoundError):
+            pass
 
     async def _fetch_meta(self, kb_id: str) -> dict[str, Any] | None:
         gm_db = self.gm._require()  # noqa: SLF001
