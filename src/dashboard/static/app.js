@@ -12,6 +12,13 @@ $$(".tab-btn").forEach((btn) => {
     $$(".tab-panel").forEach((p) => p.classList.toggle("active", p.id === id));
     if (btn.dataset.tab === "memory") loadMemory(currentMemView);
     if (btn.dataset.tab === "settings") loadSettings();
+    if (btn.dataset.tab === "chat") {
+      // History was rendered while panel was hidden (scrollHeight=0);
+      // scroll to bottom now that it's visible.
+      requestAnimationFrame(() => {
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+      });
+    }
   });
 });
 
