@@ -233,6 +233,43 @@ main {
   white-space: pre-wrap;
 }
 
+#latest-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+.prompt-section {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+.prompt-section > summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--cyan);
+  padding: 2px 0;
+  list-style: none;
+  user-select: none;
+}
+.prompt-section > summary::before {
+  content: "▶ ";
+  color: var(--muted);
+  font-size: 9px;
+}
+.prompt-section[open] > summary::before { content: "▼ "; }
+.prompt-section > pre {
+  margin: 4px 0 0;
+  padding: 6px 0 0;
+  border-top: 1px dashed var(--border);
+  font-size: 11px;
+  white-space: pre-wrap;
+  max-height: 320px;
+  overflow: auto;
+  color: var(--text);
+}
+
 /* ---------------- chat ---------------- */
 
 .chat-meta {

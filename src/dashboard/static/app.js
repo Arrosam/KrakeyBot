@@ -12,6 +12,7 @@ $$(".tab-btn").forEach((btn) => {
     $$(".tab-panel").forEach((p) => p.classList.toggle("active", p.id === id));
     if (btn.dataset.tab === "memory") loadMemory(currentMemView);
     if (btn.dataset.tab === "settings") loadSettings();
+    if (btn.dataset.tab === "thoughts") renderLatestPrompt();
     if (btn.dataset.tab === "chat") {
       // History was rendered while panel was hidden (scrollHeight=0);
       // scroll to bottom now that it's visible.
@@ -45,6 +46,52 @@ const hypoEl = $("#hypo-stream");
 const stimList = $("#stim-list");
 const promptHb = $("#prompt-hb");
 const latestPrompt = $("#latest-prompt");
+
+let latestPromptText = "";
+
+// Section titles that change every heartbeat — open by default.
+// Anything else (DNA, SELF-MODEL, HEARTBEAT question, BOOTSTRAP) is
+// collapsed since it's noise during normal inspection.
+const DYNAMIC_SECTIONS = ["STATUS", "GRAPH MEMORY", "HISTORY", "STIMULUS"];
+
+function splitPromptSections(text) {
+  if (!text) return [];
+  // Layers are joined by '\n\n'; non-DNA layers start with '# [TITLE]'.
+  // Split on the boundary, keep delimiter so titles survive.
+  const parts = text.split(/\n\n(?=#\s)/);
+  const out = [];
+  for (const p of parts) {
+    const m = p.match(/^#\s+\[?([^\]\n]+?)\]?\s*\n([\s\S]*)$/);
+    if (m) {
+      out.push({ title: m[1].trim(), body: m[2] });
+    } else {
+      // First chunk (DNA) has no '#' header at column 0 — bucket as "DNA"
+      out.push({ title: "DNA / 系统提示", body: p });
+    }
+  }
+  return out;
+}
+
+function renderLatestPrompt() {
+  latestPrompt.innerHTML = "";
+  if (!latestPromptText) {
+    latestPrompt.textContent = "(no prompt yet)";
+    return;
+  }
+  for (const s of splitPromptSections(latestPromptText)) {
+    const d = document.createElement("details");
+    d.className = "prompt-section";
+    if (DYNAMIC_SECTIONS.some((k) => s.title.toUpperCase().includes(k))) {
+      d.open = true;
+    }
+    const sum = document.createElement("summary");
+    sum.textContent = s.title;
+    const pre = document.createElement("pre");
+    pre.textContent = s.body;
+    d.appendChild(sum); d.appendChild(pre);
+    latestPrompt.appendChild(d);
+  }
+}
 
 function appendEntry(panel, hbId, text) {
   const div = document.createElement("div");
@@ -116,7 +163,8 @@ function handleEvent(e) {
       break;
     case "prompt_built":
       promptHb.textContent = e.heartbeat_id;
-      latestPrompt.textContent = e.layers.full_prompt || "(empty)";
+      latestPromptText = e.layers.full_prompt || "";
+      renderLatestPrompt();
       break;
     case "sleep_start":
       appendEntry(hypoEl, "—", "💤 sleep started: " + e.reason);
