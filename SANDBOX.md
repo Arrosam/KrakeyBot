@@ -52,6 +52,21 @@ Pick whatever guest OS you prefer:
 
 Minimum resources: 2 vCPU, 4 GB RAM, 40 GB disk.
 
+**Display mode — headed vs headless (pick one):**
+
+- **headed** — Krakey's VM desktop shows in a window on your screen. You
+  can see what she is doing, intervene manually, log in from inside.
+  Launch QEMU with `-display sdl` (or `spice` / `gtk`). Cost: a
+  visible window + a display server running inside the guest.
+- **headless** — VM runs with no display. Cheaper resources, less
+  noise, but you cannot watch or help interactively. Launch QEMU
+  with `-display none` (or `-nographic`). Coding-only sandboxes
+  generally want this; GUI-tentacle sandboxes need headed.
+
+The `sandbox.display` config field is **declarative only** — the
+runtime does not start the VM for you. Set it to the mode you
+intended; Phase S4 lifecycle tooling will consume it.
+
 ### Example: Ubuntu Server 22.04 under QEMU on Linux host
 
 ```bash
@@ -175,6 +190,7 @@ sandbox:
   guest_os: linux                     # or macos / windows
   provider: qemu
   vm_name: krakey-sandbox
+  display: headed                     # headed | headless (your choice)
   resources:
     cpu: 2
     memory_mb: 4096

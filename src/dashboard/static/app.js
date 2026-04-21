@@ -478,6 +478,7 @@ const SECTION_DEFAULTS = {
   dashboard: { enabled: true, host: "127.0.0.1", port: 8765 },
   sandbox: {
     guest_os: "", provider: "qemu", vm_name: "",
+    display: "headed",
     network_mode: "nat_allowlist",
   },
 };
@@ -522,6 +523,7 @@ const HELP = {
   "sandbox.guest_os": "沙盒客机操作系统: linux / macos / windows。启用任何 sandboxed tentacle 必须先填。",
   "sandbox.provider": "虚拟机管理器: qemu (推荐) / virtualbox / utm。",
   "sandbox.vm_name": "VM 实例名 (预先 provision 好)。",
+  "sandbox.display": "headed = VM 桌面显示一个窗口, 你能看能介入; headless = VM 完全不显示, 只通过 agent 交互。由你按使用偏好选。",
   "sandbox.resources.cpu": "分配给 VM 的 vCPU 数。",
   "sandbox.resources.memory_mb": "分配给 VM 的内存 (MB)。",
   "sandbox.resources.disk_gb": "VM 磁盘容量 (GB)。",
@@ -570,6 +572,7 @@ const SCHEMAS = {
     ["guest_os", "text"],
     ["provider", "text"],
     ["vm_name", "text"],
+    ["display", "text"],
     ["network_mode", "text"],
   ],
   sandbox_resources: [

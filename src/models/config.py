@@ -137,6 +137,11 @@ class SandboxSection:
     guest_os: str = ""         # "linux" | "macos" | "windows" — REQUIRED
     provider: str = "qemu"     # qemu | virtualbox | utm
     vm_name: str = ""
+    # "headed" — user can see the VM's desktop (spice/sdl/vnc window
+    # with a display server). "headless" — VM runs with no display.
+    # Declarative only for now: the user launches the VM themselves;
+    # this flag documents intent + drives lifecycle tooling later.
+    display: str = "headed"    # headed | headless
     resources: SandboxResourcesSection = field(
         default_factory=SandboxResourcesSection
     )
@@ -246,10 +251,19 @@ def _build_sandbox(raw: dict[str, Any] | None) -> SandboxSection:
     raw = raw or {}
     res_raw = raw.get("resources") or {}
     agent_raw = raw.get("agent") or {}
+    display = str(raw.get("display", "headed")).lower()
+    if display not in ("headed", "headless"):
+        print(
+            f"warning: sandbox.display={display!r} not recognised; "
+            "falling back to 'headed'. Valid values: headed | headless.",
+            file=sys.stderr,
+        )
+        display = "headed"
     return SandboxSection(
         guest_os=str(raw.get("guest_os", "")),
         provider=str(raw.get("provider", "qemu")),
         vm_name=str(raw.get("vm_name", "")),
+        display=display,
         resources=SandboxResourcesSection(
             cpu=int(res_raw.get("cpu", 2)),
             memory_mb=int(res_raw.get("memory_mb", 4096)),

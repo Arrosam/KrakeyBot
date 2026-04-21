@@ -140,3 +140,24 @@ async def test_runtime_builds_sandbox_runner_with_complete_config(tmp_path):
     runtime.config.sandbox.agent.token = "tok"
     runner = runtime._build_code_runner(runtime.config.tentacle["coding"])
     assert isinstance(runner, SandboxRunner)
+
+
+# ---------------- display mode config ----------------
+
+def test_sandbox_display_defaults_to_headed():
+    from src.models.config import _build_sandbox
+    sb = _build_sandbox({})
+    assert sb.display == "headed"
+
+
+def test_sandbox_display_honors_user_choice():
+    from src.models.config import _build_sandbox
+    assert _build_sandbox({"display": "headless"}).display == "headless"
+    assert _build_sandbox({"display": "HEADED"}).display == "headed"
+
+
+def test_sandbox_display_invalid_falls_back_to_headed(capsys):
+    from src.models.config import _build_sandbox
+    sb = _build_sandbox({"display": "weird"})
+    assert sb.display == "headed"
+    assert "display" in capsys.readouterr().err.lower()
