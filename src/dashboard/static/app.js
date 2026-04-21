@@ -645,17 +645,28 @@ const SCHEMAS = {
   ],
 };
 
+let pluginReport = { tentacles: [], sensories: [] };
+
 async function loadSettings() {
   settingsToast.textContent = "";
   settingsForm.innerHTML = "loading...";
   try {
-    const r = await fetch("/api/settings");
-    if (r.status === 503) {
+    // Load config + plugin discovery in parallel
+    const [cfgRes, pluginRes] = await Promise.all([
+      fetch("/api/settings"),
+      fetch("/api/plugins").catch(() => null),
+    ]);
+    if (cfgRes.status === 503) {
       settingsForm.innerHTML = "<i>(config_path not provided to dashboard)</i>";
       return;
     }
-    const data = await r.json();
+    const data = await cfgRes.json();
     cfgState = data.parsed || {};
+    if (pluginRes && pluginRes.ok) {
+      pluginReport = await pluginRes.json();
+    } else {
+      pluginReport = { tentacles: [], sensories: [] };
+    }
     renderSettingsForm();
   } catch (e) {
     settingsForm.innerHTML = "error loading: " + escapeHtml(String(e));
@@ -692,10 +703,18 @@ function renderSettingsForm() {
   settingsForm.appendChild(renderGenericSection("knowledge_base", "Knowledge Base",
     cfgState.knowledge_base, SCHEMAS.knowledge_base));
 
-  settingsForm.appendChild(renderDictSection("sensory", "Sensory",
+  // Plugins (discovered) — one card per tentacle / sensory known to
+  // the runtime RIGHT NOW. For plugins that declare a config_schema in
+  // their manifest, the fields render as typed inputs; otherwise the
+  // card links into the raw dict editor below.
+  settingsForm.appendChild(renderPluginsSection());
+
+  // Low-level dict editors — advanced overrides, still available for
+  // fields not declared in plugin manifests.
+  settingsForm.appendChild(renderDictSection("sensory", "Sensory (raw)",
     ensure(cfgState, "sensory", () => ({})),
     { defaultEntry: () => ({ enabled: true }) }));
-  settingsForm.appendChild(renderDictSection("tentacle", "Tentacle",
+  settingsForm.appendChild(renderDictSection("tentacle", "Tentacle (raw)",
     ensure(cfgState, "tentacle", () => ({})),
     { defaultEntry: () => ({ enabled: true }) }));
 
@@ -1142,6 +1161,115 @@ function renderRoleRow(rname, roles, providers) {
 }
 
 // ---------------- Generic dict section (sensory / tentacle) ----------------
+
+// ---------------- Plugins section (auto-discovered) ----------------
+
+function renderPluginsSection() {
+  const sec = makeSection("Plugins (auto-discovered)");
+  const body = sec.querySelector(".body");
+  const hint = document.createElement("p");
+  hint.className = "hint";
+  hint.style.margin = "0 0 8px";
+  hint.innerHTML =
+    "Tentacles + sensories registered this run — built-ins plus anything " +
+    "dropped into <code>workspace/tentacles/</code> or " +
+    "<code>workspace/sensories/</code>. See " +
+    "<code>PLUGINS.md</code> for the plugin contract.";
+  body.appendChild(hint);
+
+  body.appendChild(_renderPluginGroup("Tentacles",
+    pluginReport.tentacles || [], "tentacle"));
+  body.appendChild(_renderPluginGroup("Sensories",
+    pluginReport.sensories || [], "sensory"));
+  return sec;
+}
+
+function _renderPluginGroup(title, items, kindKey) {
+  const block = document.createElement("div");
+  block.className = "subblock";
+  const h = document.createElement("h4");
+  h.textContent = `${title} (${items.length})`;
+  block.appendChild(h);
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.style.cssText = "color:var(--muted);font-size:11px;padding:4px 0";
+    empty.textContent = "(none)";
+    block.appendChild(empty);
+    return block;
+  }
+  for (const p of items) {
+    block.appendChild(_renderPluginCard(p, kindKey));
+  }
+  return block;
+}
+
+function _renderPluginCard(p, kindKey) {
+  const card = document.createElement("div");
+  card.className = "subblock";
+  card.style.margin = "6px 0";
+  const header = document.createElement("h4");
+  header.style.fontSize = "11px";
+  const nameSpan = document.createElement("span");
+  nameSpan.textContent = p.name;
+  const badge = document.createElement("span");
+  badge.style.cssText = "margin-left:8px;font-size:10px;padding:1px 6px;" +
+    "border-radius:3px;border:1px solid;";
+  if (p.source === "builtin") {
+    badge.textContent = "builtin";
+    badge.style.borderColor = "var(--cyan)";
+    badge.style.color = "var(--cyan)";
+  } else {
+    badge.textContent = p.loaded ? "plugin ✓" : (p.error ? "plugin ✗" : "plugin ○");
+    badge.style.borderColor = p.error ? "var(--red)" : "var(--magenta)";
+    badge.style.color = p.error ? "var(--red)" : "var(--magenta)";
+  }
+  header.appendChild(nameSpan);
+  header.appendChild(badge);
+  if (p.is_internal) {
+    const int = document.createElement("span");
+    int.style.cssText = "margin-left:6px;font-size:10px;color:var(--muted)";
+    int.textContent = "internal";
+    header.appendChild(int);
+  }
+  card.appendChild(header);
+
+  if (p.description) {
+    const d = document.createElement("div");
+    d.style.cssText = "color:var(--muted);font-size:11px;margin:2px 0 6px";
+    d.textContent = p.description;
+    card.appendChild(d);
+  }
+  if (p.error) {
+    const err = document.createElement("pre");
+    err.style.cssText = "color:var(--red);font-size:10px;background:var(--bg);" +
+      "padding:4px 6px;border-radius:3px;max-height:120px;overflow:auto;margin:4px 0";
+    err.textContent = p.error;
+    card.appendChild(err);
+    return card;
+  }
+
+  // Render schema-driven config editor rooted in cfgState[<kindKey>][<name>]
+  if (p.config_schema && p.config_schema.length) {
+    const rootKey = kindKey === "tentacle" ? "tentacle" : "sensory";
+    const parent = ensure(cfgState, rootKey, () => ({}));
+    const entry = ensure(parent, p.name, () => ({}));
+    for (const fdef of p.config_schema) {
+      const type = fdef.type || "text";
+      const helpPath = `plugin.${p.name}.${fdef.field}`;
+      if (fdef.help) HELP[helpPath] = fdef.help;
+      if (entry[fdef.field] == null && fdef.default != null) {
+        entry[fdef.field] = fdef.default;
+      }
+      card.appendChild(renderRow(fdef.field, entry, fdef.field, type, helpPath));
+    }
+  } else if (p.source === "plugin") {
+    const note = document.createElement("div");
+    note.style.cssText = "color:var(--muted);font-size:10px;font-style:italic";
+    note.textContent = "(no config_schema declared — edit via raw dict below)";
+    card.appendChild(note);
+  }
+  return card;
+}
 
 function renderDictSection(key, title, target, opts) {
   const sec = makeSection(title);

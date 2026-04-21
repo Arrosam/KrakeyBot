@@ -184,6 +184,27 @@ class Runtime:
         self.batch_tracker = BatchTrackerSensory()
         self.sensories.register(self.batch_tracker)
 
+        # Plugins — discover user-dropped tentacles/sensories from
+        # workspace/. Each plugin is reported to the dashboard even if
+        # its import failed, so the user can see what went wrong.
+        self._plugin_tentacle_infos, self._plugin_sensory_infos = \
+            self._load_plugins()
+        for info in self._plugin_tentacle_infos:
+            if info.instance is not None and info.name not in self.tentacles:
+                try:
+                    self.tentacles.register(info.instance)
+                except Exception as e:  # noqa: BLE001
+                    info.error = f"registration failed: {e}"
+                    info.instance = None
+        for info in self._plugin_sensory_infos:
+            if info.instance is not None and \
+                    info.name not in self.sensories._sensories:  # noqa: SLF001
+                try:
+                    self.sensories.register(info.instance)
+                except Exception as e:  # noqa: BLE001
+                    info.error = f"registration failed: {e}"
+                    info.instance = None
+
         # Self-model + Bootstrap state (Phase 2.1)
         sm_path = deps.self_model_path or "workspace/self_model.yaml"
         gen_path = deps.genesis_path or "workspace/GENESIS.md"
@@ -259,6 +280,82 @@ class Runtime:
             pending = [t for t in self._classify_tasks if not t.done()]
             for t in pending:
                 t.cancel()
+
+    def _load_plugins(self):
+        """Discover tentacle + sensory plugins under workspace/.
+
+        Returns (tentacle_infos, sensory_infos). Failures are recorded
+        on the PluginInfo.error field rather than raised — a broken
+        plugin must never block boot.
+        """
+        from src.plugins.loader import discover_sensories, discover_tentacles
+        base = Path("workspace")
+        deps = {
+            "gm": self.gm,
+            "kb_registry": self.kb_registry,
+            "embedder": self.embedder,
+            "buffer": self.buffer,
+            "web_chat_history": getattr(self, "web_chat_history", None),
+            "config": self.config,
+        }
+        t = discover_tentacles(base / "tentacles", deps,
+                                 self.config.tentacle)
+        s = discover_sensories(base / "sensories", deps,
+                                 self.config.sensory)
+        for info in t + s:
+            if info.error:
+                self.log.runtime_error(
+                    f"plugin {info.kind}:{info.name} failed to load — "
+                    f"{info.error.splitlines()[0]}"
+                )
+            elif info.instance is not None:
+                self.log.hb(f"plugin loaded: {info.kind}:{info.name}")
+        return t, s
+
+    def plugin_report(self) -> dict[str, Any]:
+        """Serializable snapshot for the dashboard /api/plugins endpoint."""
+        def _flatten(infos, loaded_names):
+            return [{
+                "name": i.name,
+                "kind": i.kind,
+                "source": i.source,
+                "path": i.path,
+                "description": i.description,
+                "is_internal": i.is_internal,
+                "config_schema": i.config_schema,
+                "loaded": i.name in loaded_names and i.error is None,
+                "error": i.error,
+            } for i in infos]
+
+        # Merge built-ins + plugin discoveries
+        builtin_tentacles = [
+            {"name": t.name, "kind": "tentacle", "source": "builtin",
+             "path": "", "description": t.description,
+             "is_internal": t.is_internal, "config_schema": [],
+             "loaded": True, "error": None}
+            for t in self.tentacles._tentacles.values()  # noqa: SLF001
+            if not any(i.name == t.name and i.source == "plugin"
+                       for i in self._plugin_tentacle_infos)
+        ]
+        builtin_sensories = [
+            {"name": s.name, "kind": "sensory", "source": "builtin",
+             "path": "", "description": "",
+             "is_internal": False, "config_schema": [],
+             "loaded": True, "error": None}
+            for s in self.sensories._sensories.values()  # noqa: SLF001
+            if not any(i.name == s.name and i.source == "plugin"
+                       for i in self._plugin_sensory_infos)
+        ]
+        return {
+            "tentacles": builtin_tentacles + _flatten(
+                self._plugin_tentacle_infos,
+                {n for n in self.tentacles._tentacles}  # noqa: SLF001
+            ),
+            "sensories": builtin_sensories + _flatten(
+                self._plugin_sensory_infos,
+                {n for n in self.sensories._sensories}  # noqa: SLF001
+            ),
+        }
 
     def _build_code_runner(self, coding_cfg: dict):
         """Return Subprocess on sandbox=false, SandboxRunner otherwise.

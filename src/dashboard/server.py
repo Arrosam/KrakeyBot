@@ -188,6 +188,13 @@ def _attach_memory_routes(app: FastAPI, runtime: Any | None) -> None:
         items = rt.recent_prompts(limit=limit)
         return {"prompts": items, "count": len(items)}
 
+    @app.get("/api/plugins")
+    async def plugins():  # noqa: ANN201
+        rt = _runtime_or_503()
+        if not hasattr(rt, "plugin_report"):
+            return {"tentacles": [], "sensories": []}
+        return rt.plugin_report()
+
     @app.get("/api/kb/{kb_id}/entries")
     async def kb_entries(kb_id: str,
                             limit: int = Query(default=200, ge=1, le=2000)):  # noqa: ANN201
