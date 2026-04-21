@@ -142,8 +142,9 @@ class Runtime:
             ))
         coding_cfg = self.config.tentacle.get("coding", {})
         if coding_cfg.get("enabled", False):
+            runner = self._build_code_runner(coding_cfg)
             self.tentacles.register(CodingTentacle(
-                runner=SubprocessRunner(),
+                runner=runner,
                 sandbox_dir=coding_cfg.get("sandbox_dir",
                                               "workspace/sandbox"),
                 timeout_seconds=coding_cfg.get("timeout_seconds", 30),
@@ -233,6 +234,7 @@ class Runtime:
 
     async def run(self, iterations: int | None = None) -> None:
         await self.gm.initialize()
+        await self._preflight_sandbox()
         await self._refine_bootstrap_from_data()
         await self.sensories.start_all(self.buffer)
         await self._maybe_start_dashboard()
@@ -250,6 +252,70 @@ class Runtime:
             pending = [t for t in self._classify_tasks if not t.done()]
             for t in pending:
                 t.cancel()
+
+    def _build_code_runner(self, coding_cfg: dict):
+        """Return Subprocess on sandbox=false, SandboxRunner otherwise.
+
+        Sandbox defaults to TRUE. When any tentacle enables sandbox but
+        the top-level `sandbox` config is incomplete, refuse to start
+        with a clear error — user must configure the guest VM first.
+        """
+        want_sandbox = bool(coding_cfg.get("sandbox", True))
+        if not want_sandbox:
+            return SubprocessRunner()
+        sb = self.config.sandbox
+        missing = []
+        if not sb.guest_os:
+            missing.append("sandbox.guest_os")
+        if not sb.agent.url:
+            missing.append("sandbox.agent.url")
+        if not sb.agent.token:
+            missing.append("sandbox.agent.token")
+        if missing:
+            raise RuntimeError(
+                "coding.sandbox=true but sandbox is not configured. "
+                "Missing: " + ", ".join(missing) + ". "
+                "Either complete the `sandbox:` block in config.yaml or "
+                "set tentacle.coding.sandbox=false (unsafe)."
+            )
+        from src.sandbox.backend import SandboxConfig, SandboxRunner
+        return SandboxRunner(SandboxConfig(
+            agent_url=sb.agent.url,
+            agent_token=sb.agent.token,
+            guest_os=sb.guest_os,
+        ))
+
+    async def _preflight_sandbox(self) -> None:
+        """Ping the guest agent if any sandboxed tentacle is enabled.
+        Refuses to start the runtime when the agent is unreachable."""
+        from src.sandbox.backend import (
+            SandboxConfig, SandboxUnavailableError, preflight,
+        )
+        any_sandboxed = any(
+            self.config.tentacle.get(name, {}).get("enabled", False)
+            and self.config.tentacle.get(name, {}).get("sandbox", True)
+            for name in ("coding", "gui_control", "cli",
+                           "file_read", "file_write", "browser")
+        )
+        if not any_sandboxed:
+            return
+        sb = self.config.sandbox
+        cfg = SandboxConfig(
+            agent_url=sb.agent.url,
+            agent_token=sb.agent.token,
+            guest_os=sb.guest_os,
+        )
+        try:
+            info = await preflight(cfg)
+        except SandboxUnavailableError as e:
+            raise RuntimeError(
+                f"sandbox preflight failed: {e}. "
+                "Start the guest agent or disable sandboxed tentacles."
+            )
+        self.log.hb(
+            f"sandbox preflight ok: guest_os={info.get('guest_os')} "
+            f"agent_version={info.get('agent_version')}"
+        )
 
     async def _refine_bootstrap_from_data(self) -> None:
         """Bootstrap fires only when the workspace is genuinely empty —

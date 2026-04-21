@@ -2,6 +2,7 @@
 
 > 以持续心跳维持"存在"的自主认知 Agent。
 > 完整设计见 [`KrakeyBot_DevSpec_v2.1.md`](KrakeyBot_DevSpec_v2.1.md)，实现路线见 [`KrakeyBot_Checklist.md`](KrakeyBot_Checklist.md)。
+> 沙盒 VM 配置见 [`SANDBOX.md`](SANDBOX.md)（启用 coding/GUI/file/browser 任一 tentacle 前必读）。
 
 ---
 

@@ -115,6 +115,39 @@ class DashboardSection:
 
 
 @dataclass
+class SandboxResourcesSection:
+    cpu: int = 2
+    memory_mb: int = 4096
+    disk_gb: int = 40
+
+
+@dataclass
+class SandboxAgentSection:
+    url: str = ""
+    token: str = ""
+
+
+@dataclass
+class SandboxSection:
+    """Sandbox VM configuration. Required when any sandboxed tentacle is
+    enabled (coding / gui_control / cli / file_read / file_write / browser).
+    Runtime refuses to start if any of those has sandbox=true but the
+    required fields here are missing or the agent is unreachable.
+    """
+    guest_os: str = ""         # "linux" | "macos" | "windows" — REQUIRED
+    provider: str = "qemu"     # qemu | virtualbox | utm
+    vm_name: str = ""
+    resources: SandboxResourcesSection = field(
+        default_factory=SandboxResourcesSection
+    )
+    agent: SandboxAgentSection = field(default_factory=SandboxAgentSection)
+    # Network model documentation only; enforced in the VM provisioning,
+    # not by this config. Stored for clarity + future tooling.
+    network_mode: str = "nat_allowlist"  # nat_allowlist | host_only | isolated
+    allowlist_domains: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Config:
     llm: LLMSection
     hibernate: HibernateSection
@@ -127,6 +160,7 @@ class Config:
     sleep: SleepSection
     safety: SafetySection
     dashboard: DashboardSection = field(default_factory=DashboardSection)
+    sandbox: SandboxSection = field(default_factory=SandboxSection)
 
 
 def _substitute_env(value: Any) -> Any:
@@ -204,6 +238,29 @@ def load_config(path: str | Path = "config.yaml") -> Config:
             max_consecutive_no_action=raw["safety"]["max_consecutive_no_action"],
         ),
         dashboard=_build_dashboard(raw.get("dashboard")),
+        sandbox=_build_sandbox(raw.get("sandbox")),
+    )
+
+
+def _build_sandbox(raw: dict[str, Any] | None) -> SandboxSection:
+    raw = raw or {}
+    res_raw = raw.get("resources") or {}
+    agent_raw = raw.get("agent") or {}
+    return SandboxSection(
+        guest_os=str(raw.get("guest_os", "")),
+        provider=str(raw.get("provider", "qemu")),
+        vm_name=str(raw.get("vm_name", "")),
+        resources=SandboxResourcesSection(
+            cpu=int(res_raw.get("cpu", 2)),
+            memory_mb=int(res_raw.get("memory_mb", 4096)),
+            disk_gb=int(res_raw.get("disk_gb", 40)),
+        ),
+        agent=SandboxAgentSection(
+            url=str(agent_raw.get("url", "")),
+            token=str(agent_raw.get("token", "")),
+        ),
+        network_mode=str(raw.get("network_mode", "nat_allowlist")),
+        allowlist_domains=list(raw.get("allowlist_domains") or []),
     )
 
 

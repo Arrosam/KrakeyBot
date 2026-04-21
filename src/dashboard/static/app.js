@@ -476,6 +476,10 @@ const SECTION_DEFAULTS = {
   sleep: { max_duration_seconds: 7200 },
   safety: { gm_node_hard_limit: 1200, max_consecutive_no_action: 100 },
   dashboard: { enabled: true, host: "127.0.0.1", port: 8765 },
+  sandbox: {
+    guest_os: "", provider: "qemu", vm_name: "",
+    network_mode: "nat_allowlist",
+  },
 };
 
 // Hover tooltip text per "section.field" key.
@@ -514,6 +518,16 @@ const HELP = {
   "tentacle.max_output_chars": "stdout/stderr 截断字符数。",
   "tentacle.screenshot_dir": "GUI 截图保存目录。",
   "tentacle.history_path": "Web chat 持久化 JSONL 路径。",
+  "tentacle.sandbox": "该 tentacle 的非幂等操作是否只在沙盒 VM 内发生。默认 true — 关掉 = 危险 (代码/GUI 直接跑在你的机器)。",
+  "sandbox.guest_os": "沙盒客机操作系统: linux / macos / windows。启用任何 sandboxed tentacle 必须先填。",
+  "sandbox.provider": "虚拟机管理器: qemu (推荐) / virtualbox / utm。",
+  "sandbox.vm_name": "VM 实例名 (预先 provision 好)。",
+  "sandbox.resources.cpu": "分配给 VM 的 vCPU 数。",
+  "sandbox.resources.memory_mb": "分配给 VM 的内存 (MB)。",
+  "sandbox.resources.disk_gb": "VM 磁盘容量 (GB)。",
+  "sandbox.agent.url": "VM 内 guest agent 的 HTTP 地址, e.g. http://10.0.2.10:8765。必须在 host-only 子网上。",
+  "sandbox.agent.token": "host ↔ agent 共享 token。放 ${ENV_VAR} 从环境变量读。",
+  "sandbox.network_mode": "VM 网络策略: nat_allowlist (出互联网白名单) / host_only (无外网) / isolated (全断网)。",
 };
 
 // Fixed numeric/string dataclass schemas — drives generic renderer.
@@ -551,6 +565,21 @@ const SCHEMAS = {
     ["enabled", "bool"],
     ["host", "text"],
     ["port", "number"],
+  ],
+  sandbox_scalars: [
+    ["guest_os", "text"],
+    ["provider", "text"],
+    ["vm_name", "text"],
+    ["network_mode", "text"],
+  ],
+  sandbox_resources: [
+    ["cpu", "number"],
+    ["memory_mb", "number"],
+    ["disk_gb", "number"],
+  ],
+  sandbox_agent: [
+    ["url", "text"],
+    ["token", "password"],
   ],
 };
 
@@ -617,6 +646,36 @@ function renderSettingsForm() {
   ensureSection("dashboard");
   settingsForm.appendChild(renderGenericSection("dashboard", "Dashboard",
     cfgState.dashboard, SCHEMAS.dashboard));
+
+  // Sandbox — composite (scalars + resources sub-block + agent sub-block).
+  ensureSection("sandbox");
+  const sb = cfgState.sandbox;
+  if (sb.resources == null) sb.resources = { cpu: 2, memory_mb: 4096, disk_gb: 40 };
+  if (sb.agent == null) sb.agent = { url: "", token: "" };
+  const sbSec = renderGenericSection("sandbox", "Sandbox VM",
+    sb, SCHEMAS.sandbox_scalars);
+  const body = sbSec.querySelector(".body");
+  const resBlock = document.createElement("div");
+  resBlock.className = "subblock";
+  const resH = document.createElement("h4");
+  resH.textContent = "resources";
+  resBlock.appendChild(resH);
+  for (const [f, t] of SCHEMAS.sandbox_resources) {
+    resBlock.appendChild(renderRow(f, sb.resources, f, t,
+      `sandbox.resources.${f}`));
+  }
+  body.appendChild(resBlock);
+  const agentBlock = document.createElement("div");
+  agentBlock.className = "subblock";
+  const agH = document.createElement("h4");
+  agH.textContent = "agent";
+  agentBlock.appendChild(agH);
+  for (const [f, t] of SCHEMAS.sandbox_agent) {
+    agentBlock.appendChild(renderRow(f, sb.agent, f, t,
+      `sandbox.agent.${f}`));
+  }
+  body.appendChild(agentBlock);
+  settingsForm.appendChild(sbSec);
 }
 
 function ensure(obj, key, factory) {
