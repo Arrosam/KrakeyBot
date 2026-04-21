@@ -73,7 +73,35 @@ async def test_no_action_decision_runs_no_tentacle():
     assert [s for s in stims if s.type == "tentacle_feedback"] == []
 
 
-async def test_adrenalin_inheritance_from_hypothalamus():
+async def test_hypothalamus_error_pushes_system_event_stimulus():
+    """When the Hypothalamus LLM returns junk / empty / raises, Self must
+    still learn about it via a system_event stimulus on the next heartbeat,
+    otherwise failed dispatches look like silent successes."""
+    self_llm = ScriptedLLM([
+        "[DECISION]\nDo something real.\n[HIBERNATE]\n1",
+    ])
+    # Invalid JSON → Hypothalamus._parse_json raises → caught → pushed
+    hypo_llm = ScriptedLLM(["not json at all"])
+
+    runtime = build_runtime_with_fakes(self_llm=self_llm, hypo_llm=hypo_llm)
+    await runtime.run(iterations=1)
+
+    stims = runtime.buffer.drain()
+    hypo_errs = [s for s in stims
+                 if s.type == "system_event"
+                 and s.source == "system:hypothalamus"]
+    assert hypo_errs, "no hypothalamus error stimulus pushed"
+    assert hypo_errs[0].adrenalin is True
+    assert "could not be translated" in hypo_errs[0].content.lower() \
+        or "hypothalamus" in hypo_errs[0].content.lower()
+
+
+async def test_tentacle_feedback_does_not_inherit_adrenalin_from_hypothalamus():
+    """Successful tentacle_feedback is low-priority by design. Even when
+    the Hypothalamus flags the dispatch as adrenalin=True (upstream urgency),
+    the resulting feedback receipt should NOT wake Self out of hibernate —
+    Self has already reacted to the urgent upstream stimulus; the echo is
+    just bookkeeping."""
     self_llm = ScriptedLLM([
         "[DECISION]\nAct fast, user waiting.\n[HIBERNATE]\n1"
     ])
@@ -91,7 +119,9 @@ async def test_adrenalin_inheritance_from_hypothalamus():
     stims = runtime.buffer.drain()
     tentacle_stims = [s for s in stims if s.type == "tentacle_feedback"]
     assert tentacle_stims
-    assert tentacle_stims[0].adrenalin is True  # inherited
+    # Feedback returned from a successful web_chat_reply → adrenalin=False.
+    # Tentacle itself returned False; dispatch no longer inherits.
+    assert tentacle_stims[0].adrenalin is False
 
 
 async def test_heartbeat_with_connected_recall_nodes_does_not_crash():

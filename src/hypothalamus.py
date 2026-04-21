@@ -88,7 +88,13 @@ class Hypothalamus:
             {"role": "user", "content": decision},
         ]
         raw = await self._llm.chat(messages)
-        data = _parse_json(raw)
+        if raw is None or not str(raw).strip():
+            raise ValueError(
+                "Hypothalamus LLM returned empty content "
+                f"(model={getattr(self._llm, 'model', '?')!r}); check the "
+                "endpoint, max_tokens, or prompt-size limit."
+            )
+        data = _parse_json(str(raw))
         return _to_result(data)
 
 

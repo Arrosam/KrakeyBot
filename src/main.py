@@ -663,7 +663,25 @@ class Runtime:
                 parsed.decision, self.tentacles.list_descriptions(),
             )
         except Exception as e:  # noqa: BLE001
-            self.log.hb(f"Hypothalamus error: {e}")
+            # Include exception class — some exceptions (empty str, None
+            # deref, bare raise) format to an empty message and mask the
+            # real cause.
+            err = f"{type(e).__name__}: {e!r}"
+            self.log.hb(f"Hypothalamus error: {err}")
+            # Self also needs to learn the translation failed — otherwise
+            # the decision looks silently dispatched and she can't correct.
+            # Push a system_event stimulus with adrenalin so it surfaces on
+            # the next heartbeat.
+            await self.buffer.push(Stimulus(
+                type="system_event", source="system:hypothalamus",
+                content=(
+                    "Your last [DECISION] could not be translated by the "
+                    f"Hypothalamus ({err}). Nothing was dispatched. "
+                    "Try re-stating the intent more explicitly next beat."
+                ),
+                timestamp=datetime.now(),
+                adrenalin=True,
+            ))
             return False
         self._log_hypo_summary(result)
         await self._dispatch_tentacle_calls(result.tentacle_calls)
@@ -820,17 +838,24 @@ class Runtime:
         try:
             stim = await tentacle.execute(call.intent, call.params)
         except Exception as e:  # noqa: BLE001
+            # Catastrophic tentacle crash — worth waking Self regardless of
+            # whether the original call was urgent.
             self.log.dispatch(f"{call.tentacle} error: {e}")
             await self.buffer.push(Stimulus(
                 type="system_event", source=f"tentacle:{call.tentacle}",
                 content=f"error: {e}", timestamp=datetime.now(),
-                adrenalin=call.adrenalin,
+                adrenalin=True,
             ))
             await self.batch_tracker.mark_completed(call_id)
             return
 
-        if call.adrenalin and not stim.adrenalin:
-            stim.adrenalin = True
+        # Tentacle-feedback stimuli are low-priority receipts by design.
+        # The tentacle itself decides whether its outcome is worth
+        # interrupting Self's hibernate (failures typically set
+        # adrenalin=True in their own return). Do NOT inherit adrenalin
+        # from the dispatch: by the time feedback arrives Self has
+        # already acted on the urgent upstream signal, and re-waking for
+        # the echo just produces avoidable heartbeats.
         if tentacle.is_internal:
             self.log.internal(call.tentacle, stim.content)
         else:
