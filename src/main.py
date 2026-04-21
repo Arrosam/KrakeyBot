@@ -7,6 +7,7 @@ KnowledgeBase, and full Sleep.
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -214,6 +215,12 @@ class Runtime:
         self._config_path = deps.config_path  # for dashboard settings page
         self._backup_dir = deps.backup_dir or "workspace/backups"
 
+        # Per-run ring buffer of assembled heartbeat prompts for the
+        # dashboard Prompts tab. Size from config; not persisted.
+        dash_cfg = getattr(self.config, "dashboard", None)
+        _pl_size = getattr(dash_cfg, "prompt_log_size", 20) if dash_cfg else 20
+        self._prompt_log: deque[dict[str, Any]] = deque(maxlen=max(1, _pl_size))
+
         # Snapshot config.yaml on every startup so a bad save can be rolled
         # back from workspace/backups/.
         if self._config_path:
@@ -284,6 +291,22 @@ class Runtime:
             agent_token=sb.agent.token,
             guest_os=sb.guest_os,
         ))
+
+    def _record_prompt(self, heartbeat_id: int, prompt: str) -> None:
+        self._prompt_log.append({
+            "heartbeat_id": heartbeat_id,
+            "ts": datetime.now().isoformat(),
+            "full_prompt": prompt,
+        })
+
+    def recent_prompts(self, limit: int | None = None) -> list[dict[str, Any]]:
+        """Newest-first list of recorded prompts. Used by the dashboard
+        /api/prompts endpoint. Returns shallow copies."""
+        items = list(self._prompt_log)
+        items.reverse()
+        if limit is not None:
+            items = items[:limit]
+        return [dict(p) for p in items]
 
     async def _preflight_sandbox(self) -> None:
         """Ping the guest agent if any sandboxed tentacle is enabled.
@@ -585,6 +608,7 @@ class Runtime:
         if self.is_bootstrap:
             prompt = (BOOTSTRAP_PROMPT.format(genesis_text=self._genesis_text)
                       + "\n\n" + prompt)
+        self._record_prompt(self.heartbeat_count, prompt)
         self.events.publish(PromptBuiltEvent(
             heartbeat_id=self.heartbeat_count,
             layers={"full_prompt": prompt},

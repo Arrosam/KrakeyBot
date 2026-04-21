@@ -180,6 +180,14 @@ def _attach_memory_routes(app: FastAPI, runtime: Any | None) -> None:
         rt = _runtime_or_503()
         return {"kbs": await rt.kb_registry.list_kbs()}
 
+    @app.get("/api/prompts")
+    async def prompts(limit: int = Query(default=50, ge=1, le=500)):  # noqa: ANN201
+        rt = _runtime_or_503()
+        if not hasattr(rt, "recent_prompts"):
+            return {"prompts": [], "count": 0}
+        items = rt.recent_prompts(limit=limit)
+        return {"prompts": items, "count": len(items)}
+
     @app.get("/api/kb/{kb_id}/entries")
     async def kb_entries(kb_id: str,
                             limit: int = Query(default=200, ge=1, le=2000)):  # noqa: ANN201

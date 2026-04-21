@@ -12,7 +12,7 @@ $$(".tab-btn").forEach((btn) => {
     $$(".tab-panel").forEach((p) => p.classList.toggle("active", p.id === id));
     if (btn.dataset.tab === "memory") loadMemory(currentMemView);
     if (btn.dataset.tab === "settings") loadSettings();
-    if (btn.dataset.tab === "thoughts") renderLatestPrompt();
+    if (btn.dataset.tab === "prompts") loadPrompts();
     if (btn.dataset.tab === "chat") {
       // History was rendered while panel was hidden (scrollHeight=0);
       // scroll to bottom now that it's visible.
@@ -44,11 +44,6 @@ const thinkingEl = $("#thinking-stream");
 const decisionEl = $("#decision-stream");
 const hypoEl = $("#hypo-stream");
 const stimList = $("#stim-list");
-const promptHb = $("#prompt-hb");
-const latestPrompt = $("#latest-prompt");
-
-let latestPromptText = "";
-
 // Section titles that change every heartbeat — open by default.
 // Anything else (DNA, SELF-MODEL, HEARTBEAT question, BOOTSTRAP) is
 // collapsed since it's noise during normal inspection.
@@ -56,8 +51,6 @@ const DYNAMIC_SECTIONS = ["STATUS", "GRAPH MEMORY", "HISTORY", "STIMULUS"];
 
 function splitPromptSections(text) {
   if (!text) return [];
-  // Layers are joined by '\n\n'; non-DNA layers start with '# [TITLE]'.
-  // Split on the boundary, keep delimiter so titles survive.
   const parts = text.split(/\n\n(?=#\s)/);
   const out = [];
   for (const p of parts) {
@@ -65,32 +58,10 @@ function splitPromptSections(text) {
     if (m) {
       out.push({ title: m[1].trim(), body: m[2] });
     } else {
-      // First chunk (DNA) has no '#' header at column 0 — bucket as "DNA"
       out.push({ title: "DNA / 系统提示", body: p });
     }
   }
   return out;
-}
-
-function renderLatestPrompt() {
-  latestPrompt.innerHTML = "";
-  if (!latestPromptText) {
-    latestPrompt.textContent = "(no prompt yet)";
-    return;
-  }
-  for (const s of splitPromptSections(latestPromptText)) {
-    const d = document.createElement("details");
-    d.className = "prompt-section";
-    if (DYNAMIC_SECTIONS.some((k) => s.title.toUpperCase().includes(k))) {
-      d.open = true;
-    }
-    const sum = document.createElement("summary");
-    sum.textContent = s.title;
-    const pre = document.createElement("pre");
-    pre.textContent = s.body;
-    d.appendChild(sum); d.appendChild(pre);
-    latestPrompt.appendChild(d);
-  }
 }
 
 function appendEntry(panel, hbId, text) {
@@ -162,9 +133,14 @@ function handleEvent(e) {
         `→ ${e.tentacle} : ${e.intent}${e.adrenalin ? " (adrenalin)" : ""}`);
       break;
     case "prompt_built":
-      promptHb.textContent = e.heartbeat_id;
-      latestPromptText = e.layers.full_prompt || "";
-      renderLatestPrompt();
+      // Live-append to the Prompts tab cache so users see new beats
+      // without a re-fetch. The tab's own loader still hits /api/prompts
+      // on activation to sync with the server-side ring buffer.
+      liveAppendPrompt({
+        heartbeat_id: e.heartbeat_id,
+        ts: new Date().toISOString(),
+        full_prompt: e.layers.full_prompt || "",
+      });
       break;
     case "sleep_start":
       appendEntry(hypoEl, "—", "💤 sleep started: " + e.reason);
@@ -453,6 +429,87 @@ async function loadKBEntries(kbid) {
 
 loadMemory("stats");
 
+// ============== PROMPTS ==============
+
+const promptsList = $("#prompts-list");
+let promptsCache = [];   // newest first; trimmed to PROMPT_UI_CAP
+const PROMPT_UI_CAP = 200;
+
+async function loadPrompts() {
+  promptsList.textContent = "loading...";
+  try {
+    const r = await fetch("/api/prompts?limit=200").then((r) => r.json());
+    promptsCache = r.prompts || [];
+    renderPromptsList();
+  } catch (e) {
+    promptsList.textContent = "error: " + e;
+  }
+}
+
+function liveAppendPrompt(p) {
+  // Merge / dedupe by heartbeat_id (server may replay on reconnect)
+  const idx = promptsCache.findIndex((x) => x.heartbeat_id === p.heartbeat_id);
+  if (idx !== -1) promptsCache.splice(idx, 1);
+  promptsCache.unshift(p);
+  if (promptsCache.length > PROMPT_UI_CAP) promptsCache.length = PROMPT_UI_CAP;
+  // Only re-render if the Prompts tab is currently visible (cheap skip)
+  if ($("#tab-prompts").classList.contains("active")) renderPromptsList();
+}
+
+function fmtTs(iso) {
+  try {
+    const d = new Date(iso);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    const ss = String(d.getSeconds()).padStart(2, "0");
+    return `${hh}:${mm}:${ss}`;
+  } catch { return iso; }
+}
+
+function renderPromptsList() {
+  promptsList.innerHTML = "";
+  if (!promptsCache.length) {
+    promptsList.textContent = "(no prompts yet — wait one heartbeat)";
+    return;
+  }
+  for (const p of promptsCache) {
+    const card = document.createElement("details");
+    card.className = "prompt-card";
+    const sum = document.createElement("summary");
+    const tag = document.createElement("span");
+    tag.className = "hb-tag";
+    tag.textContent = `#${p.heartbeat_id}`;
+    const ts = document.createElement("span");
+    ts.className = "ts";
+    ts.textContent = fmtTs(p.ts);
+    sum.appendChild(tag);
+    sum.appendChild(ts);
+    sum.appendChild(document.createTextNode(
+      "  — " + (p.full_prompt ? `${p.full_prompt.length} chars` : "(empty)")
+    ));
+    card.appendChild(sum);
+    // Inner sections (DNA / STATUS / STIMULUS etc) — collapsible
+    const inner = document.createElement("div");
+    inner.className = "prompt-card-body";
+    for (const s of splitPromptSections(p.full_prompt)) {
+      const sec = document.createElement("details");
+      sec.className = "prompt-section";
+      if (DYNAMIC_SECTIONS.some((k) => s.title.toUpperCase().includes(k))) {
+        sec.open = true;
+      }
+      const ss = document.createElement("summary");
+      ss.textContent = s.title;
+      const pre = document.createElement("pre");
+      pre.textContent = s.body;
+      sec.appendChild(ss);
+      sec.appendChild(pre);
+      inner.appendChild(sec);
+    }
+    card.appendChild(inner);
+    promptsList.appendChild(card);
+  }
+}
+
 // ============== SETTINGS (form-based) ==============
 
 const settingsForm = $("#settings-form");
@@ -475,7 +532,7 @@ const SECTION_DEFAULTS = {
   knowledge_base: { dir: "workspace/data/knowledge_bases" },
   sleep: { max_duration_seconds: 7200 },
   safety: { gm_node_hard_limit: 1200, max_consecutive_no_action: 100 },
-  dashboard: { enabled: true, host: "127.0.0.1", port: 8765 },
+  dashboard: { enabled: true, host: "127.0.0.1", port: 8765, prompt_log_size: 20 },
   sandbox: {
     guest_os: "", provider: "qemu", vm_name: "",
     display: "headed",
@@ -503,6 +560,7 @@ const HELP = {
   "dashboard.enabled": "Web UI 总开关。关掉这个 = 下次启动后没有浏览器界面, 只剩日志。",
   "dashboard.host": "监听地址。127.0.0.1 = 仅本机; 0.0.0.0 = 局域网可访问（不安全）。",
   "dashboard.port": "监听端口。",
+  "dashboard.prompt_log_size": "Prompts 标签页保留最近 N 次心跳构造的完整 prompt。运行时环形缓冲, 不落盘, 重启清零。默认 20。",
   "provider.type": "Provider 实现类型。目前只支持 openai_compatible。",
   "provider.base_url": "API 根 URL（不含 /v1 等后缀, LLMClient 会自动加）。",
   "provider.api_key": "API 密钥。可填 ${ENV_VAR} 占位符从环境变量读取。",
@@ -567,6 +625,7 @@ const SCHEMAS = {
     ["enabled", "bool"],
     ["host", "text"],
     ["port", "number"],
+    ["prompt_log_size", "number"],
   ],
   sandbox_scalars: [
     ["guest_os", "text"],

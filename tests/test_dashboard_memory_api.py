@@ -139,3 +139,34 @@ async def test_endpoints_unavailable_when_no_runtime():
                                     base_url="http://test") as c:
         r = await c.get("/api/gm/nodes")
     assert r.status_code == 503
+
+
+# ---------------- prompt log ----------------
+
+async def test_prompts_endpoint_returns_recent_prompts(tmp_path):
+    runtime, _, _ = await _make_runtime(tmp_path)
+    # Simulate runtime recording heartbeat prompts
+    runtime._prompt_log = __import__("collections").deque(maxlen=3)
+    runtime._record_prompt = lambda hb, p: runtime._prompt_log.append(
+        {"heartbeat_id": hb, "ts": "2026-04-22T00:00:00", "full_prompt": p}
+    )
+    runtime.recent_prompts = lambda limit=None: list(reversed(list(runtime._prompt_log)))[:limit or 999]
+    runtime._record_prompt(1, "hello #1")
+    runtime._record_prompt(2, "hello #2")
+    runtime._record_prompt(3, "hello #3")
+    runtime._record_prompt(4, "hello #4")  # evicts #1 (maxlen=3)
+    async with _client(runtime) as c:
+        r = await c.get("/api/prompts?limit=10")
+    body = r.json()
+    assert body["count"] == 3
+    hbs = [p["heartbeat_id"] for p in body["prompts"]]
+    assert hbs == [4, 3, 2]   # newest first
+
+
+async def test_prompts_endpoint_503_when_no_runtime():
+    app = create_app(runtime=None)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport,
+                                    base_url="http://test") as c:
+        r = await c.get("/api/prompts")
+    assert r.status_code == 503

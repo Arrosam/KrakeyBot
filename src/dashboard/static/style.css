@@ -233,12 +233,57 @@ main {
   white-space: pre-wrap;
 }
 
-#latest-prompt {
+#prompts-list {
+  flex: 1;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prompt-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+}
+.prompt-card > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  list-style: none;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.prompt-card > summary::before {
+  content: "▶ ";
+  color: var(--muted);
+  font-size: 9px;
+}
+.prompt-card[open] > summary::before { content: "▼ "; }
+.prompt-card > summary .hb-tag {
+  color: var(--cyan);
+  font-size: 11px;
+}
+.prompt-card > summary .ts {
+  color: var(--muted);
+  font-size: 10px;
+}
+.prompt-card-body {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin-top: 8px;
 }
+
 .prompt-section {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -265,7 +310,9 @@ main {
   border-top: 1px dashed var(--border);
   font-size: 11px;
   white-space: pre-wrap;
-  max-height: 320px;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  max-height: 480px;
   overflow: auto;
   color: var(--text);
 }

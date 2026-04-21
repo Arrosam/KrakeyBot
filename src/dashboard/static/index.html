@@ -20,6 +20,7 @@
       <button class="tab-btn active" data-tab="thoughts">💭 Inner Thoughts</button>
       <button class="tab-btn" data-tab="chat">💬 Chat</button>
       <button class="tab-btn" data-tab="memory">🧠 Memory</button>
+      <button class="tab-btn" data-tab="prompts">📜 Prompts</button>
       <button class="tab-btn" data-tab="settings">⚙️ Settings</button>
     </nav>
     <div class="status-bar" id="status-bar">— connecting —</div>
@@ -48,10 +49,14 @@
           <ul id="stim-list" class="scroll small"></ul>
         </div>
       </div>
-      <details class="prompt-collapser">
-        <summary>Latest prompt (heartbeat <span id="prompt-hb">—</span>) — click to expand</summary>
-        <div id="latest-prompt">(no prompt yet)</div>
-      </details>
+    </section>
+
+    <!-- PROMPTS -->
+    <section id="tab-prompts" class="tab-panel">
+      <p class="hint">心跳逐次构造的完整 prompt (最近 N 次, runtime 环形缓冲)。
+        在 Settings → Dashboard 下的 <code>prompt_log_size</code> 调整保留数。
+      </p>
+      <div id="prompts-list" class="scroll">— loading —</div>
     </section>
 
     <!-- CHAT -->

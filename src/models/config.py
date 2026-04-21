@@ -112,6 +112,10 @@ class DashboardSection:
     enabled: bool = True
     host: str = "127.0.0.1"
     port: int = 8765
+    # Ring buffer for the "Prompts" tab. Runtime keeps the last N fully
+    # built heartbeat prompts so the UI can show a scrollable log rather
+    # than only the single latest one. Per-run, not persisted to disk.
+    prompt_log_size: int = 20
 
 
 @dataclass
@@ -295,6 +299,7 @@ def _build_dashboard(raw: dict[str, Any] | None) -> DashboardSection:
         enabled=bool(raw.get("enabled", True)),
         host=str(raw.get("host", "127.0.0.1")),
         port=int(raw.get("port", 8765)),
+        prompt_log_size=max(1, int(raw.get("prompt_log_size", 20))),
     )
 
 
