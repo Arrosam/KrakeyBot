@@ -10,6 +10,15 @@ from src.models.stimulus import Stimulus
 from src.prompt.dna import DNA
 
 
+def _format_stim(s: Stimulus) -> list[str]:
+    return [
+        "---",
+        f"来源: {s.source} | 时间: {s.timestamp.isoformat()} "
+        f"| adrenalin: {s.adrenalin}",
+        f"内容: {s.content}",
+    ]
+
+
 HEARTBEAT_QUESTION = (
     "# [HEARTBEAT]\n"
     "What do you notice? What matters? What do you do?\n"
@@ -89,11 +98,36 @@ class PromptBuilder:
     def _layer_stimulus(self, stimuli: list[Stimulus]) -> str:
         if not stimuli:
             return "# [STIMULUS]\n(no new signals)"
-        lines = [f"# [STIMULUS]\n本次收到 {len(stimuli)} 条信号："]
+
+        incoming: list[Stimulus] = []
+        own_actions: list[Stimulus] = []
+        system: list[Stimulus] = []
         for s in stimuli:
-            lines.append("---")
-            lines.append(f"来源: {s.source} | 时间: {s.timestamp.isoformat()} "
-                         f"| adrenalin: {s.adrenalin}")
-            lines.append(f"内容: {s.content}")
-        lines.append("---")
+            if s.type == "user_message":
+                incoming.append(s)
+            elif s.type == "tentacle_feedback":
+                own_actions.append(s)
+            else:  # batch_complete | system_event | unknown
+                system.append(s)
+
+        lines = [f"# [STIMULUS]\n本次收到 {len(stimuli)} 条信号，按来源分组："]
+
+        if incoming:
+            lines.append("\n## 用户/外部输入 (INCOMING — 别人对你说的话, 需要回应)")
+            for s in incoming:
+                lines.extend(_format_stim(s))
+
+        if own_actions:
+            lines.append(
+                "\n## 你自己刚才行动的结果 (YOUR RECENT ACTIONS — "
+                "这是你刚才说/做的话和动作的回执, 不是用户在跟你互动!)"
+            )
+            for s in own_actions:
+                lines.extend(_format_stim(s))
+
+        if system:
+            lines.append("\n## 系统事件 (SYSTEM)")
+            for s in system:
+                lines.extend(_format_stim(s))
+
         return "\n".join(lines)

@@ -2,14 +2,15 @@
 config.yaml
 
 .venv/
+.claude/
 __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
 .coverage
 *.egg-info/
-workspace/data/
-workspace/logs/
+workspace/*
+!workspace/GENESIS.md
 *.sqlite
 *.sqlite-journal
 .env

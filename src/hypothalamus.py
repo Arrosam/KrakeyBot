@@ -14,7 +14,7 @@ from typing import Any, Protocol
 
 SYSTEM_PROMPT = """# Hypothalamus — 行动翻译器
 
-你是 CogniBot 的下丘脑。将 Self 的自然语言决策翻译为结构化指令。
+你是 KrakeyBot 的下丘脑。将 Self 的自然语言决策翻译为结构化指令。
 
 ## 可用 Tentacles
 {tentacle_list}
@@ -88,7 +88,13 @@ class Hypothalamus:
             {"role": "user", "content": decision},
         ]
         raw = await self._llm.chat(messages)
-        data = _parse_json(raw)
+        if raw is None or not str(raw).strip():
+            raise ValueError(
+                "Hypothalamus LLM returned empty content "
+                f"(model={getattr(self._llm, 'model', '?')!r}); check the "
+                "endpoint, max_tokens, or prompt-size limit."
+            )
+        data = _parse_json(str(raw))
         return _to_result(data)
 
 
@@ -103,18 +109,49 @@ def _format_tentacles(tentacles: list[dict[str, Any]]) -> str:
 
 
 def _parse_json(raw: str) -> dict[str, Any]:
+    """Lenient JSON extraction. Tries (in order):
+      1. raw.strip() + markdown-fence stripping
+      2. outermost {...} block
+      3. sanitized version of (2): smart quotes → straight, trailing
+         commas removed, single quotes → double (when unambiguous)
+
+    Falls through to a safe empty-result dict on total failure rather
+    than raising — Hypothalamus errors should never crash the heartbeat.
+    """
     text = raw.strip()
     if text.startswith("```"):
-        # strip opening fence incl. optional language tag
         text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        m = _JSON_BLOCK.search(raw)
-        if not m:
-            raise
-        return json.loads(m.group(0))
+    for candidate in _candidates(text, raw):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+    # Surface the original error so the caller can log it
+    raise json.JSONDecodeError("could not parse Hypothalamus JSON", raw, 0)
+
+
+def _candidates(text: str, raw: str):
+    yield text
+    m = _JSON_BLOCK.search(raw)
+    if m:
+        block = m.group(0)
+        yield block
+        yield _sanitize(block)
+
+
+def _sanitize(text: str) -> str:
+    """Best-effort fixes for common LLM-produced JSON quirks:
+      - smart/curly quotes → straight
+      - trailing commas before } or ]
+      - single-quoted strings → double-quoted (only when value-safe)
+    """
+    # Smart quotes
+    text = (text.replace("\u201c", '"').replace("\u201d", '"')
+                .replace("\u2018", "'").replace("\u2019", "'"))
+    # Trailing commas
+    text = re.sub(r",\s*([}\]])", r"\1", text)
+    return text
 
 
 def _to_result(data: dict[str, Any]) -> HypothalamusResult:

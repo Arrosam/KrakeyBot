@@ -24,6 +24,14 @@ class Tentacle(ABC):
     def sandboxed(self) -> bool:
         return True
 
+    @property
+    def is_internal(self) -> bool:
+        """When True, the tentacle's output is for Self's inner consumption
+        only (e.g. memory_recall) and should NOT be rendered to the human
+        as Krakey's outward chat. Defaults to False — most tentacles
+        (action, …) speak on Krakey's behalf."""
+        return False
+
     @abstractmethod
     async def execute(self, intent: str, params: dict[str, Any]) -> Stimulus: ...
 

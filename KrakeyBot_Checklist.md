@@ -1,6 +1,6 @@
-# CogniBot — Implementation Checklist
+# KrakeyBot — Implementation Checklist
 
-> **配套文档**: `CogniBot_DevSpec_v2.1.md`
+> **配套文档**: `KrakeyBot_DevSpec_v2.1.md`
 > **用法**: 按 Phase 顺序执行。每个任务完成后勾选。每个 Phase 结束时运行验收测试。
 
 ---
@@ -292,7 +292,7 @@ python main.py
 按需实现，无硬性顺序。
 
 - [ ] **Telegram Sensory** — 收发 Telegram 消息
-  - 验收: Telegram 发消息 → CogniBot 回复
+  - 验收: Telegram 发消息 → KrakeyBot 回复
 
 - [ ] **更多 Tentacles** — Coding / Search / GUI Control
   - 验收: 按自定义模板实现 → 注册 → Self 可调用

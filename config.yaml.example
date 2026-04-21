@@ -64,9 +64,32 @@ knowledge_base:
 sensory:
   cli_input: { enabled: true, default_adrenalin: true }
   timer:     { enabled: true, default_adrenalin: false }
+  telegram:
+    enabled: false
+    bot_token: "${TELEGRAM_BOT_TOKEN}"   # https://core.telegram.org/bots#how-do-i-create-a-bot
+    allowed_chat_ids: []                 # whitelist; empty = anyone (not recommended)
+    default_chat_id: null                # for outbound when intent has no chat_id
 
 tentacle:
   action: { enabled: true, max_context_tokens: 4096, sandboxed: true }
+  search: { enabled: true, max_results: 5 }
+  coding:
+    # WARNING: NOT a real security sandbox — code runs with your user's privs.
+    # Disabled by default. Enable only on machines you control.
+    enabled: false
+    sandbox_dir: "workspace/sandbox"
+    timeout_seconds: 30
+    max_output_chars: 4000
+  gui_control:
+    # WARNING: gives Krakey real mouse/keyboard + screenshot of your desktop.
+    # PyAutoGUI fail-safe (slam cursor into a screen corner) aborts at any
+    # time. Disabled by default; enable only when you actually want Krakey
+    # driving the screen.
+    enabled: false
+    screenshot_dir: "workspace/screenshots"
+  web_chat:
+    # Persistent JSONL of all dashboard chat messages (both directions).
+    history_path: "workspace/data/web_chat.jsonl"
 
 sleep:
   max_duration_seconds: 7200
@@ -74,3 +97,8 @@ sleep:
 safety:
   gm_node_hard_limit: 500
   max_consecutive_no_action: 50
+
+dashboard:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8765
