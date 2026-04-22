@@ -6,6 +6,4 @@ the result alongside the built-in tentacles/sensories.
 
 Plugin contract lives in PLUGINS.md at repo root.
 """
-from src.plugins.loader import (  # noqa: F401
-    PluginInfo, discover_sensories, discover_tentacles,
-)
+from src.plugins.loader import PluginInfo, discover_plugins  # noqa: F401

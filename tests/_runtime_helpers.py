@@ -76,8 +76,13 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
             neighbor_expand_depth=1,
         ),
         knowledge_base=KnowledgeBaseSection(dir=kb_dir),
-        sensory={},
-        tentacle={"web_chat": {"history_path": f"{chat_dir}/chat.jsonl"}},
+        plugins={
+            # Keep web_chat_reply history inside the test tmpdir so it
+            # doesn't bleed into workspace/data/web_chat.jsonl.
+            "web_chat_reply": {
+                "history_path": f"{chat_dir}/chat.jsonl",
+            },
+        },
         sleep=SleepSection(max_duration_seconds=7200,
                               min_community_size=1),
         safety=SafetySection(gm_node_hard_limit=500,

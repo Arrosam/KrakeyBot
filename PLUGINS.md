@@ -1,67 +1,96 @@
 # KrakeyBot Plugin Development
 
-Krakey discovers extra tentacles and sensories at boot by scanning
-`workspace/tentacles/` and `workspace/sensories/`. Anything you drop
-there (with a valid module layout) is registered alongside the
-built-ins and appears in the dashboard's `Plugins (auto-discovered)`
-section.
+Krakey discovers plugins at boot by scanning two roots:
+
+| Root | Source tag | Who owns it |
+|---|---|---|
+| `src/plugins/builtin/` | `builtin` | ships with Krakey |
+| `workspace/plugins/`   | `plugin`  | user-dropped |
+
+Everything under those roots is organised as **projects**. One project =
+one folder. A project may contain one tentacle, one sensory, or a
+bundle of both that share state (e.g. a Telegram project that ships a
+sensory + a reply tentacle sharing one HTTP client).
 
 ## Quick rules
 
-- **Plugins run in-process with Krakey's privileges.** A plugin that
-  imports `os` can do everything your shell user can. Use the sandbox
+- **Plugins run in-process with Krakey's privileges.** Use the sandbox
   VM (`SANDBOX.md`) for anything untrusted.
-- **A bad plugin must not block boot.** The loader catches every
-  exception, logs it, reports on the dashboard, and moves on.
-- **Per-plugin config lives under `config.yaml`** at
-  `tentacle.<name>` / `sensory.<name>` — same shape as the built-ins.
-  Plugins declare their schema in a manifest so the dashboard can
-  render typed inputs.
+- **A bad plugin must never block boot.** The loader catches every
+  exception, reports it on the dashboard (red card), and moves on.
+- **Per-project config lives under `plugins.<project_name>`** in
+  `config.yaml`. There is no separate `tentacle:` / `sensory:`
+  section — one project gets one dict.
 
 ## Layout
 
 Two equally valid shapes:
 
-**Single file** (simplest):
+### Single file (simplest)
 
 ```
-workspace/tentacles/my_weather.py
+workspace/plugins/my_weather.py
 ```
 
-**Package** (if you need helper modules / data files):
+### Package (helper modules, data files, manifest.yaml)
 
 ```
-workspace/tentacles/my_weather/
+workspace/plugins/my_weather/
   __init__.py
   helpers.py
-  manifest.yaml        # optional — overrides / supplements inline MANIFEST
+  manifest.yaml        # optional — wins over inline MANIFEST
 ```
 
 Rules:
 
-- Subdirs starting with `.` or `_` and `__pycache__` are skipped.
-- The same rule applies to `workspace/sensories/`.
+- Subdirs / files starting with `.` or `_`, and `__pycache__`, are skipped.
+- Non-`.py` files at the root (like a stray README) are ignored.
 
 ## Contract
 
-A plugin module must expose **one** of:
+Your project module must expose **one** of three factories. Pick by
+what the project produces:
 
-### A. Factory function (recommended)
+### A. Multi-component project — `create_plugins`
+
+Recommended when the project produces more than one thing, especially
+if they share state (one client, one cache, one connection pool, …).
 
 ```python
-# workspace/tentacles/my_weather.py
-
-def create_tentacle(config: dict, deps: dict) -> "Tentacle":
-    return MyWeatherTentacle(
-        api_key=config["api_key"],
-        city=config.get("default_city", "Auckland"),
-    )
+def create_plugins(config: dict, deps: dict) -> dict:
+    client = HttpClient(token=config["bot_token"])
+    return {
+        "tentacles": [MyReplyTentacle(client)],
+        "sensories": [MyPollSensory(client)],
+    }
 ```
 
-`config` is the per-plugin slice of `config.yaml`
-(`tentacle.my_weather` merged with defaults from your manifest).
+Return shape: `{"tentacles": [...], "sensories": [...]}`. Either key
+may be empty or omitted.
 
-`deps` gives you access to runtime primitives you may need:
+### B. Single-tentacle shortcut — `create_tentacle`
+
+```python
+def create_tentacle(config: dict, deps: dict) -> Tentacle:
+    return WeatherTentacle(api_key=config["api_key"])
+```
+
+### C. Single-sensory shortcut — `create_sensory`
+
+```python
+def create_sensory(config: dict, deps: dict) -> Sensory:
+    return FileSystemWatchSensory(watch_dir=config["dir"])
+```
+
+### D. Bare-class fallback
+
+If the module exposes no factory, the loader looks for any subclass
+of `Tentacle` or `Sensory` and instantiates it with `cls(**config)` or
+`cls()`. Useful for trivial zero-config plugins.
+
+## `deps` — runtime-injected dependencies
+
+All factories receive the same `deps` dict:
 
 | Key | Type | Notes |
 |---|---|---|
@@ -69,62 +98,45 @@ def create_tentacle(config: dict, deps: dict) -> "Tentacle":
 | `kb_registry` | `KBRegistry` | long-term memories |
 | `embedder` | `AsyncEmbedder` | `await embedder(text) → vec` |
 | `buffer` | `StimulusBuffer` | push stimuli back at Krakey |
-| `web_chat_history` | `WebChatHistory` or `None` | dashboard chat |
-| `config` | full `Config` object | read-only views of other sections |
-
-Return a `Tentacle` (or `Sensory`) instance — see `src/interfaces/`.
-
-Sensory variant: factory is `create_sensory(config, deps) -> Sensory`.
-
-### B. Exported class
-
-If your class needs no dependencies and its `__init__` takes only
-kwargs:
-
-```python
-class WeatherTentacle(Tentacle):
-    def __init__(self, api_key: str = "", **_):
-        ...
-
-TENTACLE_CLASS = WeatherTentacle
-```
-
-The loader will call `TENTACLE_CLASS(**config)`. Use `SENSORY_CLASS`
-for sensories.
-
-### C. Bare subclass
-
-If neither factory nor class constant is exported, the loader looks
-for any subclass of `Tentacle` / `Sensory` in the module and uses it.
-Suitable for one-file plugins with zero config.
+| `web_chat_history` | `WebChatHistory` \| None | dashboard chat persistence |
+| `config` | full `Config` object | read-only view of the rest of the config |
+| `build_code_runner` | callable | `(coding_cfg) → CodeRunner` — honours sandbox policy; used by the `coding` plugin |
 
 ## Manifest
 
-Either inline in the module:
+Inline in the module:
 
 ```python
 MANIFEST = {
-    "name": "my_weather",                  # defaults to filename / dir name
+    "name": "my_weather",               # defaults to folder name
     "description": "Current weather for a city",
-    "is_internal": False,                   # tentacles only — see below
+    "is_internal": False,                # single-tentacle shortcut: default is_internal
+    "components": [                      # REQUIRED for create_plugins
+        {"kind": "tentacle", "name": "weather",
+         "is_internal": True,
+         "description": "inward: results go to Self"},
+        {"kind": "sensory", "name": "weather_alerts",
+         "description": "optional paired sensory"},
+    ],
     "config_schema": [
-        {"field": "enabled",       "type": "bool",    "default": True,
-         "help": "Master switch"},
-        {"field": "api_key",       "type": "password","default": "",
-         "help": "openweathermap.org API key"},
-        {"field": "default_city",  "type": "text",    "default": "Auckland"},
-        {"field": "max_age_min",   "type": "number",  "default": 30,
-         "help": "Cache TTL in minutes"},
+        {"field": "enabled",     "type": "bool",     "default": True},
+        {"field": "api_key",     "type": "password", "default": "",
+         "help": "openweathermap.org key"},
+        {"field": "default_city","type": "text",     "default": "Auckland"},
     ],
 }
 ```
 
-or as `manifest.yaml` next to the module:
+Or as `manifest.yaml` next to the module (YAML overrides inline
+`MANIFEST` field-for-field):
 
 ```yaml
 name: my_weather
 description: Current weather for a city
-is_internal: false
+components:
+  - kind: tentacle
+    name: weather
+    is_internal: true
 config_schema:
   - field: enabled
     type: bool
@@ -132,10 +144,20 @@ config_schema:
   - field: api_key
     type: password
     default: ""
-    help: openweathermap.org API key
+    help: openweathermap.org key
 ```
 
-YAML wins over inline when both are present.
+### Component metadata
+
+For multi-component projects the `components` list declares each
+produced tentacle / sensory:
+
+- `kind` — `"tentacle"` or `"sensory"` (required)
+- `name` — component name as it will appear in `[STATUS]` and in
+  the dashboard (defaults to the instance's `.name` property)
+- `description` — one-liner shown in the dashboard card
+- `is_internal` — tentacles only; overrides the instance's own
+  `is_internal` property
 
 ### Field types the dashboard understands
 
@@ -147,37 +169,31 @@ YAML wins over inline when both are present.
 | `text` | single-line text input |
 | `password` | masked text input |
 
-Anything else falls back to `text`.
+Unrecognised types fall back to `text`.
 
-### `is_internal` — what it means
+## Config lookup
 
-`is_internal=true` means the tentacle's output is Krakey's own private
-information (e.g. `memory_recall`, `search`). The runtime logs it in
-magenta and Self decides whether to relay the content to the human.
+The loader reads `config.yaml`'s `plugins.<project_name>` entry and
+passes it to the factory. For a `my_weather` project:
 
-`is_internal=false` means the tentacle's output goes directly to a
-real human (e.g. `web_chat_reply`). Runtime logs it in green as
-Krakey's outward voice.
+```yaml
+plugins:
+  my_weather:
+    enabled: true
+    api_key: "${OPENWEATHER_API_KEY}"
+    default_city: Wellington
+```
 
-Sensories are always "inward" — they feed stimuli, they never emit
-user-visible text.
-
-## Enabling / disabling
-
-The loader checks `config[tentacle_or_sensory][name].enabled`. If
-false, the plugin is discovered and listed in the dashboard but NOT
-registered on the runtime registry. This lets the dashboard report
-"present but disabled" without edit friction.
-
-Default when the field is absent: `true`.
+Defaults from `config_schema` fill missing keys before the factory
+sees the dict. `enabled: false` reports the project in the dashboard
+but skips instantiation entirely — the factory never runs.
 
 ## Examples
 
-A minimal "echo" tentacle that just returns its intent as an inward
-stimulus — good template to copy:
+### Minimal single-tentacle plugin
 
 ```python
-# workspace/tentacles/echo.py
+# workspace/plugins/echo.py
 from datetime import datetime
 
 from src.interfaces.tentacle import Tentacle
@@ -185,7 +201,7 @@ from src.models.stimulus import Stimulus
 
 
 MANIFEST = {
-    "description": "Echoes the intent back to Self as a tentacle_feedback.",
+    "description": "Echoes the intent back to Self as tentacle_feedback.",
     "is_internal": True,
     "config_schema": [
         {"field": "enabled", "type": "bool", "default": True},
@@ -195,9 +211,8 @@ MANIFEST = {
 
 
 class EchoTentacle(Tentacle):
-    def __init__(self, prefix: str = "echo: ", **_):
+    def __init__(self, prefix):
         self._prefix = prefix
-
     @property
     def name(self): return "echo"
     @property
@@ -207,14 +222,11 @@ class EchoTentacle(Tentacle):
         return {"intent": "free text to echo back"}
     @property
     def is_internal(self): return True
-
     async def execute(self, intent, params):
         return Stimulus(
-            type="tentacle_feedback",
-            source=f"tentacle:{self.name}",
+            type="tentacle_feedback", source="tentacle:echo",
             content=self._prefix + (intent or ""),
-            timestamp=datetime.now(),
-            adrenalin=False,
+            timestamp=datetime.now(), adrenalin=False,
         )
 
 
@@ -222,27 +234,33 @@ def create_tentacle(config, deps):
     return EchoTentacle(prefix=config.get("prefix", "echo: "))
 ```
 
-Drop that file in `workspace/tentacles/echo.py`, add
+Enable in `config.yaml`:
+
 ```yaml
-tentacle:
-  echo: { enabled: true, prefix: "→ " }
+plugins:
+  echo:
+    enabled: true
+    prefix: "→ "
 ```
-to `config.yaml`, and restart. The dashboard's Plugins section will
-show it with a `plugin ✓` badge.
+
+### Multi-component project sharing a client
+
+See `src/plugins/builtin/telegram/__init__.py` — the canonical example:
+sensory + reply tentacle sharing one `HttpTelegramClient` via
+`create_plugins`.
 
 ## Troubleshooting
 
-- **Plugin does not show up** — check `workspace/tentacles/<name>/`
-  exists and is not hidden (starts with `.` / `_`). Check the runtime
-  log at startup for `plugin ... failed to load`.
-- **Plugin shows as `plugin ✗`** — hover / expand the card in the
-  dashboard Plugins section; the full traceback is shown. Common
-  causes: missing dependency on the host, typo in `create_tentacle`
-  name, factory raising in its own init.
-- **Plugin loads but Krakey never calls it** — Hypothalamus picks
-  tentacles from `[STATUS]`. Check that `description` + name are
-  something Self can map to her intent. Rename to something less
-  generic if needed.
+- **Plugin does not show up** — check that `workspace/plugins/<name>/`
+  (or `workspace/plugins/<name>.py`) exists and is not hidden
+  (no leading `.` / `_`). Check the startup log for
+  `plugin ... failed to load`.
+- **Plugin shows `plugin ✗` in dashboard** — expand the card; the
+  full traceback is shown. Common causes: missing host dependency,
+  typo in factory name, factory raises during build.
+- **Plugin loads but Krakey never calls it** — the Hypothalamus picks
+  tentacles from `[STATUS]`. Check that `name` + `description` are
+  descriptive enough for Self to map her intent onto.
 - **Config changes ignored** — plugin instances are built at Runtime
   construction. Restart Krakey after editing `config.yaml` (or save
   via dashboard Settings + click Restart).

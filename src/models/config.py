@@ -164,8 +164,12 @@ class Config:
     sliding_window: SlidingWindowSection
     graph_memory: GraphMemorySection
     knowledge_base: KnowledgeBaseSection
-    sensory: dict[str, dict[str, Any]]
-    tentacle: dict[str, dict[str, Any]]
+    # Per-project plugin config. Key = project folder name (matches
+    # src/plugins/builtin/<name>/ or workspace/plugins/<name>/). A
+    # project can carry one tentacle, one sensory, or a bundle of both
+    # that share state (e.g. Telegram: sensory + reply tentacle
+    # sharing one HttpTelegramClient).
+    plugins: dict[str, dict[str, Any]]
     sleep: SleepSection
     safety: SafetySection
     dashboard: DashboardSection = field(default_factory=DashboardSection)
@@ -239,8 +243,7 @@ def load_config(path: str | Path = "config.yaml") -> Config:
             neighbor_expand_depth=gm["neighbor_expand_depth"],
         ),
         knowledge_base=KnowledgeBaseSection(dir=raw["knowledge_base"]["dir"]),
-        sensory=raw.get("sensory") or {},
-        tentacle=raw.get("tentacle") or {},
+        plugins=raw.get("plugins") or {},
         sleep=_build_sleep(raw["sleep"]),
         safety=SafetySection(
             gm_node_hard_limit=raw["safety"]["gm_node_hard_limit"],

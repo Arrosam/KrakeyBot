@@ -1,45 +1,35 @@
-"""Plugin loader — discover + instantiate + fail-soft."""
+"""Plugin loader — discover + instantiate + fail-soft + multi-component."""
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
 
-from src.plugins.loader import (
-    discover_sensories, discover_tentacles,
-)
+from src.plugins.loader import discover_plugins
 
 
-# ---------------- helpers ----------------
-
-
-def _write_plugin(dir_path: Path, name: str, body: str,
-                     manifest_yaml: str | None = None,
-                     as_package: bool = False) -> None:
+def _write_single(dir_path: Path, name: str, body: str) -> None:
     dir_path.mkdir(parents=True, exist_ok=True)
-    if as_package:
-        pkg = dir_path / name
-        pkg.mkdir(parents=True, exist_ok=True)
-        (pkg / "__init__.py").write_text(body, encoding="utf-8")
-        if manifest_yaml is not None:
-            (pkg / "manifest.yaml").write_text(manifest_yaml, encoding="utf-8")
-    else:
-        (dir_path / f"{name}.py").write_text(body, encoding="utf-8")
-        if manifest_yaml is not None:
-            # yaml next to single-file plugin lives in a sibling dir matching
-            # the module name; for single-file, keep yaml inline via MANIFEST
-            raise AssertionError("manifest.yaml only for package plugins")
+    (dir_path / f"{name}.py").write_text(body, encoding="utf-8")
 
 
-# ---------------- discovery ----------------
+def _write_pkg(dir_path: Path, name: str, body: str,
+                  manifest_yaml: str | None = None) -> None:
+    pkg = dir_path / name
+    pkg.mkdir(parents=True, exist_ok=True)
+    (pkg / "__init__.py").write_text(body, encoding="utf-8")
+    if manifest_yaml is not None:
+        (pkg / "manifest.yaml").write_text(manifest_yaml, encoding="utf-8")
+
+
+# ---------------- single-component shortcuts ----------------
 
 
 def test_discover_nothing_when_dir_missing(tmp_path):
-    out = discover_tentacles(tmp_path / "nope", deps={}, config={})
-    assert out == []
+    assert discover_plugins(tmp_path / "nope", deps={}, configs={}) == []
 
 
-def test_single_file_tentacle_with_factory(tmp_path):
+def test_single_file_tentacle_shortcut(tmp_path):
     body = """
 from src.interfaces.tentacle import Tentacle
 from src.models.stimulus import Stimulus
@@ -47,15 +37,13 @@ from datetime import datetime
 
 MANIFEST = {
     "description": "t",
-    "is_internal": True,
     "config_schema": [
         {"field": "greeting", "type": "text", "default": "hi"},
     ],
 }
 
 class EchoT(Tentacle):
-    def __init__(self, greeting):
-        self.greeting = greeting
+    def __init__(self, greeting): self.greeting = greeting
     @property
     def name(self): return "echo"
     @property
@@ -71,84 +59,171 @@ class EchoT(Tentacle):
 def create_tentacle(config, deps):
     return EchoT(greeting=config["greeting"])
 """
-    d = tmp_path / "tentacles"
-    _write_plugin(d, "echo", body)
+    d = tmp_path / "plugins"
+    _write_single(d, "echo", body)
 
-    out = discover_tentacles(d, deps={}, config={})
-    assert len(out) == 1
-    info = out[0]
-    assert info.error is None, info.error
-    assert info.name == "echo"
-    assert info.is_internal is True
-    assert info.config_schema[0]["field"] == "greeting"
-    assert info.instance is not None
-    assert info.instance.name == "echo"
-    # Default from schema applied (user cfg is empty)
-    assert info.instance.greeting == "hi"
-
-
-def test_package_plugin_with_manifest_yaml_overrides_inline(tmp_path):
-    body = """
-from src.interfaces.tentacle import Tentacle
-from src.models.stimulus import Stimulus
-from datetime import datetime
-
-MANIFEST = {"description": "inline-desc", "is_internal": False,
-            "config_schema": []}
-
-class P(Tentacle):
-    @property
-    def name(self): return "p"
-    @property
-    def description(self): return "p"
-    @property
-    def parameters_schema(self): return {}
-    async def execute(self, intent, params):
-        return Stimulus(type="tentacle_feedback", source="tentacle:p",
-                        content="", timestamp=datetime.now())
-
-TENTACLE_CLASS = P
-"""
-    yaml_override = """
-description: yaml-desc
-is_internal: true
-"""
-    d = tmp_path / "tentacles"
-    _write_plugin(d, "p", body, manifest_yaml=yaml_override, as_package=True)
-
-    out = discover_tentacles(d, deps={}, config={})
+    out = discover_plugins(d, deps={}, configs={})
     assert len(out) == 1
     info = out[0]
     assert info.error is None
-    # yaml wins
-    assert info.description == "yaml-desc"
-    assert info.is_internal is True
+    assert info.name == "echo"
+    assert info.kind == "tentacle"
+    assert info.project == "echo"
+    assert info.instance is not None and info.instance.greeting == "hi"
 
 
-def test_broken_plugin_is_reported_not_raised(tmp_path):
-    body = "import this_module_does_not_exist_xyz123\n"
-    d = tmp_path / "tentacles"
-    _write_plugin(d, "bad", body)
+def test_single_sensory_shortcut(tmp_path):
+    body = """
+from src.interfaces.sensory import Sensory
 
-    out = discover_tentacles(d, deps={}, config={})
+class S(Sensory):
+    @property
+    def name(self): return "s"
+    async def start(self, buffer): pass
+    async def stop(self): pass
+
+def create_sensory(config, deps): return S()
+"""
+    d = tmp_path / "plugins"
+    _write_single(d, "feed", body)
+    out = discover_plugins(d, deps={}, configs={})
     assert len(out) == 1
-    info = out[0]
-    assert info.error is not None
-    assert "xyz123" in info.error or "ModuleNotFound" in info.error
-    assert info.instance is None
+    assert out[0].kind == "sensory"
+    assert out[0].instance is not None
 
 
-def test_disabled_plugin_skips_instantiation(tmp_path):
+# ---------------- multi-component projects ----------------
+
+
+def test_create_plugins_emits_one_info_per_component(tmp_path):
     body = """
 from src.interfaces.tentacle import Tentacle
+from src.interfaces.sensory import Sensory
 from src.models.stimulus import Stimulus
 from datetime import datetime
 
 MANIFEST = {
+    "description": "paired",
+    "components": [
+        {"kind": "tentacle", "name": "paired_send", "is_internal": False,
+         "description": "send half"},
+        {"kind": "sensory",  "name": "paired_recv",
+         "description": "recv half"},
+    ],
     "config_schema": [
-        {"field": "enabled", "type": "bool", "default": True},
+        {"field": "endpoint", "type": "text", "default": "x"},
     ],
 }
+
+class T(Tentacle):
+    def __init__(self, ep): self.ep = ep
+    @property
+    def name(self): return "paired_send"
+    @property
+    def description(self): return "send"
+    @property
+    def parameters_schema(self): return {}
+    async def execute(self, intent, params):
+        return Stimulus(type="tentacle_feedback", source="t:paired_send",
+                        content="", timestamp=datetime.now())
+
+class S(Sensory):
+    def __init__(self, ep): self.ep = ep
+    @property
+    def name(self): return "paired_recv"
+    async def start(self, buffer): pass
+    async def stop(self): pass
+
+def create_plugins(config, deps):
+    ep = config["endpoint"]
+    return {"tentacles": [T(ep)], "sensories": [S(ep)]}
+"""
+    d = tmp_path / "plugins"
+    _write_pkg(d, "paired", body)
+    out = discover_plugins(d, deps={}, configs={})
+    assert len(out) == 2
+    # Same project name on both
+    assert {i.project for i in out} == {"paired"}
+    # Kinds split correctly
+    assert {i.kind for i in out} == {"tentacle", "sensory"}
+    # Metadata from components entries used
+    names = {i.name for i in out}
+    assert names == {"paired_send", "paired_recv"}
+    # Shared config_schema
+    for i in out:
+        assert len(i.config_schema) == 1
+        assert i.config_schema[0]["field"] == "endpoint"
+    # Shared state (both saw the same endpoint value)
+    t_inst = next(i.instance for i in out if i.kind == "tentacle")
+    s_inst = next(i.instance for i in out if i.kind == "sensory")
+    assert t_inst.ep == s_inst.ep == "x"
+
+
+def test_create_plugins_shared_client_between_components(tmp_path):
+    """Classic telegram-style: one client shared across tentacle + sensory."""
+    body = """
+from src.interfaces.tentacle import Tentacle
+from src.interfaces.sensory import Sensory
+from src.models.stimulus import Stimulus
+from datetime import datetime
+
+MANIFEST = {"components": [
+    {"kind": "tentacle", "name": "x_send"},
+    {"kind": "sensory",  "name": "x_recv"},
+]}
+
+class Client:
+    pass
+
+class T(Tentacle):
+    def __init__(self, c): self.client = c
+    @property
+    def name(self): return "x_send"
+    @property
+    def description(self): return ""
+    @property
+    def parameters_schema(self): return {}
+    async def execute(self, intent, params):
+        return Stimulus(type="tentacle_feedback", source="t:x_send",
+                        content="", timestamp=datetime.now())
+
+class S(Sensory):
+    def __init__(self, c): self.client = c
+    @property
+    def name(self): return "x_recv"
+    async def start(self, buffer): pass
+    async def stop(self): pass
+
+def create_plugins(config, deps):
+    c = Client()
+    return {"tentacles": [T(c)], "sensories": [S(c)]}
+"""
+    d = tmp_path / "plugins"
+    _write_pkg(d, "x_proj", body)
+    out = discover_plugins(d, deps={}, configs={})
+    t = next(i.instance for i in out if i.kind == "tentacle")
+    s = next(i.instance for i in out if i.kind == "sensory")
+    assert t.client is s.client  # same object — the whole point
+
+
+# ---------------- error + disabled + filter paths ----------------
+
+
+def test_broken_plugin_is_reported_not_raised(tmp_path):
+    d = tmp_path / "plugins"
+    _write_single(d, "bad", "import this_module_does_not_exist_xyz123\n")
+    out = discover_plugins(d, deps={}, configs={})
+    assert len(out) == 1
+    assert out[0].error is not None
+    assert "xyz123" in out[0].error or "ModuleNotFound" in out[0].error
+    assert out[0].instance is None
+
+
+def test_disabled_project_reports_but_does_not_instantiate(tmp_path):
+    body = """
+from src.interfaces.tentacle import Tentacle
+
+MANIFEST = {"config_schema":[{"field":"enabled","type":"bool","default":True}]}
 
 class Never(Tentacle):
     def __init__(self):
@@ -159,66 +234,63 @@ class Never(Tentacle):
     def description(self): return ""
     @property
     def parameters_schema(self): return {}
-    async def execute(self, intent, params):
-        raise NotImplementedError
+    async def execute(self, intent, params): raise NotImplementedError
 
-def create_tentacle(config, deps):
-    return Never()
+def create_tentacle(config, deps): return Never()
 """
-    d = tmp_path / "tentacles"
-    _write_plugin(d, "never", body)
-    # User config disables it
-    out = discover_tentacles(d, deps={}, config={"never": {"enabled": False}})
+    d = tmp_path / "plugins"
+    _write_single(d, "never", body)
+    out = discover_plugins(d, deps={}, configs={"never": {"enabled": False}})
     assert len(out) == 1
     assert out[0].error is None
-    assert out[0].instance is None   # not built
+    assert out[0].instance is None
 
 
-def test_hidden_and_pycache_dirs_skipped(tmp_path):
-    d = tmp_path / "tentacles"
+def test_hidden_dirs_and_non_py_files_skipped(tmp_path):
+    d = tmp_path / "plugins"
     d.mkdir()
     (d / "__pycache__").mkdir()
     (d / ".hidden").mkdir()
     (d / "_private.py").write_text("MANIFEST = {}", encoding="utf-8")
-    assert discover_tentacles(d, deps={}, config={}) == []
+    (d / "README.md").write_text("# readme", encoding="utf-8")
+    assert discover_plugins(d, deps={}, configs={}) == []
 
 
-def test_sensory_discover_uses_same_contract(tmp_path):
+def test_yaml_manifest_overrides_inline(tmp_path):
     body = """
-from src.interfaces.sensory import Sensory
+from src.interfaces.tentacle import Tentacle
+MANIFEST = {"description": "inline"}
 
-class S(Sensory):
+class P(Tentacle):
     @property
-    def name(self): return "s"
-    async def start(self, buffer): pass
-    async def stop(self): pass
+    def name(self): return "p"
+    @property
+    def description(self): return "p"
+    @property
+    def parameters_schema(self): return {}
+    async def execute(self, intent, params): raise NotImplementedError
 
-def create_sensory(config, deps):
-    return S()
+def create_tentacle(config, deps): return P()
 """
-    d = tmp_path / "sensories"
-    _write_plugin(d, "s_plugin", body)
-    out = discover_sensories(d, deps={}, config={})
+    d = tmp_path / "plugins"
+    _write_pkg(d, "p", body, manifest_yaml="description: yaml-wins\n")
+    out = discover_plugins(d, deps={}, configs={})
     assert len(out) == 1
-    assert out[0].instance is not None
-    assert out[0].instance.name == "s"
+    assert out[0].description == "yaml-wins"
 
 
-def test_config_schema_defaults_fill_user_overrides(tmp_path):
+def test_config_defaults_fill_user_missing_keys(tmp_path):
     body = """
 from src.interfaces.tentacle import Tentacle
 from src.models.stimulus import Stimulus
 from datetime import datetime
 
-MANIFEST = {
-    "config_schema": [
-        {"field": "k", "type": "number", "default": 10},
-    ],
-}
+MANIFEST = {"config_schema": [
+    {"field": "k", "type": "number", "default": 10},
+]}
 
 class P(Tentacle):
-    def __init__(self, k):
-        self.k = k
+    def __init__(self, k): self.k = k
     @property
     def name(self): return "p"
     @property
@@ -226,17 +298,13 @@ class P(Tentacle):
     @property
     def parameters_schema(self): return {}
     async def execute(self, intent, params):
-        return Stimulus(type="tentacle_feedback", source="t:p", content="",
-                        timestamp=datetime.now())
+        return Stimulus(type="tentacle_feedback", source="t:p",
+                        content="", timestamp=datetime.now())
 
-def create_tentacle(config, deps):
-    return P(k=config["k"])
+def create_tentacle(config, deps): return P(k=config["k"])
 """
-    d = tmp_path / "tentacles"
-    _write_plugin(d, "p", body)
-    # No user override → default 10
-    out1 = discover_tentacles(d, deps={}, config={})
-    assert out1[0].instance.k == 10
-    # User override → 42
-    out2 = discover_tentacles(d, deps={}, config={"p": {"k": 42}})
-    assert out2[0].instance.k == 42
+    d = tmp_path / "plugins"
+    _write_single(d, "p", body)
+    assert discover_plugins(d, deps={}, configs={})[0].instance.k == 10
+    assert discover_plugins(d, deps={},
+                                configs={"p": {"k": 42}})[0].instance.k == 42

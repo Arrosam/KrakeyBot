@@ -1,36 +1,50 @@
-"""Safe plugin discovery + import.
+"""Plugin discovery and safe import.
 
-Layout each plugin under `workspace/tentacles/<name>/` or
-`workspace/sensories/<name>/` with either
+Layout: each plugin is a *project* folder containing zero or more
+tentacles + zero or more sensories that may share state.
 
-    workspace/tentacles/<name>.py              # single-file
-    workspace/tentacles/<name>/__init__.py     # package
+    <root>/<project_name>/__init__.py
 
-The module must expose one of:
+Two roots are scanned:
 
-    create_tentacle(config: dict, deps: dict) -> Tentacle     # factory
-    TENTACLE_CLASS = MyTentacle                               # direct class
-    Sensory variant: create_sensory / SENSORY_CLASS
+    src/plugins/builtin/       source = "builtin"   (ships with Krakey)
+    workspace/plugins/         source = "plugin"    (user-dropped)
 
-and optionally a `MANIFEST` dict:
+Each project module must expose ONE of:
+
+    create_plugins(config, deps) -> dict:
+        # returns {"tentacles": [Tentacle, ...], "sensories": [Sensory, ...]}
+        # Omit either key for single-kind projects. Preferred because
+        # multi-component projects (e.g. telegram = sensory+tentacle
+        # sharing a client) need the same `config` + `deps` in ONE
+        # factory to keep shared state sane.
+
+    create_tentacle(config, deps) -> Tentacle      # single-tentacle shortcut
+    create_sensory(config, deps)  -> Sensory       # single-sensory shortcut
+
+and optionally a MANIFEST dict (or manifest.yaml next to the module):
 
     MANIFEST = {
-        "name":        "my_plugin",            # defaults to filename
-        "description": "one-liner",
-        "is_internal": True,                    # tentacles only
-        "config_schema": [
-            {"field": "api_key", "type": "password", "default": "",
-             "help": "..."},
-            {"field": "max_results", "type": "number", "default": 5},
+        "name":          "my_project",     # defaults to folder name
+        "description":   "one-liner",
+        "components": [                      # REQUIRED for create_plugins
+            {"kind": "tentacle", "name": "my_thing", "is_internal": True,
+             "description": "optional per-component blurb"},
+            {"kind": "sensory",  "name": "my_thing_feed"},
+        ],
+        "config_schema": [                   # drives dashboard Settings form
+            {"field": "enabled", "type": "bool", "default": True},
+            ...
         ],
     }
 
-A standalone `manifest.yaml` next to the module is read if present and
-merged on top of in-module `MANIFEST` (yaml wins).
+For single-component shortcuts (create_tentacle / create_sensory),
+`components` may be omitted — the component inherits the project name.
 
-Safety: each plugin loads in its own spec_from_file_location. ImportErrors
-and any exception during import are logged and the plugin is skipped —
-one bad plugin must not break Krakey's boot.
+Safety: each module loads in isolation via importlib.util. Any import
+or factory exception is caught, recorded on the PluginInfo.error
+field, and the plugin is skipped — a broken plugin must never block
+Krakey's boot.
 """
 from __future__ import annotations
 
@@ -39,76 +53,49 @@ import sys
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import yaml
 
 
 @dataclass
 class PluginInfo:
-    """Descriptor returned by discovery for REST/UI consumption."""
-    name: str
+    """Descriptor returned by discovery for REST / UI consumption.
+
+    One PluginInfo corresponds to one *component* (a tentacle OR a
+    sensory). A multi-component project produces multiple PluginInfos
+    linked by the same `project` string.
+    """
+    name: str                           # component name
     kind: str                           # "tentacle" | "sensory"
     source: str                         # "builtin" | "plugin"
-    path: str                           # absolute path on disk, or "" for builtin
+    path: str                           # module path on disk, "" for core
+    project: str = ""                   # containing project folder name
     description: str = ""
     is_internal: bool = False
     config_schema: list[dict[str, Any]] = field(default_factory=list)
-    # Errors encountered at import time (if any). Plugin with errors is
-    # NOT registered but IS reported so the UI can surface the problem.
     error: str | None = None
-    # The instance or factory-result; attached by the loader after a
-    # successful build_*(). Never serialised to JSON.
+    # Set by the loader on success, None otherwise. Never JSON-serialised.
     instance: Any = None
 
 
-# ---------------- discovery entrypoints ----------------
+def discover_plugins(dir_path: Path, deps: dict[str, Any],
+                        configs: dict[str, dict[str, Any]],
+                        *, source: str = "plugin"
+                        ) -> list[PluginInfo]:
+    """Scan `dir_path` for project folders / files and return one
+    PluginInfo per *component* (tentacle or sensory) produced.
 
-
-def discover_tentacles(dir_path: Path, deps: dict[str, Any],
-                          config: dict[str, dict[str, Any]],
-                          *, source: str = "plugin"
-                          ) -> list[PluginInfo]:
-    """Walk dir_path for tentacle plugins. Returns PluginInfo list (one
-    per plugin directory / file). Successful ones have .instance set to
-    a Tentacle; failures have .error populated and .instance=None.
-
-    `config` is the runtime's `tentacle:` config dict. Per-plugin entry
-    (config[name]) is passed to the plugin factory.
-
-    `source` tags the PluginInfo for UI display. Use "builtin" when
-    scanning `src/plugins/builtin/` (shipped with Krakey) and "plugin"
-    (default) for user-dropped modules under workspace/.
+    `configs` is the runtime's `plugins:` section (mapping project name
+    to its config dict). Each project's factory receives its own
+    config slice.
     """
-    return _discover(dir_path, kind="tentacle", deps=deps,
-                        config=config, source=source)
-
-
-def discover_sensories(dir_path: Path, deps: dict[str, Any],
-                          config: dict[str, dict[str, Any]],
-                          *, source: str = "plugin"
-                          ) -> list[PluginInfo]:
-    return _discover(dir_path, kind="sensory", deps=deps,
-                        config=config, source=source)
-
-
-# ---------------- internals ----------------
-
-
-def _discover(dir_path: Path, *, kind: str, deps: dict[str, Any],
-                 config: dict[str, dict[str, Any]],
-                 source: str = "plugin") -> list[PluginInfo]:
     out: list[PluginInfo] = []
     if not dir_path.exists():
         return out
     for entry in sorted(dir_path.iterdir()):
         name = entry.name
-        # Skip README.md + other non-module files. Ignore dotfiles/ underscores
-        # (conventionally private).
         if name.startswith((".", "_")) or name == "__pycache__":
-            continue
-        # Skip non-README, non-module files in the directory (e.g. docs).
-        if entry.is_file() and entry.suffix != ".py":
             continue
         if entry.is_file() and entry.suffix == ".py":
             module_path = entry
@@ -118,49 +105,70 @@ def _discover(dir_path: Path, *, kind: str, deps: dict[str, Any],
             pkg_dir = entry
         else:
             continue
-
-        default_name = pkg_dir.name if pkg_dir else entry.stem
-        info = PluginInfo(name=default_name, kind=kind, source=source,
-                           path=str(module_path))
-        try:
-            module = _import_module(module_path, default_name, kind)
-            manifest = _read_manifest(module, pkg_dir or module_path.parent)
-            _fill_info_from_manifest(info, manifest, default_name)
-            # User config for THIS plugin (may be None)
-            user_cfg = (config or {}).get(info.name, {}) or {}
-            # Default-merge so plugin sees declared defaults unless
-            # overridden
-            merged_cfg = _apply_defaults(user_cfg, info.config_schema)
-            # Skip disabled plugins — but still report them in the list
-            if not merged_cfg.get("enabled", True):
-                info.instance = None
-                out.append(info)
-                continue
-            instance = _instantiate(module, kind, merged_cfg, deps)
-            info.instance = instance
-        except Exception as e:  # noqa: BLE001
-            info.error = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
-            info.instance = None
-        out.append(info)
+        project = pkg_dir.name if pkg_dir else entry.stem
+        out.extend(_load_project(
+            module_path=module_path,
+            pkg_dir=pkg_dir,
+            project=project,
+            source=source,
+            deps=deps,
+            project_config=configs.get(project) or {},
+        ))
     return out
 
 
-def _import_module(module_path: Path, module_name: str, kind: str):
-    # Namespace plugin modules so they don't collide with site-packages
-    # and can be re-imported (pytest, live config reload).
-    full_name = f"krakey_plugin_{kind}_{module_name}"
+# ---------------- internals ----------------
+
+
+def _load_project(*, module_path: Path, pkg_dir: Path | None,
+                     project: str, source: str, deps: dict[str, Any],
+                     project_config: dict[str, Any]) -> list[PluginInfo]:
+    """Import one project module, run its factory, and return
+    PluginInfo for each produced component."""
+    # Base info shared by every component — gets cloned per component below.
+    base = PluginInfo(
+        name=project, kind="?", source=source, path=str(module_path),
+        project=project,
+    )
+    try:
+        module = _import_module(module_path, project)
+        manifest = _read_manifest(module, pkg_dir or module_path.parent)
+        _apply_manifest_project_fields(base, manifest, project)
+        merged_cfg = _apply_defaults(project_config, base.config_schema)
+        components_meta = manifest.get("components") or []
+
+        # enabled=false short-circuits: report everything as "present but
+        # not instantiated" without running the factory.
+        if not merged_cfg.get("enabled", True):
+            return _describe_components(base, manifest, components_meta,
+                                           skipped=True)
+
+        instances = _run_factory(module, merged_cfg, deps)
+    except Exception as e:  # noqa: BLE001
+        base.error = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
+        base.instance = None
+        # Even on error, report one PluginInfo per declared component
+        # (so the dashboard knows what SHOULD have loaded).
+        return _describe_components(base,
+                                        {"components": _stub_components(base)},
+                                        _stub_components(base), error=True)
+
+    return _zip_components(base, manifest.get("components") or [], instances)
+
+
+def _import_module(module_path: Path, project: str):
+    full_name = f"krakey_plugin_{project}"
     spec = importlib.util.spec_from_file_location(full_name, module_path)
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load plugin at {module_path}")
     module = importlib.util.module_from_spec(spec)
-    # Expose under sys.modules so relative imports inside the plugin work
     sys.modules[full_name] = module
     spec.loader.exec_module(module)
     return module
 
 
 def _read_manifest(module, plugin_dir: Path) -> dict[str, Any]:
-    # Merge: module MANIFEST dict → overridden by yaml file if present
+    """Merge inline MANIFEST with an optional manifest.yaml (yaml wins)."""
     manifest: dict[str, Any] = dict(getattr(module, "MANIFEST", {}) or {})
     yaml_path = plugin_dir / "manifest.yaml"
     if yaml_path.exists():
@@ -173,9 +181,11 @@ def _read_manifest(module, plugin_dir: Path) -> dict[str, Any]:
     return manifest
 
 
-def _fill_info_from_manifest(info: PluginInfo, manifest: dict[str, Any],
-                                default_name: str) -> None:
+def _apply_manifest_project_fields(info: PluginInfo,
+                                        manifest: dict[str, Any],
+                                        default_name: str) -> None:
     info.name = str(manifest.get("name") or default_name)
+    info.project = info.name
     info.description = str(manifest.get("description") or "")
     info.is_internal = bool(manifest.get("is_internal", False))
     raw_schema = manifest.get("config_schema") or []
@@ -187,13 +197,12 @@ def _fill_info_from_manifest(info: PluginInfo, manifest: dict[str, Any],
 def _normalize_field(f: dict[str, Any]) -> dict[str, Any]:
     if "field" not in f:
         raise ValueError(f"config_schema entry missing 'field': {f}")
-    out = {
+    return {
         "field": str(f["field"]),
         "type": str(f.get("type", "text")),
         "default": f.get("default"),
         "help": str(f.get("help", "")),
     }
-    return out
 
 
 def _apply_defaults(user_cfg: dict[str, Any],
@@ -206,32 +215,127 @@ def _apply_defaults(user_cfg: dict[str, Any],
     return merged
 
 
-def _instantiate(module, kind: str, config: dict[str, Any],
-                    deps: dict[str, Any]):
-    factory_name = f"create_{kind}"
-    class_name = f"{kind.upper()}_CLASS"
-    factory: Callable | None = getattr(module, factory_name, None)
-    if factory is not None:
-        return factory(config, deps)
-    cls = getattr(module, class_name, None)
-    if cls is None:
-        # Fall back: look for any class that subclasses the base Tentacle/
-        # Sensory so plugin authors can omit the export. Inspect module.
-        from src.interfaces.tentacle import Tentacle
-        from src.interfaces.sensory import Sensory
-        base = Tentacle if kind == "tentacle" else Sensory
-        for val in vars(module).values():
-            if isinstance(val, type) and val is not base \
-                    and issubclass(val, base):
-                cls = val
-                break
-    if cls is None:
+def _run_factory(module, config: dict[str, Any],
+                    deps: dict[str, Any]) -> dict[str, list]:
+    """Call the project's factory and normalize to
+    `{"tentacles": [...], "sensories": [...]}`."""
+    if hasattr(module, "create_plugins"):
+        out = module.create_plugins(config, deps) or {}
+        if not isinstance(out, dict):
+            raise TypeError("create_plugins must return a dict")
+        return {
+            "tentacles": list(out.get("tentacles") or []),
+            "sensories": list(out.get("sensories") or []),
+        }
+    if hasattr(module, "create_tentacle"):
+        return {"tentacles": [module.create_tentacle(config, deps)],
+                "sensories": []}
+    if hasattr(module, "create_sensory"):
+        return {"tentacles": [],
+                "sensories": [module.create_sensory(config, deps)]}
+
+    # Fallback: find any Tentacle / Sensory subclass and instantiate it.
+    from src.interfaces.sensory import Sensory
+    from src.interfaces.tentacle import Tentacle
+    tentacles, sensories = [], []
+    for val in vars(module).values():
+        if not isinstance(val, type):
+            continue
+        if val is Tentacle or val is Sensory:
+            continue
+        if issubclass(val, Tentacle):
+            tentacles.append(_safe_construct(val, config))
+        elif issubclass(val, Sensory):
+            sensories.append(_safe_construct(val, config))
+    if not (tentacles or sensories):
         raise ImportError(
-            f"plugin module has no create_{kind}() factory, "
-            f"{class_name}, or subclass of {kind.capitalize()}"
+            "plugin module exposes neither create_plugins / "
+            "create_tentacle / create_sensory nor any Tentacle / Sensory "
+            "subclass"
         )
-    # Try calling with config kw, then bare
+    return {"tentacles": tentacles, "sensories": sensories}
+
+
+def _safe_construct(cls, config):
     try:
         return cls(**config) if config else cls()
     except TypeError:
         return cls()
+
+
+# ---------------- reporting helpers ----------------
+
+
+def _zip_components(base: PluginInfo,
+                      components_meta: list[dict[str, Any]],
+                      instances: dict[str, list]) -> list[PluginInfo]:
+    """Pair factory-produced instances with optional component metadata
+    and emit one PluginInfo per component."""
+    out: list[PluginInfo] = []
+    tent_meta = [m for m in components_meta if m.get("kind") == "tentacle"]
+    sens_meta = [m for m in components_meta if m.get("kind") == "sensory"]
+    out.extend(_pair(base, "tentacle", instances["tentacles"], tent_meta))
+    out.extend(_pair(base, "sensory",  instances["sensories"], sens_meta))
+    return out
+
+
+def _pair(base: PluginInfo, kind: str, instances: list,
+             meta_list: list[dict[str, Any]]) -> list[PluginInfo]:
+    """Build PluginInfo for each instance, preferring metadata for the
+    component name / description / is_internal when provided."""
+    out = []
+    for i, inst in enumerate(instances):
+        meta = meta_list[i] if i < len(meta_list) else {}
+        inst_name = getattr(inst, "name", None) if hasattr(inst, "name") else None
+        # "name" on Tentacle / Sensory is a @property; safe to read.
+        try:
+            inst_name = inst.name if inst_name is None else inst_name
+        except Exception:  # noqa: BLE001
+            inst_name = None
+        info = PluginInfo(
+            name=str(meta.get("name") or inst_name or base.name),
+            kind=kind,
+            source=base.source,
+            path=base.path,
+            project=base.project,
+            description=str(meta.get("description") or base.description),
+            is_internal=bool(meta.get("is_internal",
+                                         getattr(inst, "is_internal", False))),
+            config_schema=base.config_schema,
+            error=None,
+            instance=inst,
+        )
+        out.append(info)
+    return out
+
+
+def _describe_components(base: PluginInfo, manifest: dict[str, Any],
+                           components_meta: list[dict[str, Any]],
+                           *, skipped: bool = False,
+                           error: bool = False) -> list[PluginInfo]:
+    """Emit PluginInfos with instance=None for reporting purposes —
+    used when enabled=false (skipped) or when the factory crashed."""
+    out = []
+    meta_iter = components_meta or [{"kind": "tentacle",
+                                     "name": base.name}]
+    for meta in meta_iter:
+        info = PluginInfo(
+            name=str(meta.get("name") or base.name),
+            kind=str(meta.get("kind", "tentacle")),
+            source=base.source,
+            path=base.path,
+            project=base.project,
+            description=base.description,
+            is_internal=bool(meta.get("is_internal", base.is_internal)),
+            config_schema=base.config_schema,
+            error=base.error if error else None,
+            instance=None,
+        )
+        out.append(info)
+    return out
+
+
+def _stub_components(base: PluginInfo) -> list[dict[str, Any]]:
+    """When a manifest failed to parse, produce a single-tentacle stub
+    so the dashboard still sees the project name and error."""
+    return [{"kind": "tentacle", "name": base.name}]

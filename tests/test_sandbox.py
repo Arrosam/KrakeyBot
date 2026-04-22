@@ -105,9 +105,9 @@ async def test_runtime_refuses_start_when_sandbox_required_but_missing(tmp_path)
         self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
     )
     # Enable coding with sandbox default (true), leave runtime.config.sandbox blank
-    runtime.config.tentacle["coding"] = {"enabled": True, "sandbox": True}
+    runtime.config.plugins["coding"] = {"enabled": True, "sandbox": True}
     with pytest.raises(RuntimeError) as ei:
-        runtime._build_code_runner(runtime.config.tentacle["coding"])
+        runtime._build_code_runner(runtime.config.plugins["coding"])
     msg = str(ei.value)
     assert "sandbox" in msg.lower()
     assert "guest_os" in msg or "agent" in msg
@@ -122,8 +122,8 @@ async def test_runtime_allows_subprocess_when_sandbox_false(tmp_path):
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
     )
-    runtime.config.tentacle["coding"] = {"enabled": True, "sandbox": False}
-    runner = runtime._build_code_runner(runtime.config.tentacle["coding"])
+    runtime.config.plugins["coding"] = {"enabled": True, "sandbox": False}
+    runner = runtime._build_code_runner(runtime.config.plugins["coding"])
     assert isinstance(runner, SubprocessRunner)
 
 
@@ -134,11 +134,11 @@ async def test_runtime_builds_sandbox_runner_with_complete_config(tmp_path):
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
     )
-    runtime.config.tentacle["coding"] = {"enabled": True, "sandbox": True}
+    runtime.config.plugins["coding"] = {"enabled": True, "sandbox": True}
     runtime.config.sandbox.guest_os = "linux"
     runtime.config.sandbox.agent.url = "http://10.0.2.10:8765"
     runtime.config.sandbox.agent.token = "tok"
-    runner = runtime._build_code_runner(runtime.config.tentacle["coding"])
+    runner = runtime._build_code_runner(runtime.config.plugins["coding"])
     assert isinstance(runner, SandboxRunner)
 
 

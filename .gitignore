@@ -11,13 +11,10 @@ __pycache__/
 *.egg-info/
 workspace/*
 !workspace/GENESIS.md
-!workspace/tentacles/
-!workspace/sensories/
-# Within plugin dirs: everything user-dropped is ignored, keep only stubs
-workspace/tentacles/*
-workspace/sensories/*
-!workspace/tentacles/README.md
-!workspace/sensories/README.md
+!workspace/plugins/
+# Within the plugins dir: user-dropped modules are local, keep only the stub
+workspace/plugins/*
+!workspace/plugins/README.md
 *.sqlite
 *.sqlite-journal
 .env

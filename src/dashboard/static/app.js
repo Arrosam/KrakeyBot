@@ -703,19 +703,15 @@ function renderSettingsForm() {
   settingsForm.appendChild(renderGenericSection("knowledge_base", "Knowledge Base",
     cfgState.knowledge_base, SCHEMAS.knowledge_base));
 
-  // Plugins (discovered) — one card per tentacle / sensory known to
-  // the runtime RIGHT NOW. For plugins that declare a config_schema in
-  // their manifest, the fields render as typed inputs; otherwise the
-  // card links into the raw dict editor below.
+  // Plugins — one card per component (tentacle / sensory) known to
+  // the runtime RIGHT NOW. Components from the same project share one
+  // config_schema; edits land in cfgState.plugins[<project>].
   settingsForm.appendChild(renderPluginsSection());
 
-  // Low-level dict editors — advanced overrides, still available for
-  // fields not declared in plugin manifests.
-  settingsForm.appendChild(renderDictSection("sensory", "Sensory (raw)",
-    ensure(cfgState, "sensory", () => ({})),
-    { defaultEntry: () => ({ enabled: true }) }));
-  settingsForm.appendChild(renderDictSection("tentacle", "Tentacle (raw)",
-    ensure(cfgState, "tentacle", () => ({})),
+  // Raw plugins editor — advanced override for anything not declared
+  // in a plugin's config_schema. Edits go to cfgState.plugins.*.
+  settingsForm.appendChild(renderDictSection("plugins", "Plugins (raw)",
+    ensure(cfgState, "plugins", () => ({})),
     { defaultEntry: () => ({ enabled: true }) }));
 
   ensureSection("sleep");
@@ -1164,6 +1160,11 @@ function renderRoleRow(rname, roles, providers) {
 
 // ---------------- Plugins section (auto-discovered) ----------------
 
+// Per-render guard so a multi-component project's config_schema
+// appears on only the first component rendered, not duplicated on
+// every member.
+let _pluginSchemaSeen = null;
+
 function renderPluginsSection() {
   const sec = makeSection("Plugins (auto-discovered)");
   const body = sec.querySelector(".body");
@@ -1172,11 +1173,12 @@ function renderPluginsSection() {
   hint.style.margin = "0 0 8px";
   hint.innerHTML =
     "Tentacles + sensories registered this run — built-ins plus anything " +
-    "dropped into <code>workspace/tentacles/</code> or " +
-    "<code>workspace/sensories/</code>. See " +
-    "<code>PLUGINS.md</code> for the plugin contract.";
+    "dropped into <code>workspace/plugins/</code>. A project can carry " +
+    "multiple components (sensory + tentacle) that share config. See " +
+    "<code>PLUGINS.md</code> for the contract.";
   body.appendChild(hint);
 
+  _pluginSchemaSeen = new Set();
   body.appendChild(_renderPluginGroup("Tentacles",
     pluginReport.tentacles || [], "tentacle"));
   body.appendChild(_renderPluginGroup("Sensories",
@@ -1248,24 +1250,33 @@ function _renderPluginCard(p, kindKey) {
     return card;
   }
 
-  // Render schema-driven config editor rooted in cfgState[<kindKey>][<name>]
-  if (p.config_schema && p.config_schema.length) {
-    const rootKey = kindKey === "tentacle" ? "tentacle" : "sensory";
-    const parent = ensure(cfgState, rootKey, () => ({}));
-    const entry = ensure(parent, p.name, () => ({}));
+  // Config is keyed by project name (one project = one config dict,
+  // shared across its components). Render the schema on the first
+  // component of each project only.
+  const projectKey = p.project || p.name;
+  const schemaSeen = _pluginSchemaSeen && _pluginSchemaSeen.has(projectKey);
+  if (p.config_schema && p.config_schema.length && !schemaSeen) {
+    if (_pluginSchemaSeen) _pluginSchemaSeen.add(projectKey);
+    const plugins = ensure(cfgState, "plugins", () => ({}));
+    const entry = ensure(plugins, projectKey, () => ({}));
     for (const fdef of p.config_schema) {
       const type = fdef.type || "text";
-      const helpPath = `plugin.${p.name}.${fdef.field}`;
+      const helpPath = `plugin.${projectKey}.${fdef.field}`;
       if (fdef.help) HELP[helpPath] = fdef.help;
       if (entry[fdef.field] == null && fdef.default != null) {
         entry[fdef.field] = fdef.default;
       }
       card.appendChild(renderRow(fdef.field, entry, fdef.field, type, helpPath));
     }
-  } else if (p.source === "plugin") {
+  } else if (schemaSeen) {
     const note = document.createElement("div");
     note.style.cssText = "color:var(--muted);font-size:10px;font-style:italic";
-    note.textContent = "(no config_schema declared — edit via raw dict below)";
+    note.textContent = `(config shared with project ${projectKey} — edit there)`;
+    card.appendChild(note);
+  } else if (p.source !== "core") {
+    const note = document.createElement("div");
+    note.style.cssText = "color:var(--muted);font-size:10px;font-style:italic";
+    note.textContent = "(no config_schema declared — edit via 'Plugins (raw)' below)";
     card.appendChild(note);
   }
   return card;
