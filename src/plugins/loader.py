@@ -66,7 +66,8 @@ class PluginInfo:
 
 
 def discover_tentacles(dir_path: Path, deps: dict[str, Any],
-                          config: dict[str, dict[str, Any]]
+                          config: dict[str, dict[str, Any]],
+                          *, source: str = "plugin"
                           ) -> list[PluginInfo]:
     """Walk dir_path for tentacle plugins. Returns PluginInfo list (one
     per plugin directory / file). Successful ones have .instance set to
@@ -74,26 +75,40 @@ def discover_tentacles(dir_path: Path, deps: dict[str, Any],
 
     `config` is the runtime's `tentacle:` config dict. Per-plugin entry
     (config[name]) is passed to the plugin factory.
+
+    `source` tags the PluginInfo for UI display. Use "builtin" when
+    scanning `src/plugins/builtin/` (shipped with Krakey) and "plugin"
+    (default) for user-dropped modules under workspace/.
     """
-    return _discover(dir_path, kind="tentacle", deps=deps, config=config)
+    return _discover(dir_path, kind="tentacle", deps=deps,
+                        config=config, source=source)
 
 
 def discover_sensories(dir_path: Path, deps: dict[str, Any],
-                          config: dict[str, dict[str, Any]]
+                          config: dict[str, dict[str, Any]],
+                          *, source: str = "plugin"
                           ) -> list[PluginInfo]:
-    return _discover(dir_path, kind="sensory", deps=deps, config=config)
+    return _discover(dir_path, kind="sensory", deps=deps,
+                        config=config, source=source)
 
 
 # ---------------- internals ----------------
 
 
 def _discover(dir_path: Path, *, kind: str, deps: dict[str, Any],
-                 config: dict[str, dict[str, Any]]) -> list[PluginInfo]:
+                 config: dict[str, dict[str, Any]],
+                 source: str = "plugin") -> list[PluginInfo]:
     out: list[PluginInfo] = []
     if not dir_path.exists():
         return out
     for entry in sorted(dir_path.iterdir()):
-        if entry.name.startswith((".", "_")) or entry.name == "__pycache__":
+        name = entry.name
+        # Skip README.md + other non-module files. Ignore dotfiles/ underscores
+        # (conventionally private).
+        if name.startswith((".", "_")) or name == "__pycache__":
+            continue
+        # Skip non-README, non-module files in the directory (e.g. docs).
+        if entry.is_file() and entry.suffix != ".py":
             continue
         if entry.is_file() and entry.suffix == ".py":
             module_path = entry
@@ -105,7 +120,7 @@ def _discover(dir_path: Path, *, kind: str, deps: dict[str, Any],
             continue
 
         default_name = pkg_dir.name if pkg_dir else entry.stem
-        info = PluginInfo(name=default_name, kind=kind, source="plugin",
+        info = PluginInfo(name=default_name, kind=kind, source=source,
                            path=str(module_path))
         try:
             module = _import_module(module_path, default_name, kind)

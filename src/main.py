@@ -51,12 +51,13 @@ from src.runtime.sliding_window import SlidingWindow
 from src.runtime.stimulus_buffer import StimulusBuffer
 from src.self_agent import parse_self_output
 from src.sensories.telegram import HttpTelegramClient, TelegramSensory
-from src.tentacles.coding import CodingTentacle, SubprocessRunner
-from src.tentacles.gui_control import GuiControlTentacle, PyAutoGUIBackend
-from src.tentacles.memory_recall import MemoryRecallTentacle
-from src.tentacles.search import DDGSBackend, SearchTentacle
+# coding.SubprocessRunner is referenced by _build_code_runner; the
+# plugin-factory'd tentacle classes (memory_recall, search, coding,
+# gui_control, web_chat_reply) no longer import here — they load through
+# src.plugins.builtin.<name>. Telegram stays hardcoded because the
+# sensory + tentacle pair shares a client instance.
+from src.tentacles.coding import SubprocessRunner
 from src.tentacles.telegram_reply import TelegramReplyTentacle
-from src.tentacles.web_chat_reply import WebChatTentacle
 
 
 class ChatLike(Protocol):
@@ -131,43 +132,20 @@ class Runtime:
         )
 
         self.tentacles = TentacleRegistry()
-        self.tentacles.register(MemoryRecallTentacle(
-            gm=self.gm, embedder=self.embedder,
-            kb_registry=self.kb_registry,
-        ))
-        if self.config.tentacle.get("search", {}).get("enabled", True):
-            self.tentacles.register(SearchTentacle(
-                backend=DDGSBackend(),
-                max_results=self.config.tentacle.get("search", {})
-                    .get("max_results", 5),
-            ))
-        coding_cfg = self.config.tentacle.get("coding", {})
-        if coding_cfg.get("enabled", False):
-            runner = self._build_code_runner(coding_cfg)
-            self.tentacles.register(CodingTentacle(
-                runner=runner,
-                sandbox_dir=coding_cfg.get("sandbox_dir",
-                                              "workspace/sandbox"),
-                timeout_seconds=coding_cfg.get("timeout_seconds", 30),
-                max_output_chars=coding_cfg.get("max_output_chars", 4000),
-            ))
-        gui_cfg = self.config.tentacle.get("gui_control", {})
-        if gui_cfg.get("enabled", False):
-            self.tentacles.register(GuiControlTentacle(
-                backend=PyAutoGUIBackend(),
-                screenshot_dir=gui_cfg.get("screenshot_dir",
-                                              "workspace/screenshots"),
-            ))
-
-        # Web chat (always wired — Self can write to history even if no
-        # browser is connected; messages persist for next viewer)
+        # Web chat history is a data layer (JSONL persistence + broadcast
+        # bus), not a tentacle/sensory — Runtime owns it directly so the
+        # web_chat_reply plugin can pick it up via deps, and the chat
+        # WebSocket can subscribe to it.
         web_chat_cfg = self.config.tentacle.get("web_chat", {})
         chat_path = web_chat_cfg.get("history_path",
                                         "workspace/data/web_chat.jsonl")
         self.web_chat_history = WebChatHistory(chat_path)
-        self.tentacles.register(WebChatTentacle(history=self.web_chat_history))
 
         self.sensories = SensoryRegistry()
+        # Telegram sensory + its paired reply tentacle share an
+        # HttpTelegramClient instance, so they're wired together here
+        # rather than through the plugin system (plugin factory can't
+        # easily hand one object to two plugins).
         tg_cfg = self.config.sensory.get("telegram", {})
         if tg_cfg.get("enabled", False):
             tg_token = tg_cfg.get("bot_token") or ""
@@ -181,29 +159,17 @@ class Runtime:
             self.tentacles.register(TelegramReplyTentacle(
                 client=tg_client, default_chat_id=default_chat,
             ))
+        # BatchTracker is core runtime infrastructure (dispatch wake-up
+        # mechanism) — kept out of the plugin system so it can't be
+        # disabled by accident.
         self.batch_tracker = BatchTrackerSensory()
         self.sensories.register(self.batch_tracker)
 
-        # Plugins — discover user-dropped tentacles/sensories from
-        # workspace/. Each plugin is reported to the dashboard even if
-        # its import failed, so the user can see what went wrong.
-        self._plugin_tentacle_infos, self._plugin_sensory_infos = \
-            self._load_plugins()
-        for info in self._plugin_tentacle_infos:
-            if info.instance is not None and info.name not in self.tentacles:
-                try:
-                    self.tentacles.register(info.instance)
-                except Exception as e:  # noqa: BLE001
-                    info.error = f"registration failed: {e}"
-                    info.instance = None
-        for info in self._plugin_sensory_infos:
-            if info.instance is not None and \
-                    info.name not in self.sensories._sensories:  # noqa: SLF001
-                try:
-                    self.sensories.register(info.instance)
-                except Exception as e:  # noqa: BLE001
-                    info.error = f"registration failed: {e}"
-                    info.instance = None
+        # Plugin loading is deferred until after self.log is set (below)
+        # because discover_* logs each plugin's success or failure.
+        # Placeholders here so attribute access is always safe.
+        self._plugin_tentacle_infos: list = []
+        self._plugin_sensory_infos: list = []
 
         # Self-model + Bootstrap state (Phase 2.1)
         sm_path = deps.self_model_path or "workspace/self_model.yaml"
@@ -241,6 +207,27 @@ class Runtime:
         dash_cfg = getattr(self.config, "dashboard", None)
         _pl_size = getattr(dash_cfg, "prompt_log_size", 20) if dash_cfg else 20
         self._prompt_log: deque[dict[str, Any]] = deque(maxlen=max(1, _pl_size))
+
+        # Plugins — discover both src/plugins/builtin/ (ships with Krakey)
+        # and workspace/tentacles|sensories/ (user modules). Must run
+        # after self.log is set so success / failure notices print.
+        self._plugin_tentacle_infos, self._plugin_sensory_infos = \
+            self._load_plugins()
+        for info in self._plugin_tentacle_infos:
+            if info.instance is not None and info.name not in self.tentacles:
+                try:
+                    self.tentacles.register(info.instance)
+                except Exception as e:  # noqa: BLE001
+                    info.error = f"registration failed: {e}"
+                    info.instance = None
+        for info in self._plugin_sensory_infos:
+            if info.instance is not None and \
+                    info.name not in self.sensories._sensories:  # noqa: SLF001
+                try:
+                    self.sensories.register(info.instance)
+                except Exception as e:  # noqa: BLE001
+                    info.error = f"registration failed: {e}"
+                    info.instance = None
 
         # Snapshot config.yaml on every startup so a bad save can be rolled
         # back from workspace/backups/.
@@ -282,14 +269,22 @@ class Runtime:
                 t.cancel()
 
     def _load_plugins(self):
-        """Discover tentacle + sensory plugins under workspace/.
+        """Discover tentacle + sensory plugins.
+
+        Two sources:
+          - `src/plugins/builtin/` — ships with Krakey. Each entry here
+            is a thin factory wrapper around an `src/tentacles/*.py`
+            class. Source tag: "builtin".
+          - `workspace/tentacles/` and `workspace/sensories/` — user-
+            dropped modules. Source tag: "plugin".
 
         Returns (tentacle_infos, sensory_infos). Failures are recorded
         on the PluginInfo.error field rather than raised — a broken
         plugin must never block boot.
         """
         from src.plugins.loader import discover_sensories, discover_tentacles
-        base = Path("workspace")
+        workspace = Path("workspace")
+        builtin = Path(__file__).parent / "plugins" / "builtin"
         deps = {
             "gm": self.gm,
             "kb_registry": self.kb_registry,
@@ -297,23 +292,46 @@ class Runtime:
             "buffer": self.buffer,
             "web_chat_history": getattr(self, "web_chat_history", None),
             "config": self.config,
+            # Plugin factories (coding, etc.) that need Runtime policy
+            # call into these callables rather than peek at internals.
+            "build_code_runner": self._build_code_runner,
         }
-        t = discover_tentacles(base / "tentacles", deps,
-                                 self.config.tentacle)
-        s = discover_sensories(base / "sensories", deps,
-                                 self.config.sensory)
+        t: list = []
+        t.extend(discover_tentacles(builtin, deps,
+                                        self.config.tentacle,
+                                        source="builtin"))
+        t.extend(discover_tentacles(workspace / "tentacles", deps,
+                                        self.config.tentacle,
+                                        source="plugin"))
+        s: list = []
+        s.extend(discover_sensories(builtin, deps,
+                                        self.config.sensory,
+                                        source="builtin"))
+        s.extend(discover_sensories(workspace / "sensories", deps,
+                                        self.config.sensory,
+                                        source="plugin"))
         for info in t + s:
             if info.error:
                 self.log.runtime_error(
-                    f"plugin {info.kind}:{info.name} failed to load — "
-                    f"{info.error.splitlines()[0]}"
+                    f"{info.source} {info.kind}:{info.name} "
+                    f"failed to load — {info.error.splitlines()[0]}"
                 )
             elif info.instance is not None:
-                self.log.hb(f"plugin loaded: {info.kind}:{info.name}")
+                self.log.hb(
+                    f"{info.source} loaded: {info.kind}:{info.name}"
+                )
         return t, s
 
     def plugin_report(self) -> dict[str, Any]:
-        """Serializable snapshot for the dashboard /api/plugins endpoint."""
+        """Serializable snapshot for the dashboard /api/plugins endpoint.
+
+        Unifies three populations:
+          - PluginInfos from the loader (builtin + workspace plugins)
+          - Hardcoded tentacles / sensories still wired in __init__
+            (telegram_reply + paired TelegramSensory, batch_tracker) —
+            reported as source="core" so the UI can show them with a
+            locked badge.
+        """
         def _flatten(infos, loaded_names):
             return [{
                 "name": i.name,
@@ -327,33 +345,35 @@ class Runtime:
                 "error": i.error,
             } for i in infos]
 
-        # Merge built-ins + plugin discoveries
-        builtin_tentacles = [
-            {"name": t.name, "kind": "tentacle", "source": "builtin",
+        plugin_t_names = {i.name for i in self._plugin_tentacle_infos}
+        plugin_s_names = {i.name for i in self._plugin_sensory_infos}
+        loaded_t = {n for n in self.tentacles._tentacles}  # noqa: SLF001
+        loaded_s = {n for n in self.sensories._sensories}  # noqa: SLF001
+
+        # Core (hardcoded) items: anything in the live registry that
+        # the plugin loader didn't produce a PluginInfo for.
+        core_tentacles = [
+            {"name": t.name, "kind": "tentacle", "source": "core",
              "path": "", "description": t.description,
              "is_internal": t.is_internal, "config_schema": [],
              "loaded": True, "error": None}
             for t in self.tentacles._tentacles.values()  # noqa: SLF001
-            if not any(i.name == t.name and i.source == "plugin"
-                       for i in self._plugin_tentacle_infos)
+            if t.name not in plugin_t_names
         ]
-        builtin_sensories = [
-            {"name": s.name, "kind": "sensory", "source": "builtin",
+        core_sensories = [
+            {"name": s.name, "kind": "sensory", "source": "core",
              "path": "", "description": "",
              "is_internal": False, "config_schema": [],
              "loaded": True, "error": None}
             for s in self.sensories._sensories.values()  # noqa: SLF001
-            if not any(i.name == s.name and i.source == "plugin"
-                       for i in self._plugin_sensory_infos)
+            if s.name not in plugin_s_names
         ]
         return {
-            "tentacles": builtin_tentacles + _flatten(
-                self._plugin_tentacle_infos,
-                {n for n in self.tentacles._tentacles}  # noqa: SLF001
+            "tentacles": core_tentacles + _flatten(
+                self._plugin_tentacle_infos, loaded_t
             ),
-            "sensories": builtin_sensories + _flatten(
-                self._plugin_sensory_infos,
-                {n for n in self.sensories._sensories}  # noqa: SLF001
+            "sensories": core_sensories + _flatten(
+                self._plugin_sensory_infos, loaded_s
             ),
         }
 
