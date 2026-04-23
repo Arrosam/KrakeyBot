@@ -2,8 +2,14 @@ import os
 import textwrap
 
 import pytest
+import yaml
 
-from src.models.config import load_config
+from src.models.config import (
+    Config,
+    dump_config,
+    ensure_config,
+    load_config,
+)
 
 
 def _write(tmp_path, body):
@@ -134,3 +140,101 @@ def test_real_config_file_loads():
     assert cfg.hibernate.min_interval > 0
     assert cfg.graph_memory.max_recall_nodes > 0
     assert "self" in cfg.llm.roles
+
+
+# ---------------- Phase 1: defaults + bootstrap ----------------
+
+
+def test_default_config_has_usable_sections():
+    """Config() with no args should be fully populated from defaults —
+    no KeyError / None in required subsections."""
+    cfg = Config()
+    # Scaffolding defaults are empty so the user MUST fill them in,
+    # but the sections themselves must exist and be the right type.
+    assert cfg.llm.providers == {}
+    assert cfg.llm.roles == {}
+    # All numeric knobs have sensible non-zero defaults.
+    assert cfg.hibernate.default_interval > 0
+    assert cfg.fatigue.force_sleep_threshold > 0
+    assert cfg.graph_memory.max_recall_nodes > 0
+    assert cfg.sleep.max_duration_seconds > 0
+    assert cfg.safety.gm_node_hard_limit > 0
+    # Dashboard defaults on so first-run users get the UI.
+    assert cfg.dashboard.enabled is True
+
+
+def test_dump_config_roundtrips_through_load(tmp_path):
+    """Serialize defaults → write → load. Structure must survive intact."""
+    original = Config()
+    path = tmp_path / "roundtrip.yaml"
+    path.write_text(dump_config(original), encoding="utf-8")
+    loaded = load_config(path)
+    # Spot-check a mix of sections. Full equality is fragile because
+    # e.g. default dicts may differ by key iteration; identity of
+    # values is what matters.
+    assert loaded.hibernate.default_interval == original.hibernate.default_interval
+    assert loaded.fatigue.force_sleep_threshold == original.fatigue.force_sleep_threshold
+    assert loaded.fatigue.thresholds == original.fatigue.thresholds
+    assert loaded.sleep.max_duration_seconds == original.sleep.max_duration_seconds
+    assert loaded.safety.gm_node_hard_limit == original.safety.gm_node_hard_limit
+    assert loaded.dashboard.enabled == original.dashboard.enabled
+
+
+def test_dump_config_produces_valid_yaml(tmp_path):
+    """The dumped text must parse as YAML cleanly."""
+    text = dump_config(Config())
+    parsed = yaml.safe_load(text)
+    assert isinstance(parsed, dict)
+    assert "llm" in parsed
+    assert "fatigue" in parsed
+    # int keys normalized to strings for portability.
+    ft = parsed["fatigue"]["thresholds"]
+    assert all(isinstance(k, str) for k in ft.keys())
+
+
+def test_ensure_config_writes_when_missing(tmp_path):
+    target = tmp_path / "nested" / "config.yaml"
+    created = ensure_config(target)
+    assert created is True
+    assert target.exists()
+    # And what it wrote must load back as a Config.
+    cfg = load_config(target)
+    assert cfg.hibernate.default_interval > 0
+
+
+def test_ensure_config_no_op_when_present(tmp_path):
+    target = tmp_path / "config.yaml"
+    target.write_text("hibernate:\n  default_interval: 42\n",
+                       encoding="utf-8")
+    created = ensure_config(target)
+    assert created is False
+    # Must NOT be overwritten.
+    assert "42" in target.read_text(encoding="utf-8")
+
+
+def test_load_config_bootstraps_and_exits_when_missing(tmp_path, capsys):
+    """First-run behavior: generate defaults at path, print guidance,
+    exit. No more FileNotFoundError, no copying config.yaml.example."""
+    target = tmp_path / "nope" / "config.yaml"
+    assert not target.exists()
+    with pytest.raises(SystemExit):
+        load_config(target)
+    # File now exists and contains defaults.
+    assert target.exists()
+    # Guidance message went to stderr.
+    captured = capsys.readouterr()
+    assert "Generated default config" in captured.err
+    assert "api_key" in captured.err.lower() or "api key" in captured.err.lower()
+
+
+def test_load_config_accepts_sparse_yaml(tmp_path):
+    """A config file that only specifies some sections should load fine —
+    missing sections fall back to defaults."""
+    path = tmp_path / "sparse.yaml"
+    path.write_text("hibernate:\n  default_interval: 99\n",
+                      encoding="utf-8")
+    cfg = load_config(path)
+    assert cfg.hibernate.default_interval == 99
+    # Unspecified sections use defaults.
+    assert cfg.safety.gm_node_hard_limit == 500
+    assert cfg.dashboard.enabled is True

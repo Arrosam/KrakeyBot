@@ -2,13 +2,19 @@
 
 Parses YAML, substitutes ${VAR} from os.environ at load time,
 validates fatigue thresholds vs force_sleep_threshold.
+
+First-run bootstrap: if the target config file is missing, a
+defaults-populated file is written at that path and the process
+exits with guidance to set LLM providers/API keys. We intentionally
+do NOT copy config.yaml.example — the single source of truth for
+defaults is the dataclasses below.
 """
 from __future__ import annotations
 
 import os
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -20,66 +26,74 @@ _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 @dataclass
 class ModelEntry:
-    name: str
+    name: str = ""
     capabilities: list[str] = field(default_factory=list)
 
 
 @dataclass
 class Provider:
-    type: str
-    base_url: str
+    type: str = "openai_compatible"
+    base_url: str = ""
     api_key: str | None = None
     models: list[ModelEntry] = field(default_factory=list)
 
 
 @dataclass
 class RoleBinding:
-    provider: str
-    model: str
+    provider: str = ""
+    model: str = ""
 
 
 @dataclass
 class LLMSection:
-    providers: dict[str, Provider]
-    roles: dict[str, RoleBinding]
+    # Both empty by default — the first-run file will be a usable
+    # scaffold and the user fills in providers + role bindings. The
+    # runtime bootstrap validates presence of required roles (`self`,
+    # `hypothalamus`, `embedding`) and fails loud with guidance.
+    providers: dict[str, Provider] = field(default_factory=dict)
+    roles: dict[str, RoleBinding] = field(default_factory=dict)
 
 
 @dataclass
 class HibernateSection:
-    min_interval: int
-    max_interval: int
-    default_interval: int
+    min_interval: int = 2
+    max_interval: int = 300
+    default_interval: int = 10
 
 
 @dataclass
 class FatigueSection:
-    gm_node_soft_limit: int
-    force_sleep_threshold: int
-    thresholds: dict[int, str]
+    gm_node_soft_limit: int = 1000
+    force_sleep_threshold: int = 1200
+    thresholds: dict[int, str] = field(default_factory=lambda: {
+        50: "（不繁忙时可以睡眠）",
+        75: "（疲劳，需要主动睡眠）",
+        100: "（非常疲劳，需要立即找到睡眠的机会）",
+    })
 
 
 @dataclass
 class SlidingWindowSection:
-    max_tokens: int
+    max_tokens: int = 4096
 
 
 @dataclass
 class GraphMemorySection:
-    db_path: str
-    auto_ingest_similarity_threshold: float
-    recall_per_stimulus_k: int
-    max_recall_nodes: int
-    neighbor_expand_depth: int
+    db_path: str = "workspace/data/graph_memory.sqlite"
+    auto_ingest_similarity_threshold: float = 0.92
+    recall_per_stimulus_k: int = 5
+    max_recall_nodes: int = 20
+    neighbor_expand_depth: int = 1
 
 
 @dataclass
 class KnowledgeBaseSection:
-    dir: str
+    dir: str = "workspace/data/knowledge_bases"
 
 
 @dataclass
 class SleepSection:
-    max_duration_seconds: int
+    max_duration_seconds: int = 7200
     # Communities below this size stay in GM (don't get migrated to a KB).
     # Default 2 = skip pure singletons.
     min_community_size: int = 2
@@ -103,8 +117,8 @@ class SleepSection:
 
 @dataclass
 class SafetySection:
-    gm_node_hard_limit: int
-    max_consecutive_no_action: int
+    gm_node_hard_limit: int = 500
+    max_consecutive_no_action: int = 50
 
 
 @dataclass
@@ -158,22 +172,36 @@ class SandboxSection:
 
 @dataclass
 class Config:
-    llm: LLMSection
-    hibernate: HibernateSection
-    fatigue: FatigueSection
-    sliding_window: SlidingWindowSection
-    graph_memory: GraphMemorySection
-    knowledge_base: KnowledgeBaseSection
+    llm: LLMSection = field(default_factory=LLMSection)
+    hibernate: HibernateSection = field(default_factory=HibernateSection)
+    fatigue: FatigueSection = field(default_factory=FatigueSection)
+    sliding_window: SlidingWindowSection = field(
+        default_factory=SlidingWindowSection
+    )
+    graph_memory: GraphMemorySection = field(
+        default_factory=GraphMemorySection
+    )
+    knowledge_base: KnowledgeBaseSection = field(
+        default_factory=KnowledgeBaseSection
+    )
     # Per-project plugin config. Key = project folder name (matches
     # src/plugins/builtin/<name>/ or workspace/plugins/<name>/). A
     # project can carry one tentacle, one sensory, or a bundle of both
     # that share state (e.g. Telegram: sensory + reply tentacle
     # sharing one HttpTelegramClient).
-    plugins: dict[str, dict[str, Any]]
-    sleep: SleepSection
-    safety: SafetySection
+    #
+    # DEPRECATED: kept for backwards compatibility only. Phase 2 of the
+    # config overhaul moves plugin settings to per-plugin files under
+    # workspace/plugin-configs/<project>.yaml; this central dict stays
+    # so existing configs still load until the migration lands.
+    plugins: dict[str, dict[str, Any]] = field(default_factory=dict)
+    sleep: SleepSection = field(default_factory=SleepSection)
+    safety: SafetySection = field(default_factory=SafetySection)
     dashboard: DashboardSection = field(default_factory=DashboardSection)
     sandbox: SandboxSection = field(default_factory=SandboxSection)
+
+
+# ---------------- env substitution ----------------
 
 
 def _substitute_env(value: Any) -> Any:
@@ -192,73 +220,141 @@ def _substitute_env(value: Any) -> Any:
     return value
 
 
+# ---------------- section builders ----------------
+#
+# Each builder overlays raw YAML on top of the dataclass's defaults so
+# sparse configs still load. Absent keys fall back to defaults; an
+# explicit empty value (e.g. `thresholds: {}`) is honored as empty.
+
+
 def _build_llm(raw: dict[str, Any]) -> LLMSection:
     providers: dict[str, Provider] = {}
     for pname, pdata in (raw.get("providers") or {}).items():
-        models = [ModelEntry(name=m["name"], capabilities=list(m.get("capabilities", [])))
-                  for m in (pdata.get("models") or [])]
+        models = [
+            ModelEntry(
+                name=m.get("name", ""),
+                capabilities=list(m.get("capabilities", [])),
+            )
+            for m in (pdata.get("models") or [])
+        ]
         providers[pname] = Provider(
-            type=pdata["type"],
-            base_url=pdata["base_url"],
+            type=pdata.get("type", "openai_compatible"),
+            base_url=pdata.get("base_url", ""),
             api_key=pdata.get("api_key"),
             models=models,
         )
     roles: dict[str, RoleBinding] = {}
     for rname, rdata in (raw.get("roles") or {}).items():
-        roles[rname] = RoleBinding(provider=rdata["provider"], model=rdata["model"])
+        roles[rname] = RoleBinding(
+            provider=rdata.get("provider", ""),
+            model=rdata.get("model", ""),
+        )
     return LLMSection(providers=providers, roles=roles)
 
 
-def load_config(path: str | Path = "config.yaml") -> Config:
-    raw_text = Path(path).read_text(encoding="utf-8")
-    raw: dict[str, Any] = yaml.safe_load(raw_text)
-    raw = _substitute_env(raw)
+def _build_hibernate(raw: dict[str, Any]) -> HibernateSection:
+    d = HibernateSection()
+    return HibernateSection(
+        min_interval=int(raw.get("min_interval", d.min_interval)),
+        max_interval=int(raw.get("max_interval", d.max_interval)),
+        default_interval=int(raw.get("default_interval",
+                                       d.default_interval)),
+    )
 
-    fatigue_raw = raw["fatigue"]
-    thresholds = {int(k): str(v) for k, v in (fatigue_raw.get("thresholds") or {}).items()}
-    fatigue = FatigueSection(
-        gm_node_soft_limit=fatigue_raw["gm_node_soft_limit"],
-        force_sleep_threshold=fatigue_raw["force_sleep_threshold"],
+
+def _build_fatigue(raw: dict[str, Any]) -> FatigueSection:
+    d = FatigueSection()
+    if "thresholds" in raw:
+        thresholds = {
+            int(k): str(v) for k, v in (raw["thresholds"] or {}).items()
+        }
+    else:
+        thresholds = d.thresholds
+    return FatigueSection(
+        gm_node_soft_limit=int(raw.get("gm_node_soft_limit",
+                                         d.gm_node_soft_limit)),
+        force_sleep_threshold=int(raw.get("force_sleep_threshold",
+                                             d.force_sleep_threshold)),
         thresholds=thresholds,
     )
 
-    _validate_fatigue_thresholds(fatigue)
 
-    hib = raw["hibernate"]
-    gm = raw["graph_memory"]
-    return Config(
-        llm=_build_llm(raw["llm"]),
-        hibernate=HibernateSection(
-            min_interval=hib["min_interval"],
-            max_interval=hib["max_interval"],
-            default_interval=hib["default_interval"],
+def _build_sliding_window(raw: dict[str, Any]) -> SlidingWindowSection:
+    d = SlidingWindowSection()
+    return SlidingWindowSection(
+        max_tokens=int(raw.get("max_tokens", d.max_tokens)),
+    )
+
+
+def _build_graph_memory(raw: dict[str, Any]) -> GraphMemorySection:
+    d = GraphMemorySection()
+    return GraphMemorySection(
+        db_path=str(raw.get("db_path", d.db_path)),
+        auto_ingest_similarity_threshold=float(
+            raw.get("auto_ingest_similarity_threshold",
+                     d.auto_ingest_similarity_threshold)
         ),
-        fatigue=fatigue,
-        sliding_window=SlidingWindowSection(max_tokens=raw["sliding_window"]["max_tokens"]),
-        graph_memory=GraphMemorySection(
-            db_path=gm["db_path"],
-            auto_ingest_similarity_threshold=gm["auto_ingest_similarity_threshold"],
-            recall_per_stimulus_k=gm["recall_per_stimulus_k"],
-            max_recall_nodes=gm["max_recall_nodes"],
-            neighbor_expand_depth=gm["neighbor_expand_depth"],
+        recall_per_stimulus_k=int(raw.get("recall_per_stimulus_k",
+                                              d.recall_per_stimulus_k)),
+        max_recall_nodes=int(raw.get("max_recall_nodes",
+                                         d.max_recall_nodes)),
+        neighbor_expand_depth=int(raw.get("neighbor_expand_depth",
+                                              d.neighbor_expand_depth)),
+    )
+
+
+def _build_kb(raw: dict[str, Any]) -> KnowledgeBaseSection:
+    d = KnowledgeBaseSection()
+    return KnowledgeBaseSection(dir=str(raw.get("dir", d.dir)))
+
+
+def _build_sleep(raw: dict[str, Any]) -> SleepSection:
+    d = SleepSection()
+    return SleepSection(
+        max_duration_seconds=int(raw.get("max_duration_seconds",
+                                              d.max_duration_seconds)),
+        min_community_size=int(raw.get("min_community_size",
+                                           d.min_community_size)),
+        kb_consolidation_threshold=float(
+            raw.get("kb_consolidation_threshold",
+                     d.kb_consolidation_threshold)
         ),
-        knowledge_base=KnowledgeBaseSection(dir=raw["knowledge_base"]["dir"]),
-        plugins=raw.get("plugins") or {},
-        sleep=_build_sleep(raw["sleep"]),
-        safety=SafetySection(
-            gm_node_hard_limit=raw["safety"]["gm_node_hard_limit"],
-            max_consecutive_no_action=raw["safety"]["max_consecutive_no_action"],
+        kb_index_max=int(raw.get("kb_index_max", d.kb_index_max)),
+        kb_archive_pct=int(raw.get("kb_archive_pct", d.kb_archive_pct)),
+        kb_revive_threshold=float(raw.get("kb_revive_threshold",
+                                               d.kb_revive_threshold)),
+    )
+
+
+def _build_safety(raw: dict[str, Any]) -> SafetySection:
+    d = SafetySection()
+    return SafetySection(
+        gm_node_hard_limit=int(raw.get("gm_node_hard_limit",
+                                           d.gm_node_hard_limit)),
+        max_consecutive_no_action=int(
+            raw.get("max_consecutive_no_action", d.max_consecutive_no_action)
         ),
-        dashboard=_build_dashboard(raw.get("dashboard")),
-        sandbox=_build_sandbox(raw.get("sandbox")),
+    )
+
+
+def _build_dashboard(raw: dict[str, Any] | None) -> DashboardSection:
+    raw = raw or {}
+    d = DashboardSection()
+    return DashboardSection(
+        enabled=bool(raw.get("enabled", d.enabled)),
+        host=str(raw.get("host", d.host)),
+        port=int(raw.get("port", d.port)),
+        prompt_log_size=max(1, int(raw.get("prompt_log_size",
+                                               d.prompt_log_size))),
     )
 
 
 def _build_sandbox(raw: dict[str, Any] | None) -> SandboxSection:
     raw = raw or {}
+    d = SandboxSection()
     res_raw = raw.get("resources") or {}
     agent_raw = raw.get("agent") or {}
-    display = str(raw.get("display", "headed")).lower()
+    display = str(raw.get("display", d.display)).lower()
     if display not in ("headed", "headless"):
         print(
             f"warning: sandbox.display={display!r} not recognised; "
@@ -267,42 +363,103 @@ def _build_sandbox(raw: dict[str, Any] | None) -> SandboxSection:
         )
         display = "headed"
     return SandboxSection(
-        guest_os=str(raw.get("guest_os", "")),
-        provider=str(raw.get("provider", "qemu")),
-        vm_name=str(raw.get("vm_name", "")),
+        guest_os=str(raw.get("guest_os", d.guest_os)),
+        provider=str(raw.get("provider", d.provider)),
+        vm_name=str(raw.get("vm_name", d.vm_name)),
         display=display,
         resources=SandboxResourcesSection(
-            cpu=int(res_raw.get("cpu", 2)),
-            memory_mb=int(res_raw.get("memory_mb", 4096)),
-            disk_gb=int(res_raw.get("disk_gb", 40)),
+            cpu=int(res_raw.get("cpu", d.resources.cpu)),
+            memory_mb=int(res_raw.get("memory_mb", d.resources.memory_mb)),
+            disk_gb=int(res_raw.get("disk_gb", d.resources.disk_gb)),
         ),
         agent=SandboxAgentSection(
-            url=str(agent_raw.get("url", "")),
-            token=str(agent_raw.get("token", "")),
+            url=str(agent_raw.get("url", d.agent.url)),
+            token=str(agent_raw.get("token", d.agent.token)),
         ),
-        network_mode=str(raw.get("network_mode", "nat_allowlist")),
-        allowlist_domains=list(raw.get("allowlist_domains") or []),
+        network_mode=str(raw.get("network_mode", d.network_mode)),
+        allowlist_domains=list(raw.get("allowlist_domains")
+                                 or d.allowlist_domains),
     )
 
 
-def _build_sleep(raw: dict[str, Any]) -> SleepSection:
-    return SleepSection(
-        max_duration_seconds=raw["max_duration_seconds"],
-        min_community_size=int(raw.get("min_community_size", 2)),
-        kb_consolidation_threshold=float(raw.get("kb_consolidation_threshold", 0.85)),
-        kb_index_max=int(raw.get("kb_index_max", 30)),
-        kb_archive_pct=int(raw.get("kb_archive_pct", 10)),
-        kb_revive_threshold=float(raw.get("kb_revive_threshold", 0.80)),
-    )
+# ---------------- dump / ensure ----------------
 
 
-def _build_dashboard(raw: dict[str, Any] | None) -> DashboardSection:
-    raw = raw or {}
-    return DashboardSection(
-        enabled=bool(raw.get("enabled", True)),
-        host=str(raw.get("host", "127.0.0.1")),
-        port=int(raw.get("port", 8765)),
-        prompt_log_size=max(1, int(raw.get("prompt_log_size", 20))),
+def dump_config(cfg: Config) -> str:
+    """Serialize a Config dataclass to the YAML text we'd write to disk.
+
+    Round-trips cleanly through load_config: `dump_config(Config())` is
+    a valid minimal config that load_config accepts without error.
+
+    fatigue.thresholds uses int keys in memory; YAML tolerates that but
+    some downstream tools don't, so we normalize to string keys on the
+    way out. load_config casts them back to int on the way in.
+    """
+    data: dict[str, Any] = asdict(cfg)
+    ft = data.get("fatigue") or {}
+    if "thresholds" in ft:
+        ft["thresholds"] = {str(k): v for k, v in ft["thresholds"].items()}
+    return yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+
+
+def ensure_config(path: str | Path = "config.yaml") -> bool:
+    """Create a defaults-populated config at `path` if it does not exist.
+
+    Returns True iff a new file was written. Parent directories are
+    created as needed.
+    """
+    p = Path(path)
+    if p.exists():
+        return False
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(dump_config(Config()), encoding="utf-8")
+    return True
+
+
+# ---------------- loader ----------------
+
+
+class _ConfigBootstrapExit(SystemExit):
+    """SystemExit subclass raised after first-run config generation so
+    tests can distinguish it from unrelated exits."""
+    pass
+
+
+def load_config(path: str | Path = "config.yaml") -> Config:
+    p = Path(path)
+    if not p.exists():
+        ensure_config(p)
+        print(
+            f"✨ Generated default config at {p}\n"
+            f"   Next steps:\n"
+            f"     1. Add at least one provider under llm.providers with a\n"
+            f"        valid api_key.\n"
+            f"     2. Bind the required roles under llm.roles: self,\n"
+            f"        hypothalamus, embedding (compact/reranker optional).\n"
+            f"     3. Re-run Krakey.",
+            file=sys.stderr,
+        )
+        raise _ConfigBootstrapExit(1)
+
+    raw_text = p.read_text(encoding="utf-8")
+    raw: dict[str, Any] = yaml.safe_load(raw_text) or {}
+    raw = _substitute_env(raw)
+
+    fatigue = _build_fatigue(raw.get("fatigue") or {})
+    _validate_fatigue_thresholds(fatigue)
+
+    return Config(
+        llm=_build_llm(raw.get("llm") or {}),
+        hibernate=_build_hibernate(raw.get("hibernate") or {}),
+        fatigue=fatigue,
+        sliding_window=_build_sliding_window(raw.get("sliding_window") or {}),
+        graph_memory=_build_graph_memory(raw.get("graph_memory") or {}),
+        knowledge_base=_build_kb(raw.get("knowledge_base") or {}),
+        plugins=raw.get("plugins") or {},
+        sleep=_build_sleep(raw.get("sleep") or {}),
+        safety=_build_safety(raw.get("safety") or {}),
+        dashboard=_build_dashboard(raw.get("dashboard")),
+        sandbox=_build_sandbox(raw.get("sandbox")),
     )
 
 
