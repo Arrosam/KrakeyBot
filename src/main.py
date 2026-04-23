@@ -17,8 +17,9 @@ from src.bootstrap import (
     BOOTSTRAP_PROMPT, detect_bootstrap_complete, load_genesis,
     load_self_model_or_default, parse_self_model_update,
 )
-from src.dashboard.events_ws import EventBroadcaster
-from src.dashboard.server import DashboardServer, create_app as create_dashboard_app
+from src.dashboard.app_factory import create_app as create_dashboard_app
+from src.dashboard.events import EventBroadcaster
+from src.dashboard.server import DashboardServer
 from src.dashboard.web_chat import WebChatHistory
 from src.hypothalamus import Hypothalamus, TentacleCall
 from src.models.self_model import SelfModelStore

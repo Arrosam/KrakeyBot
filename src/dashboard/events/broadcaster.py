@@ -1,34 +1,19 @@
-"""Phase 3.F.4: bridge RuntimeEventBus → /ws/events WebSocket clients.
-
-EventBroadcaster subscribes once to the bus, keeps a small ring buffer of
-recent events (so a fresh WS client gets context), and fans out each new
-event to all connected sockets. Failed sockets are quietly dropped.
-"""
+"""Concrete EventBroadcaster \u2014 bus \u2192 sockets fan-out."""
 from __future__ import annotations
 
 import asyncio
-import dataclasses
-import inspect
 from collections import deque
 from typing import Any, Awaitable, Callable
 
+from src.dashboard.events.serializer import serialize_event
 from src.runtime.event_bus import EventBus, _BaseEvent
-
-
-def serialize_event(event: _BaseEvent) -> dict[str, Any]:
-    """Dataclass → JSON-friendly dict, with `kind` discriminator inserted."""
-    payload: dict[str, Any] = {"kind": event.kind}
-    if dataclasses.is_dataclass(event):
-        for f in dataclasses.fields(event):
-            payload[f.name] = getattr(event, f.name)
-    return payload
 
 
 SocketSend = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 class EventBroadcaster:
-    """One bus → many sockets. Keeps `history_size` recent serialized
+    """One bus \u2192 many sockets. Keeps `history_size` recent serialized
     events for new connections.
 
     Captures the WS server's event loop on first socket attach so that

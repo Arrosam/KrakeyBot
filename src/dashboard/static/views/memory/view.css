@@ -1,0 +1,68 @@
+/* Memory view: sub-nav + GM nodes/edges table + KB cards. */
+
+.sub-nav { display: flex; gap: 4px; margin-bottom: 4px; }
+.mem-btn {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 4px 10px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+}
+.mem-btn.active { color: var(--text); border-color: var(--cyan); }
+
+#mem-content {
+  flex: 1;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  overflow: auto;
+}
+table.mem-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+table.mem-table th, table.mem-table td {
+  text-align: left;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+table.mem-table th { color: var(--cyan); font-weight: normal; }
+.cat-FACT { color: var(--green); }
+.cat-RELATION { color: var(--magenta); }
+.cat-KNOWLEDGE { color: var(--cyan); }
+.cat-TARGET { color: var(--yellow); }
+.cat-FOCUS { color: var(--red); }
+
+.kb-card {
+  padding: 8px;
+  margin-bottom: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.kb-card h4 { margin: 0 0 4px; color: var(--cyan); }
+.kb-card .meta { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.kb-card button {
+  padding: 4px 10px;
+  background: var(--panel);
+  border: 1px solid var(--cyan);
+  color: var(--cyan);
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+}
+
+.kb-entry {
+  padding: 6px 8px;
+  margin: 4px 0;
+  background: var(--bg);
+  border-left: 2px solid var(--cyan);
+  font-size: 11px;
+}
+.kb-entry .tags { color: var(--magenta); margin-right: 6px; }

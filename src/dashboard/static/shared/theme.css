@@ -1,0 +1,18 @@
+/* Krakey Dashboard — design tokens (colors, fonts, radii).
+   Every other stylesheet references these vars; change here to reskin. */
+
+:root {
+  --bg: #0d0f12;
+  --panel: #14181d;
+  --panel-2: #1a1f26;
+  --border: #262c34;
+  --text: #d8dee9;
+  --muted: #6b7280;
+  --cyan: #6cd5d5;
+  --green: #7ec77e;
+  --yellow: #e8c060;
+  --magenta: #c585c5;
+  --red: #d27575;
+  --user-bubble: #2a3340;
+  --bot-bubble: #14302a;
+}
