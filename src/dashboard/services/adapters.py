@@ -141,6 +141,15 @@ class RuntimePluginsService:
             return {"tentacles": [], "sensories": []}
         return self._rt.plugin_report()
 
+    def update_config(
+        self, project: str, body: dict[str, Any],
+    ) -> dict[str, Any]:
+        if self._rt is None:
+            raise RuntimeError("runtime not available")
+        if not hasattr(self._rt, "update_plugin_config"):
+            raise RuntimeError("runtime does not support plugin config updates")
+        return self._rt.update_plugin_config(project, body)
+
 
 # ---------------- config ----------------
 

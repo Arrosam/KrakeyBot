@@ -646,6 +646,13 @@ const SCHEMAS = {
 };
 
 let pluginReport = { tentacles: [], sensories: [] };
+// Dirty-tracking target for plugin edits. One entry per project, shape:
+//   { enabled: bool, ...schemaFields }
+// Populated on each render from /api/plugins `values`; re-built from
+// scratch so stale projects fall off. Saved via
+// POST /api/plugins/<project>/config (NOT /api/settings — plugin
+// configs live in their own per-plugin YAML files now).
+let pluginEdits = {};
 
 async function loadSettings() {
   settingsToast.textContent = "";
@@ -705,14 +712,10 @@ function renderSettingsForm() {
 
   // Plugins — one card per component (tentacle / sensory) known to
   // the runtime RIGHT NOW. Components from the same project share one
-  // config_schema; edits land in cfgState.plugins[<project>].
+  // config_schema; edits land in pluginEdits[<project>] and are
+  // persisted per-project via POST /api/plugins/<project>/config.
+  pluginEdits = {};  // rebuild each render so removed projects fall off
   settingsForm.appendChild(renderPluginsSection());
-
-  // Raw plugins editor — advanced override for anything not declared
-  // in a plugin's config_schema. Edits go to cfgState.plugins.*.
-  settingsForm.appendChild(renderDictSection("plugins", "Plugins (raw)",
-    ensure(cfgState, "plugins", () => ({})),
-    { defaultEntry: () => ({ enabled: true }) }));
 
   ensureSection("sleep");
   settingsForm.appendChild(renderGenericSection("sleep", "Sleep",
@@ -1271,18 +1274,24 @@ function _renderPluginCard(p, kindKey) {
     return card;
   }
 
-  const plugins = ensure(cfgState, "plugins", () => ({}));
-  const entry = ensure(plugins, projectKey, () => ({}));
+  // Flat edit target: {enabled, ...schemaFields}. Seeded from the
+  // authoritative values reported by /api/plugins (which come from
+  // the per-plugin YAML file). renderRow mutates this object in-place
+  // as the user edits, and the Save handler splits it back into
+  // {enabled, values} before POSTing.
+  const edit = ensure(pluginEdits, projectKey, () => ({
+    enabled: !!p.enabled,
+    ...(p.values || {}),
+  }));
 
   // Loader-owned `enabled` toggle — rendered separately from the
   // plugin's own config_schema. Default: false. The loader strips
   // any user-declared "enabled" field from config_schema so a plugin
   // author can't override the default or the widget.
-  if (entry.enabled == null) entry.enabled = false;
   const enabledHelpPath = `plugin.${projectKey}.enabled`;
   HELP[enabledHelpPath] = "Master switch for this plugin project. " +
     "Default OFF — the factory never runs until you set this to true.";
-  card.appendChild(renderRow("enabled", entry, "enabled", "bool",
+  card.appendChild(renderRow("enabled", edit, "enabled", "bool",
                                  enabledHelpPath));
 
   if (p.config_schema && p.config_schema.length) {
@@ -1290,74 +1299,18 @@ function _renderPluginCard(p, kindKey) {
       const type = fdef.type || "text";
       const helpPath = `plugin.${projectKey}.${fdef.field}`;
       if (fdef.help) HELP[helpPath] = fdef.help;
-      if (entry[fdef.field] == null && fdef.default != null) {
-        entry[fdef.field] = fdef.default;
+      if (edit[fdef.field] == null && fdef.default != null) {
+        edit[fdef.field] = fdef.default;
       }
-      card.appendChild(renderRow(fdef.field, entry, fdef.field, type, helpPath));
+      card.appendChild(renderRow(fdef.field, edit, fdef.field, type, helpPath));
     }
   } else {
     const note = document.createElement("div");
     note.style.cssText = "color:var(--muted);font-size:10px;font-style:italic";
-    note.textContent = "(no additional config_schema declared — toggle above is the only switch)";
+    note.textContent = "(no configurable parameters — only the toggle above)";
     card.appendChild(note);
   }
   return card;
-}
-
-function renderDictSection(key, title, target, opts) {
-  const sec = makeSection(title);
-  const body = sec.querySelector(".body");
-  const headWrap = document.createElement("div");
-  headWrap.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:6px";
-  const addBtn = mkBtn("+ add entry", () => {
-    const name = prompt(`${title} entry key:`);
-    if (!name) return;
-    if (target[name]) { alert("exists"); return; }
-    target[name] = opts.defaultEntry();
-    renderSettingsForm();
-  });
-  headWrap.appendChild(addBtn);
-  body.appendChild(headWrap);
-
-  for (const [name, entry] of Object.entries(target)) {
-    body.appendChild(renderDictEntry(name, entry, target));
-  }
-  return sec;
-}
-
-function renderDictEntry(name, entry, parent) {
-  const block = document.createElement("div");
-  block.className = "subblock";
-  const h = document.createElement("h4");
-  h.appendChild(document.createTextNode(name));
-  const actions = document.createElement("span");
-  actions.className = "actions";
-  const addField = mkBtn("+ field", () => {
-    const fname = prompt("field name:");
-    if (!fname || fname in entry) return;
-    entry[fname] = "";
-    renderSettingsForm();
-  });
-  const del = mkBtn("delete", () => {
-    if (!confirm(`delete "${name}"?`)) return;
-    delete parent[name];
-    renderSettingsForm();
-  }, "danger");
-  actions.appendChild(addField); actions.appendChild(del);
-  h.appendChild(actions);
-  block.appendChild(h);
-
-  for (const k of Object.keys(entry)) {
-    const v = entry[k];
-    let type;
-    if (typeof v === "boolean") type = "bool";
-    else if (typeof v === "number") type = Number.isInteger(v) ? "number" : "number_float";
-    else type = "text";
-    // Generic per-section help: e.g. tentacle.<key> applies regardless of entry name
-    const sectionKey = parent === cfgState.sensory ? "sensory" : "tentacle";
-    block.appendChild(renderRow(k, entry, k, type, `${sectionKey}.${k}`));
-  }
-  return block;
 }
 
 function showToast(text, ok = true) {
@@ -1369,16 +1322,52 @@ function showToast(text, ok = true) {
 $("#settings-save").addEventListener("click", async () => {
   if (cfgState == null) { showToast("✗ nothing to save", false); return; }
   try {
+    // Plugin configs now live in their own per-plugin YAML files —
+    // strip `plugins` from the core config.yaml payload so it stops
+    // accumulating stale state. The backend still tolerates it for
+    // backwards compat, but new saves shouldn't touch it.
+    const corePayload = { ...cfgState };
+    delete corePayload.plugins;
+
     const r = await fetch("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ parsed: cfgState }),
+      body: JSON.stringify({ parsed: corePayload }),
     });
     const body = await r.json();
-    if (r.ok) {
-      showToast(`✓ saved (backup: ${body.backup || "n/a"}). Restart for changes to take effect.`);
-    } else {
+    if (!r.ok) {
       showToast(`✗ save failed: ${body.detail || r.statusText}`, false);
+      return;
+    }
+
+    // Persist each dirty plugin project to its own file. Errors are
+    // collected but don't abort — we still report the core save.
+    const pluginErrs = [];
+    for (const [project, edit] of Object.entries(pluginEdits)) {
+      const enabled = !!edit.enabled;
+      const values = {};
+      for (const [k, v] of Object.entries(edit)) {
+        if (k !== "enabled") values[k] = v;
+      }
+      try {
+        const pr = await fetch(`/api/plugins/${encodeURIComponent(project)}/config`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled, values }),
+        });
+        if (!pr.ok) {
+          const pb = await pr.json().catch(() => ({}));
+          pluginErrs.push(`${project}: ${pb.detail || pr.statusText}`);
+        }
+      } catch (e) {
+        pluginErrs.push(`${project}: ${e}`);
+      }
+    }
+
+    if (pluginErrs.length) {
+      showToast(`✗ plugin saves failed: ${pluginErrs.join(", ")}`, false);
+    } else {
+      showToast(`✓ saved (backup: ${body.backup || "n/a"}). Restart for changes to take effect.`);
     }
   } catch (e) {
     showToast("✗ network: " + e, false);

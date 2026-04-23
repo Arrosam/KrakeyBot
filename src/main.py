@@ -316,7 +316,19 @@ class Runtime:
           - Core items still wired hard in __init__ (batch_tracker) —
             reported with source="core" so the UI can show a locked
             badge.
+
+        Each component carries a `values` dict: the current on-disk
+        config for its project, minus the loader-owned `enabled` flag
+        (which is surfaced separately). The dashboard renders forms
+        directly from `config_schema` + `values` — no need to hit
+        /api/settings for plugin config anymore.
         """
+        def _values_for(project: str) -> dict[str, Any]:
+            if not project:
+                return {}
+            cfg = self._plugin_config_store.peek_config(project)
+            return {k: v for k, v in cfg.items() if k != "enabled"}
+
         def _flatten(infos, loaded_names):
             return [{
                 "name": i.name,
@@ -331,6 +343,7 @@ class Runtime:
                 # dedicated toggle (separate from the plugin's own
                 # config_schema rows).
                 "enabled": i.enabled,
+                "values": _values_for(i.project),
                 "loaded": i.name in loaded_names and i.error is None,
                 "error": i.error,
             } for i in infos]
@@ -346,7 +359,7 @@ class Runtime:
             {"name": t.name, "kind": "tentacle", "source": "core",
              "path": "", "project": "", "description": t.description,
              "is_internal": t.is_internal, "config_schema": [],
-             "enabled": True,
+             "enabled": True, "values": {},
              "loaded": True, "error": None}
             for t in self.tentacles._tentacles.values()  # noqa: SLF001
             if t.name not in plugin_t_names
@@ -355,7 +368,7 @@ class Runtime:
             {"name": s.name, "kind": "sensory", "source": "core",
              "path": "", "project": "", "description": "",
              "is_internal": False, "config_schema": [],
-             "enabled": True,
+             "enabled": True, "values": {},
              "loaded": True, "error": None}
             for s in self.sensories._sensories.values()  # noqa: SLF001
             if s.name not in plugin_s_names
@@ -366,6 +379,27 @@ class Runtime:
             "tentacles": core_tentacles + _flatten(t_infos, loaded_t),
             "sensories": core_sensories + _flatten(s_infos, loaded_s),
         }
+
+    def update_plugin_config(
+        self, project: str, body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist an edit from the dashboard into the per-plugin file.
+
+        `body` has shape {"enabled": bool, "values": {...}}. The final
+        on-disk file merges them: {"enabled": ..., **values}. Changes
+        take effect on next restart (plugins aren't hot-reloaded).
+        """
+        if not project or not isinstance(project, str):
+            raise ValueError("project name required")
+        enabled = bool(body.get("enabled", False))
+        values = dict(body.get("values") or {})
+        # Guard: `enabled` is loader-owned; refuse to let a client
+        # stuff it inside `values` and double-write.
+        values.pop("enabled", None)
+        config = {"enabled": enabled, **values}
+        path = self._plugin_config_store.write(project, config)
+        return {"project": project, "path": str(path),
+                "config": config}
 
     def _build_code_runner(self, coding_cfg: dict):
         """Return Subprocess on sandbox=false, SandboxRunner otherwise.

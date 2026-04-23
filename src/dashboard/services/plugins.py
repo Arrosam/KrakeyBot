@@ -13,3 +13,13 @@ class PluginsService(Protocol):
     """
 
     def report(self) -> dict[str, Any]: ...
+
+    def update_config(
+        self, project: str, body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist a dashboard edit to a plugin project's config.
+
+        Body shape: ``{"enabled": bool, "values": {...}}``. Implementations
+        should validate and write atomically. Returns a summary dict
+        (project name, file path, resulting config).
+        """
