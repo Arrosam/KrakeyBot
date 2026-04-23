@@ -10,6 +10,12 @@ Two roots are scanned:
     src/plugins/builtin/       source = "builtin"   (ships with Krakey)
     workspace/plugins/         source = "plugin"    (user-dropped)
 
+Per-plugin config is stored in separate YAML files under
+``workspace/plugin-configs/`` (see ``src.plugins.plugin_config``). The
+loader pulls it via the ``config_store`` kwarg. The legacy
+``configs=dict`` parameter is still accepted so tests that pre-date
+the file-based store keep working.
+
 Each project module must expose ONE of:
 
     create_plugins(config, deps) -> dict:
@@ -62,9 +68,14 @@ import sys
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yaml
+
+from src.plugins.plugin_config import (
+    DictPluginConfigStore,
+    PluginConfigStore,
+)
 
 
 @dataclass
@@ -91,17 +102,30 @@ class PluginInfo:
     instance: Any = None
 
 
-def discover_plugins(dir_path: Path, deps: dict[str, Any],
-                        configs: dict[str, dict[str, Any]],
-                        *, source: str = "plugin"
-                        ) -> list[PluginInfo]:
+def discover_plugins(
+    dir_path: Path,
+    deps: dict[str, Any],
+    configs: dict[str, dict[str, Any]] | None = None,
+    *,
+    source: str = "plugin",
+    config_store: PluginConfigStore | None = None,
+) -> list[PluginInfo]:
     """Scan `dir_path` for project folders / files and return one
     PluginInfo per *component* (tentacle or sensory) produced.
 
-    `configs` is the runtime's `plugins:` section (mapping project name
-    to its config dict). Each project's factory receives its own
-    config slice.
+    Config source (exactly one of):
+
+      - ``config_store``: the recommended path — a PluginConfigStore
+        backed by per-plugin YAML files. Enables first-run generation
+        and dashboard round-trips.
+      - ``configs``: legacy mapping of project name → config dict. If
+        provided (and no store is given) an in-memory store shim is
+        used. Kept for backwards compatibility with pre-store tests.
+
+    Each project's factory receives its resolved config slice.
     """
+    if config_store is None:
+        config_store = DictPluginConfigStore(configs)
     out: list[PluginInfo] = []
     if not dir_path.exists():
         return out
@@ -124,7 +148,7 @@ def discover_plugins(dir_path: Path, deps: dict[str, Any],
             project=project,
             source=source,
             deps=deps,
-            project_config=configs.get(project) or {},
+            config_store=config_store,
         ))
     return out
 
@@ -134,22 +158,27 @@ def discover_plugins(dir_path: Path, deps: dict[str, Any],
 
 def _load_project(*, module_path: Path, pkg_dir: Path | None,
                      project: str, source: str, deps: dict[str, Any],
-                     project_config: dict[str, Any]) -> list[PluginInfo]:
+                     config_store: PluginConfigStore) -> list[PluginInfo]:
     """Import one project module, run its factory, and return
-    PluginInfo for each produced component."""
-    # Base info shared by every component — gets cloned per component below.
+    PluginInfo for each produced component.
+
+    Order of operations is: import → read manifest → resolve config via
+    the store (needs the schema) → check enabled → run factory. The
+    store may persist a fresh file the first time it sees a project; on
+    subsequent runs the file is the sole source of truth.
+    """
     base = PluginInfo(
         name=project, kind="?", source=source, path=str(module_path),
         project=project,
     )
-    # Resolve `enabled` BEFORE import so even a plugin that would crash
-    # on import is gated by it. A user who sets enabled=false never even
-    # pays the import cost of a flaky plugin.
-    base.enabled = bool(project_config.get("enabled", False))
     try:
         module = _import_module(module_path, project)
         manifest = _read_manifest(module, pkg_dir or module_path.parent)
         _apply_manifest_project_fields(base, manifest, project)
+
+        project_config = config_store.load_or_init(project, base.config_schema)
+        base.enabled = bool(project_config.get("enabled", False))
+
         merged_cfg = _apply_defaults(project_config, base.config_schema)
         # `enabled` is loader-owned; never let a user-supplied schema or
         # project config resurrect a bogus value.
@@ -158,7 +187,7 @@ def _load_project(*, module_path: Path, pkg_dir: Path | None,
 
         # enabled=false short-circuits: report everything as "present but
         # not instantiated" without running the factory. Default is
-        # false — plugins must be explicitly enabled in config.yaml.
+        # false — plugins must be explicitly enabled.
         if not base.enabled:
             return _describe_components(base, manifest, components_meta,
                                            skipped=True)

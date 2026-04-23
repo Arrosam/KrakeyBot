@@ -136,7 +136,20 @@ class Runtime:
         # reply tentacle) can pick it up via deps. Built regardless of
         # `web_chat.enabled` so the dashboard can still display the
         # existing transcript in monitor-only mode.
-        wc_cfg = self.config.plugins.get("web_chat", {})
+        #
+        # Per-plugin config store: one YAML file per plugin project
+        # under workspace/plugin-configs/. On first run the store
+        # migrates values from the deprecated config.yaml `plugins:`
+        # pile, so users upgrading from the old layout keep their
+        # settings. peek_config() is used here because web_chat's file
+        # may not exist yet (loader hasn't run) — peek falls back to
+        # legacy without materializing anything.
+        from src.plugins.plugin_config import FilePluginConfigStore
+        self._plugin_config_store = FilePluginConfigStore(
+            root=Path("workspace/plugin-configs"),
+            legacy_plugins=self.config.plugins,
+        )
+        wc_cfg = self._plugin_config_store.peek_config("web_chat")
         chat_path = wc_cfg.get("history_path",
                                    "workspace/data/web_chat.jsonl")
         self.web_chat_history = WebChatHistory(chat_path)
@@ -276,11 +289,12 @@ class Runtime:
             "build_code_runner": self._build_code_runner,
         }
         infos: list = []
-        infos.extend(discover_plugins(builtin, deps, self.config.plugins,
-                                            source="builtin"))
+        infos.extend(discover_plugins(builtin, deps,
+                                            source="builtin",
+                                            config_store=self._plugin_config_store))
         infos.extend(discover_plugins(workspace / "plugins", deps,
-                                            self.config.plugins,
-                                            source="plugin"))
+                                            source="plugin",
+                                            config_store=self._plugin_config_store))
         for info in infos:
             if info.error:
                 self.log.runtime_error(
@@ -407,9 +421,17 @@ class Runtime:
         from src.sandbox.backend import (
             SandboxConfig, SandboxUnavailableError, preflight,
         )
+        # Per-plugin store replaces config.yaml's `plugins:` pile. peek
+        # is safe: by the time preflight runs the loader has already
+        # materialized each plugin's file, so every per-plugin dict
+        # reflects its on-disk state.
+        def _plugin_flag(name: str, key: str, fallback: bool) -> bool:
+            return bool(
+                self._plugin_config_store.peek_config(name).get(key, fallback)
+            )
         any_sandboxed = any(
-            self.config.plugins.get(name, {}).get("enabled", False)
-            and self.config.plugins.get(name, {}).get("sandbox", True)
+            _plugin_flag(name, "enabled", False)
+            and _plugin_flag(name, "sandbox", True)
             for name in ("coding", "gui_control", "cli",
                            "file_read", "file_write", "browser")
         )
