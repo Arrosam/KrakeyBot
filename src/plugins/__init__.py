@@ -1,8 +1,9 @@
 """Plugin loader — dynamic tentacle/sensory discovery from workspace.
 
-At boot Runtime scans `workspace/tentacles/` and `workspace/sensories/`,
-imports each plugin in isolation (no sys.path pollution), and registers
-the result alongside the built-in tentacles/sensories.
+At boot Runtime scans `src/plugins/builtin/` (ships with Krakey) and
+`workspace/plugins/` (user-dropped), imports each plugin project in
+isolation (no sys.path pollution), and registers the produced
+tentacles + sensories alongside the core ones.
 
 Plugin contract lives in PLUGINS.md at repo root.
 """

@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from src.dashboard.server import create_app
 from src.dashboard.web_chat import WebChatHistory
-from src.tentacles.web_chat_reply import WebChatTentacle
+from src.plugins.builtin.web_chat.tentacle import WebChatTentacle
 
 
 # ---------------- WebChatHistory ----------------
@@ -83,6 +83,73 @@ async def test_unsubscribe_stops_delivery(tmp_path):
     h.unsubscribe(cb)
     await h.append("user", "2")
     assert len(seen) == 1
+
+
+# ---------------- WebChatSensory ----------------
+
+
+async def test_sensory_push_creates_user_message_stimulus(tmp_path):
+    from src.plugins.builtin.web_chat.sensory import WebChatSensory
+
+    pushed = []
+
+    class _Buf:
+        async def push(self, s): pushed.append(s)
+
+    sens = WebChatSensory()
+    await sens.start(_Buf())
+    await sens.push_user_message("hello krakey")
+    assert len(pushed) == 1
+    s = pushed[0]
+    assert s.type == "user_message"
+    assert s.source == "sensory:web_chat"
+    assert s.content == "hello krakey"
+    assert s.adrenalin is True
+    assert s.metadata["channel"] == "web_chat"
+
+
+async def test_sensory_push_appends_attachment_notices(tmp_path):
+    from src.plugins.builtin.web_chat.sensory import WebChatSensory
+
+    pushed = []
+
+    class _Buf:
+        async def push(self, s): pushed.append(s)
+
+    sens = WebChatSensory()
+    await sens.start(_Buf())
+    await sens.push_user_message(
+        "see file",
+        attachments=[{"name": "a.png", "type": "image/png",
+                         "size": 123, "url": "/u/a.png"}],
+    )
+    s = pushed[0]
+    assert "see file" in s.content
+    assert "[附件: a.png" in s.content
+    assert s.metadata["attachments"][0]["name"] == "a.png"
+
+
+async def test_sensory_push_before_start_silently_drops():
+    from src.plugins.builtin.web_chat.sensory import WebChatSensory
+
+    sens = WebChatSensory()
+    # No start() — buffer is None. Must not raise.
+    await sens.push_user_message("dropped")
+
+
+async def test_sensory_push_after_stop_silently_drops():
+    from src.plugins.builtin.web_chat.sensory import WebChatSensory
+
+    pushed = []
+
+    class _Buf:
+        async def push(self, s): pushed.append(s)
+
+    sens = WebChatSensory()
+    await sens.start(_Buf())
+    await sens.stop()
+    await sens.push_user_message("dropped")
+    assert pushed == []
 
 
 # ---------------- WebChatTentacle ----------------

@@ -1390,13 +1390,18 @@ cognibot/
 │   │   ├── tentacle.py                # Tentacle 基类 + Registry
 │   │   ├── sensory.py                 # Sensory 基类 + Registry
 │   │   └── batch_tracker_sensory.py
-│   ├── tentacles/
-│   │   ├── action.py
-│   │   └── ...
-│   ├── sensories/
-│   │   ├── cli_input.py
-│   │   ├── timer.py
-│   │   └── ...
+│   ├── plugins/
+│   │   ├── loader.py                 # 发现 + 安全 import
+│   │   └── builtin/                  # 内置插件项目
+│   │       ├── search/               # 单文件: __init__.py
+│   │       ├── coding/               # 单文件
+│   │       ├── gui_control/          # 单文件
+│   │       ├── memory_recall/        # 单文件
+│   │       ├── telegram/             # 多文件: client/sensory/tentacle
+│   │       └── web_chat/             # 多文件: sensory/tentacle
+│   ├── sandbox/
+│   │   ├── subprocess_runner.py      # 本机 CodeRunner
+│   │   └── backend.py                # 沙盒 VM CodeRunner
 │   ├── prompt/
 │   │   ├── dna.py
 │   │   ├── hypothalamus_prompt.py

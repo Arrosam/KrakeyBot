@@ -3,7 +3,7 @@
 > 以持续心跳维持"存在"的自主认知 Agent。
 > 完整设计见 [`KrakeyBot_DevSpec_v2.1.md`](KrakeyBot_DevSpec_v2.1.md)，实现路线见 [`KrakeyBot_Checklist.md`](KrakeyBot_Checklist.md)。
 > 沙盒 VM 配置见 [`SANDBOX.md`](SANDBOX.md)（启用 coding/GUI/file/browser 任一 tentacle 前必读）。
-> 自定义 tentacle / sensory 见 [`PLUGINS.md`](PLUGINS.md)（把模块丢进 `workspace/tentacles/` 或 `workspace/sensories/` 自动加载）。
+> 自定义 tentacle / sensory 见 [`PLUGINS.md`](PLUGINS.md)（把插件项目丢进 `workspace/plugins/<project>/` 自动加载）。
 
 ---
 
@@ -331,14 +331,20 @@ KrakeyBot/
 │   ├── llm/client.py       # 统一 LLM Client
 │   ├── models/             # config / stimulus / self_model
 │   ├── prompt/             # DNA + builder
-│   ├── runtime/            # stimulus_buffer / hibernate
+│   ├── runtime/            # stimulus_buffer / hibernate / fatigue
+│   ├── memory/             # GraphMemory / KnowledgeBase / recall
+│   ├── sleep/              # 7 阶段 Sleep 管线
+│   ├── dashboard/          # FastAPI + WS + web chat history
+│   ├── sandbox/            # SubprocessRunner + guest VM backend
 │   ├── interfaces/         # Tentacle / Sensory ABC + Registry
-│   ├── sensories/cli_input.py
-│   └── tentacles/action.py
+│   └── plugins/
+│       ├── loader.py       # 插件发现 + 安全 import
+│       └── builtin/        # 内置插件项目（search / coding / ...）
 ├── tests/                  # pytest，全 Mock，无网络依赖
 └── workspace/              # 运行时数据（gitignored）
     ├── data/
-    └── logs/
+    ├── logs/
+    └── plugins/            # 用户自定义插件（可选）
 ```
 
 完整目录规划见 DevSpec §16。

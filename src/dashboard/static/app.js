@@ -1251,14 +1251,41 @@ function _renderPluginCard(p, kindKey) {
   }
 
   // Config is keyed by project name (one project = one config dict,
-  // shared across its components). Render the schema on the first
-  // component of each project only.
+  // shared across its components). Render the `enabled` toggle and the
+  // schema on the FIRST component of each project only; siblings get
+  // a "shared" note.
   const projectKey = p.project || p.name;
-  const schemaSeen = _pluginSchemaSeen && _pluginSchemaSeen.has(projectKey);
-  if (p.config_schema && p.config_schema.length && !schemaSeen) {
-    if (_pluginSchemaSeen) _pluginSchemaSeen.add(projectKey);
-    const plugins = ensure(cfgState, "plugins", () => ({}));
-    const entry = ensure(plugins, projectKey, () => ({}));
+  const firstOfProject = _pluginSchemaSeen && !_pluginSchemaSeen.has(projectKey);
+  if (_pluginSchemaSeen) _pluginSchemaSeen.add(projectKey);
+
+  if (p.source === "core") {
+    // Core items are always on; no enabled toggle, no schema.
+    return card;
+  }
+
+  if (!firstOfProject) {
+    const note = document.createElement("div");
+    note.style.cssText = "color:var(--muted);font-size:10px;font-style:italic";
+    note.textContent = `(config shared with project ${projectKey} — edit there)`;
+    card.appendChild(note);
+    return card;
+  }
+
+  const plugins = ensure(cfgState, "plugins", () => ({}));
+  const entry = ensure(plugins, projectKey, () => ({}));
+
+  // Loader-owned `enabled` toggle — rendered separately from the
+  // plugin's own config_schema. Default: false. The loader strips
+  // any user-declared "enabled" field from config_schema so a plugin
+  // author can't override the default or the widget.
+  if (entry.enabled == null) entry.enabled = false;
+  const enabledHelpPath = `plugin.${projectKey}.enabled`;
+  HELP[enabledHelpPath] = "Master switch for this plugin project. " +
+    "Default OFF — the factory never runs until you set this to true.";
+  card.appendChild(renderRow("enabled", entry, "enabled", "bool",
+                                 enabledHelpPath));
+
+  if (p.config_schema && p.config_schema.length) {
     for (const fdef of p.config_schema) {
       const type = fdef.type || "text";
       const helpPath = `plugin.${projectKey}.${fdef.field}`;
@@ -1268,15 +1295,10 @@ function _renderPluginCard(p, kindKey) {
       }
       card.appendChild(renderRow(fdef.field, entry, fdef.field, type, helpPath));
     }
-  } else if (schemaSeen) {
+  } else {
     const note = document.createElement("div");
     note.style.cssText = "color:var(--muted);font-size:10px;font-style:italic";
-    note.textContent = `(config shared with project ${projectKey} — edit there)`;
-    card.appendChild(note);
-  } else if (p.source !== "core") {
-    const note = document.createElement("div");
-    note.style.cssText = "color:var(--muted);font-size:10px;font-style:italic";
-    note.textContent = "(no config_schema declared — edit via 'Plugins (raw)' below)";
+    note.textContent = "(no additional config_schema declared — toggle above is the only switch)";
     card.appendChild(note);
   }
   return card;

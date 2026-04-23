@@ -1,64 +1,19 @@
-"""Phase 3 / D: Telegram Sensory + thin HTTP client.
+"""Telegram inbound sensory — polls getUpdates in a background task.
 
-Inbound side. Polls Telegram Bot API in a background task and pushes each
-text message as a `user_message` stimulus (adrenalin=True by default,
-since incoming messages from a real human warrant attention).
-
-Outbound side lives in src/tentacles/telegram_reply.py — the same client
-instance is shared with that tentacle so a single bot connection serves
-both directions.
+Pushes each incoming text message as a `user_message` Stimulus with
+`adrenalin=True` (a real human contacted Krakey; that's worth waking
+for). Chat-id allowlisting is enforced here, not at the client level.
 """
 from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Any, Protocol
-
-import aiohttp
 
 from src.interfaces.sensory import Sensory
 from src.models.stimulus import Stimulus
 from src.runtime.stimulus_buffer import StimulusBuffer
 
-
-class TelegramClient(Protocol):
-    async def get_updates(self, offset: int,
-                            timeout: int = 10) -> list[dict[str, Any]]: ...
-
-    async def send_message(self, chat_id: int, text: str) -> None: ...
-
-
-class HttpTelegramClient:
-    """Production client — raw aiohttp against api.telegram.org."""
-
-    def __init__(self, token: str,
-                  base_url: str = "https://api.telegram.org",
-                  poll_timeout: int = 25):
-        self._token = token
-        self._base = f"{base_url.rstrip('/')}/bot{token}"
-        self._poll_timeout = poll_timeout
-        self._timeout = aiohttp.ClientTimeout(total=poll_timeout + 10)
-
-    async def get_updates(self, offset: int, timeout: int | None = None
-                            ) -> list[dict[str, Any]]:
-        params = {"offset": offset,
-                   "timeout": timeout if timeout is not None else self._poll_timeout}
-        async with aiohttp.ClientSession(timeout=self._timeout) as s:
-            async with s.get(f"{self._base}/getUpdates", params=params) as r:
-                r.raise_for_status()
-                data = await r.json()
-        if not data.get("ok"):
-            raise RuntimeError(f"telegram getUpdates not ok: {data}")
-        return list(data.get("result", []))
-
-    async def send_message(self, chat_id: int, text: str) -> None:
-        body = {"chat_id": chat_id, "text": text}
-        async with aiohttp.ClientSession(timeout=self._timeout) as s:
-            async with s.post(f"{self._base}/sendMessage", json=body) as r:
-                r.raise_for_status()
-                data = await r.json()
-        if not data.get("ok"):
-            raise RuntimeError(f"telegram sendMessage not ok: {data}")
+from .client import TelegramClient
 
 
 class TelegramSensory(Sensory):

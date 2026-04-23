@@ -77,11 +77,19 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         ),
         knowledge_base=KnowledgeBaseSection(dir=kb_dir),
         plugins={
-            # Keep web_chat_reply history inside the test tmpdir so it
-            # doesn't bleed into workspace/data/web_chat.jsonl.
-            "web_chat_reply": {
+            # `enabled` is loader-owned and defaults to False — must be
+            # set explicitly for tests that expect the plugin to load.
+            # Mirror the "default-on" set the manifests used to declare
+            # so existing tests keep their assumptions.
+            "web_chat": {
+                "enabled": True,
+                # Keep web chat history inside the test tmpdir so it
+                # doesn't bleed into workspace/data/web_chat.jsonl.
                 "history_path": f"{chat_dir}/chat.jsonl",
             },
+            "memory_recall": {"enabled": True},
+            # `search` stays OFF in the helper: it hits the real network
+            # (DuckDuckGo) and tests should opt in deliberately.
         },
         sleep=SleepSection(max_duration_seconds=7200,
                               min_community_size=1),

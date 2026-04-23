@@ -62,13 +62,16 @@ def create_tentacle(config, deps):
     d = tmp_path / "plugins"
     _write_single(d, "echo", body)
 
-    out = discover_plugins(d, deps={}, configs={})
+    # Must explicitly enable; enabled defaults to False.
+    out = discover_plugins(d, deps={},
+                                configs={"echo": {"enabled": True}})
     assert len(out) == 1
     info = out[0]
     assert info.error is None
     assert info.name == "echo"
     assert info.kind == "tentacle"
     assert info.project == "echo"
+    assert info.enabled is True
     assert info.instance is not None and info.instance.greeting == "hi"
 
 
@@ -86,9 +89,11 @@ def create_sensory(config, deps): return S()
 """
     d = tmp_path / "plugins"
     _write_single(d, "feed", body)
-    out = discover_plugins(d, deps={}, configs={})
+    out = discover_plugins(d, deps={},
+                                configs={"feed": {"enabled": True}})
     assert len(out) == 1
     assert out[0].kind == "sensory"
+    assert out[0].enabled is True
     assert out[0].instance is not None
 
 
@@ -140,7 +145,8 @@ def create_plugins(config, deps):
 """
     d = tmp_path / "plugins"
     _write_pkg(d, "paired", body)
-    out = discover_plugins(d, deps={}, configs={})
+    out = discover_plugins(d, deps={},
+                                configs={"paired": {"enabled": True}})
     assert len(out) == 2
     # Same project name on both
     assert {i.project for i in out} == {"paired"}
@@ -200,7 +206,8 @@ def create_plugins(config, deps):
 """
     d = tmp_path / "plugins"
     _write_pkg(d, "x_proj", body)
-    out = discover_plugins(d, deps={}, configs={})
+    out = discover_plugins(d, deps={},
+                                configs={"x_proj": {"enabled": True}})
     t = next(i.instance for i in out if i.kind == "tentacle")
     s = next(i.instance for i in out if i.kind == "sensory")
     assert t.client is s.client  # same object — the whole point
@@ -223,7 +230,7 @@ def test_disabled_project_reports_but_does_not_instantiate(tmp_path):
     body = """
 from src.interfaces.tentacle import Tentacle
 
-MANIFEST = {"config_schema":[{"field":"enabled","type":"bool","default":True}]}
+MANIFEST = {}
 
 class Never(Tentacle):
     def __init__(self):
@@ -244,6 +251,78 @@ def create_tentacle(config, deps): return Never()
     assert len(out) == 1
     assert out[0].error is None
     assert out[0].instance is None
+    assert out[0].enabled is False
+
+
+def test_default_enabled_is_false_factory_not_called(tmp_path):
+    """No config entry + no `enabled: true` → factory does not run,
+    even though the plugin module is otherwise valid."""
+    body = """
+from src.interfaces.tentacle import Tentacle
+
+MANIFEST = {"description": "default-off plugin"}
+
+class BoomOnBuild(Tentacle):
+    def __init__(self):
+        raise RuntimeError("factory must not run — plugin is disabled by default")
+    @property
+    def name(self): return "boom"
+    @property
+    def description(self): return ""
+    @property
+    def parameters_schema(self): return {}
+    async def execute(self, intent, params): raise NotImplementedError
+
+def create_tentacle(config, deps): return BoomOnBuild()
+"""
+    d = tmp_path / "plugins"
+    _write_single(d, "boom", body)
+    # configs={} → enabled defaults to False → factory is NOT called
+    out = discover_plugins(d, deps={}, configs={})
+    assert len(out) == 1
+    assert out[0].error is None
+    assert out[0].instance is None
+    assert out[0].enabled is False
+
+
+def test_author_declared_enabled_is_stripped_from_schema(tmp_path):
+    """`enabled` is loader-owned; anything a plugin author writes for it
+    in config_schema is stripped before the dashboard sees it."""
+    body = """
+from src.interfaces.tentacle import Tentacle
+
+MANIFEST = {
+    "config_schema": [
+        {"field": "enabled", "type": "bool", "default": True,
+         "help": "this should be stripped"},
+        {"field": "knob", "type": "text", "default": "x"},
+    ],
+}
+
+class T(Tentacle):
+    @property
+    def name(self): return "stripper"
+    @property
+    def description(self): return ""
+    @property
+    def parameters_schema(self): return {}
+    async def execute(self, intent, params): raise NotImplementedError
+
+def create_tentacle(config, deps): return T()
+"""
+    d = tmp_path / "plugins"
+    _write_single(d, "stripper", body)
+    out = discover_plugins(d, deps={},
+                                configs={"stripper": {"enabled": True}})
+    assert len(out) == 1
+    info = out[0]
+    fields = [f["field"] for f in info.config_schema]
+    # `enabled` stripped, author's other knob survives
+    assert "enabled" not in fields
+    assert "knob" in fields
+    # Even though author set default=True, the loader-owned default is
+    # False — only the user's config flips it on.
+    assert info.enabled is True
 
 
 def test_hidden_dirs_and_non_py_files_skipped(tmp_path):
@@ -305,6 +384,11 @@ def create_tentacle(config, deps): return P(k=config["k"])
 """
     d = tmp_path / "plugins"
     _write_single(d, "p", body)
-    assert discover_plugins(d, deps={}, configs={})[0].instance.k == 10
-    assert discover_plugins(d, deps={},
-                                configs={"p": {"k": 42}})[0].instance.k == 42
+    # Missing keys fall back to schema defaults, but `enabled` still
+    # has to be set explicitly — it defaults to False regardless.
+    r1 = discover_plugins(d, deps={},
+                             configs={"p": {"enabled": True}})[0]
+    assert r1.instance.k == 10
+    r2 = discover_plugins(d, deps={},
+                             configs={"p": {"enabled": True, "k": 42}})[0]
+    assert r2.instance.k == 42

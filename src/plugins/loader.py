@@ -33,13 +33,22 @@ and optionally a MANIFEST dict (or manifest.yaml next to the module):
             {"kind": "sensory",  "name": "my_thing_feed"},
         ],
         "config_schema": [                   # drives dashboard Settings form
-            {"field": "enabled", "type": "bool", "default": True},
+            # DO NOT declare "enabled" here — it is reserved and managed
+            # by the loader (default: False). The dashboard renders a
+            # dedicated toggle above your schema rows.
+            {"field": "api_key", "type": "password", "default": ""},
             ...
         ],
     }
 
 For single-component shortcuts (create_tentacle / create_sensory),
 `components` may be omitted — the component inherits the project name.
+
+**Enabled is loader-owned.** Every project gets an implicit
+`plugins.<project>.enabled: bool` config key with default `False`.
+The factory never runs unless the user sets it to `true`. User-declared
+`enabled` fields in `config_schema` are silently stripped so plugin
+authors cannot override the default or the widget.
 
 Safety: each module loads in isolation via importlib.util. Any import
 or factory exception is caught, recorded on the PluginInfo.error
@@ -74,6 +83,9 @@ class PluginInfo:
     description: str = ""
     is_internal: bool = False
     config_schema: list[dict[str, Any]] = field(default_factory=list)
+    # Loader-owned. True iff `plugins.<project>.enabled: true` in
+    # config.yaml. Default is False — plugins never self-enable.
+    enabled: bool = False
     error: str | None = None
     # Set by the loader on success, None otherwise. Never JSON-serialised.
     instance: Any = None
@@ -130,16 +142,24 @@ def _load_project(*, module_path: Path, pkg_dir: Path | None,
         name=project, kind="?", source=source, path=str(module_path),
         project=project,
     )
+    # Resolve `enabled` BEFORE import so even a plugin that would crash
+    # on import is gated by it. A user who sets enabled=false never even
+    # pays the import cost of a flaky plugin.
+    base.enabled = bool(project_config.get("enabled", False))
     try:
         module = _import_module(module_path, project)
         manifest = _read_manifest(module, pkg_dir or module_path.parent)
         _apply_manifest_project_fields(base, manifest, project)
         merged_cfg = _apply_defaults(project_config, base.config_schema)
+        # `enabled` is loader-owned; never let a user-supplied schema or
+        # project config resurrect a bogus value.
+        merged_cfg["enabled"] = base.enabled
         components_meta = manifest.get("components") or []
 
         # enabled=false short-circuits: report everything as "present but
-        # not instantiated" without running the factory.
-        if not merged_cfg.get("enabled", True):
+        # not instantiated" without running the factory. Default is
+        # false — plugins must be explicitly enabled in config.yaml.
+        if not base.enabled:
             return _describe_components(base, manifest, components_meta,
                                            skipped=True)
 
@@ -158,7 +178,16 @@ def _load_project(*, module_path: Path, pkg_dir: Path | None,
 
 def _import_module(module_path: Path, project: str):
     full_name = f"krakey_plugin_{project}"
-    spec = importlib.util.spec_from_file_location(full_name, module_path)
+    # For package-style plugins (`<project>/__init__.py`) set
+    # `submodule_search_locations` so intra-package relative imports
+    # like `from .client import HttpTelegramClient` resolve correctly.
+    submodule_locations: list[str] | None = None
+    if module_path.name == "__init__.py":
+        submodule_locations = [str(module_path.parent)]
+    spec = importlib.util.spec_from_file_location(
+        full_name, module_path,
+        submodule_search_locations=submodule_locations,
+    )
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load plugin at {module_path}")
     module = importlib.util.module_from_spec(spec)
@@ -191,7 +220,13 @@ def _apply_manifest_project_fields(info: PluginInfo,
     raw_schema = manifest.get("config_schema") or []
     if not isinstance(raw_schema, list):
         raise ValueError("config_schema must be a list of field dicts")
-    info.config_schema = [_normalize_field(f) for f in raw_schema]
+    # `enabled` is reserved; strip anything a plugin author tried to
+    # declare for it. The loader owns that field (default False) and
+    # the dashboard renders a dedicated widget.
+    info.config_schema = [
+        _normalize_field(f) for f in raw_schema
+        if str(f.get("field", "")).strip() != "enabled"
+    ]
 
 
 def _normalize_field(f: dict[str, Any]) -> dict[str, Any]:
@@ -302,6 +337,7 @@ def _pair(base: PluginInfo, kind: str, instances: list,
             is_internal=bool(meta.get("is_internal",
                                          getattr(inst, "is_internal", False))),
             config_schema=base.config_schema,
+            enabled=base.enabled,
             error=None,
             instance=inst,
         )
@@ -328,6 +364,7 @@ def _describe_components(base: PluginInfo, manifest: dict[str, Any],
             description=base.description,
             is_internal=bool(meta.get("is_internal", base.is_internal)),
             config_schema=base.config_schema,
+            enabled=base.enabled,
             error=base.error if error else None,
             instance=None,
         )

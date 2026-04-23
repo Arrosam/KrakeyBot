@@ -119,7 +119,9 @@ MANIFEST = {
          "description": "optional paired sensory"},
     ],
     "config_schema": [
-        {"field": "enabled",     "type": "bool",     "default": True},
+        # DO NOT declare `enabled` — it is a reserved key owned by the
+        # loader (default False). The dashboard renders a dedicated
+        # toggle for it above your rows.
         {"field": "api_key",     "type": "password", "default": "",
          "help": "openweathermap.org key"},
         {"field": "default_city","type": "text",     "default": "Auckland"},
@@ -138,14 +140,20 @@ components:
     name: weather
     is_internal: true
 config_schema:
-  - field: enabled
-    type: bool
-    default: true
+  # `enabled` is reserved — do NOT add it here.
   - field: api_key
     type: password
     default: ""
     help: openweathermap.org key
 ```
+
+### Reserved keys
+
+- `enabled` — loader-owned. Default **`False`**. The factory never runs
+  until the user sets `plugins.<project>.enabled: true` in
+  `config.yaml` (or toggles it on in the dashboard). Any `enabled`
+  entry a plugin author writes into `config_schema` is stripped
+  silently on load.
 
 ### Component metadata
 
@@ -185,8 +193,9 @@ plugins:
 ```
 
 Defaults from `config_schema` fill missing keys before the factory
-sees the dict. `enabled: false` reports the project in the dashboard
-but skips instantiation entirely — the factory never runs.
+sees the dict. `enabled` defaults to `false`; until the user explicitly
+sets it to `true`, the project is reported in the dashboard but its
+module is imported only for manifest reading — the factory never runs.
 
 ## Examples
 
@@ -204,7 +213,6 @@ MANIFEST = {
     "description": "Echoes the intent back to Self as tentacle_feedback.",
     "is_internal": True,
     "config_schema": [
-        {"field": "enabled", "type": "bool", "default": True},
         {"field": "prefix",  "type": "text", "default": "echo: "},
     ],
 }

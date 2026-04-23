@@ -54,7 +54,7 @@ from src.self_agent import parse_self_output
 # (src.plugins.builtin.<project>/). SubprocessRunner stays imported
 # here because Runtime._build_code_runner owns the sandbox-vs-subprocess
 # policy decision and hands the runner to the coding plugin via deps.
-from src.tentacles.coding import SubprocessRunner
+from src.sandbox.subprocess_runner import SubprocessRunner
 
 
 class ChatLike(Protocol):
@@ -131,9 +131,11 @@ class Runtime:
         self.tentacles = TentacleRegistry()
         # Web chat history is a data layer (JSONL persistence + broadcast
         # bus) that the dashboard WebSocket subscribes to. Must exist
-        # before the plugin loader so the web_chat_reply plugin can pick
-        # it up via deps.
-        wc_cfg = self.config.plugins.get("web_chat_reply", {})
+        # before the plugin loader so the `web_chat` project (sensory +
+        # reply tentacle) can pick it up via deps. Built regardless of
+        # `web_chat.enabled` so the dashboard can still display the
+        # existing transcript in monitor-only mode.
+        wc_cfg = self.config.plugins.get("web_chat", {})
         chat_path = wc_cfg.get("history_path",
                                    "workspace/data/web_chat.jsonl")
         self.web_chat_history = WebChatHistory(chat_path)
@@ -310,6 +312,10 @@ class Runtime:
                 "description": i.description,
                 "is_internal": i.is_internal,
                 "config_schema": i.config_schema,
+                # Loader-owned flag so the dashboard can render a
+                # dedicated toggle (separate from the plugin's own
+                # config_schema rows).
+                "enabled": i.enabled,
                 "loaded": i.name in loaded_names and i.error is None,
                 "error": i.error,
             } for i in infos]
@@ -325,6 +331,7 @@ class Runtime:
             {"name": t.name, "kind": "tentacle", "source": "core",
              "path": "", "project": "", "description": t.description,
              "is_internal": t.is_internal, "config_schema": [],
+             "enabled": True,
              "loaded": True, "error": None}
             for t in self.tentacles._tentacles.values()  # noqa: SLF001
             if t.name not in plugin_t_names
@@ -333,6 +340,7 @@ class Runtime:
             {"name": s.name, "kind": "sensory", "source": "core",
              "path": "", "project": "", "description": "",
              "is_internal": False, "config_schema": [],
+             "enabled": True,
              "loaded": True, "error": None}
             for s in self.sensories._sensories.values()  # noqa: SLF001
             if s.name not in plugin_s_names
@@ -464,30 +472,21 @@ class Runtime:
         if cfg is None or not cfg.enabled:
             return
 
-        async def _on_user_message(text: str,
-                                     attachments: list[dict] | None = None) -> None:
-            # Web user message → push as a normal user_message stimulus.
-            # Attachments rendered as text notice so Self knows about them
-            # (vision/binary handling lives behind that).
-            content = text
-            if attachments:
-                lines = [text] if text else []
-                for a in attachments:
-                    name = a.get("name", "file")
-                    typ = a.get("type", "")
-                    size = a.get("size", 0)
-                    url = a.get("url", "")
-                    lines.append(f"[附件: {name} ({typ}, {size} bytes) {url}]")
-                content = "\n".join(lines)
-            md: dict = {"channel": "web_chat"}
-            if attachments:
-                md["attachments"] = attachments
-            await self.buffer.push(Stimulus(
-                type="user_message", source="sensory:web_chat",
-                content=content, timestamp=datetime.now(),
-                adrenalin=True,
-                metadata=md,
-            ))
+        # Route inbound user messages through the web_chat sensory
+        # (plugin-registered). If the plugin is disabled, no sensory
+        # exists — install a noop callback that logs the drop so the
+        # dashboard can still show history in monitor-only mode.
+        web_chat_sensory = self.sensories._sensories.get("web_chat")  # noqa: SLF001
+        if web_chat_sensory is not None:
+            _on_user_message = web_chat_sensory.push_user_message
+        else:
+            async def _on_user_message(text: str,
+                                           attachments: list[dict] | None = None
+                                           ) -> None:
+                self.log.hb_warn(
+                    "web_chat plugin disabled — dropping inbound message "
+                    f"({len(text or '')} chars)"
+                )
 
         def _on_restart() -> None:
             """Re-exec process so a new instance picks up edited config."""

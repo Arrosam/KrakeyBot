@@ -1,8 +1,7 @@
-"""Telegram outbound reply (Phase 3 / D).
+"""Telegram outbound reply tentacle.
 
-The Krakey-side equivalent of ActionTentacle for the Telegram channel.
-Takes the same TelegramClient instance the TelegramSensory polls with;
-its output is `is_internal=False` because what gets sent IS Krakey's
+Takes the same `TelegramClient` instance the sensory polls with; its
+output is `is_internal=False` because what gets sent IS Krakey's
 real outward chat to a human.
 """
 from __future__ import annotations
@@ -12,7 +11,8 @@ from typing import Any
 
 from src.interfaces.tentacle import Tentacle
 from src.models.stimulus import Stimulus
-from src.sensories.telegram import TelegramClient
+
+from .client import TelegramClient
 
 
 class TelegramReplyTentacle(Tentacle):

@@ -117,7 +117,7 @@ async def test_runtime_allows_subprocess_when_sandbox_false(tmp_path):
     """Opting OUT of sandbox (sandbox=false) must be explicitly allowed
     so users can run coding directly on the host if they want."""
     from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
-    from src.tentacles.coding import SubprocessRunner
+    from src.sandbox.subprocess_runner import SubprocessRunner
 
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),

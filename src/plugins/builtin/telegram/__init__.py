@@ -5,11 +5,17 @@ tentacle sends replies, and both share one HttpTelegramClient instance.
 This is exactly the kind of plugin that needed the `create_plugins`
 factory — a factory-per-component would build two clients and lose
 rate-limit / connection coordination.
+
+Layout within this package:
+  - client.py   — HttpTelegramClient + TelegramClient Protocol
+  - sensory.py  — TelegramSensory (inbound polling)
+  - tentacle.py — TelegramReplyTentacle (outbound send)
 """
 from __future__ import annotations
 
-from src.sensories.telegram import HttpTelegramClient, TelegramSensory
-from src.tentacles.telegram_reply import TelegramReplyTentacle
+from .client import HttpTelegramClient
+from .sensory import TelegramSensory
+from .tentacle import TelegramReplyTentacle
 
 
 MANIFEST = {
@@ -28,9 +34,6 @@ MANIFEST = {
                         "reaches the real human."},
     ],
     "config_schema": [
-        {"field": "enabled", "type": "bool", "default": False,
-         "help": "Master switch for both the sensory and the reply "
-                 "tentacle."},
         {"field": "bot_token", "type": "password", "default": "",
          "help": "BotFather token. Use ${ENV_VAR} to pull from the "
                  "environment at load time."},

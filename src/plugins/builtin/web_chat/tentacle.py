@@ -1,9 +1,9 @@
-"""Phase 3.F.3: Krakey → web chat outbound.
+"""Krakey → web chat outbound reply tentacle.
 
 No LLM — Hypothalamus already crafted the text; this tentacle just
 persists + broadcasts it. Returns success/failure as feedback.
-Failure preserves the underlying error message and is marked adrenalin
-so Self knows to react.
+Failure preserves the underlying error message and is marked
+adrenalin so Self knows to react.
 """
 from __future__ import annotations
 
