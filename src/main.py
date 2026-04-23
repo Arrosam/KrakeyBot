@@ -738,12 +738,14 @@ class Runtime:
         (sleeps min_interval and short-circuits the heartbeat)."""
         prompt = self.builder.build(
             self_model=self.self_model,
+            capabilities=self._capabilities(),
             status=self._status(counts.node_count, counts.edge_count,
                                   counts.fatigue_pct, counts.fatigue_hint),
             recall={"nodes": recall_result.nodes,
                     "edges": recall_result.edges},
             window=self.window.get_rounds(),
             stimuli=stimuli,
+            current_time=datetime.now(),
         )
         if self.is_bootstrap:
             prompt = (BOOTSTRAP_PROMPT.format(genesis_text=self._genesis_text)
@@ -1033,6 +1035,9 @@ class Runtime:
 
     def _status(self, node_count: int, edge_count: int,
                   pct: int, hint: str) -> dict[str, Any]:
+        """Runtime status numbers — changes every beat (heartbeat counter,
+        fatigue), so this section is deliberately placed near the end of
+        the prompt to preserve the cacheable prefix above it."""
         return {
             "gm_node_count": node_count,
             "gm_edge_count": edge_count,
@@ -1040,8 +1045,13 @@ class Runtime:
             "fatigue_hint": hint,
             "last_sleep_time": "never",
             "heartbeats_since_sleep": self.heartbeat_count,
-            "tentacles": self.tentacles.list_descriptions(),
         }
+
+    def _capabilities(self) -> list[dict[str, Any]]:
+        """Tentacle list for the [CAPABILITIES] layer. Only changes on
+        plugin reload, so this gets rendered high in the prompt above the
+        cache-breaking volatile layers."""
+        return self.tentacles.list_descriptions()
 
 
 def _delta_str(delta: int) -> str:
