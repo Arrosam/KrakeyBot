@@ -35,6 +35,71 @@ function setStatus() {
   parts.push(eventsWS && eventsWS.readyState === 1 ? "events✓" : "events✗");
   parts.push(chatWS && chatWS.readyState === 1 ? "chat✓" : "chat✗");
   statusBar.textContent = parts.join("  |  ");
+  renderStatusPanel();
+}
+
+// Format helpers for the big Status panel in the Inner Thoughts view.
+// Renders the same data as the top-bar but as a persistent readable
+// block so Samuel can watch GM growth + fatigue over time without
+// squinting at the narrow header.
+function _fmtSince(iso) {
+  if (!iso) return "—";
+  try {
+    const then = new Date(iso).getTime();
+    const ms = Date.now() - then;
+    if (ms < 0 || isNaN(ms)) return iso;
+    const sec = Math.floor(ms / 1000);
+    if (sec < 60) return `${sec}s ago`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m ago`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr}h ${min % 60}m ago`;
+    const d = Math.floor(hr / 24);
+    return `${d}d ${hr % 24}h ago`;
+  } catch { return iso; }
+}
+
+function _setPair(key, value, extraCls) {
+  // Upsert a dt/dd pair. Keeping insertion order stable so the panel
+  // doesn't flicker as new keys arrive — we stamp a `data-key`
+  // attribute on the dt and bind the dd right after it.
+  let dt = statusPanel.querySelector(`dt[data-key="${key}"]`);
+  let dd;
+  if (!dt) {
+    dt = document.createElement("dt");
+    dt.dataset.key = key;
+    dt.textContent = key;
+    dd = document.createElement("dd");
+    dd.dataset.key = key;
+    statusPanel.appendChild(dt);
+    statusPanel.appendChild(dd);
+  } else {
+    dd = statusPanel.querySelector(`dd[data-key="${key}"]`);
+  }
+  dd.textContent = value;
+  dd.className = extraCls || "";
+}
+
+function renderStatusPanel() {
+  if (!statusPanel) return;
+  _setPair("heartbeat", lastStats.heartbeat_id != null
+    ? `#${lastStats.heartbeat_id}` : "—");
+  _setPair("gm nodes", lastStats.node_count != null
+    ? String(lastStats.node_count) : "—");
+  _setPair("gm edges", lastStats.edge_count != null
+    ? String(lastStats.edge_count) : "—");
+  const fp = lastStats.fatigue_pct;
+  let fCls = "";
+  if (fp != null) {
+    if (fp >= 75) fCls = "fatigue-high";
+    else if (fp >= 50) fCls = "fatigue-mid";
+  }
+  _setPair("fatigue", fp != null ? `${fp}%` : "—", fCls);
+  _setPair("last sleep", lastStats.last_sleep
+    ? _fmtSince(lastStats.last_sleep) : "never",
+    lastStats.last_sleep ? "" : "stale");
+  _setPair("mode", lastStats.mode || "normal");
+  _setPair("events ws", eventsWS && eventsWS.readyState === 1 ? "connected" : "disconnected");
 }
 
 // ============== INNER THOUGHTS — /ws/events ==============
@@ -44,6 +109,7 @@ const thinkingEl = $("#thinking-stream");
 const decisionEl = $("#decision-stream");
 const hypoEl = $("#hypo-stream");
 const stimList = $("#stim-list");
+const statusPanel = $("#status-panel");
 // Section titles that change every heartbeat — open by default.
 // Anything else (DNA, SELF-MODEL, HEARTBEAT question, BOOTSTRAP) is
 // collapsed since it's noise during normal inspection.
@@ -144,9 +210,14 @@ function handleEvent(e) {
       break;
     case "sleep_start":
       appendEntry(hypoEl, "—", "💤 sleep started: " + e.reason);
+      lastStats.mode = "sleeping";
+      setStatus();
       break;
     case "sleep_done":
       appendEntry(hypoEl, "—", "🌅 sleep done: " + JSON.stringify(e.stats));
+      lastStats.mode = "normal";
+      lastStats.last_sleep = new Date().toISOString();
+      setStatus();
       break;
     case "hibernate":
       // could render but it's noisy; skip in UI

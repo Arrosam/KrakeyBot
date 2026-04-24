@@ -1191,9 +1191,18 @@ def _delta_str(delta: int) -> str:
 
 
 def _summarize_stimuli(stimuli: list[Stimulus]) -> str:
+    """Render the stimulus list for persistence in a ``SlidingWindowRound``.
+
+    This text is what Self sees in the ``[HISTORY]`` layer every
+    subsequent beat — truncation here is destructive: downstream
+    mechanisms (recall-anchor extraction, compact summarization,
+    bootstrap-signal detection, user-message echo checks) all rely on
+    the full content. The window's token budget handles overflow via
+    compact_if_needed, so we don't need a blunt character cap here.
+    """
     if not stimuli:
         return "(none)"
-    return " | ".join(f"{s.source}: {s.content[:60]}" for s in stimuli)
+    return " | ".join(f"{s.source}: {s.content}" for s in stimuli)
 
 
 # ---------------- production builder ----------------
