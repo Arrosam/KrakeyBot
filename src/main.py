@@ -176,9 +176,15 @@ class Runtime:
 
         # Self-model + Bootstrap state (Phase 2.1)
         sm_path = deps.self_model_path or "workspace/self_model.yaml"
-        gen_path = deps.genesis_path or "workspace/GENESIS.md"
+        # GENESIS is read lazily (see `_get_genesis_text`) — in steady
+        # state (bootstrap complete, GM populated) the file is never
+        # touched, and `self._genesis_text` stays None to avoid both
+        # the I/O on every start AND the correctness trap of having
+        # stale genesis text sitting in memory when it's not supposed
+        # to influence the prompt.
+        self._genesis_path = deps.genesis_path or "workspace/GENESIS.md"
+        self._genesis_text: str | None = None
         self._self_model_store = SelfModelStore(sm_path)
-        self._genesis_text = load_genesis(gen_path)
         self.self_model, detected_bootstrap = load_self_model_or_default(sm_path)
         # Provisional value used by tests that bypass run() / data probe.
         # Re-derived from GM+KB emptiness once gm.initialize() runs (see
@@ -745,6 +751,23 @@ class Runtime:
             await self.buffer.push(s)
         return recall_result
 
+    def _get_genesis_text(self) -> str:
+        """Lazy-load GENESIS.md on first use.
+
+        Bootstrap is the ONLY consumer of this text — after
+        bootstrap_complete flips to True, the agent should never see
+        GENESIS again. Reading the file unconditionally at startup
+        was both wasteful I/O (80% of runs are steady-state) and a
+        correctness trap: once stale genesis bytes live on ``self``
+        it's too easy to accidentally surface them later.
+
+        Cached on first call so repeat heartbeats during a long
+        Bootstrap don't re-read the file 50 times.
+        """
+        if self._genesis_text is None:
+            self._genesis_text = load_genesis(self._genesis_path)
+        return self._genesis_text
+
     def _build_self_prompt(self, stimuli, recall_result,
                               counts: "_GMCounts") -> str:
         prompt = self.builder.build(
@@ -759,7 +782,7 @@ class Runtime:
             current_time=datetime.now(),
         )
         if self.is_bootstrap:
-            prompt = (BOOTSTRAP_PROMPT.format(genesis_text=self._genesis_text)
+            prompt = (BOOTSTRAP_PROMPT.format(genesis_text=self._get_genesis_text())
                       + "\n\n" + prompt)
         return prompt
 
