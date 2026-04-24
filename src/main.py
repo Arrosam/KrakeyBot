@@ -79,6 +79,12 @@ class RuntimeDeps:
     genesis_path: str | None = None         # default: workspace/GENESIS.md
     config_path: str | None = None          # default: config.yaml — for dashboard
     backup_dir: str | None = None           # default: workspace/backups
+    # Per-plugin YAML root. Must be overridable so tests can point at
+    # a tmpdir — otherwise the test helper's `config.plugins["web_chat"]`
+    # (e.g. a tmpdir history_path) gets shadowed by the production
+    # ``workspace/plugin-configs/web_chat.yaml`` that FilePluginConfigStore
+    # reads first, and test messages leak into the real user chat log.
+    plugin_configs_root: str | None = None  # default: workspace/plugin-configs
 
 
 MAX_RECALL_RETRIES = 1
@@ -154,8 +160,13 @@ class Runtime:
         # may not exist yet (loader hasn't run) — peek falls back to
         # legacy without materializing anything.
         from src.plugins.plugin_config import FilePluginConfigStore
+        # Root is overridable (see RuntimeDeps.plugin_configs_root) so
+        # tests can isolate at a tmpdir and their legacy-dict overrides
+        # actually take effect.
+        plugin_root = Path(deps.plugin_configs_root
+                            or "workspace/plugin-configs")
         self._plugin_config_store = FilePluginConfigStore(
-            root=Path("workspace/plugin-configs"),
+            root=plugin_root,
             legacy_plugins=self.config.plugins,
         )
         wc_cfg = self._plugin_config_store.peek_config("web_chat")

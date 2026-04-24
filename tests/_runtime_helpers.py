@@ -56,6 +56,16 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     # main.py falls back to "workspace/data/web_chat.jsonl" — the production
     # path — and pytest writes test fixture messages into the real chat log.
     chat_dir = tempfile.mkdtemp(prefix="krakey_test_chat_")
+    # Per-plugin config YAMLs under workspace/plugin-configs/ shadow
+    # the legacy dict below when a file exists. Point the store at a
+    # fresh empty tmpdir so the helper's plugin overrides actually
+    # take effect (otherwise prod's web_chat.yaml wins → test
+    # messages like "Hi there!" leak into the real user chat log).
+    plugin_configs_dir = tempfile.mkdtemp(prefix="krakey_test_plugcfg_")
+    # Ditto for self_model: it's a mutable file, and bootstrap tests
+    # rewrite it. Without an override, concurrent test writes trample
+    # the production workspace/self_model.yaml.
+    self_model_path = f"{tempfile.mkdtemp(prefix='krakey_test_sm_')}/self_model.yaml"
     from src.models.config import (
         Config, DashboardSection, FatigueSection, GraphMemorySection,
         HibernateSection, KnowledgeBaseSection, LLMParams, LLMSection,
@@ -111,6 +121,8 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         classify_llm=classify_llm or ScriptedLLM(),
         embedder=embedder or NullEmbedder(),
         reranker=reranker,
+        plugin_configs_root=plugin_configs_dir,
+        self_model_path=self_model_path,
     )
     return Runtime(
         deps, hibernate_min=hibernate_min, hibernate_max=hibernate_max,
