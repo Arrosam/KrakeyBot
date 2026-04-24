@@ -1079,14 +1079,16 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
     embedding_role = cfg.llm.roles["embedding"]
 
     self_llm = LLMClient(cfg.llm.providers[self_role.provider],
-                           self_role.model)
+                           self_role.model, params=self_role.params)
     hypo_llm = LLMClient(cfg.llm.providers[hypo_role.provider],
-                           hypo_role.model)
+                           hypo_role.model, params=hypo_role.params)
     compact_llm = LLMClient(cfg.llm.providers[compact_role.provider],
-                              compact_role.model)
+                              compact_role.model,
+                              params=compact_role.params)
     classify_llm = compact_llm  # reuse
     embed_client = LLMClient(cfg.llm.providers[embedding_role.provider],
-                               embedding_role.model)
+                               embedding_role.model,
+                               params=embedding_role.params)
 
     async def embedder(text: str) -> list[float]:
         return await embed_client.embed(text)
@@ -1096,6 +1098,7 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
     if rerank_role is not None:
         reranker_client = LLMClient(
             cfg.llm.providers[rerank_role.provider], rerank_role.model,
+            params=rerank_role.params,
         )
 
         class _RerankerAdapter:

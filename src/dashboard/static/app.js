@@ -654,14 +654,22 @@ let pluginReport = { tentacles: [], sensories: [] };
 // configs live in their own per-plugin YAML files now).
 let pluginEdits = {};
 
+// Config-schema introspection cache. Populated on loadSettings() from
+// GET /api/config/schema. The LLM role params UI reads this instead of
+// hardcoding field lists — adding a field to LLMParams on the Python
+// side automatically surfaces it here without JS edits.
+//   shape: { llm_params: [{field, type, default, help, choices?}], llm_role_defaults: {role: {...}} }
+let configSchema = { llm_params: [], llm_role_defaults: {} };
+
 async function loadSettings() {
   settingsToast.textContent = "";
   settingsForm.innerHTML = "loading...";
   try {
-    // Load config + plugin discovery in parallel
-    const [cfgRes, pluginRes] = await Promise.all([
+    // Load config + plugin discovery + schema in parallel
+    const [cfgRes, pluginRes, schemaRes] = await Promise.all([
       fetch("/api/settings"),
       fetch("/api/plugins").catch(() => null),
+      fetch("/api/config/schema").catch(() => null),
     ]);
     if (cfgRes.status === 503) {
       settingsForm.innerHTML = "<i>(config_path not provided to dashboard)</i>";
@@ -673,6 +681,11 @@ async function loadSettings() {
       pluginReport = await pluginRes.json();
     } else {
       pluginReport = { tentacles: [], sensories: [] };
+    }
+    if (schemaRes && schemaRes.ok) {
+      configSchema = await schemaRes.json();
+    } else {
+      configSchema = { llm_params: [], llm_role_defaults: {} };
     }
     renderSettingsForm();
   } catch (e) {
@@ -836,6 +849,30 @@ function renderRow(label, target, key, type, helpPath) {
     widget.type = "password";
     widget.value = val == null ? "" : val;
     widget.addEventListener("input", () => { target[key] = widget.value; });
+  } else if (type === "enum") {
+    // Dropdown whose option list is passed via the row's 5th arg
+    // (choices). Handled by renderEnumRow — renderRow itself falls
+    // back to text if no choices are wired up.
+    widget = document.createElement("input");
+    widget.type = "text";
+    widget.value = val == null ? "" : val;
+    widget.addEventListener("input", () => { target[key] = widget.value; });
+  } else if (type === "list") {
+    // Comma-separated list for stop_sequences / retry_on_status.
+    // Parsed back into array on save; empty → undefined (drops field).
+    widget = document.createElement("input");
+    widget.type = "text";
+    widget.placeholder = "comma, separated, values";
+    widget.value = Array.isArray(val) ? val.join(", ") : (val == null ? "" : val);
+    widget.addEventListener("input", () => {
+      const v = widget.value.trim();
+      if (v === "") { delete target[key]; return; }
+      const parts = v.split(",").map(s => s.trim()).filter(s => s);
+      // If every part parses as an integer, store as ints (retry codes
+      // are ints in the dataclass). Otherwise keep strings.
+      const allInts = parts.every(s => /^-?\d+$/.test(s));
+      target[key] = allInts ? parts.map(s => parseInt(s, 10)) : parts;
+    });
   } else {
     widget = document.createElement("input");
     widget.type = "text";
@@ -844,6 +881,38 @@ function renderRow(label, target, key, type, helpPath) {
   }
   if (helpPath && HELP[helpPath] && type !== "bool") widget.title = HELP[helpPath];
   row.appendChild(widget);
+  return row;
+}
+
+// Enum row — dropdown <select> with a given choice list. Used for
+// reasoning_mode / response_format. Kept separate from the generic
+// renderRow so the <select> can be populated without hacking the
+// main dispatch table.
+function renderEnumRow(label, target, key, choices, helpPath) {
+  const row = document.createElement("div");
+  row.className = "cfg-row";
+  const lab = document.createElement("label");
+  lab.textContent = label;
+  if (helpPath && HELP[helpPath]) lab.title = HELP[helpPath];
+  row.appendChild(lab);
+  const sel = document.createElement("select");
+  for (const c of choices) {
+    const opt = document.createElement("option");
+    opt.value = c;
+    opt.textContent = c === "" ? "(unset)" : c;
+    sel.appendChild(opt);
+  }
+  const cur = target[key];
+  sel.value = cur == null ? "" : cur;
+  sel.addEventListener("change", () => {
+    if (sel.value === "") {
+      delete target[key];
+    } else {
+      target[key] = sel.value;
+    }
+  });
+  if (helpPath && HELP[helpPath]) sel.title = HELP[helpPath];
+  row.appendChild(sel);
   return row;
 }
 
@@ -1107,6 +1176,10 @@ function mkDropdown(triggerLabel, items, onPick) {
 }
 
 function renderRoleRow(rname, roles, providers) {
+  // Wrapper so the params <details> sits directly below the role row
+  // (sharing a container keeps delete/rename behavior correct).
+  const container = document.createElement("div");
+
   const row = document.createElement("div");
   row.className = "cfg-row";
   const lab = document.createElement("label");
@@ -1156,7 +1229,68 @@ function renderRoleRow(rname, roles, providers) {
 
   wrap.appendChild(provSel); wrap.appendChild(modSel); wrap.appendChild(del);
   row.appendChild(wrap);
-  return row;
+  container.appendChild(row);
+
+  // Params sub-block (driven by /api/config/schema). Collapsed by
+  // default so the LLM section stays scannable; user opens only the
+  // role they're tuning.
+  container.appendChild(renderRoleParamsBlock(rname, roles));
+  return container;
+}
+
+// Build a collapsible <details> containing every LLMParams field, with
+// types + defaults pulled from configSchema.llm_params. Unknown fields
+// in the stored YAML still render as text inputs so nothing is lost
+// on round-trip.
+function renderRoleParamsBlock(rname, roles) {
+  const details = document.createElement("details");
+  details.className = "role-params";
+  details.style.cssText = "margin:4px 0 12px 0;padding:6px 10px;" +
+    "border:1px solid var(--border,#e2e8f0);border-radius:4px;" +
+    "background:rgba(0,0,0,0.015)";
+  const summary = document.createElement("summary");
+  summary.style.cssText = "cursor:pointer;font-size:11px;color:var(--muted);" +
+    "user-select:none";
+  summary.textContent = `params (${rname})`;
+  details.appendChild(summary);
+
+  // Ensure the edit target exists. Pre-populate with role-specific
+  // defaults on first open so e.g. self shows max_tokens=8192 rather
+  // than the universal 4096 baseline.
+  if (roles[rname].params == null) {
+    const roleDefaults = (configSchema.llm_role_defaults || {})[rname] || {};
+    roles[rname].params = { ...roleDefaults };
+  }
+  const target = roles[rname].params;
+
+  const body = document.createElement("div");
+  body.style.cssText = "padding:4px 0";
+  const schema = configSchema.llm_params || [];
+  for (const fdef of schema) {
+    const helpPath = `llm.role.${rname}.params.${fdef.field}`;
+    if (fdef.help) HELP[helpPath] = fdef.help;
+    let r;
+    if (fdef.type === "enum" && fdef.choices) {
+      r = renderEnumRow(fdef.field, target, fdef.field, fdef.choices,
+                         helpPath);
+    } else {
+      r = renderRow(fdef.field, target, fdef.field, fdef.type, helpPath);
+    }
+    body.appendChild(r);
+  }
+  // Reset-to-defaults action — clears all overrides so the load-time
+  // role defaults take effect again.
+  const actions = document.createElement("div");
+  actions.style.cssText = "margin-top:6px";
+  const resetBtn = mkBtn("reset to role defaults", () => {
+    const roleDefaults = (configSchema.llm_role_defaults || {})[rname] || {};
+    roles[rname].params = { ...roleDefaults };
+    renderSettingsForm();
+  });
+  actions.appendChild(resetBtn);
+  body.appendChild(actions);
+  details.appendChild(body);
+  return details;
 }
 
 // ---------------- Generic dict section (sensory / tentacle) ----------------

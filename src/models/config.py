@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 import re
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -39,9 +39,140 @@ class Provider:
 
 
 @dataclass
+class LLMParams:
+    """Per-role LLM call parameters.
+
+    These are overlaid on `LLMClient` requests. Fields default to values
+    that work for a general-purpose chat role; specific roles (self,
+    hypothalamus, compact, classifier, embedding) get their own sensible
+    defaults applied on top via `_ROLE_DEFAULTS` before the user's YAML
+    overrides are merged in.
+
+    Provider adaptation is handled inside `LLMClient`:
+      * `reasoning_mode` is translated to the provider-native field
+        (Anthropic `thinking.budget_tokens`, OpenAI `reasoning_effort`).
+        Set to "off" to disable.
+      * `response_format="json_object"` becomes
+        `response_format={"type":"json_object"}` on OpenAI-compatible;
+        Anthropic has no native JSON-mode so the field is ignored there.
+      * Fields the provider cannot accept are silently dropped rather
+        than sent (e.g. `temperature` on DeepSeek-Reasoner).
+
+    Token fields intentionally spell out their direction:
+      * ``max_output_tokens`` \u2014 upper bound on generation. Translated
+        to Anthropic ``max_tokens``, OpenAI classic ``max_tokens``,
+        OpenAI reasoning ``max_completion_tokens``, Gemini
+        ``maxOutputTokens``.
+      * ``max_input_tokens`` \u2014 declared context-window size for the
+        target model (e.g. 200_000 for Claude Sonnet 4.5, 128_000 for
+        GPT-4o, 64_000 for DeepSeek). Currently **informational /
+        guardrail** \u2014 not automatically enforced. Used by the
+        dashboard, by future prompt-budget warnings, and by any code
+        that wants to size the sliding window against the target
+        model. Leave None to skip the declaration.
+
+    None means "do not send this field" (use provider's own default).
+    """
+    # Generation bounds
+    max_output_tokens: int | None = 4096
+    # Declared input-context window for the backing model (see class
+    # docstring). Informational for now.
+    max_input_tokens: int | None = None
+    temperature: float | None = 0.7
+    top_p: float | None = None
+    stop_sequences: list[str] = field(default_factory=list)
+    response_format: str | None = None   # None | "json_object"
+    seed: int | None = None
+
+    # Reasoning / thinking (provider-abstracted)
+    # off | low | medium | high
+    reasoning_mode: str = "off"
+    reasoning_budget_tokens: int | None = None
+
+    # Transport-level knobs
+    timeout_seconds: float = 120.0
+    max_retries: int = 3
+    retry_on_status: list[int] = field(
+        default_factory=lambda: [429, 500, 502, 503, 504]
+    )
+
+
+# Role → default param overrides applied before YAML overlay. Any field
+# not mentioned here falls back to LLMParams' universal defaults.
+#
+# Note on `response_format`: deliberately *not* defaulted to "json_object"
+# for Hypothalamus / compact / classifier. Many OpenAI-compatible
+# providers (xunfei / zhipu / moonshot / baichuan / …) either ignore the
+# field or crash their backends with "EngineInternalError:Unexpected EOF"
+# style 500s when they see it. Hypothalamus already has a robust JSON
+# extractor (markdown fence, regex, smart-quote/trailing-comma fixups)
+# that works without JSON mode, so turning it on is a cost/benefit loss
+# in the general case. Users whose provider supports it (Anthropic does
+# not, OpenAI + Gemini do) can opt in via YAML per-role.
+_ROLE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "self": {
+        "max_output_tokens": 8192,
+        "temperature": 0.7,
+        "reasoning_mode": "medium",
+        "reasoning_budget_tokens": 4096,
+        "timeout_seconds": 180.0,
+    },
+    "hypothalamus": {
+        # 2048 not 512 — multi-action decisions with Chinese tentacle
+        # intents blow past 512 easily and get truncated mid-JSON,
+        # which some providers surface as an "Unexpected EOF" 500.
+        "max_output_tokens": 2048,
+        "temperature": 0.0,
+        "reasoning_mode": "off",
+        "timeout_seconds": 20.0,
+    },
+    "compact": {
+        "max_output_tokens": 2048,
+        "temperature": 0.2,
+        "reasoning_mode": "off",
+        "timeout_seconds": 60.0,
+    },
+    "classifier": {
+        "max_output_tokens": 1024,
+        "temperature": 0.0,
+        "reasoning_mode": "off",
+        "timeout_seconds": 30.0,
+    },
+    "embedding": {
+        # Embedding endpoints don't use generation params; keep a short
+        # timeout since embedding calls should be fast.
+        "timeout_seconds": 20.0,
+    },
+    "reranker": {
+        "timeout_seconds": 20.0,
+    },
+}
+
+
+# Human-readable descriptions used both for docstrings and for the
+# `/api/config/schema` endpoint that feeds the dashboard UI. Keep this
+# in sync with LLMParams fields above.
+_LLM_PARAM_HELP: dict[str, str] = {
+    "max_output_tokens": "生成 (输出) token 上限。按 provider 自动翻译: Anthropic max_tokens, OpenAI 经典 max_tokens, OpenAI reasoning max_completion_tokens, Gemini maxOutputTokens。Anthropic 必填。",
+    "max_input_tokens": "模型的输入上下文窗口大小 (e.g. Claude Sonnet 4.5 = 200000, GPT-4o = 128000, DeepSeek = 64000)。当前为声明性字段 — 仅用于 UI 展示 + 未来 prompt 预算警告, 不会自动截断 prompt。留空 = 不声明。",
+    "temperature": "采样温度。0 = 确定性，越大越发散。部分 reasoning 模型 (OpenAI o-series, DeepSeek Reasoner) 不支持，会被自动忽略。",
+    "top_p": "nucleus sampling 阈值 (0-1)。通常和 temperature 二选一。留空 = 不发送此字段。",
+    "stop_sequences": "停止序列列表。遇到任一即停止生成。",
+    "response_format": "响应格式。json_object = 强制 JSON 输出 (OpenAI 兼容有效; Anthropic 无原生 JSON 模式, 自动忽略; 国产兼容端口 xunfei/zhipu/moonshot 等常不支持, 可能触发 500)。留空 = 自由文本。",
+    "seed": "随机种子，用于可复现实验。仅 OpenAI / Gemini 支持；Anthropic 无此字段。",
+    "reasoning_mode": "推理强度: off / low / medium / high。Anthropic 翻译为 thinking.budget_tokens，OpenAI 翻译为 reasoning_effort。",
+    "reasoning_budget_tokens": "Anthropic thinking 预算 token 数 (≥ 1024 且 < max_output_tokens)。只在 reasoning_mode != off 时生效。留空 = 按模式自动推算。",
+    "timeout_seconds": "单次 HTTP 请求超时秒数。Self 建议 180, Hypothalamus 20。",
+    "max_retries": "HTTP 失败时的最大重试次数。指数退避 + jitter。仅 5xx 和 429 会触发重试，4xx 不重试。",
+    "retry_on_status": "触发重试的 HTTP 状态码列表。默认 [429, 500, 502, 503, 504]。",
+}
+
+
+@dataclass
 class RoleBinding:
     provider: str = ""
     model: str = ""
+    params: LLMParams = field(default_factory=LLMParams)
 
 
 @dataclass
@@ -227,6 +358,45 @@ def _substitute_env(value: Any) -> Any:
 # explicit empty value (e.g. `thresholds: {}`) is honored as empty.
 
 
+def _build_llm_params(
+    role_name: str, raw_params: dict[str, Any] | None,
+) -> LLMParams:
+    """Build LLMParams for `role_name`.
+
+    Precedence (highest to lowest):
+      1. User-supplied fields in config YAML (`raw_params`)
+      2. Role-specific defaults from `_ROLE_DEFAULTS[role_name]`
+      3. Universal defaults on the LLMParams dataclass itself
+
+    Unknown keys in raw_params are ignored (forward compatibility — a
+    future LLMParams field can appear in configs without errors).
+    """
+    # Normalize the legacy alias on the user's raw input first, BEFORE
+    # merging with role defaults. Older configs may say `max_tokens`;
+    # the current dataclass field is `max_output_tokens` (direction
+    # made explicit). If both appear in the user's block, the explicit
+    # new name wins and the alias is discarded.
+    user: dict[str, Any] = dict(raw_params or {})
+    if "max_tokens" in user:
+        if "max_output_tokens" not in user:
+            user["max_output_tokens"] = user["max_tokens"]
+        user.pop("max_tokens")
+
+    merged: dict[str, Any] = {}
+    merged.update(_ROLE_DEFAULTS.get(role_name, {}))
+    for k, v in user.items():
+        merged[k] = v
+    # Filter to known fields so unknown keys don't crash dataclass init.
+    known = {f.name for f in fields(LLMParams)}
+    safe = {k: v for k, v in merged.items() if k in known}
+    # Light coercion: YAML lists for list fields, numeric strings for numbers.
+    if "stop_sequences" in safe and safe["stop_sequences"] is not None:
+        safe["stop_sequences"] = list(safe["stop_sequences"])
+    if "retry_on_status" in safe and safe["retry_on_status"] is not None:
+        safe["retry_on_status"] = [int(x) for x in safe["retry_on_status"]]
+    return LLMParams(**safe)
+
+
 def _build_llm(raw: dict[str, Any]) -> LLMSection:
     providers: dict[str, Provider] = {}
     for pname, pdata in (raw.get("providers") or {}).items():
@@ -248,8 +418,73 @@ def _build_llm(raw: dict[str, Any]) -> LLMSection:
         roles[rname] = RoleBinding(
             provider=rdata.get("provider", ""),
             model=rdata.get("model", ""),
+            params=_build_llm_params(rname, rdata.get("params")),
         )
     return LLMSection(providers=providers, roles=roles)
+
+
+# ---------------- schema introspection (for dashboard UI) ----------------
+
+
+def llm_params_schema() -> list[dict[str, Any]]:
+    """Return a list of field descriptors for LLMParams.
+
+    Shape matches the per-plugin ``config_schema`` contract already
+    consumed by the dashboard JS (`renderRow` + the plugin card
+    renderer): each entry is ``{field, type, default, help}``.
+
+    The dashboard fetches this via ``GET /api/config/schema`` and renders
+    a dynamic "Params" sub-form under each LLM role so the UI stays in
+    lockstep with the Python dataclass — adding a field to LLMParams
+    automatically surfaces it in the UI without touching JavaScript.
+    """
+    out: list[dict[str, Any]] = []
+    defaults = LLMParams()
+    for f in fields(LLMParams):
+        t = f.type
+        # Normalize annotation to a UI type string.
+        ui_type = "text"
+        ann = t if isinstance(t, str) else getattr(t, "__name__", str(t))
+        ann_lower = ann.lower()
+        if "bool" in ann_lower:
+            ui_type = "bool"
+        elif "int" in ann_lower and "float" not in ann_lower:
+            ui_type = "number"
+        elif "float" in ann_lower:
+            ui_type = "number_float"
+        elif "list" in ann_lower:
+            ui_type = "list"
+        else:
+            ui_type = "text"
+        # Enum-like: reasoning_mode / response_format
+        choices: list[str] | None = None
+        if f.name == "reasoning_mode":
+            choices = ["off", "low", "medium", "high"]
+            ui_type = "enum"
+        elif f.name == "response_format":
+            choices = ["", "json_object"]
+            ui_type = "enum"
+        entry: dict[str, Any] = {
+            "field": f.name,
+            "type": ui_type,
+            "default": getattr(defaults, f.name),
+            "help": _LLM_PARAM_HELP.get(f.name, ""),
+        }
+        if choices is not None:
+            entry["choices"] = choices
+        out.append(entry)
+    return out
+
+
+def role_default_params(role_name: str) -> dict[str, Any]:
+    """Expose the role-specific default overrides for the dashboard.
+
+    The UI can use this to pre-fill the params form when the user first
+    opens a role (so the Self role shows max_tokens=8192 etc. rather
+    than the universal 4096). Returning a fresh dict each time so
+    callers can safely mutate.
+    """
+    return dict(_ROLE_DEFAULTS.get(role_name, {}))
 
 
 def _build_hibernate(raw: dict[str, Any]) -> HibernateSection:

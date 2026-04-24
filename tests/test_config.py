@@ -6,9 +6,12 @@ import yaml
 
 from src.models.config import (
     Config,
+    LLMParams,
     dump_config,
     ensure_config,
+    llm_params_schema,
     load_config,
+    role_default_params,
 )
 
 
@@ -238,3 +241,238 @@ def test_load_config_accepts_sparse_yaml(tmp_path):
     # Unspecified sections use defaults.
     assert cfg.safety.gm_node_hard_limit == 500
     assert cfg.dashboard.enabled is True
+
+
+# ---------------- Phase 2: LLMParams + role defaults ----------------
+
+
+def test_llm_params_universal_defaults():
+    """LLMParams() should be usable as-is — the fallback for any role
+    that isn't in _ROLE_DEFAULTS."""
+    p = LLMParams()
+    assert p.max_output_tokens == 4096
+    assert p.max_input_tokens is None
+    assert p.temperature == 0.7
+    assert p.reasoning_mode == "off"
+    assert p.timeout_seconds == 120.0
+    assert p.max_retries == 3
+    assert 429 in p.retry_on_status
+    # Mutable defaults must not be shared across instances.
+    q = LLMParams()
+    q.stop_sequences.append("X")
+    assert p.stop_sequences == []
+
+
+def test_role_default_params_includes_known_roles():
+    """Known roles (self, hypothalamus, compact, classifier, embedding,
+    reranker) all carry a defaults dict."""
+    for rname in ("self", "hypothalamus", "compact", "classifier",
+                  "embedding", "reranker"):
+        d = role_default_params(rname)
+        assert isinstance(d, dict)
+        assert "timeout_seconds" in d, f"{rname} missing timeout default"
+
+
+def test_role_default_params_returns_fresh_copy():
+    """Callers must be able to mutate the return without poisoning the
+    next call."""
+    d = role_default_params("self")
+    d["max_output_tokens"] = 999999
+    d2 = role_default_params("self")
+    assert d2.get("max_output_tokens") != 999999
+
+
+def test_role_defaults_applied_when_yaml_omits_params(tmp_path):
+    """When a role is declared in YAML with no params block, the role
+    defaults (not the universal dataclass defaults) should land."""
+    p = tmp_path / "c.yaml"
+    p.write_text(textwrap.dedent("""
+        llm:
+          providers:
+            p: {type: "openai_compatible", base_url: "http://x", api_key: "k", models: []}
+          roles:
+            self: {provider: "p", model: "m"}
+            hypothalamus: {provider: "p", model: "h"}
+    """), encoding="utf-8")
+    cfg = load_config(p)
+    self_params = cfg.llm.roles["self"].params
+    assert self_params.max_output_tokens == 8192
+    assert self_params.reasoning_mode == "medium"
+    assert self_params.reasoning_budget_tokens == 4096
+    assert self_params.timeout_seconds == 180.0
+
+    hypo_params = cfg.llm.roles["hypothalamus"].params
+    # Bumped from 512 → 2048: Chinese JSON with multiple tentacle_calls
+    # truncates at 512 and some providers surface that as a 500
+    # ("Unexpected EOF" from xunfei engine).
+    assert hypo_params.max_output_tokens == 2048
+    assert hypo_params.temperature == 0.0
+    # response_format intentionally NOT defaulted — many OpenAI-compat
+    # providers choke on it. Users opt in per-role in YAML.
+    assert hypo_params.response_format is None
+    assert hypo_params.timeout_seconds == 20.0
+
+
+def test_yaml_params_override_role_defaults(tmp_path):
+    """User-supplied params in YAML win over role defaults."""
+    p = tmp_path / "c.yaml"
+    p.write_text(textwrap.dedent("""
+        llm:
+          providers:
+            p: {type: "openai_compatible", base_url: "http://x", api_key: "k", models: []}
+          roles:
+            self:
+              provider: "p"
+              model: "m"
+              params:
+                max_output_tokens: 2000
+                reasoning_mode: "off"
+                max_input_tokens: 200000
+    """), encoding="utf-8")
+    cfg = load_config(p)
+    sp = cfg.llm.roles["self"].params
+    assert sp.max_output_tokens == 2000
+    assert sp.max_input_tokens == 200000
+    assert sp.reasoning_mode == "off"
+    # Unspecified fields still come from role defaults.
+    assert sp.timeout_seconds == 180.0
+
+
+def test_yaml_max_tokens_legacy_alias_accepted(tmp_path):
+    """Older configs use `max_tokens` (pre-rename to max_output_tokens).
+    The loader must accept it silently so existing setups don't break
+    on upgrade."""
+    p = tmp_path / "c.yaml"
+    p.write_text(textwrap.dedent("""
+        llm:
+          providers:
+            p: {type: "openai_compatible", base_url: "http://x", api_key: "k", models: []}
+          roles:
+            self:
+              provider: "p"
+              model: "m"
+              params:
+                max_tokens: 3000
+    """), encoding="utf-8")
+    cfg = load_config(p)
+    assert cfg.llm.roles["self"].params.max_output_tokens == 3000
+
+
+def test_yaml_new_name_wins_over_legacy_alias(tmp_path):
+    """If both `max_tokens` and `max_output_tokens` appear, the explicit
+    new name wins — the alias is a read-only bridge."""
+    p = tmp_path / "c.yaml"
+    p.write_text(textwrap.dedent("""
+        llm:
+          providers:
+            p: {type: "openai_compatible", base_url: "http://x", api_key: "k", models: []}
+          roles:
+            self:
+              provider: "p"
+              model: "m"
+              params:
+                max_tokens: 1111
+                max_output_tokens: 2222
+    """), encoding="utf-8")
+    cfg = load_config(p)
+    assert cfg.llm.roles["self"].params.max_output_tokens == 2222
+
+
+def test_unknown_role_gets_universal_defaults(tmp_path):
+    """A role name with no entry in _ROLE_DEFAULTS should still load
+    cleanly, falling back to the universal LLMParams defaults."""
+    p = tmp_path / "c.yaml"
+    p.write_text(textwrap.dedent("""
+        llm:
+          providers:
+            p: {type: "openai_compatible", base_url: "http://x", api_key: "k", models: []}
+          roles:
+            custom_role: {provider: "p", model: "m"}
+    """), encoding="utf-8")
+    cfg = load_config(p)
+    cp = cfg.llm.roles["custom_role"].params
+    assert cp.max_output_tokens == 4096
+    assert cp.temperature == 0.7
+    assert cp.timeout_seconds == 120.0
+
+
+def test_llm_params_schema_has_expected_fields():
+    """The schema endpoint's payload must cover every LLMParams field,
+    with enum choices for the two enum-shaped ones."""
+    schema = llm_params_schema()
+    names = {e["field"] for e in schema}
+    assert {"max_output_tokens", "max_input_tokens", "temperature",
+            "top_p", "stop_sequences", "response_format", "seed",
+            "reasoning_mode", "reasoning_budget_tokens",
+            "timeout_seconds", "max_retries", "retry_on_status"} <= names
+    # The old ambiguous name must NOT be re-introduced in the schema —
+    # it stays only as a YAML-input alias, not a first-class field.
+    assert "max_tokens" not in names
+
+    by_name = {e["field"]: e for e in schema}
+    assert by_name["reasoning_mode"]["type"] == "enum"
+    assert set(by_name["reasoning_mode"]["choices"]) == {
+        "off", "low", "medium", "high"
+    }
+    assert by_name["response_format"]["type"] == "enum"
+    assert by_name["max_output_tokens"]["type"] == "number"
+    assert by_name["max_input_tokens"]["type"] == "number"
+    assert by_name["temperature"]["type"] == "number_float"
+    assert by_name["stop_sequences"]["type"] == "list"
+
+
+def test_llm_params_schema_defaults_match_dataclass():
+    """The `default` field in the schema must match LLMParams() so the
+    UI pre-fills with the same value the Python loader would."""
+    schema = llm_params_schema()
+    d = LLMParams()
+    for entry in schema:
+        assert entry["default"] == getattr(d, entry["field"]), (
+            f"schema default for {entry['field']} drifted from dataclass"
+        )
+
+
+def test_llm_params_unknown_key_in_yaml_ignored(tmp_path):
+    """Forward-compat: unknown params field shouldn't blow up the
+    loader (lets us roll back to an older Krakey without hand-editing
+    configs)."""
+    p = tmp_path / "c.yaml"
+    p.write_text(textwrap.dedent("""
+        llm:
+          providers:
+            p: {type: "openai_compatible", base_url: "http://x", api_key: "k", models: []}
+          roles:
+            self:
+              provider: "p"
+              model: "m"
+              params:
+                max_output_tokens: 1234
+                this_field_does_not_exist: "xyz"
+    """), encoding="utf-8")
+    cfg = load_config(p)  # must not raise
+    assert cfg.llm.roles["self"].params.max_output_tokens == 1234
+
+
+def test_llm_params_roundtrip_through_dump(tmp_path):
+    """A Config with custom role params must round-trip."""
+    from src.models.config import LLMSection, Provider, RoleBinding
+
+    cfg = Config()
+    cfg.llm = LLMSection(
+        providers={"p": Provider(type="openai_compatible",
+                                  base_url="http://x", api_key="k")},
+        roles={
+            "self": RoleBinding(
+                provider="p", model="m",
+                params=LLMParams(max_output_tokens=9999,
+                                   max_input_tokens=200000,
+                                   reasoning_mode="high"),
+            ),
+        },
+    )
+    path = tmp_path / "roundtrip.yaml"
+    path.write_text(dump_config(cfg), encoding="utf-8")
+    loaded = load_config(path)
+    assert loaded.llm.roles["self"].params.max_output_tokens == 9999
+    assert loaded.llm.roles["self"].params.max_input_tokens == 200000
+    assert loaded.llm.roles["self"].params.reasoning_mode == "high"
