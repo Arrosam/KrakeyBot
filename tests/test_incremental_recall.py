@@ -45,11 +45,22 @@ async def _populate(tmp_path, embed_map):
 
 
 def _recall(gm, **kw):
+    # Default budget large enough that tests which don't care about
+    # the cap never have their expected node count truncated.
     default = dict(
-        per_stimulus_k=3, max_recall_nodes=10,
+        per_stimulus_k=3, recall_token_budget=100_000,
         weights=ScoringWeights(), now=lambda: datetime(2026, 4, 19),
     )
     default.update(kw)
+    # Backward-compat shim: old tests passed `max_recall_nodes=N` —
+    # translate to a token budget that admits roughly that many
+    # single-line nodes.
+    if "max_recall_nodes" in default:
+        n = default.pop("max_recall_nodes")
+        # Each node renders in ~15 tokens under cl100k_base (short
+        # name + short description). 20× headroom per node lets the
+        # tests still work even with neighbor keywords.
+        default["recall_token_budget"] = max(n * 20, 200)
     return IncrementalRecall(gm, embedder=gm._embedder, **default)
 
 
@@ -119,14 +130,34 @@ async def test_same_node_hit_by_two_stimuli_accumulates_weight(tmp_path):
     await gm.close()
 
 
-async def test_max_recall_nodes_caps_result(tmp_path):
+async def test_recall_token_budget_caps_result(tmp_path):
+    """Token budget replaces the old node-count cap. A tight budget
+    stops admission after roughly the expected rendered-token total.
+    """
     vecs = {f"n{i}": [1.0, float(i) * 0.01] for i in range(10)}
     gm = await _populate(tmp_path, vecs)
 
-    r = _recall(gm, per_stimulus_k=10, max_recall_nodes=3)
+    # Budget tight enough to fit ~3 nodes of ~15 tokens each.
+    r = _recall(gm, per_stimulus_k=10, recall_token_budget=50)
     await r.add_stimuli([_stim("n0")])
     result = await r.finalize()
-    assert len(result.nodes) == 3
+    # 10 candidates; budget admits 2-4 depending on tokenizer quirks.
+    assert 1 <= len(result.nodes) <= 5
+    await gm.close()
+
+
+async def test_recall_token_budget_admits_at_least_one(tmp_path):
+    """Corner case: even a single node that would exceed the budget
+    gets admitted — dropping recall entirely is worse UX than soft
+    overshoot. The overall-prompt enforcement handles the true cap."""
+    vecs = {"a_very_long_node_name_that_wastes_tokens_on_purpose": [1.0, 0.0]}
+    gm = await _populate(tmp_path, vecs)
+    r = _recall(gm, per_stimulus_k=1, recall_token_budget=1)
+    await r.add_stimuli([_stim(
+        "a_very_long_node_name_that_wastes_tokens_on_purpose"
+    )])
+    result = await r.finalize()
+    assert len(result.nodes) == 1
     await gm.close()
 
 

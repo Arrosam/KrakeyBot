@@ -34,12 +34,10 @@ def test_loads_minimal_config(tmp_path):
           gm_node_soft_limit: 200
           force_sleep_threshold: 120
           thresholds: {50: "a", 75: "b", 100: "c"}
-        sliding_window: {max_tokens: 4096}
         graph_memory:
           db_path: "x.sqlite"
           auto_ingest_similarity_threshold: 0.9
           recall_per_stimulus_k: 5
-          max_recall_nodes: 20
           neighbor_expand_depth: 1
         knowledge_base: {dir: "kb"}
         sensory: {}
@@ -50,7 +48,7 @@ def test_loads_minimal_config(tmp_path):
     cfg = load_config(path)
     assert cfg.hibernate.default_interval == 30
     assert cfg.fatigue.force_sleep_threshold == 120
-    assert cfg.graph_memory.max_recall_nodes == 20
+    assert cfg.graph_memory.recall_per_stimulus_k == 5
 
 
 def test_env_substitution(tmp_path, monkeypatch):
@@ -65,12 +63,10 @@ def test_env_substitution(tmp_path, monkeypatch):
           gm_node_soft_limit: 200
           force_sleep_threshold: 120
           thresholds: {50: "a"}
-        sliding_window: {max_tokens: 4096}
         graph_memory:
           db_path: "x"
           auto_ingest_similarity_threshold: 0.9
           recall_per_stimulus_k: 5
-          max_recall_nodes: 20
           neighbor_expand_depth: 1
         knowledge_base: {dir: "kb"}
         sensory: {}
@@ -90,12 +86,10 @@ def test_warn_when_fatigue_threshold_ge_force(tmp_path, capsys):
           gm_node_soft_limit: 200
           force_sleep_threshold: 100
           thresholds: {50: "a", 120: "too-high"}
-        sliding_window: {max_tokens: 4096}
         graph_memory:
           db_path: "x"
           auto_ingest_similarity_threshold: 0.9
           recall_per_stimulus_k: 5
-          max_recall_nodes: 20
           neighbor_expand_depth: 1
         knowledge_base: {dir: "kb"}
         sensory: {}
@@ -120,12 +114,10 @@ def test_env_substitution_missing_var_keeps_placeholder(tmp_path, monkeypatch):
           gm_node_soft_limit: 200
           force_sleep_threshold: 120
           thresholds: {}
-        sliding_window: {max_tokens: 4096}
         graph_memory:
           db_path: "x"
           auto_ingest_similarity_threshold: 0.9
           recall_per_stimulus_k: 5
-          max_recall_nodes: 20
           neighbor_expand_depth: 1
         knowledge_base: {dir: "kb"}
         sensory: {}
@@ -141,7 +133,7 @@ def test_real_config_file_loads():
     cfg = load_config("config.yaml")
     assert cfg.hibernate.default_interval > 0
     assert cfg.hibernate.min_interval > 0
-    assert cfg.graph_memory.max_recall_nodes > 0
+    assert cfg.graph_memory.recall_per_stimulus_k > 0
     assert "self" in cfg.llm.roles
 
 
@@ -159,7 +151,7 @@ def test_default_config_has_usable_sections():
     # All numeric knobs have sensible non-zero defaults.
     assert cfg.hibernate.default_interval > 0
     assert cfg.fatigue.force_sleep_threshold > 0
-    assert cfg.graph_memory.max_recall_nodes > 0
+    assert cfg.graph_memory.recall_per_stimulus_k > 0
     assert cfg.sleep.max_duration_seconds > 0
     assert cfg.safety.gm_node_hard_limit > 0
     # Dashboard defaults on so first-run users get the UI.
@@ -451,6 +443,100 @@ def test_llm_params_unknown_key_in_yaml_ignored(tmp_path):
     """), encoding="utf-8")
     cfg = load_config(p)  # must not raise
     assert cfg.llm.roles["self"].params.max_output_tokens == 1234
+
+
+# ---------------- Phase: prompt-budget refactor ----------------
+
+
+def test_removed_sliding_window_section_warns_loud(tmp_path, capsys):
+    """Old configs with `sliding_window.max_tokens` must emit a loud
+    stderr warning so users notice the behavior moved to LLMParams."""
+    p = tmp_path / "c.yaml"
+    p.write_text(textwrap.dedent("""
+        llm:
+          providers:
+            p: {type: "openai_compatible", base_url: "http://x", api_key: "k", models: []}
+          roles:
+            self: {provider: "p", model: "claude-sonnet-4-5"}
+        sliding_window: {max_tokens: 8192}
+    """), encoding="utf-8")
+    load_config(p)
+    err = capsys.readouterr().err
+    assert "sliding_window.max_tokens" in err
+    assert "deprecated" in err.lower()
+
+
+def test_removed_max_recall_nodes_warns_loud(tmp_path, capsys):
+    """Same deprecation contract for graph_memory.max_recall_nodes."""
+    p = tmp_path / "c.yaml"
+    p.write_text(textwrap.dedent("""
+        llm:
+          providers:
+            p: {type: "openai_compatible", base_url: "http://x", api_key: "k", models: []}
+          roles:
+            self: {provider: "p", model: "claude-sonnet-4-5"}
+        graph_memory:
+          db_path: "x"
+          max_recall_nodes: 30
+    """), encoding="utf-8")
+    load_config(p)
+    err = capsys.readouterr().err
+    assert "max_recall_nodes" in err
+    assert "deprecated" in err.lower()
+
+
+def test_max_input_tokens_resolved_from_model_on_load(tmp_path):
+    """When YAML omits max_input_tokens, the loader must resolve it
+    from the known-model lookup (Claude Sonnet 4.5 = 200k)."""
+    p = tmp_path / "c.yaml"
+    p.write_text(textwrap.dedent("""
+        llm:
+          providers:
+            p: {type: "anthropic", base_url: "http://x", api_key: "k", models: []}
+          roles:
+            self: {provider: "p", model: "claude-sonnet-4-5"}
+    """), encoding="utf-8")
+    cfg = load_config(p)
+    assert cfg.llm.roles["self"].params.max_input_tokens == 200_000
+
+
+def test_max_input_tokens_explicit_yaml_wins_over_model_lookup(tmp_path):
+    """Explicit max_input_tokens in YAML overrides the model-lookup
+    default — user is authoritative."""
+    p = tmp_path / "c.yaml"
+    p.write_text(textwrap.dedent("""
+        llm:
+          providers:
+            p: {type: "anthropic", base_url: "http://x", api_key: "k", models: []}
+          roles:
+            self:
+              provider: "p"
+              model: "claude-sonnet-4-5"
+              params: {max_input_tokens: 32000}
+    """), encoding="utf-8")
+    cfg = load_config(p)
+    assert cfg.llm.roles["self"].params.max_input_tokens == 32_000
+
+
+def test_unknown_model_falls_back_to_128k_default(tmp_path):
+    """Unknown model name → DEFAULT_CONTEXT_WINDOW (128k)."""
+    p = tmp_path / "c.yaml"
+    p.write_text(textwrap.dedent("""
+        llm:
+          providers:
+            p: {type: "openai_compatible", base_url: "http://x", api_key: "k", models: []}
+          roles:
+            self: {provider: "p", model: "some-unknown-frontier-model"}
+    """), encoding="utf-8")
+    cfg = load_config(p)
+    assert cfg.llm.roles["self"].params.max_input_tokens == 128_000
+
+
+def test_history_token_fraction_and_recall_budget_defaults():
+    """New LLMParams fields have sensible defaults."""
+    p = LLMParams()
+    assert p.history_token_fraction == 0.4
+    assert p.recall_token_budget == 3000
 
 
 def test_llm_params_roundtrip_through_dump(tmp_path):

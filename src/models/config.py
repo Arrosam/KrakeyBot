@@ -63,21 +63,35 @@ class LLMParams:
         to Anthropic ``max_tokens``, OpenAI classic ``max_tokens``,
         OpenAI reasoning ``max_completion_tokens``, Gemini
         ``maxOutputTokens``.
-      * ``max_input_tokens`` \u2014 declared context-window size for the
-        target model (e.g. 200_000 for Claude Sonnet 4.5, 128_000 for
-        GPT-4o, 64_000 for DeepSeek). Currently **informational /
-        guardrail** \u2014 not automatically enforced. Used by the
-        dashboard, by future prompt-budget warnings, and by any code
-        that wants to size the sliding window against the target
-        model. Leave None to skip the declaration.
+      * ``max_input_tokens`` \u2014 input-context-window budget for the
+        backing model. If left None at load time, the config loader
+        resolves it via ``src.utils.model_context.resolve_max_input_tokens``
+        (known-prefix lookup, default 128_000). This is **active**:
+        used by the runtime for sliding-window history budget, recall
+        budget, and overall-prompt enforcement.
+
+    Prompt-budget allocation (only meaningful for Self's role, since
+    Self is the only consumer of the sliding window + GM recall):
+      * ``history_token_fraction`` \u2014 fraction of ``max_input_tokens``
+        reserved for [HISTORY]. Default 0.4. When the window's token
+        total exceeds this fraction the compactor pops oldest rounds
+        into GM.
+      * ``recall_token_budget`` \u2014 ABSOLUTE token cap for the
+        [GRAPH MEMORY] section (not a fraction). Too many recall nodes
+        pollute context with marginal relevance, so this scales poorly
+        with bigger context \u2014 a model with 2M tokens doesn't want 500
+        recall items. Default 3000.
 
     None means "do not send this field" (use provider's own default).
     """
     # Generation bounds
     max_output_tokens: int | None = 4096
-    # Declared input-context window for the backing model (see class
-    # docstring). Informational for now.
+    # Input-context budget. None at construction time; the loader
+    # resolves it via model_context lookup before the runtime starts.
     max_input_tokens: int | None = None
+    # Prompt-budget allocation (Self role only in practice)
+    history_token_fraction: float = 0.4
+    recall_token_budget: int = 3000
     temperature: float | None = 0.7
     top_p: float | None = None
     stop_sequences: list[str] = field(default_factory=list)
@@ -154,7 +168,9 @@ _ROLE_DEFAULTS: dict[str, dict[str, Any]] = {
 # in sync with LLMParams fields above.
 _LLM_PARAM_HELP: dict[str, str] = {
     "max_output_tokens": "生成 (输出) token 上限。按 provider 自动翻译: Anthropic max_tokens, OpenAI 经典 max_tokens, OpenAI reasoning max_completion_tokens, Gemini maxOutputTokens。Anthropic 必填。",
-    "max_input_tokens": "模型的输入上下文窗口大小 (e.g. Claude Sonnet 4.5 = 200000, GPT-4o = 128000, DeepSeek = 64000)。当前为声明性字段 — 仅用于 UI 展示 + 未来 prompt 预算警告, 不会自动截断 prompt。留空 = 不声明。",
+    "max_input_tokens": "输入 (prompt) 上下文 token 预算。留空则启动时按 model 名字自动查表 (未知模型默认 128000)。驱动 sliding window 压缩阈值、GM recall 预算、整体 prompt 超限自动裁剪 history。",
+    "history_token_fraction": "Self role 独有。[HISTORY] 层占用 max_input_tokens 的比例。默认 0.4 = 40%。超过这个比例就触发 compact 把最老 round 收入 GM。",
+    "recall_token_budget": "Self role 独有。[GRAPH MEMORY] 召回节点的总 token 预算 (绝对值, 不是比例)。默认 3000。太多 recall 会污染 context, 所以不跟 context 规模线性增长。",
     "temperature": "采样温度。0 = 确定性，越大越发散。部分 reasoning 模型 (OpenAI o-series, DeepSeek Reasoner) 不支持，会被自动忽略。",
     "top_p": "nucleus sampling 阈值 (0-1)。通常和 temperature 二选一。留空 = 不发送此字段。",
     "stop_sequences": "停止序列列表。遇到任一即停止生成。",
@@ -204,16 +220,14 @@ class FatigueSection:
 
 
 @dataclass
-class SlidingWindowSection:
-    max_tokens: int = 4096
-
-
-@dataclass
 class GraphMemorySection:
     db_path: str = "workspace/data/graph_memory.sqlite"
     auto_ingest_similarity_threshold: float = 0.92
+    # Top-K candidate nodes per stimulus during vec_search. A SEARCH
+    # cap, not a prompt cap — the prompt cap is the per-role
+    # `recall_token_budget` in LLMParams. Keeping this separate avoids
+    # blowing compute on vec_search results we'd only truncate anyway.
     recall_per_stimulus_k: int = 5
-    max_recall_nodes: int = 20
     neighbor_expand_depth: int = 1
 
 
@@ -306,9 +320,11 @@ class Config:
     llm: LLMSection = field(default_factory=LLMSection)
     hibernate: HibernateSection = field(default_factory=HibernateSection)
     fatigue: FatigueSection = field(default_factory=FatigueSection)
-    sliding_window: SlidingWindowSection = field(
-        default_factory=SlidingWindowSection
-    )
+    # `sliding_window` removed in the prompt-budget refactor — the
+    # window's size is now derived from the Self role's LLMParams
+    # (`max_input_tokens * history_token_fraction`). See
+    # `_warn_about_removed_sections` in the loader for the deprecation
+    # message on old configs.
     graph_memory: GraphMemorySection = field(
         default_factory=GraphMemorySection
     )
@@ -415,10 +431,19 @@ def _build_llm(raw: dict[str, Any]) -> LLMSection:
         )
     roles: dict[str, RoleBinding] = {}
     for rname, rdata in (raw.get("roles") or {}).items():
+        model = rdata.get("model", "")
+        params = _build_llm_params(rname, rdata.get("params"))
+        # Resolve max_input_tokens NOW (rather than lazily at call
+        # time) so the runtime sees a concrete int everywhere and
+        # budget math doesn't have to keep checking for None.
+        # Order: YAML-pinned value > model_context lookup > default.
+        if params.max_input_tokens is None:
+            from src.utils.model_context import resolve_max_input_tokens
+            params.max_input_tokens = resolve_max_input_tokens(model)
         roles[rname] = RoleBinding(
             provider=rdata.get("provider", ""),
-            model=rdata.get("model", ""),
-            params=_build_llm_params(rname, rdata.get("params")),
+            model=model,
+            params=params,
         )
     return LLMSection(providers=providers, roles=roles)
 
@@ -514,13 +539,6 @@ def _build_fatigue(raw: dict[str, Any]) -> FatigueSection:
     )
 
 
-def _build_sliding_window(raw: dict[str, Any]) -> SlidingWindowSection:
-    d = SlidingWindowSection()
-    return SlidingWindowSection(
-        max_tokens=int(raw.get("max_tokens", d.max_tokens)),
-    )
-
-
 def _build_graph_memory(raw: dict[str, Any]) -> GraphMemorySection:
     d = GraphMemorySection()
     return GraphMemorySection(
@@ -531,8 +549,6 @@ def _build_graph_memory(raw: dict[str, Any]) -> GraphMemorySection:
         ),
         recall_per_stimulus_k=int(raw.get("recall_per_stimulus_k",
                                               d.recall_per_stimulus_k)),
-        max_recall_nodes=int(raw.get("max_recall_nodes",
-                                         d.max_recall_nodes)),
         neighbor_expand_depth=int(raw.get("neighbor_expand_depth",
                                               d.neighbor_expand_depth)),
     )
@@ -680,6 +696,8 @@ def load_config(path: str | Path = "config.yaml") -> Config:
     raw: dict[str, Any] = yaml.safe_load(raw_text) or {}
     raw = _substitute_env(raw)
 
+    _warn_about_removed_sections(raw)
+
     fatigue = _build_fatigue(raw.get("fatigue") or {})
     _validate_fatigue_thresholds(fatigue)
 
@@ -687,7 +705,6 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         llm=_build_llm(raw.get("llm") or {}),
         hibernate=_build_hibernate(raw.get("hibernate") or {}),
         fatigue=fatigue,
-        sliding_window=_build_sliding_window(raw.get("sliding_window") or {}),
         graph_memory=_build_graph_memory(raw.get("graph_memory") or {}),
         knowledge_base=_build_kb(raw.get("knowledge_base") or {}),
         plugins=raw.get("plugins") or {},
@@ -696,6 +713,42 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         dashboard=_build_dashboard(raw.get("dashboard")),
         sandbox=_build_sandbox(raw.get("sandbox")),
     )
+
+
+def _warn_about_removed_sections(raw: dict[str, Any]) -> None:
+    """Loud deprecation warnings for the prompt-budget refactor.
+
+    Two fields were removed in favor of per-role LLMParams budgets:
+      * ``sliding_window.max_tokens``     → derived from
+        ``llm.roles.self.params.max_input_tokens *
+        history_token_fraction``.
+      * ``graph_memory.max_recall_nodes`` → replaced by
+        ``llm.roles.self.params.recall_token_budget`` (absolute
+        token cap, not a node count).
+
+    We don't silently map them — the semantics changed (nodes → tokens;
+    global → per-role) so silent mapping would produce surprising
+    behavior. Users get one explicit stderr line per stale field.
+    """
+    sw = raw.get("sliding_window") or {}
+    if isinstance(sw, dict) and "max_tokens" in sw:
+        print(
+            "deprecated: `sliding_window.max_tokens` is no longer used.\n"
+            "  History budget is now derived from "
+            "`llm.roles.self.params.max_input_tokens * "
+            "history_token_fraction`. Remove the sliding_window section "
+            "from your config. Your previous value is being ignored.",
+            file=sys.stderr,
+        )
+    gm = raw.get("graph_memory") or {}
+    if isinstance(gm, dict) and "max_recall_nodes" in gm:
+        print(
+            "deprecated: `graph_memory.max_recall_nodes` is no longer "
+            "used.\n  Recall size is now capped by tokens via "
+            "`llm.roles.self.params.recall_token_budget`. Remove the "
+            "key from your config. Your previous value is being ignored.",
+            file=sys.stderr,
+        )
 
 
 def _validate_fatigue_thresholds(f: FatigueSection) -> None:

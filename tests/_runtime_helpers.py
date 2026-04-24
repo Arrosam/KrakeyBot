@@ -58,22 +58,30 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     chat_dir = tempfile.mkdtemp(prefix="krakey_test_chat_")
     from src.models.config import (
         Config, DashboardSection, FatigueSection, GraphMemorySection,
-        HibernateSection, KnowledgeBaseSection, LLMSection, SafetySection,
-        SleepSection, SlidingWindowSection,
+        HibernateSection, KnowledgeBaseSection, LLMParams, LLMSection,
+        RoleBinding, SafetySection, SleepSection,
     )
 
+    # The Runtime reads self.config.llm.roles["self"].params for
+    # window/recall budgets; without a "self" role, construction
+    # KeyErrors. We stamp a minimal RoleBinding with LLMParams
+    # defaults so tests get the standard 40%/3000-token split without
+    # having to spell it out.
+    default_self_params = LLMParams(max_input_tokens=16_000)
     cfg = Config(
-        llm=LLMSection(providers={}, roles={}),
+        llm=LLMSection(
+            providers={},
+            roles={"self": RoleBinding(provider="", model="",
+                                          params=default_self_params)},
+        ),
         hibernate=HibernateSection(min_interval=1, max_interval=60,
                                     default_interval=1),
         fatigue=FatigueSection(gm_node_soft_limit=200,
                                 force_sleep_threshold=120,
                                 thresholds={}),
-        sliding_window=SlidingWindowSection(max_tokens=4096),
         graph_memory=GraphMemorySection(
             db_path=gm_path, auto_ingest_similarity_threshold=0.9,
-            recall_per_stimulus_k=5, max_recall_nodes=20,
-            neighbor_expand_depth=1,
+            recall_per_stimulus_k=5, neighbor_expand_depth=1,
         ),
         knowledge_base=KnowledgeBaseSection(dir=kb_dir),
         plugins={

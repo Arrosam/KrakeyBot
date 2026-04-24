@@ -109,9 +109,18 @@ class Runtime:
         self.reranker = deps.reranker
         self.hypothalamus = Hypothalamus(deps.hypo_llm)
         self.buffer = StimulusBuffer()
-        self.window = SlidingWindow(
-            max_tokens=self.config.sliding_window.max_tokens,
+        # History token budget is derived from the Self role's input
+        # context window × history_token_fraction. The Self role's
+        # params.max_input_tokens is already resolved by the config
+        # loader (YAML > model lookup > 128k default) so `int()` is
+        # safe. Only Self consumes this window, so we key it off
+        # Self's role config.
+        self_params = self.config.llm.roles["self"].params
+        _history_budget = int(
+            (self_params.max_input_tokens or 128_000)
+            * self_params.history_token_fraction
         )
+        self.window = SlidingWindow(history_token_budget=_history_budget)
         self.builder = PromptBuilder()
 
         gm_path = self.config.graph_memory.db_path or ":memory:"
@@ -232,11 +241,15 @@ class Runtime:
                 self.log.runtime_error(f"config backup failed: {e}")
 
     def _new_recall(self) -> IncrementalRecall:
+        # Recall is budgeted in tokens off Self's role params (NOT a
+        # fraction of max_input_tokens — an absolute cap; too many
+        # recall items pollute the prompt regardless of context size).
+        self_params = self.config.llm.roles["self"].params
         return IncrementalRecall(
             self.gm,
             embedder=self.embedder,
             per_stimulus_k=self.config.graph_memory.recall_per_stimulus_k,
-            max_recall_nodes=self.config.graph_memory.max_recall_nodes,
+            recall_token_budget=self_params.recall_token_budget,
             reranker=self.reranker,
             neighbor_depth=self.config.graph_memory.neighbor_expand_depth,
         )
@@ -732,10 +745,8 @@ class Runtime:
             await self.buffer.push(s)
         return recall_result
 
-    async def _phase_run_self(self, stimuli, recall_result,
-                                counts: "_GMCounts"):
-        """Build prompt + call Self LLM + parse. Returns None on LLM error
-        (sleeps min_interval and short-circuits the heartbeat)."""
+    def _build_self_prompt(self, stimuli, recall_result,
+                              counts: "_GMCounts") -> str:
         prompt = self.builder.build(
             self_model=self.self_model,
             capabilities=self._capabilities(),
@@ -750,6 +761,89 @@ class Runtime:
         if self.is_bootstrap:
             prompt = (BOOTSTRAP_PROMPT.format(genesis_text=self._genesis_text)
                       + "\n\n" + prompt)
+        return prompt
+
+    async def _enforce_input_budget(self, stimuli, recall_result,
+                                       counts: "_GMCounts"):
+        """Overall prompt-budget enforcement (DevSpec \u00a710.2).
+
+        After recall is finalized and we have a candidate prompt, if
+        the full prompt exceeds the Self role's ``max_input_tokens``,
+        prune the oldest history round into GM (normal compact path)
+        and re-run recall (GM changed \u2192 new nodes may be more
+        relevant). Repeat until the prompt fits or the window is empty.
+
+        This is the second line of defense: ``_phase_compact`` already
+        caps history at ``max_input_tokens * history_token_fraction``,
+        but the rest of the prompt (DNA + self-model + capabilities +
+        stimulus + recall + status) can push the total over budget
+        even when history is within its own share. When that happens
+        we borrow from history (oldest rounds are least valuable) and
+        promote them to GM so nothing is lost.
+
+        Returns the final (prompt, recall_result) pair. Hard cap on
+        iterations so a pathological configuration can't spin forever.
+        """
+        from src.runtime.compact import compact_round
+        from src.utils.tokens import estimate_tokens
+
+        self_params = self.config.llm.roles["self"].params
+        budget = int(self_params.max_input_tokens or 128_000)
+
+        async def _recall_fn(text: str):
+            return await self.gm.fts_search(text, top_k=10)
+
+        prompt = self._build_self_prompt(stimuli, recall_result, counts)
+        max_iters = 10  # safety bound — should never need more than 2-3
+        for _ in range(max_iters):
+            total = estimate_tokens(prompt)
+            if total <= budget:
+                return prompt, recall_result
+            if not self.window.rounds:
+                # Nothing left to borrow from. Log loud and send
+                # anyway \u2014 provider will return its own error, which
+                # surfaces through the existing Self-LLM-error path.
+                self.log.hb_warn(
+                    f"prompt {total} > max_input_tokens {budget} and "
+                    "window is empty; sending anyway"
+                )
+                return prompt, recall_result
+            oldest = self.window.pop_oldest()
+            assert oldest is not None
+            self.log.hb(
+                f"input budget: prompt {total} > {budget}; pruning oldest "
+                f"round (heartbeat #{oldest.heartbeat_id}) into GM"
+            )
+            try:
+                await compact_round(oldest, self.gm, self.compact_llm,
+                                      _recall_fn)
+            except Exception as e:  # noqa: BLE001 \u2014 never crash the beat
+                self.log.hb_warn(
+                    f"budget-driven compact failed: {e} \u2014 round "
+                    f"#{oldest.heartbeat_id} dropped without GM write"
+                )
+            # Re-run recall against the (possibly) enriched GM.
+            fresh = self._new_recall()
+            await fresh.add_stimuli(stimuli)
+            recall_result = await fresh.finalize()
+            self._recall = fresh
+            prompt = self._build_self_prompt(stimuli, recall_result, counts)
+        # Hit the iteration ceiling without converging. Ship what we
+        # have plus a loud warning; a follow-up beat will try again.
+        self.log.hb_warn(
+            f"input budget not satisfied after {max_iters} prune "
+            f"iterations; sending oversized prompt "
+            f"({estimate_tokens(prompt)} > {budget})"
+        )
+        return prompt, recall_result
+
+    async def _phase_run_self(self, stimuli, recall_result,
+                                counts: "_GMCounts"):
+        """Build prompt + call Self LLM + parse. Returns None on LLM error
+        (sleeps min_interval and short-circuits the heartbeat)."""
+        prompt, recall_result = await self._enforce_input_budget(
+            stimuli, recall_result, counts,
+        )
         self._record_prompt(self.heartbeat_count, prompt)
         self.events.publish(PromptBuiltEvent(
             heartbeat_id=self.heartbeat_count,

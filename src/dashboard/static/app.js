@@ -523,11 +523,15 @@ let cfgState = null;
 const SECTION_DEFAULTS = {
   hibernate: { min_interval: 2, max_interval: 300, default_interval: 10 },
   fatigue: { gm_node_soft_limit: 1000, force_sleep_threshold: 1200, thresholds: {} },
-  sliding_window: { max_tokens: 4096 },
+  // `sliding_window` section removed — history budget is now derived
+  // from Self role's max_input_tokens × history_token_fraction (see
+  // role params UI under LLM).
   graph_memory: {
     db_path: "workspace/data/graph_memory.sqlite",
     auto_ingest_similarity_threshold: 0.92,
-    recall_per_stimulus_k: 5, max_recall_nodes: 20, neighbor_expand_depth: 1,
+    recall_per_stimulus_k: 5, neighbor_expand_depth: 1,
+    // `max_recall_nodes` removed — recall is now capped by Self role's
+    // recall_token_budget (absolute token cap, not a node count).
   },
   knowledge_base: { dir: "workspace/data/knowledge_bases" },
   sleep: { max_duration_seconds: 7200 },
@@ -547,11 +551,9 @@ const HELP = {
   "hibernate.default_interval": "Self 没指定时的默认 hibernate 间隔（秒）。",
   "fatigue.gm_node_soft_limit": "GM 节点软上限。fatigue% = nodes / soft_limit * 100。Self 看到 fatigue% 决定是否主动睡眠。",
   "fatigue.force_sleep_threshold": "强制睡眠阈值（fatigue%）。超过这个值, runtime 不等 Self 同意直接进 sleep。",
-  "sliding_window.max_tokens": "滑动上下文窗口最大 token 数。超过则压缩旧 round 为 summary。",
   "graph_memory.db_path": "GM SQLite 文件路径。",
   "graph_memory.auto_ingest_similarity_threshold": "stimulus auto_ingest 的相似度阈值 (0-1)。低于则当作新节点入 GM。",
-  "graph_memory.recall_per_stimulus_k": "每条 stimulus 召回的 top-K 节点数。",
-  "graph_memory.max_recall_nodes": "单次 prompt 中召回节点的总数上限。",
+  "graph_memory.recall_per_stimulus_k": "每条 stimulus 向量搜索返回的 top-K 候选节点数 (搜索阈, 不是 prompt 阈)。prompt 阈由 Self role 的 recall_token_budget 控制。",
   "graph_memory.neighbor_expand_depth": "召回时邻居展开深度（沿 edges 走几跳）。",
   "knowledge_base.dir": "KB SQLite 文件目录, sleep migration 会写到这里。",
   "sleep.max_duration_seconds": "单次 sleep 最长允许时长（秒）, 防 sleep 卡死。",
@@ -601,14 +603,10 @@ const SCHEMAS = {
     ["gm_node_soft_limit", "number"],
     ["force_sleep_threshold", "number"],
   ],
-  sliding_window: [
-    ["max_tokens", "number"],
-  ],
   graph_memory: [
     ["db_path", "text"],
     ["auto_ingest_similarity_threshold", "number_float"],
     ["recall_per_stimulus_k", "number"],
-    ["max_recall_nodes", "number"],
     ["neighbor_expand_depth", "number"],
   ],
   knowledge_base: [
@@ -713,9 +711,6 @@ function renderSettingsForm() {
   fatSec.querySelector(".body").appendChild(renderFatigueThresholds(cfgState.fatigue));
   settingsForm.appendChild(fatSec);
 
-  ensureSection("sliding_window");
-  settingsForm.appendChild(renderGenericSection("sliding_window", "Sliding Window",
-    cfgState.sliding_window, SCHEMAS.sliding_window));
   ensureSection("graph_memory");
   settingsForm.appendChild(renderGenericSection("graph_memory", "Graph Memory",
     cfgState.graph_memory, SCHEMAS.graph_memory));
