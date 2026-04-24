@@ -2,7 +2,7 @@
 import pytest
 
 from src.models.stimulus import Stimulus
-from src.tentacles.search import SearchTentacle
+from src.plugins.builtin.search import SearchTentacle
 
 
 class FakeBackend:

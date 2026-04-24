@@ -11,6 +11,10 @@ __pycache__/
 *.egg-info/
 workspace/*
 !workspace/GENESIS.md
+!workspace/plugins/
+# Within the plugins dir: user-dropped modules are local, keep only the stub
+workspace/plugins/*
+!workspace/plugins/README.md
 *.sqlite
 *.sqlite-journal
 .env

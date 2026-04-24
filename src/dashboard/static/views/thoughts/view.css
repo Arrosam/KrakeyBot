@@ -1,0 +1,24 @@
+/* Inner Thoughts view: thinking + decision + hypothalamus + pending stimuli. */
+
+.thoughts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+#thinking-stream { color: var(--cyan); }
+#decision-stream { color: var(--cyan); }
+#hypo-stream { color: var(--yellow); }
+
+#stim-list { list-style: none; padding: 8px 10px; margin: 0; }
+#stim-list li {
+  padding: 4px 6px;
+  margin-bottom: 4px;
+  background: var(--panel-2);
+  border-radius: 3px;
+  font-size: 11px;
+}
+#stim-list li.adrenalin { border-left: 2px solid var(--red); }
+#stim-list li .src { color: var(--muted); margin-right: 6px; }

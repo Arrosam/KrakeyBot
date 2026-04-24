@@ -17,8 +17,9 @@ from src.bootstrap import (
     BOOTSTRAP_PROMPT, detect_bootstrap_complete, load_genesis,
     load_self_model_or_default, parse_self_model_update,
 )
-from src.dashboard.events_ws import EventBroadcaster
-from src.dashboard.server import DashboardServer, create_app as create_dashboard_app
+from src.dashboard.app_factory import create_app as create_dashboard_app
+from src.dashboard.events import EventBroadcaster
+from src.dashboard.server import DashboardServer
 from src.dashboard.web_chat import WebChatHistory
 from src.hypothalamus import Hypothalamus, TentacleCall
 from src.models.self_model import SelfModelStore
@@ -50,13 +51,11 @@ from src.runtime.hibernate import hibernate_with_recall
 from src.runtime.sliding_window import SlidingWindow
 from src.runtime.stimulus_buffer import StimulusBuffer
 from src.self_agent import parse_self_output
-from src.sensories.telegram import HttpTelegramClient, TelegramSensory
-from src.tentacles.coding import CodingTentacle, SubprocessRunner
-from src.tentacles.gui_control import GuiControlTentacle, PyAutoGUIBackend
-from src.tentacles.memory_recall import MemoryRecallTentacle
-from src.tentacles.search import DDGSBackend, SearchTentacle
-from src.tentacles.telegram_reply import TelegramReplyTentacle
-from src.tentacles.web_chat_reply import WebChatTentacle
+# All tentacle / sensory classes now load via the plugin system
+# (src.plugins.builtin.<project>/). SubprocessRunner stays imported
+# here because Runtime._build_code_runner owns the sandbox-vs-subprocess
+# policy decision and hands the runner to the coding plugin via deps.
+from src.sandbox.subprocess_runner import SubprocessRunner
 
 
 class ChatLike(Protocol):
@@ -131,58 +130,40 @@ class Runtime:
         )
 
         self.tentacles = TentacleRegistry()
-        self.tentacles.register(MemoryRecallTentacle(
-            gm=self.gm, embedder=self.embedder,
-            kb_registry=self.kb_registry,
-        ))
-        if self.config.tentacle.get("search", {}).get("enabled", True):
-            self.tentacles.register(SearchTentacle(
-                backend=DDGSBackend(),
-                max_results=self.config.tentacle.get("search", {})
-                    .get("max_results", 5),
-            ))
-        coding_cfg = self.config.tentacle.get("coding", {})
-        if coding_cfg.get("enabled", False):
-            runner = self._build_code_runner(coding_cfg)
-            self.tentacles.register(CodingTentacle(
-                runner=runner,
-                sandbox_dir=coding_cfg.get("sandbox_dir",
-                                              "workspace/sandbox"),
-                timeout_seconds=coding_cfg.get("timeout_seconds", 30),
-                max_output_chars=coding_cfg.get("max_output_chars", 4000),
-            ))
-        gui_cfg = self.config.tentacle.get("gui_control", {})
-        if gui_cfg.get("enabled", False):
-            self.tentacles.register(GuiControlTentacle(
-                backend=PyAutoGUIBackend(),
-                screenshot_dir=gui_cfg.get("screenshot_dir",
-                                              "workspace/screenshots"),
-            ))
-
-        # Web chat (always wired — Self can write to history even if no
-        # browser is connected; messages persist for next viewer)
-        web_chat_cfg = self.config.tentacle.get("web_chat", {})
-        chat_path = web_chat_cfg.get("history_path",
-                                        "workspace/data/web_chat.jsonl")
+        # Web chat history is a data layer (JSONL persistence + broadcast
+        # bus) that the dashboard WebSocket subscribes to. Must exist
+        # before the plugin loader so the `web_chat` project (sensory +
+        # reply tentacle) can pick it up via deps. Built regardless of
+        # `web_chat.enabled` so the dashboard can still display the
+        # existing transcript in monitor-only mode.
+        #
+        # Per-plugin config store: one YAML file per plugin project
+        # under workspace/plugin-configs/. On first run the store
+        # migrates values from the deprecated config.yaml `plugins:`
+        # pile, so users upgrading from the old layout keep their
+        # settings. peek_config() is used here because web_chat's file
+        # may not exist yet (loader hasn't run) — peek falls back to
+        # legacy without materializing anything.
+        from src.plugins.plugin_config import FilePluginConfigStore
+        self._plugin_config_store = FilePluginConfigStore(
+            root=Path("workspace/plugin-configs"),
+            legacy_plugins=self.config.plugins,
+        )
+        wc_cfg = self._plugin_config_store.peek_config("web_chat")
+        chat_path = wc_cfg.get("history_path",
+                                   "workspace/data/web_chat.jsonl")
         self.web_chat_history = WebChatHistory(chat_path)
-        self.tentacles.register(WebChatTentacle(history=self.web_chat_history))
 
         self.sensories = SensoryRegistry()
-        tg_cfg = self.config.sensory.get("telegram", {})
-        if tg_cfg.get("enabled", False):
-            tg_token = tg_cfg.get("bot_token") or ""
-            allowed = tg_cfg.get("allowed_chat_ids") or None
-            tg_client = HttpTelegramClient(token=tg_token)
-            self.sensories.register(TelegramSensory(
-                client=tg_client,
-                allowed_chat_ids=set(allowed) if allowed else None,
-            ))
-            default_chat = tg_cfg.get("default_chat_id")
-            self.tentacles.register(TelegramReplyTentacle(
-                client=tg_client, default_chat_id=default_chat,
-            ))
+        # BatchTracker is core runtime infrastructure (dispatch wake-up
+        # mechanism) — kept out of the plugin system so it can't be
+        # disabled by accident.
         self.batch_tracker = BatchTrackerSensory()
         self.sensories.register(self.batch_tracker)
+
+        # Plugin loading is deferred until after self.log is set (below)
+        # because discover_plugins logs each plugin's success or failure.
+        self._plugin_infos: list = []
 
         # Self-model + Bootstrap state (Phase 2.1)
         sm_path = deps.self_model_path or "workspace/self_model.yaml"
@@ -220,6 +201,27 @@ class Runtime:
         dash_cfg = getattr(self.config, "dashboard", None)
         _pl_size = getattr(dash_cfg, "prompt_log_size", 20) if dash_cfg else 20
         self._prompt_log: deque[dict[str, Any]] = deque(maxlen=max(1, _pl_size))
+
+        # Plugins — discover src/plugins/builtin/ (ships with Krakey)
+        # and workspace/plugins/ (user-dropped). Each project produces
+        # zero or more components (tentacles + sensories); loader
+        # returns a flat list of PluginInfos, one per component.
+        self._plugin_infos = self._load_plugins()
+        for info in self._plugin_infos:
+            if info.instance is None:
+                continue
+            registry = (self.tentacles if info.kind == "tentacle"
+                        else self.sensories)
+            existing = (info.name in self.tentacles
+                        if info.kind == "tentacle"
+                        else info.name in registry._sensories)  # noqa: SLF001
+            if existing:
+                continue
+            try:
+                registry.register(info.instance)
+            except Exception as e:  # noqa: BLE001
+                info.error = f"registration failed: {e}"
+                info.instance = None
 
         # Snapshot config.yaml on every startup so a bad save can be rolled
         # back from workspace/backups/.
@@ -259,6 +261,145 @@ class Runtime:
             pending = [t for t in self._classify_tasks if not t.done()]
             for t in pending:
                 t.cancel()
+
+    def _load_plugins(self):
+        """Discover plugin projects from both roots and return one
+        PluginInfo per component (tentacle or sensory).
+
+        Sources:
+          - `src/plugins/builtin/` — ships with Krakey (tag: "builtin").
+          - `workspace/plugins/`   — user-dropped  (tag: "plugin").
+
+        Failures are recorded on PluginInfo.error rather than raised —
+        a broken plugin must never block boot.
+        """
+        from src.plugins.loader import discover_plugins
+        workspace = Path("workspace")
+        builtin = Path(__file__).parent / "plugins" / "builtin"
+        deps = {
+            "gm": self.gm,
+            "kb_registry": self.kb_registry,
+            "embedder": self.embedder,
+            "buffer": self.buffer,
+            "web_chat_history": getattr(self, "web_chat_history", None),
+            "config": self.config,
+            # Plugin factories that need Runtime policy (coding's
+            # sandbox-vs-subprocess choice) call these rather than
+            # peek at Runtime internals.
+            "build_code_runner": self._build_code_runner,
+        }
+        infos: list = []
+        infos.extend(discover_plugins(builtin, deps,
+                                            source="builtin",
+                                            config_store=self._plugin_config_store))
+        infos.extend(discover_plugins(workspace / "plugins", deps,
+                                            source="plugin",
+                                            config_store=self._plugin_config_store))
+        for info in infos:
+            if info.error:
+                self.log.runtime_error(
+                    f"{info.source} {info.kind}:{info.name} "
+                    f"(project={info.project}) failed to load — "
+                    f"{info.error.splitlines()[0]}"
+                )
+            elif info.instance is not None:
+                self.log.hb(
+                    f"{info.source} loaded: {info.kind}:{info.name}"
+                )
+        return infos
+
+    def plugin_report(self) -> dict[str, Any]:
+        """Serializable snapshot for the dashboard /api/plugins endpoint.
+
+        Unifies three populations:
+          - PluginInfos from the loader (builtin + user plugins).
+          - Core items still wired hard in __init__ (batch_tracker) —
+            reported with source="core" so the UI can show a locked
+            badge.
+
+        Each component carries a `values` dict: the current on-disk
+        config for its project, minus the loader-owned `enabled` flag
+        (which is surfaced separately). The dashboard renders forms
+        directly from `config_schema` + `values` — no need to hit
+        /api/settings for plugin config anymore.
+        """
+        def _values_for(project: str) -> dict[str, Any]:
+            if not project:
+                return {}
+            cfg = self._plugin_config_store.peek_config(project)
+            return {k: v for k, v in cfg.items() if k != "enabled"}
+
+        def _flatten(infos, loaded_names):
+            return [{
+                "name": i.name,
+                "kind": i.kind,
+                "source": i.source,
+                "path": i.path,
+                "project": i.project,
+                "description": i.description,
+                "is_internal": i.is_internal,
+                "config_schema": i.config_schema,
+                # Loader-owned flag so the dashboard can render a
+                # dedicated toggle (separate from the plugin's own
+                # config_schema rows).
+                "enabled": i.enabled,
+                "values": _values_for(i.project),
+                "loaded": i.name in loaded_names and i.error is None,
+                "error": i.error,
+            } for i in infos]
+
+        plugin_t_names = {i.name for i in self._plugin_infos
+                          if i.kind == "tentacle"}
+        plugin_s_names = {i.name for i in self._plugin_infos
+                          if i.kind == "sensory"}
+        loaded_t = {n for n in self.tentacles._tentacles}  # noqa: SLF001
+        loaded_s = {n for n in self.sensories._sensories}  # noqa: SLF001
+
+        core_tentacles = [
+            {"name": t.name, "kind": "tentacle", "source": "core",
+             "path": "", "project": "", "description": t.description,
+             "is_internal": t.is_internal, "config_schema": [],
+             "enabled": True, "values": {},
+             "loaded": True, "error": None}
+            for t in self.tentacles._tentacles.values()  # noqa: SLF001
+            if t.name not in plugin_t_names
+        ]
+        core_sensories = [
+            {"name": s.name, "kind": "sensory", "source": "core",
+             "path": "", "project": "", "description": "",
+             "is_internal": False, "config_schema": [],
+             "enabled": True, "values": {},
+             "loaded": True, "error": None}
+            for s in self.sensories._sensories.values()  # noqa: SLF001
+            if s.name not in plugin_s_names
+        ]
+        t_infos = [i for i in self._plugin_infos if i.kind == "tentacle"]
+        s_infos = [i for i in self._plugin_infos if i.kind == "sensory"]
+        return {
+            "tentacles": core_tentacles + _flatten(t_infos, loaded_t),
+            "sensories": core_sensories + _flatten(s_infos, loaded_s),
+        }
+
+    def update_plugin_config(
+        self, project: str, body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist an edit from the dashboard into the per-plugin file.
+
+        `body` has shape {"enabled": bool, "values": {...}}. The final
+        on-disk file merges them: {"enabled": ..., **values}. Changes
+        take effect on next restart (plugins aren't hot-reloaded).
+        """
+        if not project or not isinstance(project, str):
+            raise ValueError("project name required")
+        enabled = bool(body.get("enabled", False))
+        values = dict(body.get("values") or {})
+        # Guard: `enabled` is loader-owned; refuse to let a client
+        # stuff it inside `values` and double-write.
+        values.pop("enabled", None)
+        config = {"enabled": enabled, **values}
+        path = self._plugin_config_store.write(project, config)
+        return {"project": project, "path": str(path),
+                "config": config}
 
     def _build_code_runner(self, coding_cfg: dict):
         """Return Subprocess on sandbox=false, SandboxRunner otherwise.
@@ -314,9 +455,17 @@ class Runtime:
         from src.sandbox.backend import (
             SandboxConfig, SandboxUnavailableError, preflight,
         )
+        # Per-plugin store replaces config.yaml's `plugins:` pile. peek
+        # is safe: by the time preflight runs the loader has already
+        # materialized each plugin's file, so every per-plugin dict
+        # reflects its on-disk state.
+        def _plugin_flag(name: str, key: str, fallback: bool) -> bool:
+            return bool(
+                self._plugin_config_store.peek_config(name).get(key, fallback)
+            )
         any_sandboxed = any(
-            self.config.tentacle.get(name, {}).get("enabled", False)
-            and self.config.tentacle.get(name, {}).get("sandbox", True)
+            _plugin_flag(name, "enabled", False)
+            and _plugin_flag(name, "sandbox", True)
             for name in ("coding", "gui_control", "cli",
                            "file_read", "file_write", "browser")
         )
@@ -380,30 +529,21 @@ class Runtime:
         if cfg is None or not cfg.enabled:
             return
 
-        async def _on_user_message(text: str,
-                                     attachments: list[dict] | None = None) -> None:
-            # Web user message → push as a normal user_message stimulus.
-            # Attachments rendered as text notice so Self knows about them
-            # (vision/binary handling lives behind that).
-            content = text
-            if attachments:
-                lines = [text] if text else []
-                for a in attachments:
-                    name = a.get("name", "file")
-                    typ = a.get("type", "")
-                    size = a.get("size", 0)
-                    url = a.get("url", "")
-                    lines.append(f"[附件: {name} ({typ}, {size} bytes) {url}]")
-                content = "\n".join(lines)
-            md: dict = {"channel": "web_chat"}
-            if attachments:
-                md["attachments"] = attachments
-            await self.buffer.push(Stimulus(
-                type="user_message", source="sensory:web_chat",
-                content=content, timestamp=datetime.now(),
-                adrenalin=True,
-                metadata=md,
-            ))
+        # Route inbound user messages through the web_chat sensory
+        # (plugin-registered). If the plugin is disabled, no sensory
+        # exists — install a noop callback that logs the drop so the
+        # dashboard can still show history in monitor-only mode.
+        web_chat_sensory = self.sensories._sensories.get("web_chat")  # noqa: SLF001
+        if web_chat_sensory is not None:
+            _on_user_message = web_chat_sensory.push_user_message
+        else:
+            async def _on_user_message(text: str,
+                                           attachments: list[dict] | None = None
+                                           ) -> None:
+                self.log.hb_warn(
+                    "web_chat plugin disabled — dropping inbound message "
+                    f"({len(text or '')} chars)"
+                )
 
         def _on_restart() -> None:
             """Re-exec process so a new instance picks up edited config."""
@@ -598,12 +738,14 @@ class Runtime:
         (sleeps min_interval and short-circuits the heartbeat)."""
         prompt = self.builder.build(
             self_model=self.self_model,
+            capabilities=self._capabilities(),
             status=self._status(counts.node_count, counts.edge_count,
                                   counts.fatigue_pct, counts.fatigue_hint),
             recall={"nodes": recall_result.nodes,
                     "edges": recall_result.edges},
             window=self.window.get_rounds(),
             stimuli=stimuli,
+            current_time=datetime.now(),
         )
         if self.is_bootstrap:
             prompt = (BOOTSTRAP_PROMPT.format(genesis_text=self._genesis_text)
@@ -893,6 +1035,9 @@ class Runtime:
 
     def _status(self, node_count: int, edge_count: int,
                   pct: int, hint: str) -> dict[str, Any]:
+        """Runtime status numbers — changes every beat (heartbeat counter,
+        fatigue), so this section is deliberately placed near the end of
+        the prompt to preserve the cacheable prefix above it."""
         return {
             "gm_node_count": node_count,
             "gm_edge_count": edge_count,
@@ -900,8 +1045,13 @@ class Runtime:
             "fatigue_hint": hint,
             "last_sleep_time": "never",
             "heartbeats_since_sleep": self.heartbeat_count,
-            "tentacles": self.tentacles.list_descriptions(),
         }
+
+    def _capabilities(self) -> list[dict[str, Any]]:
+        """Tentacle list for the [CAPABILITIES] layer. Only changes on
+        plugin reload, so this gets rendered high in the prompt above the
+        cache-breaking volatile layers."""
+        return self.tentacles.list_descriptions()
 
 
 def _delta_str(delta: int) -> str:
@@ -929,14 +1079,16 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
     embedding_role = cfg.llm.roles["embedding"]
 
     self_llm = LLMClient(cfg.llm.providers[self_role.provider],
-                           self_role.model)
+                           self_role.model, params=self_role.params)
     hypo_llm = LLMClient(cfg.llm.providers[hypo_role.provider],
-                           hypo_role.model)
+                           hypo_role.model, params=hypo_role.params)
     compact_llm = LLMClient(cfg.llm.providers[compact_role.provider],
-                              compact_role.model)
+                              compact_role.model,
+                              params=compact_role.params)
     classify_llm = compact_llm  # reuse
     embed_client = LLMClient(cfg.llm.providers[embedding_role.provider],
-                               embedding_role.model)
+                               embedding_role.model,
+                               params=embedding_role.params)
 
     async def embedder(text: str) -> list[float]:
         return await embed_client.embed(text)
@@ -946,6 +1098,7 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
     if rerank_role is not None:
         reranker_client = LLMClient(
             cfg.llm.providers[rerank_role.provider], rerank_role.model,
+            params=rerank_role.params,
         )
 
         class _RerankerAdapter:

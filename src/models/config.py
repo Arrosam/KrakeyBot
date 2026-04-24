@@ -2,13 +2,19 @@
 
 Parses YAML, substitutes ${VAR} from os.environ at load time,
 validates fatigue thresholds vs force_sleep_threshold.
+
+First-run bootstrap: if the target config file is missing, a
+defaults-populated file is written at that path and the process
+exits with guidance to set LLM providers/API keys. We intentionally
+do NOT copy config.yaml.example — the single source of truth for
+defaults is the dataclasses below.
 """
 from __future__ import annotations
 
 import os
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -20,66 +26,205 @@ _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 @dataclass
 class ModelEntry:
-    name: str
+    name: str = ""
     capabilities: list[str] = field(default_factory=list)
 
 
 @dataclass
 class Provider:
-    type: str
-    base_url: str
+    type: str = "openai_compatible"
+    base_url: str = ""
     api_key: str | None = None
     models: list[ModelEntry] = field(default_factory=list)
 
 
 @dataclass
+class LLMParams:
+    """Per-role LLM call parameters.
+
+    These are overlaid on `LLMClient` requests. Fields default to values
+    that work for a general-purpose chat role; specific roles (self,
+    hypothalamus, compact, classifier, embedding) get their own sensible
+    defaults applied on top via `_ROLE_DEFAULTS` before the user's YAML
+    overrides are merged in.
+
+    Provider adaptation is handled inside `LLMClient`:
+      * `reasoning_mode` is translated to the provider-native field
+        (Anthropic `thinking.budget_tokens`, OpenAI `reasoning_effort`).
+        Set to "off" to disable.
+      * `response_format="json_object"` becomes
+        `response_format={"type":"json_object"}` on OpenAI-compatible;
+        Anthropic has no native JSON-mode so the field is ignored there.
+      * Fields the provider cannot accept are silently dropped rather
+        than sent (e.g. `temperature` on DeepSeek-Reasoner).
+
+    Token fields intentionally spell out their direction:
+      * ``max_output_tokens`` \u2014 upper bound on generation. Translated
+        to Anthropic ``max_tokens``, OpenAI classic ``max_tokens``,
+        OpenAI reasoning ``max_completion_tokens``, Gemini
+        ``maxOutputTokens``.
+      * ``max_input_tokens`` \u2014 declared context-window size for the
+        target model (e.g. 200_000 for Claude Sonnet 4.5, 128_000 for
+        GPT-4o, 64_000 for DeepSeek). Currently **informational /
+        guardrail** \u2014 not automatically enforced. Used by the
+        dashboard, by future prompt-budget warnings, and by any code
+        that wants to size the sliding window against the target
+        model. Leave None to skip the declaration.
+
+    None means "do not send this field" (use provider's own default).
+    """
+    # Generation bounds
+    max_output_tokens: int | None = 4096
+    # Declared input-context window for the backing model (see class
+    # docstring). Informational for now.
+    max_input_tokens: int | None = None
+    temperature: float | None = 0.7
+    top_p: float | None = None
+    stop_sequences: list[str] = field(default_factory=list)
+    response_format: str | None = None   # None | "json_object"
+    seed: int | None = None
+
+    # Reasoning / thinking (provider-abstracted)
+    # off | low | medium | high
+    reasoning_mode: str = "off"
+    reasoning_budget_tokens: int | None = None
+
+    # Transport-level knobs
+    timeout_seconds: float = 120.0
+    max_retries: int = 3
+    retry_on_status: list[int] = field(
+        default_factory=lambda: [429, 500, 502, 503, 504]
+    )
+
+
+# Role → default param overrides applied before YAML overlay. Any field
+# not mentioned here falls back to LLMParams' universal defaults.
+#
+# Note on `response_format`: deliberately *not* defaulted to "json_object"
+# for Hypothalamus / compact / classifier. Many OpenAI-compatible
+# providers (xunfei / zhipu / moonshot / baichuan / …) either ignore the
+# field or crash their backends with "EngineInternalError:Unexpected EOF"
+# style 500s when they see it. Hypothalamus already has a robust JSON
+# extractor (markdown fence, regex, smart-quote/trailing-comma fixups)
+# that works without JSON mode, so turning it on is a cost/benefit loss
+# in the general case. Users whose provider supports it (Anthropic does
+# not, OpenAI + Gemini do) can opt in via YAML per-role.
+_ROLE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "self": {
+        "max_output_tokens": 8192,
+        "temperature": 0.7,
+        "reasoning_mode": "medium",
+        "reasoning_budget_tokens": 4096,
+        "timeout_seconds": 180.0,
+    },
+    "hypothalamus": {
+        # 2048 not 512 — multi-action decisions with Chinese tentacle
+        # intents blow past 512 easily and get truncated mid-JSON,
+        # which some providers surface as an "Unexpected EOF" 500.
+        "max_output_tokens": 2048,
+        "temperature": 0.0,
+        "reasoning_mode": "off",
+        "timeout_seconds": 20.0,
+    },
+    "compact": {
+        "max_output_tokens": 2048,
+        "temperature": 0.2,
+        "reasoning_mode": "off",
+        "timeout_seconds": 60.0,
+    },
+    "classifier": {
+        "max_output_tokens": 1024,
+        "temperature": 0.0,
+        "reasoning_mode": "off",
+        "timeout_seconds": 30.0,
+    },
+    "embedding": {
+        # Embedding endpoints don't use generation params; keep a short
+        # timeout since embedding calls should be fast.
+        "timeout_seconds": 20.0,
+    },
+    "reranker": {
+        "timeout_seconds": 20.0,
+    },
+}
+
+
+# Human-readable descriptions used both for docstrings and for the
+# `/api/config/schema` endpoint that feeds the dashboard UI. Keep this
+# in sync with LLMParams fields above.
+_LLM_PARAM_HELP: dict[str, str] = {
+    "max_output_tokens": "生成 (输出) token 上限。按 provider 自动翻译: Anthropic max_tokens, OpenAI 经典 max_tokens, OpenAI reasoning max_completion_tokens, Gemini maxOutputTokens。Anthropic 必填。",
+    "max_input_tokens": "模型的输入上下文窗口大小 (e.g. Claude Sonnet 4.5 = 200000, GPT-4o = 128000, DeepSeek = 64000)。当前为声明性字段 — 仅用于 UI 展示 + 未来 prompt 预算警告, 不会自动截断 prompt。留空 = 不声明。",
+    "temperature": "采样温度。0 = 确定性，越大越发散。部分 reasoning 模型 (OpenAI o-series, DeepSeek Reasoner) 不支持，会被自动忽略。",
+    "top_p": "nucleus sampling 阈值 (0-1)。通常和 temperature 二选一。留空 = 不发送此字段。",
+    "stop_sequences": "停止序列列表。遇到任一即停止生成。",
+    "response_format": "响应格式。json_object = 强制 JSON 输出 (OpenAI 兼容有效; Anthropic 无原生 JSON 模式, 自动忽略; 国产兼容端口 xunfei/zhipu/moonshot 等常不支持, 可能触发 500)。留空 = 自由文本。",
+    "seed": "随机种子，用于可复现实验。仅 OpenAI / Gemini 支持；Anthropic 无此字段。",
+    "reasoning_mode": "推理强度: off / low / medium / high。Anthropic 翻译为 thinking.budget_tokens，OpenAI 翻译为 reasoning_effort。",
+    "reasoning_budget_tokens": "Anthropic thinking 预算 token 数 (≥ 1024 且 < max_output_tokens)。只在 reasoning_mode != off 时生效。留空 = 按模式自动推算。",
+    "timeout_seconds": "单次 HTTP 请求超时秒数。Self 建议 180, Hypothalamus 20。",
+    "max_retries": "HTTP 失败时的最大重试次数。指数退避 + jitter。仅 5xx 和 429 会触发重试，4xx 不重试。",
+    "retry_on_status": "触发重试的 HTTP 状态码列表。默认 [429, 500, 502, 503, 504]。",
+}
+
+
+@dataclass
 class RoleBinding:
-    provider: str
-    model: str
+    provider: str = ""
+    model: str = ""
+    params: LLMParams = field(default_factory=LLMParams)
 
 
 @dataclass
 class LLMSection:
-    providers: dict[str, Provider]
-    roles: dict[str, RoleBinding]
+    # Both empty by default — the first-run file will be a usable
+    # scaffold and the user fills in providers + role bindings. The
+    # runtime bootstrap validates presence of required roles (`self`,
+    # `hypothalamus`, `embedding`) and fails loud with guidance.
+    providers: dict[str, Provider] = field(default_factory=dict)
+    roles: dict[str, RoleBinding] = field(default_factory=dict)
 
 
 @dataclass
 class HibernateSection:
-    min_interval: int
-    max_interval: int
-    default_interval: int
+    min_interval: int = 2
+    max_interval: int = 300
+    default_interval: int = 10
 
 
 @dataclass
 class FatigueSection:
-    gm_node_soft_limit: int
-    force_sleep_threshold: int
-    thresholds: dict[int, str]
+    gm_node_soft_limit: int = 1000
+    force_sleep_threshold: int = 1200
+    thresholds: dict[int, str] = field(default_factory=lambda: {
+        50: "（不繁忙时可以睡眠）",
+        75: "（疲劳，需要主动睡眠）",
+        100: "（非常疲劳，需要立即找到睡眠的机会）",
+    })
 
 
 @dataclass
 class SlidingWindowSection:
-    max_tokens: int
+    max_tokens: int = 4096
 
 
 @dataclass
 class GraphMemorySection:
-    db_path: str
-    auto_ingest_similarity_threshold: float
-    recall_per_stimulus_k: int
-    max_recall_nodes: int
-    neighbor_expand_depth: int
+    db_path: str = "workspace/data/graph_memory.sqlite"
+    auto_ingest_similarity_threshold: float = 0.92
+    recall_per_stimulus_k: int = 5
+    max_recall_nodes: int = 20
+    neighbor_expand_depth: int = 1
 
 
 @dataclass
 class KnowledgeBaseSection:
-    dir: str
+    dir: str = "workspace/data/knowledge_bases"
 
 
 @dataclass
 class SleepSection:
-    max_duration_seconds: int
+    max_duration_seconds: int = 7200
     # Communities below this size stay in GM (don't get migrated to a KB).
     # Default 2 = skip pure singletons.
     min_community_size: int = 2
@@ -103,8 +248,8 @@ class SleepSection:
 
 @dataclass
 class SafetySection:
-    gm_node_hard_limit: int
-    max_consecutive_no_action: int
+    gm_node_hard_limit: int = 500
+    max_consecutive_no_action: int = 50
 
 
 @dataclass
@@ -158,18 +303,36 @@ class SandboxSection:
 
 @dataclass
 class Config:
-    llm: LLMSection
-    hibernate: HibernateSection
-    fatigue: FatigueSection
-    sliding_window: SlidingWindowSection
-    graph_memory: GraphMemorySection
-    knowledge_base: KnowledgeBaseSection
-    sensory: dict[str, dict[str, Any]]
-    tentacle: dict[str, dict[str, Any]]
-    sleep: SleepSection
-    safety: SafetySection
+    llm: LLMSection = field(default_factory=LLMSection)
+    hibernate: HibernateSection = field(default_factory=HibernateSection)
+    fatigue: FatigueSection = field(default_factory=FatigueSection)
+    sliding_window: SlidingWindowSection = field(
+        default_factory=SlidingWindowSection
+    )
+    graph_memory: GraphMemorySection = field(
+        default_factory=GraphMemorySection
+    )
+    knowledge_base: KnowledgeBaseSection = field(
+        default_factory=KnowledgeBaseSection
+    )
+    # Per-project plugin config. Key = project folder name (matches
+    # src/plugins/builtin/<name>/ or workspace/plugins/<name>/). A
+    # project can carry one tentacle, one sensory, or a bundle of both
+    # that share state (e.g. Telegram: sensory + reply tentacle
+    # sharing one HttpTelegramClient).
+    #
+    # DEPRECATED: kept for backwards compatibility only. Phase 2 of the
+    # config overhaul moves plugin settings to per-plugin files under
+    # workspace/plugin-configs/<project>.yaml; this central dict stays
+    # so existing configs still load until the migration lands.
+    plugins: dict[str, dict[str, Any]] = field(default_factory=dict)
+    sleep: SleepSection = field(default_factory=SleepSection)
+    safety: SafetySection = field(default_factory=SafetySection)
     dashboard: DashboardSection = field(default_factory=DashboardSection)
     sandbox: SandboxSection = field(default_factory=SandboxSection)
+
+
+# ---------------- env substitution ----------------
 
 
 def _substitute_env(value: Any) -> Any:
@@ -188,74 +351,245 @@ def _substitute_env(value: Any) -> Any:
     return value
 
 
+# ---------------- section builders ----------------
+#
+# Each builder overlays raw YAML on top of the dataclass's defaults so
+# sparse configs still load. Absent keys fall back to defaults; an
+# explicit empty value (e.g. `thresholds: {}`) is honored as empty.
+
+
+def _build_llm_params(
+    role_name: str, raw_params: dict[str, Any] | None,
+) -> LLMParams:
+    """Build LLMParams for `role_name`.
+
+    Precedence (highest to lowest):
+      1. User-supplied fields in config YAML (`raw_params`)
+      2. Role-specific defaults from `_ROLE_DEFAULTS[role_name]`
+      3. Universal defaults on the LLMParams dataclass itself
+
+    Unknown keys in raw_params are ignored (forward compatibility — a
+    future LLMParams field can appear in configs without errors).
+    """
+    # Normalize the legacy alias on the user's raw input first, BEFORE
+    # merging with role defaults. Older configs may say `max_tokens`;
+    # the current dataclass field is `max_output_tokens` (direction
+    # made explicit). If both appear in the user's block, the explicit
+    # new name wins and the alias is discarded.
+    user: dict[str, Any] = dict(raw_params or {})
+    if "max_tokens" in user:
+        if "max_output_tokens" not in user:
+            user["max_output_tokens"] = user["max_tokens"]
+        user.pop("max_tokens")
+
+    merged: dict[str, Any] = {}
+    merged.update(_ROLE_DEFAULTS.get(role_name, {}))
+    for k, v in user.items():
+        merged[k] = v
+    # Filter to known fields so unknown keys don't crash dataclass init.
+    known = {f.name for f in fields(LLMParams)}
+    safe = {k: v for k, v in merged.items() if k in known}
+    # Light coercion: YAML lists for list fields, numeric strings for numbers.
+    if "stop_sequences" in safe and safe["stop_sequences"] is not None:
+        safe["stop_sequences"] = list(safe["stop_sequences"])
+    if "retry_on_status" in safe and safe["retry_on_status"] is not None:
+        safe["retry_on_status"] = [int(x) for x in safe["retry_on_status"]]
+    return LLMParams(**safe)
+
+
 def _build_llm(raw: dict[str, Any]) -> LLMSection:
     providers: dict[str, Provider] = {}
     for pname, pdata in (raw.get("providers") or {}).items():
-        models = [ModelEntry(name=m["name"], capabilities=list(m.get("capabilities", [])))
-                  for m in (pdata.get("models") or [])]
+        models = [
+            ModelEntry(
+                name=m.get("name", ""),
+                capabilities=list(m.get("capabilities", [])),
+            )
+            for m in (pdata.get("models") or [])
+        ]
         providers[pname] = Provider(
-            type=pdata["type"],
-            base_url=pdata["base_url"],
+            type=pdata.get("type", "openai_compatible"),
+            base_url=pdata.get("base_url", ""),
             api_key=pdata.get("api_key"),
             models=models,
         )
     roles: dict[str, RoleBinding] = {}
     for rname, rdata in (raw.get("roles") or {}).items():
-        roles[rname] = RoleBinding(provider=rdata["provider"], model=rdata["model"])
+        roles[rname] = RoleBinding(
+            provider=rdata.get("provider", ""),
+            model=rdata.get("model", ""),
+            params=_build_llm_params(rname, rdata.get("params")),
+        )
     return LLMSection(providers=providers, roles=roles)
 
 
-def load_config(path: str | Path = "config.yaml") -> Config:
-    raw_text = Path(path).read_text(encoding="utf-8")
-    raw: dict[str, Any] = yaml.safe_load(raw_text)
-    raw = _substitute_env(raw)
+# ---------------- schema introspection (for dashboard UI) ----------------
 
-    fatigue_raw = raw["fatigue"]
-    thresholds = {int(k): str(v) for k, v in (fatigue_raw.get("thresholds") or {}).items()}
-    fatigue = FatigueSection(
-        gm_node_soft_limit=fatigue_raw["gm_node_soft_limit"],
-        force_sleep_threshold=fatigue_raw["force_sleep_threshold"],
+
+def llm_params_schema() -> list[dict[str, Any]]:
+    """Return a list of field descriptors for LLMParams.
+
+    Shape matches the per-plugin ``config_schema`` contract already
+    consumed by the dashboard JS (`renderRow` + the plugin card
+    renderer): each entry is ``{field, type, default, help}``.
+
+    The dashboard fetches this via ``GET /api/config/schema`` and renders
+    a dynamic "Params" sub-form under each LLM role so the UI stays in
+    lockstep with the Python dataclass — adding a field to LLMParams
+    automatically surfaces it in the UI without touching JavaScript.
+    """
+    out: list[dict[str, Any]] = []
+    defaults = LLMParams()
+    for f in fields(LLMParams):
+        t = f.type
+        # Normalize annotation to a UI type string.
+        ui_type = "text"
+        ann = t if isinstance(t, str) else getattr(t, "__name__", str(t))
+        ann_lower = ann.lower()
+        if "bool" in ann_lower:
+            ui_type = "bool"
+        elif "int" in ann_lower and "float" not in ann_lower:
+            ui_type = "number"
+        elif "float" in ann_lower:
+            ui_type = "number_float"
+        elif "list" in ann_lower:
+            ui_type = "list"
+        else:
+            ui_type = "text"
+        # Enum-like: reasoning_mode / response_format
+        choices: list[str] | None = None
+        if f.name == "reasoning_mode":
+            choices = ["off", "low", "medium", "high"]
+            ui_type = "enum"
+        elif f.name == "response_format":
+            choices = ["", "json_object"]
+            ui_type = "enum"
+        entry: dict[str, Any] = {
+            "field": f.name,
+            "type": ui_type,
+            "default": getattr(defaults, f.name),
+            "help": _LLM_PARAM_HELP.get(f.name, ""),
+        }
+        if choices is not None:
+            entry["choices"] = choices
+        out.append(entry)
+    return out
+
+
+def role_default_params(role_name: str) -> dict[str, Any]:
+    """Expose the role-specific default overrides for the dashboard.
+
+    The UI can use this to pre-fill the params form when the user first
+    opens a role (so the Self role shows max_tokens=8192 etc. rather
+    than the universal 4096). Returning a fresh dict each time so
+    callers can safely mutate.
+    """
+    return dict(_ROLE_DEFAULTS.get(role_name, {}))
+
+
+def _build_hibernate(raw: dict[str, Any]) -> HibernateSection:
+    d = HibernateSection()
+    return HibernateSection(
+        min_interval=int(raw.get("min_interval", d.min_interval)),
+        max_interval=int(raw.get("max_interval", d.max_interval)),
+        default_interval=int(raw.get("default_interval",
+                                       d.default_interval)),
+    )
+
+
+def _build_fatigue(raw: dict[str, Any]) -> FatigueSection:
+    d = FatigueSection()
+    if "thresholds" in raw:
+        thresholds = {
+            int(k): str(v) for k, v in (raw["thresholds"] or {}).items()
+        }
+    else:
+        thresholds = d.thresholds
+    return FatigueSection(
+        gm_node_soft_limit=int(raw.get("gm_node_soft_limit",
+                                         d.gm_node_soft_limit)),
+        force_sleep_threshold=int(raw.get("force_sleep_threshold",
+                                             d.force_sleep_threshold)),
         thresholds=thresholds,
     )
 
-    _validate_fatigue_thresholds(fatigue)
 
-    hib = raw["hibernate"]
-    gm = raw["graph_memory"]
-    return Config(
-        llm=_build_llm(raw["llm"]),
-        hibernate=HibernateSection(
-            min_interval=hib["min_interval"],
-            max_interval=hib["max_interval"],
-            default_interval=hib["default_interval"],
+def _build_sliding_window(raw: dict[str, Any]) -> SlidingWindowSection:
+    d = SlidingWindowSection()
+    return SlidingWindowSection(
+        max_tokens=int(raw.get("max_tokens", d.max_tokens)),
+    )
+
+
+def _build_graph_memory(raw: dict[str, Any]) -> GraphMemorySection:
+    d = GraphMemorySection()
+    return GraphMemorySection(
+        db_path=str(raw.get("db_path", d.db_path)),
+        auto_ingest_similarity_threshold=float(
+            raw.get("auto_ingest_similarity_threshold",
+                     d.auto_ingest_similarity_threshold)
         ),
-        fatigue=fatigue,
-        sliding_window=SlidingWindowSection(max_tokens=raw["sliding_window"]["max_tokens"]),
-        graph_memory=GraphMemorySection(
-            db_path=gm["db_path"],
-            auto_ingest_similarity_threshold=gm["auto_ingest_similarity_threshold"],
-            recall_per_stimulus_k=gm["recall_per_stimulus_k"],
-            max_recall_nodes=gm["max_recall_nodes"],
-            neighbor_expand_depth=gm["neighbor_expand_depth"],
+        recall_per_stimulus_k=int(raw.get("recall_per_stimulus_k",
+                                              d.recall_per_stimulus_k)),
+        max_recall_nodes=int(raw.get("max_recall_nodes",
+                                         d.max_recall_nodes)),
+        neighbor_expand_depth=int(raw.get("neighbor_expand_depth",
+                                              d.neighbor_expand_depth)),
+    )
+
+
+def _build_kb(raw: dict[str, Any]) -> KnowledgeBaseSection:
+    d = KnowledgeBaseSection()
+    return KnowledgeBaseSection(dir=str(raw.get("dir", d.dir)))
+
+
+def _build_sleep(raw: dict[str, Any]) -> SleepSection:
+    d = SleepSection()
+    return SleepSection(
+        max_duration_seconds=int(raw.get("max_duration_seconds",
+                                              d.max_duration_seconds)),
+        min_community_size=int(raw.get("min_community_size",
+                                           d.min_community_size)),
+        kb_consolidation_threshold=float(
+            raw.get("kb_consolidation_threshold",
+                     d.kb_consolidation_threshold)
         ),
-        knowledge_base=KnowledgeBaseSection(dir=raw["knowledge_base"]["dir"]),
-        sensory=raw.get("sensory") or {},
-        tentacle=raw.get("tentacle") or {},
-        sleep=_build_sleep(raw["sleep"]),
-        safety=SafetySection(
-            gm_node_hard_limit=raw["safety"]["gm_node_hard_limit"],
-            max_consecutive_no_action=raw["safety"]["max_consecutive_no_action"],
+        kb_index_max=int(raw.get("kb_index_max", d.kb_index_max)),
+        kb_archive_pct=int(raw.get("kb_archive_pct", d.kb_archive_pct)),
+        kb_revive_threshold=float(raw.get("kb_revive_threshold",
+                                               d.kb_revive_threshold)),
+    )
+
+
+def _build_safety(raw: dict[str, Any]) -> SafetySection:
+    d = SafetySection()
+    return SafetySection(
+        gm_node_hard_limit=int(raw.get("gm_node_hard_limit",
+                                           d.gm_node_hard_limit)),
+        max_consecutive_no_action=int(
+            raw.get("max_consecutive_no_action", d.max_consecutive_no_action)
         ),
-        dashboard=_build_dashboard(raw.get("dashboard")),
-        sandbox=_build_sandbox(raw.get("sandbox")),
+    )
+
+
+def _build_dashboard(raw: dict[str, Any] | None) -> DashboardSection:
+    raw = raw or {}
+    d = DashboardSection()
+    return DashboardSection(
+        enabled=bool(raw.get("enabled", d.enabled)),
+        host=str(raw.get("host", d.host)),
+        port=int(raw.get("port", d.port)),
+        prompt_log_size=max(1, int(raw.get("prompt_log_size",
+                                               d.prompt_log_size))),
     )
 
 
 def _build_sandbox(raw: dict[str, Any] | None) -> SandboxSection:
     raw = raw or {}
+    d = SandboxSection()
     res_raw = raw.get("resources") or {}
     agent_raw = raw.get("agent") or {}
-    display = str(raw.get("display", "headed")).lower()
+    display = str(raw.get("display", d.display)).lower()
     if display not in ("headed", "headless"):
         print(
             f"warning: sandbox.display={display!r} not recognised; "
@@ -264,42 +598,103 @@ def _build_sandbox(raw: dict[str, Any] | None) -> SandboxSection:
         )
         display = "headed"
     return SandboxSection(
-        guest_os=str(raw.get("guest_os", "")),
-        provider=str(raw.get("provider", "qemu")),
-        vm_name=str(raw.get("vm_name", "")),
+        guest_os=str(raw.get("guest_os", d.guest_os)),
+        provider=str(raw.get("provider", d.provider)),
+        vm_name=str(raw.get("vm_name", d.vm_name)),
         display=display,
         resources=SandboxResourcesSection(
-            cpu=int(res_raw.get("cpu", 2)),
-            memory_mb=int(res_raw.get("memory_mb", 4096)),
-            disk_gb=int(res_raw.get("disk_gb", 40)),
+            cpu=int(res_raw.get("cpu", d.resources.cpu)),
+            memory_mb=int(res_raw.get("memory_mb", d.resources.memory_mb)),
+            disk_gb=int(res_raw.get("disk_gb", d.resources.disk_gb)),
         ),
         agent=SandboxAgentSection(
-            url=str(agent_raw.get("url", "")),
-            token=str(agent_raw.get("token", "")),
+            url=str(agent_raw.get("url", d.agent.url)),
+            token=str(agent_raw.get("token", d.agent.token)),
         ),
-        network_mode=str(raw.get("network_mode", "nat_allowlist")),
-        allowlist_domains=list(raw.get("allowlist_domains") or []),
+        network_mode=str(raw.get("network_mode", d.network_mode)),
+        allowlist_domains=list(raw.get("allowlist_domains")
+                                 or d.allowlist_domains),
     )
 
 
-def _build_sleep(raw: dict[str, Any]) -> SleepSection:
-    return SleepSection(
-        max_duration_seconds=raw["max_duration_seconds"],
-        min_community_size=int(raw.get("min_community_size", 2)),
-        kb_consolidation_threshold=float(raw.get("kb_consolidation_threshold", 0.85)),
-        kb_index_max=int(raw.get("kb_index_max", 30)),
-        kb_archive_pct=int(raw.get("kb_archive_pct", 10)),
-        kb_revive_threshold=float(raw.get("kb_revive_threshold", 0.80)),
-    )
+# ---------------- dump / ensure ----------------
 
 
-def _build_dashboard(raw: dict[str, Any] | None) -> DashboardSection:
-    raw = raw or {}
-    return DashboardSection(
-        enabled=bool(raw.get("enabled", True)),
-        host=str(raw.get("host", "127.0.0.1")),
-        port=int(raw.get("port", 8765)),
-        prompt_log_size=max(1, int(raw.get("prompt_log_size", 20))),
+def dump_config(cfg: Config) -> str:
+    """Serialize a Config dataclass to the YAML text we'd write to disk.
+
+    Round-trips cleanly through load_config: `dump_config(Config())` is
+    a valid minimal config that load_config accepts without error.
+
+    fatigue.thresholds uses int keys in memory; YAML tolerates that but
+    some downstream tools don't, so we normalize to string keys on the
+    way out. load_config casts them back to int on the way in.
+    """
+    data: dict[str, Any] = asdict(cfg)
+    ft = data.get("fatigue") or {}
+    if "thresholds" in ft:
+        ft["thresholds"] = {str(k): v for k, v in ft["thresholds"].items()}
+    return yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+
+
+def ensure_config(path: str | Path = "config.yaml") -> bool:
+    """Create a defaults-populated config at `path` if it does not exist.
+
+    Returns True iff a new file was written. Parent directories are
+    created as needed.
+    """
+    p = Path(path)
+    if p.exists():
+        return False
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(dump_config(Config()), encoding="utf-8")
+    return True
+
+
+# ---------------- loader ----------------
+
+
+class _ConfigBootstrapExit(SystemExit):
+    """SystemExit subclass raised after first-run config generation so
+    tests can distinguish it from unrelated exits."""
+    pass
+
+
+def load_config(path: str | Path = "config.yaml") -> Config:
+    p = Path(path)
+    if not p.exists():
+        ensure_config(p)
+        print(
+            f"✨ Generated default config at {p}\n"
+            f"   Next steps:\n"
+            f"     1. Add at least one provider under llm.providers with a\n"
+            f"        valid api_key.\n"
+            f"     2. Bind the required roles under llm.roles: self,\n"
+            f"        hypothalamus, embedding (compact/reranker optional).\n"
+            f"     3. Re-run Krakey.",
+            file=sys.stderr,
+        )
+        raise _ConfigBootstrapExit(1)
+
+    raw_text = p.read_text(encoding="utf-8")
+    raw: dict[str, Any] = yaml.safe_load(raw_text) or {}
+    raw = _substitute_env(raw)
+
+    fatigue = _build_fatigue(raw.get("fatigue") or {})
+    _validate_fatigue_thresholds(fatigue)
+
+    return Config(
+        llm=_build_llm(raw.get("llm") or {}),
+        hibernate=_build_hibernate(raw.get("hibernate") or {}),
+        fatigue=fatigue,
+        sliding_window=_build_sliding_window(raw.get("sliding_window") or {}),
+        graph_memory=_build_graph_memory(raw.get("graph_memory") or {}),
+        knowledge_base=_build_kb(raw.get("knowledge_base") or {}),
+        plugins=raw.get("plugins") or {},
+        sleep=_build_sleep(raw.get("sleep") or {}),
+        safety=_build_safety(raw.get("safety") or {}),
+        dashboard=_build_dashboard(raw.get("dashboard")),
+        sandbox=_build_sandbox(raw.get("sandbox")),
     )
 
 

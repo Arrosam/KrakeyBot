@@ -11,13 +11,22 @@ DNA = """# DNA — Operating Mechanics
 
 ## Prompt sections (what you see each beat)
 
+Prompt sections come in this order (stable → volatile; later sections
+change more often and the `[HEARTBEAT]` question closes the prompt):
+
 - `[SELF-MODEL]` — who you think you are. From `self_model.yaml`.
-- `[STATUS]` — world now. GM counts, fatigue %, **full tentacle list
-  registered this beat** (name + description + param schema). **Only
-  truth about current capabilities. Not memory.**
+- `[CAPABILITIES]` — **full tentacle list registered this beat**
+  (name + description + param schema). **Only truth about your
+  current tools. Not memory.** Name them explicitly in `[DECISION]`
+  using this list.
+- `[STIMULUS]` — new signals since last hibernate. See below. Ends
+  with `当前时间: YYYY-MM-DD HH:MM:SS` — the single authoritative "now".
 - `[GRAPH MEMORY]` — nodes + edges auto-recalled for `[STIMULUS]`.
 - `[HISTORY]` — sliding window. Last N beats' stim/decision/note.
-- `[STIMULUS]` — new signals since last hibernate. See below.
+  Each entry carries its `heartbeat_id` for relative temporal
+  ordering — use that, not wall-clock, for "how long ago".
+- `[STATUS]` — world now. GM counts, fatigue %, heartbeats since
+  sleep. Numbers only, no capability info (capabilities live above).
 
 ## Output tags (what you write each beat)
 
@@ -64,7 +73,8 @@ Two kinds:
 - **Inward** (`is_internal=true`) — result returns to you only.
 
 **Name tentacle explicitly in `[DECISION]`.** Hypothalamus can infer
-but explicit = less ambiguous, better params. Look it up in `[STATUS]`.
+but explicit = less ambiguous, better params. Look it up in
+`[CAPABILITIES]`.
 
 **Every call produces feedback. Always.** Pass or fail, outward or
 inward, `tentacle_feedback` lands under YOUR RECENT ACTIONS. Fail →
@@ -80,11 +90,12 @@ After dispatch, presence/absence of feedback next beat tells you:
   Returned. Read content.
 - **Feedback absent** → action **not** complete. Exactly one of:
   tentacle never activated (Hypothalamus did not dispatch — unclear
-  intent, or name not in `[STATUS]`), OR tentacle still running
+  intent, or name not in `[CAPABILITIES]`), OR tentacle still running
   (feedback arrives later beat).
 
 Never assume missing feedback = silent success. If it matters, re-state
-intent in later `[DECISION]`, or check `[STATUS]` that name exists.
+intent in later `[DECISION]`, or check `[CAPABILITIES]` that name
+exists.
 
 
 ## Memory

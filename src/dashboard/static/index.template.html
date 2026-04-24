@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Krakey Dashboard</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <img class="brand-logo" src="/static/logo.png" alt=""
+           onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'brand-logo placeholder',textContent:'K'}))">
+      <div class="brand-text">
+        <div class="brand-name">KrakeyBot</div>
+        <div class="brand-tag">digital being</div>
+      </div>
+    </div>
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="thoughts">💭 Inner Thoughts</button>
+      <button class="tab-btn" data-tab="chat">💬 Chat</button>
+      <button class="tab-btn" data-tab="memory">🧠 Memory</button>
+      <button class="tab-btn" data-tab="prompts">📜 Prompts</button>
+      <button class="tab-btn" data-tab="settings">⚙️ Settings</button>
+    </nav>
+    <div class="status-bar" id="status-bar">— connecting —</div>
+  </header>
+
+  <main>
+    <!-- @@view:thoughts@@ -->
+
+    <!-- @@view:prompts@@ -->
+
+    <!-- @@view:chat@@ -->
+
+    <!-- @@view:memory@@ -->
+
+    <!-- @@view:settings@@ -->
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

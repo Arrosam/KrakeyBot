@@ -3,7 +3,7 @@ import pytest
 
 from src.memory.graph_memory import GraphMemory
 from src.models.stimulus import Stimulus
-from src.tentacles.memory_recall import MemoryRecallTentacle
+from src.plugins.builtin.memory_recall import MemoryRecallTentacle
 
 
 class MapEmbedder:
@@ -116,7 +116,7 @@ async def test_recall_follows_kb_index_node(tmp_path):
     await kb.write_entry("Sun is a yellow dwarf star",
                           embedding=[0.95, 0.31])
 
-    from src.tentacles.memory_recall import MemoryRecallTentacle
+    from src.plugins.builtin.memory_recall import MemoryRecallTentacle
     t = MemoryRecallTentacle(gm=gm, embedder=embed, kb_registry=reg)
     stim = await t.execute("astronomy", {})
 
@@ -138,7 +138,7 @@ async def test_recall_with_kb_id_param_queries_that_kb_directly(tmp_path):
     await kb.write_entry("Sun mass: 2e30 kg", embedding=[1.0, 0.0])
     await kb.write_entry("Earth orbits Sun", embedding=[0.95, 0.31])
 
-    from src.tentacles.memory_recall import MemoryRecallTentacle
+    from src.plugins.builtin.memory_recall import MemoryRecallTentacle
     t = MemoryRecallTentacle(gm=gm, embedder=embed, kb_registry=reg)
     stim = await t.execute("look up sun in astronomy",
                               {"kb_id": "astronomy", "query": "sun"})
@@ -155,7 +155,7 @@ async def test_recall_without_kb_registry_still_works(tmp_path):
     await gm.insert_node(name="apple", category="FACT", description="",
                           embedding=[1.0, 0.0])
 
-    from src.tentacles.memory_recall import MemoryRecallTentacle
+    from src.plugins.builtin.memory_recall import MemoryRecallTentacle
     t = MemoryRecallTentacle(gm=gm, embedder=embed)  # no kb_registry
     stim = await t.execute("x", {})
     assert "apple" in stim.content

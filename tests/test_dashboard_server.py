@@ -4,7 +4,8 @@ import asyncio
 import httpx
 import pytest
 
-from src.dashboard.server import DashboardServer, create_app
+from src.dashboard.app_factory import create_app
+from src.dashboard.server import DashboardServer
 
 
 def test_app_factory_returns_fastapi_instance():

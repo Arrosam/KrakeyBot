@@ -6,7 +6,7 @@ import httpx
 import pytest
 import yaml
 
-from src.dashboard.server import create_app
+from src.dashboard.app_factory import create_app
 from src.models.config_backup import (
     BACKUP_FILENAME_PREFIX, backup_config, list_backups,
 )
@@ -150,10 +150,61 @@ async def test_post_settings_requires_parsed_or_raw(tmp_path):
     assert r.status_code == 400
 
 
+# ---------------- /api/config/schema ----------------
+
+
+async def test_config_schema_lists_llm_params(tmp_path):
+    """The dashboard renders LLM role params from this endpoint. It
+    must expose every field on LLMParams so a future field addition
+    doesn't silently drop off the UI."""
+    p = tmp_path / "config.yaml"
+    p.write_text("a: 1\n", encoding="utf-8")
+    async with _client(config_path=p) as c:
+        r = await c.get("/api/config/schema")
+    assert r.status_code == 200
+    body = r.json()
+    assert "llm_params" in body
+    assert "llm_role_defaults" in body
+    names = {e["field"] for e in body["llm_params"]}
+    assert {"max_output_tokens", "max_input_tokens", "temperature",
+            "reasoning_mode", "reasoning_budget_tokens",
+            "timeout_seconds", "max_retries", "retry_on_status"} <= names
+    # Old ambiguous name must not resurface in the schema; it lives
+    # only as a YAML read-alias.
+    assert "max_tokens" not in names
+
+
+async def test_config_schema_role_defaults_include_known_roles(tmp_path):
+    """Each built-in role name must appear in llm_role_defaults so the
+    UI can pre-fill sensible values when a role is first created."""
+    p = tmp_path / "config.yaml"
+    p.write_text("a: 1\n", encoding="utf-8")
+    async with _client(config_path=p) as c:
+        r = await c.get("/api/config/schema")
+    defaults = r.json()["llm_role_defaults"]
+    for role in ("self", "hypothalamus", "compact", "classifier",
+                 "embedding", "reranker"):
+        assert role in defaults, f"role {role} missing from defaults"
+    # Spot-check a value
+    assert defaults["self"]["max_output_tokens"] == 8192
+
+
+async def test_config_schema_reasoning_mode_has_choices(tmp_path):
+    """reasoning_mode is an enum — UI needs the choice list."""
+    p = tmp_path / "config.yaml"
+    p.write_text("a: 1\n", encoding="utf-8")
+    async with _client(config_path=p) as c:
+        r = await c.get("/api/config/schema")
+    by_name = {e["field"]: e for e in r.json()["llm_params"]}
+    entry = by_name["reasoning_mode"]
+    assert entry["type"] == "enum"
+    assert set(entry["choices"]) == {"off", "low", "medium", "high"}
+
+
 async def test_upload_endpoint_saves_files_and_serves_them(tmp_path, monkeypatch):
     # Re-point the upload dir at tmp so we don't litter the repo workspace.
-    import src.dashboard.server as srv
-    monkeypatch.setattr(srv, "_UPLOAD_DIR", tmp_path / "uploads")
+    import src.dashboard.routes.uploads as uploads_route
+    monkeypatch.setattr(uploads_route, "_UPLOAD_DIR", tmp_path / "uploads")
 
     async with _client() as c:
         files = [("files", ("hello.txt", b"hi there", "text/plain"))]

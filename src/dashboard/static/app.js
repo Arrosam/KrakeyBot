@@ -645,17 +645,48 @@ const SCHEMAS = {
   ],
 };
 
+let pluginReport = { tentacles: [], sensories: [] };
+// Dirty-tracking target for plugin edits. One entry per project, shape:
+//   { enabled: bool, ...schemaFields }
+// Populated on each render from /api/plugins `values`; re-built from
+// scratch so stale projects fall off. Saved via
+// POST /api/plugins/<project>/config (NOT /api/settings — plugin
+// configs live in their own per-plugin YAML files now).
+let pluginEdits = {};
+
+// Config-schema introspection cache. Populated on loadSettings() from
+// GET /api/config/schema. The LLM role params UI reads this instead of
+// hardcoding field lists — adding a field to LLMParams on the Python
+// side automatically surfaces it here without JS edits.
+//   shape: { llm_params: [{field, type, default, help, choices?}], llm_role_defaults: {role: {...}} }
+let configSchema = { llm_params: [], llm_role_defaults: {} };
+
 async function loadSettings() {
   settingsToast.textContent = "";
   settingsForm.innerHTML = "loading...";
   try {
-    const r = await fetch("/api/settings");
-    if (r.status === 503) {
+    // Load config + plugin discovery + schema in parallel
+    const [cfgRes, pluginRes, schemaRes] = await Promise.all([
+      fetch("/api/settings"),
+      fetch("/api/plugins").catch(() => null),
+      fetch("/api/config/schema").catch(() => null),
+    ]);
+    if (cfgRes.status === 503) {
       settingsForm.innerHTML = "<i>(config_path not provided to dashboard)</i>";
       return;
     }
-    const data = await r.json();
+    const data = await cfgRes.json();
     cfgState = data.parsed || {};
+    if (pluginRes && pluginRes.ok) {
+      pluginReport = await pluginRes.json();
+    } else {
+      pluginReport = { tentacles: [], sensories: [] };
+    }
+    if (schemaRes && schemaRes.ok) {
+      configSchema = await schemaRes.json();
+    } else {
+      configSchema = { llm_params: [], llm_role_defaults: {} };
+    }
     renderSettingsForm();
   } catch (e) {
     settingsForm.innerHTML = "error loading: " + escapeHtml(String(e));
@@ -692,12 +723,12 @@ function renderSettingsForm() {
   settingsForm.appendChild(renderGenericSection("knowledge_base", "Knowledge Base",
     cfgState.knowledge_base, SCHEMAS.knowledge_base));
 
-  settingsForm.appendChild(renderDictSection("sensory", "Sensory",
-    ensure(cfgState, "sensory", () => ({})),
-    { defaultEntry: () => ({ enabled: true }) }));
-  settingsForm.appendChild(renderDictSection("tentacle", "Tentacle",
-    ensure(cfgState, "tentacle", () => ({})),
-    { defaultEntry: () => ({ enabled: true }) }));
+  // Plugins — one card per component (tentacle / sensory) known to
+  // the runtime RIGHT NOW. Components from the same project share one
+  // config_schema; edits land in pluginEdits[<project>] and are
+  // persisted per-project via POST /api/plugins/<project>/config.
+  pluginEdits = {};  // rebuild each render so removed projects fall off
+  settingsForm.appendChild(renderPluginsSection());
 
   ensureSection("sleep");
   settingsForm.appendChild(renderGenericSection("sleep", "Sleep",
@@ -818,6 +849,30 @@ function renderRow(label, target, key, type, helpPath) {
     widget.type = "password";
     widget.value = val == null ? "" : val;
     widget.addEventListener("input", () => { target[key] = widget.value; });
+  } else if (type === "enum") {
+    // Dropdown whose option list is passed via the row's 5th arg
+    // (choices). Handled by renderEnumRow — renderRow itself falls
+    // back to text if no choices are wired up.
+    widget = document.createElement("input");
+    widget.type = "text";
+    widget.value = val == null ? "" : val;
+    widget.addEventListener("input", () => { target[key] = widget.value; });
+  } else if (type === "list") {
+    // Comma-separated list for stop_sequences / retry_on_status.
+    // Parsed back into array on save; empty → undefined (drops field).
+    widget = document.createElement("input");
+    widget.type = "text";
+    widget.placeholder = "comma, separated, values";
+    widget.value = Array.isArray(val) ? val.join(", ") : (val == null ? "" : val);
+    widget.addEventListener("input", () => {
+      const v = widget.value.trim();
+      if (v === "") { delete target[key]; return; }
+      const parts = v.split(",").map(s => s.trim()).filter(s => s);
+      // If every part parses as an integer, store as ints (retry codes
+      // are ints in the dataclass). Otherwise keep strings.
+      const allInts = parts.every(s => /^-?\d+$/.test(s));
+      target[key] = allInts ? parts.map(s => parseInt(s, 10)) : parts;
+    });
   } else {
     widget = document.createElement("input");
     widget.type = "text";
@@ -826,6 +881,38 @@ function renderRow(label, target, key, type, helpPath) {
   }
   if (helpPath && HELP[helpPath] && type !== "bool") widget.title = HELP[helpPath];
   row.appendChild(widget);
+  return row;
+}
+
+// Enum row — dropdown <select> with a given choice list. Used for
+// reasoning_mode / response_format. Kept separate from the generic
+// renderRow so the <select> can be populated without hacking the
+// main dispatch table.
+function renderEnumRow(label, target, key, choices, helpPath) {
+  const row = document.createElement("div");
+  row.className = "cfg-row";
+  const lab = document.createElement("label");
+  lab.textContent = label;
+  if (helpPath && HELP[helpPath]) lab.title = HELP[helpPath];
+  row.appendChild(lab);
+  const sel = document.createElement("select");
+  for (const c of choices) {
+    const opt = document.createElement("option");
+    opt.value = c;
+    opt.textContent = c === "" ? "(unset)" : c;
+    sel.appendChild(opt);
+  }
+  const cur = target[key];
+  sel.value = cur == null ? "" : cur;
+  sel.addEventListener("change", () => {
+    if (sel.value === "") {
+      delete target[key];
+    } else {
+      target[key] = sel.value;
+    }
+  });
+  if (helpPath && HELP[helpPath]) sel.title = HELP[helpPath];
+  row.appendChild(sel);
   return row;
 }
 
@@ -1089,6 +1176,10 @@ function mkDropdown(triggerLabel, items, onPick) {
 }
 
 function renderRoleRow(rname, roles, providers) {
+  // Wrapper so the params <details> sits directly below the role row
+  // (sharing a container keeps delete/rename behavior correct).
+  const container = document.createElement("div");
+
   const row = document.createElement("div");
   row.className = "cfg-row";
   const lab = document.createElement("label");
@@ -1138,65 +1229,222 @@ function renderRoleRow(rname, roles, providers) {
 
   wrap.appendChild(provSel); wrap.appendChild(modSel); wrap.appendChild(del);
   row.appendChild(wrap);
-  return row;
+  container.appendChild(row);
+
+  // Params sub-block (driven by /api/config/schema). Collapsed by
+  // default so the LLM section stays scannable; user opens only the
+  // role they're tuning.
+  container.appendChild(renderRoleParamsBlock(rname, roles));
+  return container;
+}
+
+// Build a collapsible <details> containing every LLMParams field, with
+// types + defaults pulled from configSchema.llm_params. Unknown fields
+// in the stored YAML still render as text inputs so nothing is lost
+// on round-trip.
+function renderRoleParamsBlock(rname, roles) {
+  const details = document.createElement("details");
+  details.className = "role-params";
+  details.style.cssText = "margin:4px 0 12px 0;padding:6px 10px;" +
+    "border:1px solid var(--border,#e2e8f0);border-radius:4px;" +
+    "background:rgba(0,0,0,0.015)";
+  const summary = document.createElement("summary");
+  summary.style.cssText = "cursor:pointer;font-size:11px;color:var(--muted);" +
+    "user-select:none";
+  summary.textContent = `params (${rname})`;
+  details.appendChild(summary);
+
+  // Ensure the edit target exists. Pre-populate with role-specific
+  // defaults on first open so e.g. self shows max_tokens=8192 rather
+  // than the universal 4096 baseline.
+  if (roles[rname].params == null) {
+    const roleDefaults = (configSchema.llm_role_defaults || {})[rname] || {};
+    roles[rname].params = { ...roleDefaults };
+  }
+  const target = roles[rname].params;
+
+  const body = document.createElement("div");
+  body.style.cssText = "padding:4px 0";
+  const schema = configSchema.llm_params || [];
+  for (const fdef of schema) {
+    const helpPath = `llm.role.${rname}.params.${fdef.field}`;
+    if (fdef.help) HELP[helpPath] = fdef.help;
+    let r;
+    if (fdef.type === "enum" && fdef.choices) {
+      r = renderEnumRow(fdef.field, target, fdef.field, fdef.choices,
+                         helpPath);
+    } else {
+      r = renderRow(fdef.field, target, fdef.field, fdef.type, helpPath);
+    }
+    body.appendChild(r);
+  }
+  // Reset-to-defaults action — clears all overrides so the load-time
+  // role defaults take effect again.
+  const actions = document.createElement("div");
+  actions.style.cssText = "margin-top:6px";
+  const resetBtn = mkBtn("reset to role defaults", () => {
+    const roleDefaults = (configSchema.llm_role_defaults || {})[rname] || {};
+    roles[rname].params = { ...roleDefaults };
+    renderSettingsForm();
+  });
+  actions.appendChild(resetBtn);
+  body.appendChild(actions);
+  details.appendChild(body);
+  return details;
 }
 
 // ---------------- Generic dict section (sensory / tentacle) ----------------
 
-function renderDictSection(key, title, target, opts) {
-  const sec = makeSection(title);
-  const body = sec.querySelector(".body");
-  const headWrap = document.createElement("div");
-  headWrap.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:6px";
-  const addBtn = mkBtn("+ add entry", () => {
-    const name = prompt(`${title} entry key:`);
-    if (!name) return;
-    if (target[name]) { alert("exists"); return; }
-    target[name] = opts.defaultEntry();
-    renderSettingsForm();
-  });
-  headWrap.appendChild(addBtn);
-  body.appendChild(headWrap);
+// ---------------- Plugins section (auto-discovered) ----------------
 
-  for (const [name, entry] of Object.entries(target)) {
-    body.appendChild(renderDictEntry(name, entry, target));
-  }
+// Per-render guard so a multi-component project's config_schema
+// appears on only the first component rendered, not duplicated on
+// every member.
+let _pluginSchemaSeen = null;
+
+function renderPluginsSection() {
+  const sec = makeSection("Plugins (auto-discovered)");
+  const body = sec.querySelector(".body");
+  const hint = document.createElement("p");
+  hint.className = "hint";
+  hint.style.margin = "0 0 8px";
+  hint.innerHTML =
+    "Tentacles + sensories registered this run — built-ins plus anything " +
+    "dropped into <code>workspace/plugins/</code>. A project can carry " +
+    "multiple components (sensory + tentacle) that share config. See " +
+    "<code>PLUGINS.md</code> for the contract.";
+  body.appendChild(hint);
+
+  _pluginSchemaSeen = new Set();
+  body.appendChild(_renderPluginGroup("Tentacles",
+    pluginReport.tentacles || [], "tentacle"));
+  body.appendChild(_renderPluginGroup("Sensories",
+    pluginReport.sensories || [], "sensory"));
   return sec;
 }
 
-function renderDictEntry(name, entry, parent) {
+function _renderPluginGroup(title, items, kindKey) {
   const block = document.createElement("div");
   block.className = "subblock";
   const h = document.createElement("h4");
-  h.appendChild(document.createTextNode(name));
-  const actions = document.createElement("span");
-  actions.className = "actions";
-  const addField = mkBtn("+ field", () => {
-    const fname = prompt("field name:");
-    if (!fname || fname in entry) return;
-    entry[fname] = "";
-    renderSettingsForm();
-  });
-  const del = mkBtn("delete", () => {
-    if (!confirm(`delete "${name}"?`)) return;
-    delete parent[name];
-    renderSettingsForm();
-  }, "danger");
-  actions.appendChild(addField); actions.appendChild(del);
-  h.appendChild(actions);
+  h.textContent = `${title} (${items.length})`;
   block.appendChild(h);
-
-  for (const k of Object.keys(entry)) {
-    const v = entry[k];
-    let type;
-    if (typeof v === "boolean") type = "bool";
-    else if (typeof v === "number") type = Number.isInteger(v) ? "number" : "number_float";
-    else type = "text";
-    // Generic per-section help: e.g. tentacle.<key> applies regardless of entry name
-    const sectionKey = parent === cfgState.sensory ? "sensory" : "tentacle";
-    block.appendChild(renderRow(k, entry, k, type, `${sectionKey}.${k}`));
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.style.cssText = "color:var(--muted);font-size:11px;padding:4px 0";
+    empty.textContent = "(none)";
+    block.appendChild(empty);
+    return block;
+  }
+  for (const p of items) {
+    block.appendChild(_renderPluginCard(p, kindKey));
   }
   return block;
+}
+
+function _renderPluginCard(p, kindKey) {
+  const card = document.createElement("div");
+  card.className = "subblock";
+  card.style.margin = "6px 0";
+  const header = document.createElement("h4");
+  header.style.fontSize = "11px";
+  const nameSpan = document.createElement("span");
+  nameSpan.textContent = p.name;
+  const badge = document.createElement("span");
+  badge.style.cssText = "margin-left:8px;font-size:10px;padding:1px 6px;" +
+    "border-radius:3px;border:1px solid;";
+  if (p.source === "builtin") {
+    badge.textContent = "builtin";
+    badge.style.borderColor = "var(--cyan)";
+    badge.style.color = "var(--cyan)";
+  } else {
+    badge.textContent = p.loaded ? "plugin ✓" : (p.error ? "plugin ✗" : "plugin ○");
+    badge.style.borderColor = p.error ? "var(--red)" : "var(--magenta)";
+    badge.style.color = p.error ? "var(--red)" : "var(--magenta)";
+  }
+  header.appendChild(nameSpan);
+  header.appendChild(badge);
+  if (p.is_internal) {
+    const int = document.createElement("span");
+    int.style.cssText = "margin-left:6px;font-size:10px;color:var(--muted)";
+    int.textContent = "internal";
+    header.appendChild(int);
+  }
+  card.appendChild(header);
+
+  if (p.description) {
+    const d = document.createElement("div");
+    d.style.cssText = "color:var(--muted);font-size:11px;margin:2px 0 6px";
+    d.textContent = p.description;
+    card.appendChild(d);
+  }
+  if (p.error) {
+    const err = document.createElement("pre");
+    err.style.cssText = "color:var(--red);font-size:10px;background:var(--bg);" +
+      "padding:4px 6px;border-radius:3px;max-height:120px;overflow:auto;margin:4px 0";
+    err.textContent = p.error;
+    card.appendChild(err);
+    return card;
+  }
+
+  // Config is keyed by project name (one project = one config dict,
+  // shared across its components). Render the `enabled` toggle and the
+  // schema on the FIRST component of each project only; siblings get
+  // a "shared" note.
+  const projectKey = p.project || p.name;
+  const firstOfProject = _pluginSchemaSeen && !_pluginSchemaSeen.has(projectKey);
+  if (_pluginSchemaSeen) _pluginSchemaSeen.add(projectKey);
+
+  if (p.source === "core") {
+    // Core items are always on; no enabled toggle, no schema.
+    return card;
+  }
+
+  if (!firstOfProject) {
+    const note = document.createElement("div");
+    note.style.cssText = "color:var(--muted);font-size:10px;font-style:italic";
+    note.textContent = `(config shared with project ${projectKey} — edit there)`;
+    card.appendChild(note);
+    return card;
+  }
+
+  // Flat edit target: {enabled, ...schemaFields}. Seeded from the
+  // authoritative values reported by /api/plugins (which come from
+  // the per-plugin YAML file). renderRow mutates this object in-place
+  // as the user edits, and the Save handler splits it back into
+  // {enabled, values} before POSTing.
+  const edit = ensure(pluginEdits, projectKey, () => ({
+    enabled: !!p.enabled,
+    ...(p.values || {}),
+  }));
+
+  // Loader-owned `enabled` toggle — rendered separately from the
+  // plugin's own config_schema. Default: false. The loader strips
+  // any user-declared "enabled" field from config_schema so a plugin
+  // author can't override the default or the widget.
+  const enabledHelpPath = `plugin.${projectKey}.enabled`;
+  HELP[enabledHelpPath] = "Master switch for this plugin project. " +
+    "Default OFF — the factory never runs until you set this to true.";
+  card.appendChild(renderRow("enabled", edit, "enabled", "bool",
+                                 enabledHelpPath));
+
+  if (p.config_schema && p.config_schema.length) {
+    for (const fdef of p.config_schema) {
+      const type = fdef.type || "text";
+      const helpPath = `plugin.${projectKey}.${fdef.field}`;
+      if (fdef.help) HELP[helpPath] = fdef.help;
+      if (edit[fdef.field] == null && fdef.default != null) {
+        edit[fdef.field] = fdef.default;
+      }
+      card.appendChild(renderRow(fdef.field, edit, fdef.field, type, helpPath));
+    }
+  } else {
+    const note = document.createElement("div");
+    note.style.cssText = "color:var(--muted);font-size:10px;font-style:italic";
+    note.textContent = "(no configurable parameters — only the toggle above)";
+    card.appendChild(note);
+  }
+  return card;
 }
 
 function showToast(text, ok = true) {
@@ -1208,16 +1456,52 @@ function showToast(text, ok = true) {
 $("#settings-save").addEventListener("click", async () => {
   if (cfgState == null) { showToast("✗ nothing to save", false); return; }
   try {
+    // Plugin configs now live in their own per-plugin YAML files —
+    // strip `plugins` from the core config.yaml payload so it stops
+    // accumulating stale state. The backend still tolerates it for
+    // backwards compat, but new saves shouldn't touch it.
+    const corePayload = { ...cfgState };
+    delete corePayload.plugins;
+
     const r = await fetch("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ parsed: cfgState }),
+      body: JSON.stringify({ parsed: corePayload }),
     });
     const body = await r.json();
-    if (r.ok) {
-      showToast(`✓ saved (backup: ${body.backup || "n/a"}). Restart for changes to take effect.`);
-    } else {
+    if (!r.ok) {
       showToast(`✗ save failed: ${body.detail || r.statusText}`, false);
+      return;
+    }
+
+    // Persist each dirty plugin project to its own file. Errors are
+    // collected but don't abort — we still report the core save.
+    const pluginErrs = [];
+    for (const [project, edit] of Object.entries(pluginEdits)) {
+      const enabled = !!edit.enabled;
+      const values = {};
+      for (const [k, v] of Object.entries(edit)) {
+        if (k !== "enabled") values[k] = v;
+      }
+      try {
+        const pr = await fetch(`/api/plugins/${encodeURIComponent(project)}/config`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled, values }),
+        });
+        if (!pr.ok) {
+          const pb = await pr.json().catch(() => ({}));
+          pluginErrs.push(`${project}: ${pb.detail || pr.statusText}`);
+        }
+      } catch (e) {
+        pluginErrs.push(`${project}: ${e}`);
+      }
+    }
+
+    if (pluginErrs.length) {
+      showToast(`✗ plugin saves failed: ${pluginErrs.join(", ")}`, false);
+    } else {
+      showToast(`✓ saved (backup: ${body.backup || "n/a"}). Restart for changes to take effect.`);
     }
   } catch (e) {
     showToast("✗ network: " + e, false);

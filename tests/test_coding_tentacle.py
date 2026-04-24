@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from src.tentacles.coding import CodingTentacle, SubprocessRunner
+from src.plugins.builtin.coding import CodingTentacle
+from src.sandbox.subprocess_runner import SubprocessRunner
 
 
 class FakeRunner:
