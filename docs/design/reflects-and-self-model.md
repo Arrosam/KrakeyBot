@@ -215,29 +215,33 @@ class Reflect(Protocol):
 - 新增 **"action executor engine"**：扫描 Self 的 `[DECISION]` / `[ACTION]` 区域，正则抠出 tentacle-call tag，直接派发
 - 这条路径是强模型的默认 —— 省一次 LLM 调用、省延迟、省 token
 
-**tag 格式建议**（待定）：
+**Action tag 格式（finalized 2026-04-25）：OpenAI tool_calls 风格的
+JSONL，每行一个 JSON 对象，外层包 `[ACTION]...[/ACTION]` 划界**。
 
 ```
 [ACTION]
-<use tentacle="web_chat_reply" adrenalin="false">
-  {"text": "Hi Samuel!"}
-</use>
-<use tentacle="search">
-  {"query": "agent memory architectures 2026"}
-</use>
+{"name": "web_chat_reply", "arguments": {"text": "Hi Alex!"}}
+{"name": "search", "arguments": {"query": "Cython optimization"}}
 [/ACTION]
 ```
 
-或更简短的：
+字段：
+- ``name`` (str, required): tentacle 名字
+- ``arguments`` (object, optional): 参数字典；未传时 = 空字典
+- ``adrenalin`` (bool, optional): 紧迫信号；未传时 = false
 
-```
-[ACTION]
-@web_chat_reply(text="Hi Samuel!")
-@search(query="agent memory architectures 2026")
-[/ACTION]
-```
+**为什么选这个**：
+- OpenAI function calling 是行业标准（2023-至今），DeepSeek / Mistral
+  / Qwen / Gemini 全跟这个 schema —— LLM 训练数据覆盖最广。
+- 字段名 ``name`` + ``arguments`` 一比一对应 OpenAI tool 定义，便于
+  复用现有的 tool schema 描述。
+- JSONL 一行一个对象 —— Python `for line in block: json.loads(line)`
+  解析最简单，不需要嵌套 XML 解析器。
+- 单行错不影响其它行（比 XML 鲁棒：XML 一个 tag 错就整段废）。
+- 中文 / 转义 / 多行参数等边缘情况靠 JSON 标准处理。
 
-哪种格式更适合 LLM 生成需要测试。
+XML-ish `<use>...</use>` 和函数风格 `@tentacle(...)` 都被拒绝：前者啰嗦
+且 parser 需要更多状态机；后者紧凑但 LLM 在尾随逗号 / 引号转义上常出错。
 
 **问题点**：
 - 默认关闭意味着小模型用户需要手动打开这个 Reflect。OK，可以接受。
@@ -325,9 +329,10 @@ Samuel 最终拍板，这里是我的推荐：
 
 ## Part 5 — 待 Samuel 决策的开放问题
 
-- [ ] Reflect #1 的 action tag 用哪种格式？XML-ish `<use>` 还是
-      函数调用风格 `@tentacle(...)`？(实现 #1 时再定，可以拿目标模型
-      实测两种格式 parse 成功率)
+- [x] ~~Reflect #1 action tag 格式~~ — 2026-04-25：**OpenAI tool_calls
+      风格 JSONL** (`{"name": "...", "arguments": {...}}` 每行一个),
+      外层 `[ACTION]...[/ACTION]` 包裹。理由记录在 Part 3 Reflect #1
+      段。
 - [x] ~~Reflect #2 默认开关~~ — 2026-04-25：**默认关**。每跳多一次
       LLM 调用是延迟 / 成本代价；用户主动开就是接受这个代价。和
       Reflect #1 默认关同哲学（不为弱模型烘焙拐杖）。
