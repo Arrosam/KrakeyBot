@@ -395,6 +395,11 @@ Samuel 最终拍板，这里是我的推荐：
       dashboard 仅显示运行状态 + 提供 config 编辑界面。Reflects 各自的
       详细配置在各自文件夹（`workspace/reflects/<name>/config.yaml`,
       沿用现有 plugin 模式）。改 config 要重启。
+      **实现 2026-04-25 落地**: `config.reflects: list[str] | None`
+      字段；列表元素是 `BUILTIN_FACTORIES` 里的 name；按列表顺序注册
+      （= 链执行顺序）。`None` (字段缺失) → 兼容老 config, 注册旧默认
+      + loud deprecation。`[]` → 显式零插件, 静默执行。未知 name → log
+      + skip, 不阻塞启动（strictly additive 原则）。
 - [x] ~~多 Reflect 同 kind 共存~~ — 2026-04-25：**允许，顺序执行**。
       `config.yaml` 里有一个 reflects 列表，注册顺序 = 执行顺序。同
       kind 的 Reflects 链式调用：前一个的输出（e.g. anchors 列表 / 翻译

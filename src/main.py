@@ -7,6 +7,7 @@ KnowledgeBase, and full Sleep.
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
@@ -118,17 +119,14 @@ class Runtime:
         self.embedder = deps.embedder
         self.reranker = deps.reranker
         # Reflect registry — kind-grouped, ordered storage of pluggable
-        # mechanisms. Built-in defaults register here; user Reflects
-        # (#1 hypothalamus toggle, #2 LLM recall anchor, #3 in_mind)
-        # will register from config.yaml when implemented. See
-        # src/reflects/__init__.py + docs/design/reflects-and-self-model.md.
+        # mechanisms. Names + order come from ``config.reflects``;
+        # registration honors that order so chain semantics (when chain
+        # length >1 lands) match the user's declared sequence.
+        # See src/reflects/__init__.py + docs/design/reflects-and-self-model.md.
         from src.reflects import ReflectRegistry
-        from src.reflects.builtin import (
-            DefaultHypothalamusReflect, DefaultRecallAnchorReflect,
-        )
+        from src.reflects.builtin import BUILTIN_FACTORIES
         self.reflects = ReflectRegistry()
-        self.reflects.register(DefaultHypothalamusReflect(deps.hypo_llm))
-        self.reflects.register(DefaultRecallAnchorReflect())
+        self._register_reflects_from_config(deps, BUILTIN_FACTORIES)
         self.buffer = StimulusBuffer()
         # History token budget is derived from the Self role's input
         # context window × history_token_fraction. The Self role's
@@ -278,6 +276,59 @@ class Runtime:
                 backup_config(self._config_path, self._backup_dir)
             except Exception as e:  # noqa: BLE001
                 self.log.runtime_error(f"config backup failed: {e}")
+
+    def _register_reflects_from_config(
+        self, deps: "RuntimeDeps", factories: dict,
+    ) -> None:
+        """Walk ``config.reflects`` and register each built-in factory
+        in declared order.
+
+        Three input states (see ``Config.reflects`` docstring):
+          * ``None``   — migration sentinel: the YAML had no
+                         ``reflects:`` section. Fall back to the
+                         legacy default (both built-ins) and log a
+                         loud deprecation. Existing users see no
+                         behavior change.
+          * ``[]``     — explicit zero Reflects. Honored without
+                         warning. The zero-plugin invariant
+                         (CLAUDE.md, design doc) guarantees runtime
+                         keeps working.
+          * ``[...]``  — explicit list. Each entry is looked up in
+                         ``factories``; unknown names are logged + skipped
+                         so a typo doesn't crash startup.
+        """
+        names = self.config.reflects
+        if names is None:
+            print(
+                "config: no `reflects:` section found in config.yaml — "
+                "using legacy defaults (default_hypothalamus + "
+                "default_recall_anchor). Add an explicit `reflects:` "
+                "list to silence this warning. The recommended new "
+                "default is `reflects: [default_recall_anchor]` "
+                "(Reflect #1 default OFF, see "
+                "docs/design/reflects-and-self-model.md).",
+                file=sys.stderr,
+            )
+            names = ["default_hypothalamus", "default_recall_anchor"]
+        for name in names:
+            factory = factories.get(name)
+            if factory is None:
+                print(
+                    f"config: unknown Reflect name {name!r} — skipping. "
+                    f"Known: {sorted(factories.keys())}",
+                    file=sys.stderr,
+                )
+                continue
+            try:
+                self.reflects.register(factory(deps))
+            except Exception as e:  # noqa: BLE001
+                # A bad factory must not block runtime startup —
+                # plugins are strictly additive (CLAUDE.md invariant).
+                print(
+                    f"config: Reflect {name!r} factory raised {e!r}; "
+                    "skipping registration. Runtime will run without it.",
+                    file=sys.stderr,
+                )
 
     def _new_recall(self) -> IncrementalRecall:
         # Routed through the Reflect registry (kind="recall_anchor")

@@ -342,6 +342,16 @@ class Config:
     # workspace/plugin-configs/<project>.yaml; this central dict stays
     # so existing configs still load until the migration lands.
     plugins: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Ordered list of Reflect plugin names to register at startup.
+    # Order = execution order within a kind (chain semantics in
+    # ``ReflectRegistry``). ``None`` is a migration sentinel: the
+    # loader fell back to it because the YAML had no ``reflects:``
+    # key, which means "old config not yet updated" — the runtime
+    # then registers the legacy defaults + emits a deprecation
+    # warning. An empty ``[]`` is the user's explicit choice for
+    # zero Reflects (honored, no warning).
+    # See docs/design/reflects-and-self-model.md for the full design.
+    reflects: list[str] | None = None
     sleep: SleepSection = field(default_factory=SleepSection)
     safety: SafetySection = field(default_factory=SafetySection)
     dashboard: DashboardSection = field(default_factory=DashboardSection)
@@ -708,11 +718,52 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         graph_memory=_build_graph_memory(raw.get("graph_memory") or {}),
         knowledge_base=_build_kb(raw.get("knowledge_base") or {}),
         plugins=raw.get("plugins") or {},
+        reflects=_build_reflects(raw),
         sleep=_build_sleep(raw.get("sleep") or {}),
         safety=_build_safety(raw.get("safety") or {}),
         dashboard=_build_dashboard(raw.get("dashboard")),
         sandbox=_build_sandbox(raw.get("sandbox")),
     )
+
+
+def _build_reflects(raw: dict[str, Any]) -> list[str] | None:
+    """Parse the ``reflects:`` field.
+
+    Three states:
+      * key absent       → return None (migration sentinel; runtime
+                           falls back to legacy defaults + warns)
+      * key empty list   → return [] (explicit "no reflects")
+      * key string list  → return that list, in order
+
+    Non-string entries are dropped with a warning so a typo or stray
+    YAML mapping doesn't cause a registration crash later.
+    """
+    if "reflects" not in raw:
+        return None
+    val = raw.get("reflects")
+    if val is None:
+        # Explicit ``reflects: null`` is "I want no reflects" — same
+        # as empty list. Treat both equally.
+        return []
+    if not isinstance(val, list):
+        print(
+            f"warning: `reflects:` should be a list, got "
+            f"{type(val).__name__}; ignoring and falling back to "
+            "legacy defaults.",
+            file=sys.stderr,
+        )
+        return None
+    cleaned: list[str] = []
+    for item in val:
+        if not isinstance(item, str) or not item.strip():
+            print(
+                f"warning: `reflects:` entry {item!r} is not a non-empty "
+                "string; skipping.",
+                file=sys.stderr,
+            )
+            continue
+        cleaned.append(item.strip())
+    return cleaned
 
 
 def _warn_about_removed_sections(raw: dict[str, Any]) -> None:

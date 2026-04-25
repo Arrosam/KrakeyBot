@@ -89,6 +89,12 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         fatigue=FatigueSection(gm_node_soft_limit=200,
                                 force_sleep_threshold=120,
                                 thresholds={}),
+        # Explicit reflect list — silences the "no reflects: section,
+        # falling back to legacy default" deprecation warning that
+        # would otherwise fire in every test run. Tests that want to
+        # exercise specific Reflects override this on the returned
+        # runtime by clearing/refilling self.reflects directly.
+        reflects=["default_hypothalamus", "default_recall_anchor"],
         graph_memory=GraphMemorySection(
             db_path=gm_path, auto_ingest_similarity_threshold=0.9,
             recall_per_stimulus_k=5, neighbor_expand_depth=1,
