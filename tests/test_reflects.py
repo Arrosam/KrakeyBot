@@ -27,10 +27,10 @@ from src.reflects import (
 # "no code load before user enables" rule because tests are not the
 # Web UI / config-form scan path. Production discovery still goes
 # through src.reflects.discovery.load_reflect.
-from src.reflects.builtin.default_hypothalamus.reflect import (
+from src.plugins.builtin.default_hypothalamus.reflect import (
     DefaultHypothalamusReflect,
 )
-from src.reflects.builtin.default_recall_anchor.reflect import (
+from src.plugins.builtin.default_recall_anchor.reflect import (
     DefaultRecallAnchorReflect,
 )
 from tests._runtime_helpers import (

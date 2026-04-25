@@ -19,7 +19,7 @@ import textwrap
 import pytest
 
 from src.models.config import load_config
-from src.reflects.discovery import discover_reflects, load_reflect
+from src.plugins.unified_discovery import discover_plugins, load_component
 from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
 
 
@@ -57,7 +57,7 @@ def test_loader_returns_none_when_reflects_key_absent(tmp_path):
             self_thinking: t1
     """)
     cfg = load_config(p)
-    assert cfg.reflects is None
+    assert cfg.plugins is None
 
 
 def test_loader_returns_empty_list_when_reflects_is_empty(tmp_path):
@@ -72,7 +72,7 @@ def test_loader_returns_empty_list_when_reflects_is_empty(tmp_path):
         reflects: []
     """)
     cfg = load_config(p)
-    assert cfg.reflects == []
+    assert cfg.plugins == []
 
 
 def test_loader_returns_ordered_list_when_specified(tmp_path):
@@ -89,7 +89,7 @@ def test_loader_returns_ordered_list_when_specified(tmp_path):
           - default_hypothalamus
     """)
     cfg = load_config(p)
-    assert cfg.reflects == [
+    assert cfg.plugins == [
         "default_recall_anchor", "default_hypothalamus",
     ]
 
@@ -98,73 +98,59 @@ def test_loader_returns_ordered_list_when_specified(tmp_path):
 
 
 def test_discover_finds_builtin_meta_files():
-    """The two in-tree built-ins must be discoverable by name."""
-    metas = discover_reflects()
+    """The three in-tree default plugins (hypothalamus, recall_anchor,
+    in_mind) must each be discoverable as a unified-format plugin
+    with at least one component."""
+    metas = discover_plugins()
     assert "default_hypothalamus" in metas
     assert "default_recall_anchor" in metas
+    assert "default_in_mind" in metas
     h = metas["default_hypothalamus"]
-    assert h.kind == "hypothalamus"
-    assert h.factory_module == (
-        "src.reflects.builtin.default_hypothalamus.reflect"
+    assert len(h.components) >= 1
+    refl_comp = next(c for c in h.components if c.kind == "reflect")
+    assert refl_comp.sub_kind == "hypothalamus"
+    assert refl_comp.factory_module == (
+        "src.plugins.builtin.default_hypothalamus.reflect"
     )
-    assert h.factory_attr == "build_reflect"
+    assert refl_comp.factory_attr == "build_reflect"
 
 
-def test_discover_does_not_import_reflect_modules():
+def test_discover_does_not_import_plugin_modules():
     """Architectural invariant: scanning meta.yaml must not pull
-    plugin code into sys.modules. Verified by clearing then
-    re-running discovery.
-
-    We inspect the modules belonging to each built-in's reflect.py
-    path. If discover_reflects() imported them, they'd appear in
-    sys.modules. They MUST NOT.
+    plugin code into sys.modules.
     """
     plugin_modules = (
-        "src.reflects.builtin.default_hypothalamus.reflect",
-        "src.reflects.builtin.default_recall_anchor.reflect",
+        "src.plugins.builtin.default_hypothalamus.reflect",
+        "src.plugins.builtin.default_recall_anchor.reflect",
     )
-    # Clear cached imports so we know whether discovery is the one
-    # importing them. We have to be careful not to break other tests
-    # that already imported these modules (e.g. test_reflects.py
-    # imports the classes directly), but pytest fixtures isolate
-    # sys.modules surprisingly poorly. Defensive: just record the
-    # state, run discovery, assert nothing NEW got loaded.
     before = {m: m in sys.modules for m in plugin_modules}
-    metas = discover_reflects()
+    metas = discover_plugins()
     after = {m: m in sys.modules for m in plugin_modules}
-    # The names must show up in metadata regardless of imports.
     assert "default_hypothalamus" in metas
-    # Any module not loaded BEFORE discovery must still not be loaded
-    # AFTER discovery. (If it was already loaded, no claim.)
     for m in plugin_modules:
         if not before[m]:
             assert not after[m], (
-                f"discover_reflects() imported {m} — that's a plugin "
+                f"discover_plugins() imported {m} — that's a plugin "
                 "module and must stay out of sys.modules until "
-                "load_reflect(name) is called explicitly"
+                "load_component(component, ctx) is called explicitly"
             )
 
 
-def test_load_reflect_imports_and_calls_factory():
-    """load_reflect is the *only* path that imports plugin modules.
-    It builds a fake PluginContext that pretends the user has bound
-    the `translator` purpose to a stand-in LLMClient — the factory
-    sees `ctx.get_llm("translator")` return the fake and returns a
-    Reflect."""
+def test_load_component_imports_and_calls_factory():
+    """load_component is the only path that imports plugin modules.
+    Builds a fake PluginContext binding the `translator` purpose to
+    a stand-in LLMClient → factory returns a Reflect."""
     from src.reflects.context import PluginContext
+    metas = discover_plugins()
+    refl_comp = next(c for c in metas["default_hypothalamus"].components
+                     if c.kind == "reflect")
     fake_llm = ScriptedLLM([])
     ctx = PluginContext(deps=None, plugin_name="default_hypothalamus",
                           config={}, llms={"translator": fake_llm})
-    r = load_reflect("default_hypothalamus", ctx)
+    r = load_component(refl_comp, ctx)
     assert r is not None
     assert r.kind == "hypothalamus"
     assert r.name == "default_hypothalamus"
-
-
-def test_load_reflect_raises_keyerror_for_unknown():
-    deps = type("_FakeDeps", (), {})()
-    with pytest.raises(KeyError):
-        load_reflect("does_not_exist", deps)
 
 
 # ---- Runtime registration end-to-end --------------------------------
@@ -177,7 +163,7 @@ async def test_runtime_registers_explicit_list_in_order(tmp_path, capsys):
         reflects=["default_hypothalamus", "default_recall_anchor"],
     )
     err = capsys.readouterr().err
-    assert "no `reflects:`" not in err
+    assert "no `plugins:`" not in err
     assert set(runtime.reflects.names()) == {
         "default_hypothalamus", "default_recall_anchor",
     }
@@ -191,7 +177,7 @@ async def test_runtime_registers_empty_list_with_no_warning(tmp_path, capsys):
         reflects=[],
     )
     err = capsys.readouterr().err
-    assert "no `reflects:`" not in err
+    assert "no `plugins:`" not in err
     assert runtime.reflects.names() == []
 
 
@@ -205,12 +191,12 @@ async def test_runtime_warns_when_reflects_field_is_none(tmp_path, capsys):
         reflects=[],  # helper preset; we'll simulate the None case below
     )
     runtime.reflects._by_kind.clear()
-    runtime.config.reflects = None
+    runtime.config.plugins = None
     capsys.readouterr()  # discard prior output
 
-    runtime._register_reflects_from_config(_minimal_deps_for_runtime(runtime))
+    runtime._register_plugins_from_config(_minimal_deps_for_runtime(runtime))
     err = capsys.readouterr().err
-    assert "no `reflects:`" in err
+    assert "no `plugins:`" in err
     # No legacy default registered — explicit principle.
     assert runtime.reflects.names() == []
 
@@ -222,12 +208,12 @@ async def test_runtime_skips_unknown_reflect_names_loudly(tmp_path, capsys):
         reflects=[],
     )
     runtime.reflects._by_kind.clear()
-    runtime.config.reflects = [
+    runtime.config.plugins = [
         "default_recall_anchor", "typo_reflect", "default_hypothalamus",
     ]
     capsys.readouterr()
 
-    runtime._register_reflects_from_config(_minimal_deps_for_runtime(runtime))
+    runtime._register_plugins_from_config(_minimal_deps_for_runtime(runtime))
     err = capsys.readouterr().err
     assert "typo_reflect" in err
     assert set(runtime.reflects.names()) == {

@@ -118,13 +118,12 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         fatigue=FatigueSection(gm_node_soft_limit=200,
                                 force_sleep_threshold=120,
                                 thresholds={}),
-        # Test convenience: opt into both built-in Reflects when the
-        # caller didn't say otherwise. Production config default is
-        # zero plugins, but most existing tests assume the historical
-        # "Hypothalamus + recall both registered" shape and shouldn't
-        # have to re-state it. Tests on the zero-plugin path pass
+        # Test convenience: opt into both built-in Reflect plugins
+        # when the caller didn't say otherwise. Stored under
+        # `Config.plugins` (the unified field, post Samuel
+        # 2026-04-26). Tests on the zero-plugin path pass
         # ``reflects=[]`` to opt out explicitly.
-        reflects=(
+        plugins=(
             list(reflects)
             if reflects is not None
             else ["default_hypothalamus", "default_recall_anchor"]
@@ -134,11 +133,11 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
             recall_per_stimulus_k=5, neighbor_expand_depth=1,
         ),
         knowledge_base=KnowledgeBaseSection(dir=kb_dir),
-        plugins={
-            # `enabled` is loader-owned and defaults to False — must be
-            # set explicitly for tests that expect the plugin to load.
-            # Mirror the "default-on" set the manifests used to declare
-            # so existing tests keep their assumptions.
+        legacy_plugin_configs={
+            # Legacy MANIFEST plugin per-project config (deprecated;
+            # replaced by workspace/plugin-configs/<name>.yaml). Tests
+            # still use this to pre-enable web_chat / memory_recall
+            # under the old loader.
             "web_chat": {
                 "enabled": True,
                 # Keep web chat history inside the test tmpdir so it

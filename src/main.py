@@ -136,19 +136,12 @@ class Runtime:
         self.embedder = deps.embedder
         self.reranker = deps.reranker
         # Reflect registry — kind-grouped, ordered storage of pluggable
-        # mechanisms. Names + order come from ``config.reflects``;
-        # registration honors that order so chain semantics (when chain
-        # length >1 lands) match the user's declared sequence. Reflect
-        # modules are imported lazily via load_reflect() — only enabled
-        # plugins ever execute Python code, see
-        # docs/design/reflects-and-self-model.md.
+        # mechanisms. Plugin loader runs LATER (after tentacles +
+        # sensories registries exist) since a single plugin can
+        # contribute components of all three kinds; loading them
+        # before all three registries are built would crash.
         from src.reflects import ReflectRegistry
         self.reflects = ReflectRegistry()
-        self._register_reflects_from_config(deps)
-        # Reflects' attach() hooks fire near the END of __init__
-        # (search "attach_all" below) — when self.tentacles +
-        # plugin loader + other subsystems already exist so a
-        # Reflect (e.g. in_mind) can register its own tentacle.
         self.buffer = StimulusBuffer()
         # History token budget is derived from the Self role's input
         # context window × history_token_fraction. The Self role's
@@ -202,7 +195,7 @@ class Runtime:
                             or "workspace/plugin-configs")
         self._plugin_config_store = FilePluginConfigStore(
             root=plugin_root,
-            legacy_plugins=self.config.plugins,
+            legacy_plugins=self.config.legacy_plugin_configs,
         )
         wc_cfg = self._plugin_config_store.peek_config("web_chat")
         chat_path = wc_cfg.get("history_path",
@@ -216,8 +209,18 @@ class Runtime:
         self.batch_tracker = BatchTrackerSensory()
         self.sensories.register(self.batch_tracker)
 
-        # Plugin loading is deferred until after self.log is set (below)
-        # because discover_plugins logs each plugin's success or failure.
+        # Unified-format plugins (meta.yaml + components list). Each
+        # plugin can contribute reflect / tentacle / sensory components
+        # in any combination — see src/plugins/unified_discovery.py +
+        # docs/design/reflects-and-self-model.md (Samuel 2026-04-26).
+        # Has to run AFTER the three registries exist (above) because
+        # one plugin may register into any of them.
+        self._register_plugins_from_config(deps)
+
+        # Legacy MANIFEST-format plugin loading (tentacles + sensories
+        # in the old src/plugins/builtin/<name>/__init__.py shape) is
+        # deferred until after self.log is set because discover_plugins
+        # logs each plugin's success or failure.
         self._plugin_infos: list = []
 
         # Self-model + Bootstrap state (Phase 2.1)
@@ -307,117 +310,143 @@ class Runtime:
         # by contract; one bad Reflect won't block the others.
         self.reflects.attach_all(self)
 
-    def _register_reflects_from_config(
+    def _register_plugins_from_config(
         self, deps: "RuntimeDeps",
     ) -> None:
-        """Walk ``config.reflects`` and lazily load each named Reflect.
+        """Walk ``config.plugins`` and lazily load each plugin's
+        components.
 
-        For each enabled name:
-          1. Look up its metadata (without importing plugin code).
+        For each enabled plugin name:
+          1. Look up its metadata (no plugin code imported yet).
           2. Read its per-plugin config from
              ``<reflect_configs_root>/<name>/config.yaml`` —
              pure-text settings the plugin is allowed to see (no
              API keys / providers).
-          3. Resolve every declared ``llm_purposes`` entry to an
-             ``LLMClient`` via the shared tag cache, using the user's
-             ``llm_purposes`` mapping in the per-plugin config.
-          4. Build a ``PluginContext`` and call the plugin's factory
-             with it. The factory imports plugin code (the only
-             place that does) and returns a Reflect instance.
+          3. For each declared component:
+             a. Resolve its declared ``llm_purposes`` entries to
+                ``LLMClient`` instances via the shared tag cache,
+                using the user's ``llm_purposes`` mapping in the
+                per-plugin config.
+             b. Build a ``PluginContext`` for that component.
+             c. Lazy-import the factory module + invoke factory.
+             d. Route the returned object to the right registry by
+                component kind (reflect → self.reflects, tentacle →
+                self.tentacles, sensory → self.sensories).
 
-        Failure modes are isolated per-plugin: unknown name, missing
-        plugin config file, broken factory, and unbound purpose all
-        log + skip without blocking startup of the rest. Plugin model
-        is strictly additive (CLAUDE.md invariant).
+        Failure modes are isolated per-plugin AND per-component:
+        broken metadata, missing plugin config, factory exceptions,
+        and unbound purposes all log + skip without blocking
+        startup of the rest. Plugin model is strictly additive
+        (CLAUDE.md invariant).
+
+        Phase 1 (Samuel 2026-04-26): only the new meta.yaml-format
+        plugins go through here. Tentacle/sensory plugins on the
+        legacy ``MANIFEST = {}`` shape are still loaded by
+        ``src.plugins.loader.discover_plugins`` (called later in
+        Runtime construction); Phase 2 will fold them in too.
         """
+        from src.plugins.unified_discovery import (
+            discover_plugins as _discover_unified, load_component,
+        )
         from src.reflects.context import PluginContext, load_plugin_config
-        from src.reflects.discovery import discover_reflects, load_reflect
 
-        names = self.config.reflects
+        names = self.config.plugins
         if names is None:
             print(
-                "config: no `reflects:` section in config.yaml — "
-                "starting with zero Reflects. Add an explicit list "
-                "(e.g. `reflects: [default_recall_anchor]`) to enable "
-                "any. Available built-ins: "
-                f"{sorted(discover_reflects().keys())}",
+                "config: no `plugins:` section in config.yaml — "
+                "starting with zero unified plugins. Add an explicit "
+                "list (e.g. `plugins: [default_recall_anchor]`) to "
+                "enable any. Available built-ins: "
+                f"{sorted(_discover_unified().keys())}",
                 file=sys.stderr,
             )
             return
         if not names:
             return  # explicit empty list: respect, no nag
 
-        all_meta = discover_reflects()
-        cfg_root = Path(deps.reflect_configs_root or "workspace/reflects")
+        all_meta = _discover_unified()
+        cfg_root = Path(deps.reflect_configs_root or "workspace/plugins")
 
-        for name in names:
-            meta = all_meta.get(name)
+        for plugin_name in names:
+            meta = all_meta.get(plugin_name)
             if meta is None:
                 print(
-                    f"config: unknown Reflect name {name!r} — skipping. "
+                    f"config: unknown plugin {plugin_name!r} — skipping. "
                     f"Available: {sorted(all_meta.keys())}",
                     file=sys.stderr,
                 )
                 continue
 
-            # Per-plugin config (pure-text, plugin-readable).
-            plugin_cfg = load_plugin_config(name, cfg_root)
+            plugin_cfg = load_plugin_config(plugin_name, cfg_root)
             user_purposes = plugin_cfg.get("llm_purposes") or {}
             if not isinstance(user_purposes, dict):
                 print(
-                    f"config: {name}/config.yaml `llm_purposes:` must be "
-                    "a mapping; ignoring all purpose bindings",
+                    f"config: {plugin_name}/config.yaml `llm_purposes:` "
+                    "must be a mapping; ignoring all purpose bindings",
                     file=sys.stderr,
                 )
                 user_purposes = {}
 
-            # Resolve each declared purpose to an LLMClient.
-            ctx_llms: dict[str, Any] = {}
-            for purpose_decl in meta.llm_purposes:
-                purpose_name = str(purpose_decl.get("name", "")).strip()
-                if not purpose_name:
-                    continue
-                tag_name = user_purposes.get(purpose_name)
-                if not isinstance(tag_name, str) or not tag_name:
-                    # User hasn't bound this purpose. Plugin will see
-                    # ctx.get_llm() return None and decide what to do.
-                    continue
-                client = resolve_llm_for_tag(
-                    self.config, tag_name, deps.llm_clients_by_tag,
-                )
-                if client is None:
-                    # resolve_llm_for_tag already logged the reason
-                    continue
-                ctx_llms[purpose_name] = client
+            for component in meta.components:
+                ctx_llms: dict[str, Any] = {}
+                for purpose_decl in component.llm_purposes:
+                    purpose_name = str(purpose_decl.get("name", "")).strip()
+                    if not purpose_name:
+                        continue
+                    tag_name = user_purposes.get(purpose_name)
+                    if not isinstance(tag_name, str) or not tag_name:
+                        continue
+                    client = resolve_llm_for_tag(
+                        self.config, tag_name, deps.llm_clients_by_tag,
+                    )
+                    if client is None:
+                        continue
+                    ctx_llms[purpose_name] = client
 
-            ctx = PluginContext(
-                deps=deps, plugin_name=name,
-                config=plugin_cfg, llms=ctx_llms,
+                ctx = PluginContext(
+                    deps=deps, plugin_name=plugin_name,
+                    config=plugin_cfg, llms=ctx_llms,
+                )
+
+                try:
+                    instance = load_component(component, ctx)
+                except Exception as e:  # noqa: BLE001
+                    print(
+                        f"config: plugin {plugin_name!r} component "
+                        f"{component.kind!r} failed to load: "
+                        f"{type(e).__name__}: {e}; skipping.",
+                        file=sys.stderr,
+                    )
+                    continue
+                if instance is None:
+                    continue  # factory opted out (e.g. unbound LLM)
+
+                self._register_component(plugin_name, component, instance)
+
+    def _register_component(
+        self, plugin_name: str, component: "Any", instance: Any,
+    ) -> None:
+        """Route a built component to the right registry by kind."""
+        kind = component.kind
+        try:
+            if kind == "reflect":
+                self.reflects.register(instance)
+            elif kind == "tentacle":
+                self.tentacles.register(instance)
+            elif kind == "sensory":
+                self.sensories.register(instance)
+            else:
+                print(
+                    f"config: plugin {plugin_name!r} produced unknown "
+                    f"component kind {kind!r}; skipping",
+                    file=sys.stderr,
+                )
+        except Exception as e:  # noqa: BLE001
+            print(
+                f"config: plugin {plugin_name!r} {kind} registration "
+                f"failed: {type(e).__name__}: {e}",
+                file=sys.stderr,
             )
-
-            try:
-                reflect = load_reflect(name, ctx)
-            except Exception as e:  # noqa: BLE001
-                print(
-                    f"config: Reflect {name!r} failed to load: "
-                    f"{type(e).__name__}: {e}; skipping. Runtime will "
-                    "run without it.",
-                    file=sys.stderr,
-                )
-                continue
-            if reflect is None:
-                # Factory may return None to opt out (e.g. its required
-                # LLM purpose wasn't bound). That's a soft skip with no
-                # extra noise — the factory or resolver already logged.
-                continue
-            try:
-                self.reflects.register(reflect)
-            except Exception as e:  # noqa: BLE001
-                print(
-                    f"config: Reflect {name!r} registration failed: "
-                    f"{type(e).__name__}: {e}; skipping.",
-                    file=sys.stderr,
-                )
 
     def _new_recall(self) -> IncrementalRecall:
         # Routed through the Reflect registry (kind="recall_anchor")
@@ -994,7 +1023,7 @@ class Runtime:
         # discipline of the plugin folder.
         in_mind_instructions: str | None = None
         if in_mind_state is not None:
-            from src.reflects.builtin.default_in_mind.prompt import (
+            from src.plugins.builtin.default_in_mind.prompt import (
                 IN_MIND_INSTRUCTIONS_LAYER,
             )
             in_mind_instructions = IN_MIND_INSTRUCTIONS_LAYER

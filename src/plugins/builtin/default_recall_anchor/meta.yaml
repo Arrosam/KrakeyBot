@@ -1,0 +1,17 @@
+name: default_recall_anchor
+description: >
+  Scripted vec_search + weighted-merge recall. Produces the per-beat
+  IncrementalRecall instance that drives the [GRAPH MEMORY] prompt
+  layer. No LLM in the recall path — fast, deterministic, free of
+  extra round-trips. Without this plugin (or any other plugin
+  contributing a recall_anchor reflect), Self's [GRAPH MEMORY]
+  layer is always empty, which works but loses the agent's working
+  memory benefits.
+
+config_schema: []
+
+components:
+  - kind: reflect
+    sub_kind: recall_anchor
+    factory_module: src.plugins.builtin.default_recall_anchor.reflect
+    factory_attr: build_reflect

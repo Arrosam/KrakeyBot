@@ -1,6 +1,6 @@
 """``default_in_mind`` Reflect — owner of Self's in-mind state.
 
-Imported lazily by ``src.reflects.discovery.load_reflect``. On
+Imported lazily by ``src.plugins.unified_discovery.load_component``. On
 ``attach(runtime)`` it registers its ``update_in_mind`` tentacle so
 Self can mutate the state via the normal action-dispatch pipeline.
 """
@@ -10,9 +10,9 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from src.reflects.builtin.default_in_mind import state as state_mod
-from src.reflects.builtin.default_in_mind.state import InMindState
-from src.reflects.builtin.default_in_mind.tentacle import (
+from src.plugins.builtin.default_in_mind import state as state_mod
+from src.plugins.builtin.default_in_mind.state import InMindState
+from src.plugins.builtin.default_in_mind.tentacle import (
     UpdateInMindTentacle,
 )
 

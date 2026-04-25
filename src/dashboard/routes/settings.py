@@ -23,7 +23,7 @@ import yaml
 
 from src.dashboard.services.config import ConfigService
 from src.models.config import llm_params_schema
-from src.reflects.discovery import discover_reflects
+from src.plugins.unified_discovery import discover_plugins as _discover_unified
 
 
 def register(app: FastAPI, *, config: ConfigService) -> None:
@@ -83,35 +83,45 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
 
     @app.get("/api/reflects/available")
     async def get_available_reflects():  # noqa: ANN201
-        """List Reflects discoverable on disk.
+        """List unified-format plugins discoverable on disk.
 
         Pure-text scan — never imports any plugin module
-        (architectural invariant). The dashboard renders this list
-        as the "Available Reflects" UI on the settings page so users
-        see what they can enable + which LLM purposes each declares.
+        (architectural invariant). Each plugin's ``components`` array
+        carries reflect / tentacle / sensory entries with their own
+        ``llm_purposes`` declarations.
         """
         out = []
-        for name, meta in discover_reflects().items():
+        for name, meta in _discover_unified().items():
+            # Aggregate llm_purposes across components for the UI's
+            # tag-binding form (the dashboard treats them at the
+            # plugin level even though they're declared per-component).
+            all_purposes: list = []
+            for c in meta.components:
+                all_purposes.extend(c.llm_purposes)
             out.append({
                 "name": meta.name,
-                "kind": meta.kind,
                 "description": meta.description,
                 "config_schema": meta.config_schema,
-                "llm_purposes": meta.llm_purposes,
+                "components": [
+                    {"kind": c.kind, "sub_kind": c.sub_kind}
+                    for c in meta.components
+                ],
+                "llm_purposes": all_purposes,
             })
         out.sort(key=lambda r: r["name"])
         return {"reflects": out}
 
     @app.get("/api/reflects/{name}/config")
     async def get_reflect_config(name: str):  # noqa: ANN201
-        """Read the per-Reflect config file
-        (``workspace/reflects/<name>/config.yaml``).
+        """Read the per-plugin config file
+        (``workspace/plugins/<name>/config.yaml``).
 
-        Returns ``{}`` if the file doesn't exist yet — that's the
-        valid initial state, the plugin operates with whatever
-        defaults its code defines.
+        Returns ``{}`` if the file doesn't exist yet — valid initial
+        state. (Endpoint name kept for back-compat with the dashboard
+        JS; the underlying path moved from ``workspace/reflects/`` to
+        ``workspace/plugins/`` in the unification refactor.)
         """
-        path = Path("workspace") / "reflects" / name / "config.yaml"
+        path = Path("workspace") / "plugins" / name / "config.yaml"
         if not path.exists():
             return {"path": str(path), "config": {}}
         try:
@@ -130,7 +140,7 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
 
     @app.post("/api/reflects/{name}/config")
     async def post_reflect_config(name: str, payload: dict = Body(...)):  # noqa: ANN201
-        """Write the per-Reflect config file. Creates directory if
+        """Write the per-plugin config file. Creates directory if
         needed; replaces existing content."""
         new_cfg = payload.get("config")
         if not isinstance(new_cfg, dict):
@@ -138,7 +148,7 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
                 status_code=400,
                 detail="payload must include 'config' (mapping)",
             )
-        path = Path("workspace") / "reflects" / name / "config.yaml"
+        path = Path("workspace") / "plugins" / name / "config.yaml"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             yaml.safe_dump(new_cfg, allow_unicode=True, sort_keys=False),

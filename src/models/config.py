@@ -345,27 +345,27 @@ class Config:
     knowledge_base: KnowledgeBaseSection = field(
         default_factory=KnowledgeBaseSection
     )
-    # Per-project plugin config. Key = project folder name (matches
-    # src/plugins/builtin/<name>/ or workspace/plugins/<name>/). A
-    # project can carry one tentacle, one sensory, or a bundle of both
-    # that share state (e.g. Telegram: sensory + reply tentacle
-    # sharing one HttpTelegramClient).
+    # Ordered list of unified-format plugin names to enable at
+    # startup. A plugin can declare any mix of reflect / tentacle /
+    # sensory components in its meta.yaml (Samuel 2026-04-26
+    # unification). Order = chain execution order for same-kind
+    # reflect components.
     #
-    # DEPRECATED: kept for backwards compatibility only. Phase 2 of the
-    # config overhaul moves plugin settings to per-plugin files under
-    # workspace/plugin-configs/<project>.yaml; this central dict stays
-    # so existing configs still load until the migration lands.
-    plugins: dict[str, dict[str, Any]] = field(default_factory=dict)
-    # Ordered list of Reflect plugin names to register at startup.
-    # Order = execution order within a kind (chain semantics in
-    # ``ReflectRegistry``). ``None`` is a migration sentinel: the
-    # loader fell back to it because the YAML had no ``reflects:``
-    # key, which means "old config not yet updated" — the runtime
-    # then registers the legacy defaults + emits a deprecation
-    # warning. An empty ``[]`` is the user's explicit choice for
-    # zero Reflects (honored, no warning).
-    # See docs/design/reflects-and-self-model.md for the full design.
-    reflects: list[str] | None = None
+    # ``None`` (field absent) and ``[]`` are both honored as "zero
+    # plugins" — the runtime never enables anything implicitly
+    # (strictly additive). ``None`` triggers a one-line stderr
+    # nudge so users notice; ``[]`` is silent.
+    plugins: list[str] | None = None
+    # Legacy per-project plugin config (deprecated). Was a dict keyed
+    # by project name → settings; replaced by the per-plugin
+    # ``workspace/plugin-configs/<project>.yaml`` files for tentacles
+    # and sensories, and ``workspace/plugins/<name>/config.yaml`` for
+    # the unified plugin format. Kept here only as a holding pen so
+    # the legacy MANIFEST loader's dict-store fallback still works
+    # during the Phase 1 transition window.
+    legacy_plugin_configs: dict[str, dict[str, Any]] = field(
+        default_factory=dict
+    )
     sleep: SleepSection = field(default_factory=SleepSection)
     safety: SafetySection = field(default_factory=SafetySection)
     dashboard: DashboardSection = field(default_factory=DashboardSection)
@@ -767,8 +767,8 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         fatigue=fatigue,
         graph_memory=_build_graph_memory(raw.get("graph_memory") or {}),
         knowledge_base=_build_kb(raw.get("knowledge_base") or {}),
-        plugins=raw.get("plugins") or {},
-        reflects=_build_reflects(raw),
+        plugins=_build_plugins(raw),
+        legacy_plugin_configs=raw.get("legacy_plugin_configs") or {},
         sleep=_build_sleep(raw.get("sleep") or {}),
         safety=_build_safety(raw.get("safety") or {}),
         dashboard=_build_dashboard(raw.get("dashboard")),
@@ -776,38 +776,48 @@ def load_config(path: str | Path = "config.yaml") -> Config:
     )
 
 
-def _build_reflects(raw: dict[str, Any]) -> list[str] | None:
-    """Parse the ``reflects:`` field.
+def _build_plugins(raw: dict[str, Any]) -> list[str] | None:
+    """Parse the ``plugins:`` field.
 
     Three states:
-      * key absent       → return None (migration sentinel; runtime
-                           falls back to legacy defaults + warns)
-      * key empty list   → return [] (explicit "no reflects")
+      * key absent       → return None (one-line stderr nudge at
+                           runtime so users notice they have no
+                           plugins enabled)
+      * key empty list   → return [] (explicit "zero plugins")
       * key string list  → return that list, in order
 
-    Non-string entries are dropped with a warning so a typo or stray
-    YAML mapping doesn't cause a registration crash later.
+    Migration: the OLD ``reflects:`` field is silently translated to
+    ``plugins:`` for one release window so users mid-migration still
+    boot. Non-string entries are dropped with a warning.
     """
-    if "reflects" not in raw:
+    # Old `reflects:` field migration alias
+    if "plugins" not in raw and "reflects" in raw:
+        print(
+            "config: `reflects:` is deprecated — renamed to `plugins:` "
+            "in the unified plugin refactor (2026-04-26). Treating your "
+            "`reflects:` list as the plugin list this run; please rename "
+            "the key to silence this warning.",
+            file=sys.stderr,
+        )
+        raw = {**raw, "plugins": raw["reflects"]}
+
+    if "plugins" not in raw:
         return None
-    val = raw.get("reflects")
+    val = raw.get("plugins")
     if val is None:
-        # Explicit ``reflects: null`` is "I want no reflects" — same
-        # as empty list. Treat both equally.
         return []
     if not isinstance(val, list):
         print(
-            f"warning: `reflects:` should be a list, got "
-            f"{type(val).__name__}; ignoring and falling back to "
-            "legacy defaults.",
+            f"warning: `plugins:` should be a list, got "
+            f"{type(val).__name__}; treating as empty.",
             file=sys.stderr,
         )
-        return None
+        return []
     cleaned: list[str] = []
     for item in val:
         if not isinstance(item, str) or not item.strip():
             print(
-                f"warning: `reflects:` entry {item!r} is not a non-empty "
+                f"warning: `plugins:` entry {item!r} is not a non-empty "
                 "string; skipping.",
                 file=sys.stderr,
             )

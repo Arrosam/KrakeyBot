@@ -13,7 +13,7 @@ Two pieces:
 """
 from __future__ import annotations
 
-from src.reflects.builtin.default_in_mind.state import InMindState
+from src.plugins.builtin.default_in_mind.state import InMindState
 
 
 IN_MIND_INSTRUCTIONS_LAYER = """# [IN MIND — 操作约束]

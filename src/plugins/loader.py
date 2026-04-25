@@ -137,6 +137,14 @@ def discover_plugins(
             module_path = entry
             pkg_dir = None
         elif entry.is_dir() and (entry / "__init__.py").exists():
+            # New unified-format plugins are managed by
+            # src.plugins.unified_discovery (meta.yaml-based, no
+            # Python import at scan time). The legacy MANIFEST loader
+            # below skips any folder that has a meta.yaml so the two
+            # systems don't double-count plugins during the
+            # transition window.
+            if (entry / "meta.yaml").exists():
+                continue
             module_path = entry / "__init__.py"
             pkg_dir = entry
         else:

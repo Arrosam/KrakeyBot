@@ -246,7 +246,7 @@ async def test_reflect_config_get_missing_returns_empty(tmp_path):
 async def test_reflect_config_save_and_read_back(tmp_path, monkeypatch):
     """POST /api/reflects/<name>/config writes the workspace file;
     a follow-up GET reads it back. Path is rooted under
-    `workspace/reflects/`; isolate to tmp_path so the test doesn't
+    `workspace/plugins/`; isolate to tmp_path so the test doesn't
     write into the real workspace."""
     monkeypatch.chdir(tmp_path)
     cfg_path = tmp_path / "config.yaml"
@@ -267,8 +267,8 @@ async def test_reflect_config_save_and_read_back(tmp_path, monkeypatch):
         body = read.json()["config"]
         assert body["llm_purposes"] == {"translator": "fast_generation"}
 
-    # File actually landed under workspace/reflects/
-    written = (tmp_path / "workspace" / "reflects"
+    # File actually landed under workspace/plugins/
+    written = (tmp_path / "workspace" / "plugins"
                / "default_hypothalamus" / "config.yaml")
     assert written.exists()
     parsed = yaml.safe_load(written.read_text(encoding="utf-8"))

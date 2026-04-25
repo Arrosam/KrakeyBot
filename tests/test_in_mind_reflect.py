@@ -23,13 +23,13 @@ from types import SimpleNamespace
 import pytest
 
 from src.memory.recall import RecallResult
-from src.reflects.builtin.default_in_mind.reflect import (
+from src.plugins.builtin.default_in_mind.reflect import (
     InMindReflectImpl, build_reflect,
 )
-from src.reflects.builtin.default_in_mind.state import (
+from src.plugins.builtin.default_in_mind.state import (
     InMindState, load, now_iso, save,
 )
-from src.reflects.builtin.default_in_mind.prompt import (
+from src.plugins.builtin.default_in_mind.prompt import (
     IN_MIND_INSTRUCTIONS_LAYER, render_virtual_round,
 )
 from tests._runtime_helpers import (

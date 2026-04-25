@@ -29,7 +29,7 @@ from src.interfaces.tentacle import Tentacle
 from src.models.stimulus import Stimulus
 
 if TYPE_CHECKING:
-    from src.reflects.builtin.default_in_mind.reflect import (
+    from src.plugins.builtin.default_in_mind.reflect import (
         InMindReflectImpl,
     )
 
