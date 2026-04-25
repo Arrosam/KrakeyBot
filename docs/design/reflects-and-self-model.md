@@ -206,14 +206,35 @@ class Reflect(Protocol):
 
 #### Reflect #1 — `hypothalamus`（可关闭的 Hypothalamus）
 
-**默认**：**关闭**（强模型不需要）
+**重要前提（2026-04-25 澄清）**：默认机制和 Hypothalamus Reflect 是
+**通过 prompt 层互斥的**，不是"core 配合 Reflect 并行运行"。
 
-**开启时**：行为同现在的 Hypothalamus —— 一个专门的 LLM 把 Self 的自然语言 Decision 翻译成结构化的 tentacle calls。保留是为了**让小模型也能跑 Krakey**（小模型靠自己结构化输出 tentacle call 可能不稳）。
+- **默认状态（Reflect #1 未激活 = 不在 reflects 列表）**：
+  - Self 的 prompt 里有一层 `[ACTION FORMAT]` 块教它如何用结构化 tag
+    输出 tentacle 调用
+  - Self 的输出里包含 `[ACTION]...[/ACTION]` 块写 JSONL 调用
+  - 内置 **action executor** (脚本, 非 LLM) 扫描该块, 直接 parse 成
+    tentacle calls 派发
+  - 路径短: 1 次 Self LLM 调用 → 解析 → 派发
 
-**关闭时**：
-- Self prompt 里会注入新的"action 格式约定"指令，告诉 Self 用结构化 tag（类似 tool_use 的样式）直接声明 tentacle 调用
-- 新增 **"action executor engine"**：扫描 Self 的 `[DECISION]` / `[ACTION]` 区域，正则抠出 tentacle-call tag，直接派发
-- 这条路径是强模型的默认 —— 省一次 LLM 调用、省延迟、省 token
+- **激活状态（Reflect #1 在 reflects 列表里）**：
+  - Reflect #1 激活时**抑制 `[ACTION FORMAT]` 块从 prompt 里消失**
+  - Self 看不到结构化调用的指令, 自然回到自然语言 decision 风格
+  - Hypothalamus LLM 翻译 Self 的自然语言决策为 tentacle calls
+  - 路径长: 2 次 LLM 调用（Self + Hypothalamus）→ 派发
+
+**为什么这样设计**:
+
+把"教 Self 写 ACTION tag"和"让 Hypothalamus 翻译"放在同一个 prompt
+里**会互相干扰** —— Self 看到 ACTION 教程会输出 tag, Hypothalamus 又
+会试图翻译这段 tag, 双解释 = 双错乱。所以激活 Reflect #1 = 一刀切移除
+ACTION 教程, Self 不知道有这种格式, Hypothalamus 唯一翻译者。
+
+**默认**: **关闭**（强模型不需要 Hypothalamus 这层翻译, 直接发 ACTION
+JSONL 比走第二次 LLM 调用快也便宜）。
+
+**保留 Reflect #1 是为了让小模型也能跑** —— 小模型可能无法稳定生成
+合法 JSONL, 这时打开 Reflect #1 让 Hypothalamus 帮它兜底。
 
 **Action tag 格式（finalized 2026-04-25）：OpenAI tool_calls 风格的
 JSONL，每行一个 JSON 对象，外层包 `[ACTION]...[/ACTION]` 划界**。

@@ -202,3 +202,113 @@ async def test_runtime_no_longer_holds_hypothalamus_attribute(tmp_path):
         gm_path=str(tmp_path / "gm.sqlite"),
     )
     assert not hasattr(runtime, "hypothalamus")
+
+
+# ---- has_hypothalamus + dispatch_decision routing -------------------
+
+
+def test_has_hypothalamus_reports_registration():
+    reg = ReflectRegistry()
+    assert reg.has_hypothalamus() is False
+    reg.register(DefaultRecallAnchorReflect())
+    assert reg.has_hypothalamus() is False  # different kind
+    reg.register(DefaultHypothalamusReflect(ScriptedLLM([])))
+    assert reg.has_hypothalamus() is True
+
+
+async def test_dispatch_decision_uses_hypothalamus_when_registered():
+    """With a hypothalamus Reflect, Self's natural-language decision is
+    translated by the LLM (existing behavior). The action executor
+    path is bypassed entirely."""
+    reg = ReflectRegistry()
+    reg.register(DefaultHypothalamusReflect(ScriptedLLM([json.dumps({
+        "tentacle_calls": [{"tentacle": "search",
+                            "intent": "find weather",
+                            "params": {"q": "today"},
+                            "adrenalin": False}],
+        "memory_writes": [], "memory_updates": [], "sleep": False,
+    })])))
+    raw = "[DECISION]\nLook up the weather.\n[ACTION]\n{\"name\":\"ignored\"}\n[/ACTION]"
+    result = await reg.dispatch_decision(raw, "Look up the weather.", [])
+    # Hypothalamus output wins; the [ACTION] block in raw is ignored.
+    assert len(result.tentacle_calls) == 1
+    assert result.tentacle_calls[0].tentacle == "search"
+
+
+async def test_dispatch_decision_uses_executor_when_no_hypothalamus():
+    """Without any hypothalamus Reflect registered, dispatch parses
+    [ACTION] JSONL out of the raw Self response."""
+    reg = ReflectRegistry()  # nothing registered
+    raw = """[DECISION]
+greet user
+[ACTION]
+{"name": "web_chat_reply", "arguments": {"text": "Hi"}}
+[/ACTION]
+"""
+    result = await reg.dispatch_decision(raw, "greet user", [])
+    assert len(result.tentacle_calls) == 1
+    assert result.tentacle_calls[0].tentacle == "web_chat_reply"
+    assert result.tentacle_calls[0].params == {"text": "Hi"}
+
+
+async def test_dispatch_decision_executor_with_no_action_block_returns_empty():
+    """Self can write a [DECISION] without invoking any tentacle. The
+    executor returns zero calls — that's a valid 'just thinking' beat."""
+    reg = ReflectRegistry()
+    raw = "[DECISION]\nJust noting this for later.\n[NOTE]\nReflective beat.\n"
+    result = await reg.dispatch_decision(raw, "Just noting this", [])
+    assert result.tentacle_calls == []
+
+
+# ---- prompt-layer suppression ---------------------------------------
+
+
+async def test_prompt_includes_action_format_when_no_hypothalamus(tmp_path):
+    """Default state: no hypothalamus Reflect → Self prompt MUST
+    include the [ACTION FORMAT] block teaching the JSONL syntax."""
+    runtime = build_runtime_with_fakes(
+        self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
+        gm_path=str(tmp_path / "gm.sqlite"),
+    )
+    # Strip the auto-registered default hypothalamus to put the runtime
+    # in the "Reflect #1 default OFF" state.
+    runtime.reflects._by_kind.pop("hypothalamus", None)
+    assert runtime.reflects.has_hypothalamus() is False
+
+    await runtime.gm.initialize()
+    runtime._recall = runtime._new_recall()
+    from src.memory.recall import RecallResult
+    from types import SimpleNamespace
+    counts = SimpleNamespace(node_count=0, edge_count=0,
+                              fatigue_pct=0, fatigue_hint="")
+    prompt = runtime._build_self_prompt(
+        stimuli=[],
+        recall_result=RecallResult(),
+        counts=counts,
+    )
+    assert "[ACTION FORMAT]" in prompt
+    assert '{"name":' in prompt or '"name"' in prompt  # syntax shown
+
+
+async def test_prompt_omits_action_format_when_hypothalamus_active(tmp_path):
+    """Hypothalamus Reflect active → suppress [ACTION FORMAT] so Self
+    doesn't see two competing dispatch instructions."""
+    runtime = build_runtime_with_fakes(
+        self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
+        gm_path=str(tmp_path / "gm.sqlite"),
+    )
+    # Default helper auto-registers the default hypothalamus.
+    assert runtime.reflects.has_hypothalamus() is True
+
+    await runtime.gm.initialize()
+    runtime._recall = runtime._new_recall()
+    from src.memory.recall import RecallResult
+    from types import SimpleNamespace
+    counts = SimpleNamespace(node_count=0, edge_count=0,
+                              fatigue_pct=0, fatigue_hint="")
+    prompt = runtime._build_self_prompt(
+        stimuli=[],
+        recall_result=RecallResult(),
+        counts=counts,
+    )
+    assert "[ACTION FORMAT]" not in prompt

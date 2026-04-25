@@ -796,6 +796,11 @@ class Runtime:
 
     def _build_self_prompt(self, stimuli, recall_result,
                               counts: "_GMCounts") -> str:
+        # Suppress the [ACTION FORMAT] layer when a hypothalamus
+        # Reflect is registered: the translator owns the dispatch
+        # path, and teaching Self structured tags would conflict with
+        # its job. See docs/design/reflects-and-self-model.md
+        # Reflect #1 design.
         prompt = self.builder.build(
             self_model=self.self_model,
             capabilities=self._capabilities(),
@@ -806,6 +811,7 @@ class Runtime:
             window=self.window.get_rounds(),
             stimuli=stimuli,
             current_time=datetime.now(),
+            suppress_action_format=self.reflects.has_hypothalamus(),
         )
         if self.is_bootstrap:
             prompt = (BOOTSTRAP_PROMPT.format(genesis_text=self._get_genesis_text())
@@ -962,18 +968,28 @@ class Runtime:
                 self.log.runtime_error(f"auto_ingest error: {e}")
 
     async def _phase_apply_hypothalamus(self, parsed, recall_result) -> bool:
-        """Returns True iff Self requested sleep (caller should short-circuit
-        and run _perform_sleep)."""
+        """Convert Self's response into tentacle calls + dispatch.
+
+        Routes through ``self.reflects.dispatch_decision`` which picks
+        the path:
+          * Hypothalamus Reflect registered → LLM translation of
+            ``parsed.decision`` (existing behavior).
+          * No Hypothalamus Reflect → script-only action executor
+            scans ``parsed.raw`` for ``[ACTION]...[/ACTION]`` JSONL.
+
+        Returns True iff Self requested sleep (caller short-circuits
+        and runs _perform_sleep).
+        """
         decision = parsed.decision.strip().lower()
         if not decision or decision in ("no action", "无行动"):
+            # Even "no action" decisions can't have ACTION blocks, so
+            # short-circuit. (Action executor would also produce empty
+            # but skip the work.)
             return False
         try:
-            # Routed through the Reflect registry (kind="hypothalamus")
-            # since 2026-04-25. Skeleton only ships the default built-in
-            # so this is a length-1 chain; semantics for length >1
-            # land with Reflect #1.
-            result = await self.reflects.translate(
-                parsed.decision, self.tentacles.list_descriptions(),
+            result = await self.reflects.dispatch_decision(
+                parsed.raw, parsed.decision,
+                self.tentacles.list_descriptions(),
             )
         except Exception as e:  # noqa: BLE001
             # Include exception class — some exceptions (empty str, None

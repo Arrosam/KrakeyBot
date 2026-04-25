@@ -59,26 +59,81 @@ class ReflectRegistry:
 
     # ---- kind-specific dispatch -------------------------------------
 
+    def has_hypothalamus(self) -> bool:
+        """Whether any kind=\"hypothalamus\" Reflect is registered.
+
+        Drives the prompt-layer suppression for ``[ACTION FORMAT]``:
+        when a hypothalamus Reflect is active it owns the translation
+        path, so teaching Self the structured-tag syntax would create
+        an interpretive conflict (Self would emit tags, Hypothalamus
+        would also try to translate them). Suppress the teaching
+        layer when Hypothalamus is on duty.
+        """
+        return bool(self._by_kind.get("hypothalamus"))
+
+    async def dispatch_decision(
+        self, self_text: str, decision: str,
+        tentacles: list[dict[str, Any]],
+    ) -> "HypothalamusResult":
+        """Convert Self's response into structured tentacle calls.
+
+        Picks the path based on registration:
+          * hypothalamus Reflect registered → run translate (existing
+            LLM-based path; Self's decision is natural language).
+          * no hypothalamus Reflect → action executor parses
+            ``[ACTION]...[/ACTION]`` JSONL out of ``self_text``.
+
+        ``self_text`` is the raw Self LLM response; ``decision`` is
+        the parsed [DECISION] section. Hypothalamus uses ``decision``
+        (clean natural language); the action executor uses
+        ``self_text`` (the structured tags can appear anywhere).
+        """
+        chain = self._by_kind.get("hypothalamus") or []
+        if not chain:
+            return self._dispatch_via_executor(self_text)
+        if len(chain) > 1:
+            raise NotImplementedError(
+                "hypothalamus chain length > 1 — chain composition "
+                "semantics will land when Reflect #2 forces them. "
+                "For now only one hypothalamus Reflect at a time."
+            )
+        return await chain[0].translate(decision, tentacles)  # type: ignore[attr-defined]
+
+    def _dispatch_via_executor(self, self_text: str) -> "HypothalamusResult":
+        """Parse [ACTION] JSONL, wrap as a HypothalamusResult so the
+        downstream call site doesn't care which path produced it.
+
+        Local import — keeps the package's import graph free of a
+        runtime → reflects → runtime cycle (action_executor lives
+        under runtime/).
+        """
+        from src.hypothalamus import HypothalamusResult
+        from src.runtime.action_executor import parse_action_block
+
+        calls = parse_action_block(self_text)
+        return HypothalamusResult(
+            tentacle_calls=calls,
+            memory_writes=[], memory_updates=[], sleep=False,
+        )
+
+    # Back-compat alias used by tests written before dispatch_decision
+    # existed. Functionally equivalent to the hypothalamus-only path:
+    # this method ignores the executor route on purpose so legacy
+    # tests asserting "translate routes through hypothalamus chain"
+    # still mean what they meant.
     async def translate(
         self, decision: str, tentacles: list[dict[str, Any]],
     ) -> "HypothalamusResult":
-        """Run the hypothalamus chain. Skeleton supports length-1 only;
-        when multi-Reflect chains land (Reflect #1), composition logic
-        comes here."""
         chain = self._by_kind.get("hypothalamus") or []
         if not chain:
             raise RuntimeError(
-                "no hypothalamus Reflect registered — runtime needs "
-                "at least the default built-in"
+                "no hypothalamus Reflect registered — register one or "
+                "use dispatch_decision() to fall back to the executor"
             )
         if len(chain) > 1:
             raise NotImplementedError(
-                "hypothalamus chain length > 1 — semantics will land "
-                "with Reflect #1 (toggle-able Hypothalamus). For now "
-                "only the default built-in is allowed."
+                "hypothalamus chain length > 1 — see dispatch_decision"
             )
-        # Type-narrow: chain[0] is a HypothalamusReflect by registration
-        # contract. The Protocol is duck-typed, no isinstance check.
         return await chain[0].translate(decision, tentacles)  # type: ignore[attr-defined]
 
     def make_recall(self, runtime: Any) -> "IncrementalRecall":

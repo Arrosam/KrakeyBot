@@ -56,6 +56,26 @@ class SlidingWindowRound:
     note_text: str
 
 
+ACTION_FORMAT_LAYER = """# [ACTION FORMAT]
+当你想调用 tentacles 时, 在你的回复里写一段 [ACTION]...[/ACTION] 块,
+块内每行写一个 JSON 对象 (OpenAI tool_calls 风格):
+
+[ACTION]
+{"name": "<tentacle_name>", "arguments": {...}}
+{"name": "<another>", "arguments": {...}, "adrenalin": true}
+[/ACTION]
+
+字段:
+- name (str, 必需): 从 [CAPABILITIES] 里挑一个 tentacle 名字
+- arguments (object, 可选): 该 tentacle 的参数, 不传 = 空对象 {}
+- adrenalin (bool, 可选): 紧急标志, 不传 = false; 只在你想要这次动作的
+  反馈打断后续 hibernate 时设 true
+
+不需要调用 tentacle 的心跳 (例: 只是思考 / 写 [NOTE]) 直接省略 [ACTION] 块。
+[ACTION] 块可以出现在 [DECISION] / [THINKING] 里, 也可以出现在 [DECISION]
+之后, 都会被解析。一行解析失败不影响其它行。"""
+
+
 class PromptBuilder:
     def build(
         self,
@@ -67,17 +87,31 @@ class PromptBuilder:
         window: list[SlidingWindowRound],
         stimuli: list[Stimulus],
         current_time: datetime | None = None,
+        suppress_action_format: bool = False,
     ) -> str:
-        layers = [
+        """Assemble the Self prompt.
+
+        ``suppress_action_format``: True → omit the ``[ACTION FORMAT]``
+        layer. Set when a Reflect of kind="hypothalamus" is registered:
+        Hypothalamus translates Self's natural-language decisions into
+        tentacle calls, so teaching Self to write structured ACTION
+        tags would actively conflict with the translator. See
+        docs/design/reflects-and-self-model.md Reflect #1 design.
+        """
+        layers: list[str] = [
             DNA,
             self._layer_self_model(self_model),
             self._layer_capabilities(capabilities),
+        ]
+        if not suppress_action_format:
+            layers.append(ACTION_FORMAT_LAYER)
+        layers.extend([
             self._layer_stimulus(stimuli, current_time),
             self._layer_recall(recall),
             self._layer_history(window),
             self._layer_status(status),
             HEARTBEAT_QUESTION,
-        ]
+        ])
         return "\n\n".join(layers)
 
     def _layer_self_model(self, sm: dict[str, Any]) -> str:
