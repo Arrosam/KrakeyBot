@@ -725,20 +725,32 @@ class _ConfigBootstrapExit(SystemExit):
 
 
 def load_config(path: str | Path = "config.yaml") -> Config:
+    """Load + parse ``config.yaml``.
+
+    First-run path (file missing): writes a defaults-populated file
+    at ``path`` and returns the parsed Config. Does NOT exit — the
+    runtime caller (``build_runtime_from_config``) detects an
+    incomplete config (no providers / no self_thinking binding) and
+    drops into setup mode (dashboard-only, no heartbeat) so the user
+    can fill in providers + tags from the Web UI before the next
+    restart kicks off the real heartbeat loop.
+    """
     p = Path(path)
     if not p.exists():
         ensure_config(p)
         print(
             f"✨ Generated default config at {p}\n"
-            f"   Next steps:\n"
-            f"     1. Add at least one provider under llm.providers with a\n"
-            f"        valid api_key.\n"
-            f"     2. Bind the required roles under llm.roles: self,\n"
-            f"        hypothalamus, embedding (compact/reranker optional).\n"
-            f"     3. Re-run Krakey.",
+            "   Krakey will start in SETUP MODE (dashboard only, no\n"
+            "   heartbeat) so you can configure it via the Web UI:\n"
+            "     1. http://127.0.0.1:8765 (default dashboard port)\n"
+            "     2. LLM section: add a provider, define a tag, bind\n"
+            "        core_purposes.self_thinking + embedding.\n"
+            "     3. Reflects section: enable the ones you want.\n"
+            "     4. Save → Restart. Krakey then runs heartbeat.",
             file=sys.stderr,
         )
-        raise _ConfigBootstrapExit(1)
+        # Fall through to load the freshly-written defaults; caller
+        # decides what to do (setup mode vs full Runtime).
 
     raw_text = p.read_text(encoding="utf-8")
     raw: dict[str, Any] = yaml.safe_load(raw_text) or {}

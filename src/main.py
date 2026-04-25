@@ -426,12 +426,31 @@ class Runtime:
         # it from config without Runtime needing to know the difference.
         return self.reflects.make_recall(self)
 
+    @property
+    def is_setup_mode(self) -> bool:
+        """True when no Self LLM is bound (config incomplete).
+
+        In this state Krakey still starts the dashboard so the user
+        can finish configuration via Web UI, but the heartbeat loop
+        is skipped. After the user fills in providers + tags + the
+        ``self_thinking`` core purpose binding and clicks "Restart"
+        in the dashboard, the next process boot will see a complete
+        config and run the real heartbeat.
+        """
+        return self.self_llm is None
+
     async def run(self, iterations: int | None = None) -> None:
         await self.gm.initialize()
         await self._preflight_sandbox()
         await self._refine_bootstrap_from_data()
         await self.sensories.start_all(self.buffer)
         await self._maybe_start_dashboard()
+
+        if self.is_setup_mode:
+            await self._run_setup_mode()
+            await self.sensories.stop_all()
+            return
+
         self._recall = self._new_recall()
         try:
             count = 0
@@ -446,6 +465,33 @@ class Runtime:
             pending = [t for t in self._classify_tasks if not t.done()]
             for t in pending:
                 t.cancel()
+
+    async def _run_setup_mode(self) -> None:
+        """Setup-mode loop: dashboard is up, heartbeat is skipped.
+
+        Idle here until the user signals stop (Ctrl-C / kill / a
+        dashboard /api/restart). This gives the Web UI a process to
+        live in while the user fills in the missing providers + tags
+        + ``core_purposes.self_thinking`` binding.
+        """
+        host = self.config.dashboard.host
+        port = self.config.dashboard.port
+        msg = (
+            "\n=========================================================\n"
+            "  Krakey is in SETUP MODE.\n\n"
+            "  No `core_purposes.self_thinking` tag binding found in\n"
+            "  config.yaml — the heartbeat is paused. Open the Web UI\n"
+            "  to finish setup:\n\n"
+            f"      http://{host}:{port}\n\n"
+            "  Then in the LLM section: add a provider, define a tag,\n"
+            "  bind core_purposes.self_thinking + embedding. Save +\n"
+            "  Restart. The next boot will run the real heartbeat.\n"
+            "=========================================================\n"
+        )
+        self.log.runtime_error(msg)
+        # Idle until externally stopped.
+        while not self._stop:
+            await asyncio.sleep(1.0)
 
     def _load_plugins(self):
         """Discover plugin projects from both roots and return one
@@ -1461,15 +1507,12 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
     def _client_for_tag(tag_name: str | None) -> LLMClient | None:
         return resolve_llm_for_tag(cfg, tag_name, client_cache)
 
-    # Core purposes (Self / compact / classifier ...). Self is required;
-    # the rest are optional — Runtime checks at use time.
+    # Core purposes (Self / compact / classifier ...). Self is required
+    # for the heartbeat to fire; if missing, we DON'T raise — the
+    # Runtime drops into "setup mode" (dashboard runs, heartbeat
+    # skipped) so the user can complete the config via Web UI without
+    # having to hand-edit YAML before they ever see Krakey's UI.
     self_llm = _client_for_tag(cfg.llm.core_purposes.get("self_thinking"))
-    if self_llm is None:
-        raise RuntimeError(
-            "config.yaml must bind core purpose 'self_thinking' to a "
-            "tag — Self has no LLM otherwise. See "
-            "docs/design/reflects-and-self-model.md for the tag system."
-        )
     compact_llm = _client_for_tag(cfg.llm.core_purposes.get("compact"))
     classify_llm = (
         _client_for_tag(cfg.llm.core_purposes.get("classifier"))
@@ -1477,6 +1520,8 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
     )
     if compact_llm is None:
         compact_llm = self_llm  # last-resort fallback so sleep doesn't crash
+        # (in setup mode self_llm is also None — that's fine, sleep
+        # never runs without a heartbeat)
 
     # Embedding + reranker (model-type slots, not purposes)
     embed_client = _client_for_tag(cfg.llm.embedding)
@@ -1485,7 +1530,7 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
         if embed_client is None:
             raise RuntimeError(
                 "no embedding tag bound — set llm.embedding to a tag name "
-                "in config.yaml"
+                "in config.yaml (or use the dashboard's LLM section)"
             )
         return await embed_client.embed(text)
 
