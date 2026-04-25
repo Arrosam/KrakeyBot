@@ -78,8 +78,10 @@ async def _format_status(runtime: "Runtime") -> str:
     edges = await runtime.gm.count_edges()
     pct = int(nodes / runtime.config.fatigue.gm_node_soft_limit * 100) \
         if runtime.config.fatigue.gm_node_soft_limit else 0
-    cycles = (runtime.self_model.get("statistics", {})
-                .get("total_sleep_cycles", 0))
+    # `_sleep_cycles` is a runtime-lifetime counter (per-process, not
+    # persisted) since the 2026-04-25 self-model slim — see
+    # docs/design/reflects-and-self-model.md Part 1.
+    cycles = getattr(runtime, "_sleep_cycles", 0)
     name = runtime.self_model.get("identity", {}).get("name", "(unnamed)")
     return (
         f"name={name} "

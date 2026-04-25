@@ -29,22 +29,14 @@ def test_update_deep_merges(tmp_path):
     p = tmp_path / "sm.yaml"
     store = SelfModelStore(p)
     store.save(default_self_model())
-    store.update({"state": {"focus_topic": "astronomy"},
-                  "statistics": {"total_heartbeats": 5}})
+    # Identity persona survives an identity.name update; bootstrap
+    # flag is unaffected.
+    store.update({"identity": {"name": "Krakey"}})
 
     data = store.load()
-    assert data["state"]["focus_topic"] == "astronomy"
+    assert data["identity"]["name"] == "Krakey"
+    assert data["identity"]["persona"] == ""  # default, untouched
     assert data["state"]["bootstrap_complete"] is False  # untouched
-    assert data["statistics"]["total_heartbeats"] == 5
-
-
-def test_update_appends_goal(tmp_path):
-    p = tmp_path / "sm.yaml"
-    store = SelfModelStore(p)
-    store.save(default_self_model())
-    store.update({"goals": {"active": ["greet user"]}})
-    data = store.load()
-    assert data["goals"]["active"] == ["greet user"]
 
 
 def test_load_existing_preserves_data(tmp_path):
@@ -53,3 +45,12 @@ def test_load_existing_preserves_data(tmp_path):
     store = SelfModelStore(p)
     data = store.load()
     assert data["identity"]["name"] == "Existing"
+
+
+def test_slim_schema_has_only_two_top_level_keys():
+    """Regression for the 2026-04-25 slim. Adding fields back to
+    self-model should be a deliberate decision and break this test."""
+    d = default_self_model()
+    assert set(d.keys()) == {"identity", "state"}
+    assert set(d["identity"].keys()) == {"name", "persona"}
+    assert set(d["state"].keys()) == {"bootstrap_complete"}

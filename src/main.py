@@ -207,6 +207,13 @@ class Runtime:
                               else detected_bootstrap)
 
         self.heartbeat_count = 0
+        # Sleep cycle counter — runtime-only. Used to be persisted in
+        # self_model.statistics.total_sleep_cycles, but stats was the
+        # bulk of self_model's noise (most fields never written) so the
+        # 2026-04-25 slim refactor pulled them all out. Per-process
+        # counter is enough for /status and dashboard display; cross-run
+        # totals weren't actually used by any product feature.
+        self._sleep_cycles = 0
         self._stop = False
         self._min = hibernate_min if hibernate_min is not None else self.config.hibernate.min_interval
         self._max = hibernate_max if hibernate_max is not None else self.config.hibernate.max_interval
@@ -1037,16 +1044,12 @@ class Runtime:
             f"kbs={stats['kbs_created']}, index_nodes={stats['index_nodes']}"
         )
 
-        # Self-model bookkeeping
-        cycles = (self.self_model.get("statistics", {})
-                   .get("total_sleep_cycles", 0)) + 1
-        self.self_model = self._self_model_store.update({
-            "state": {"is_sleeping": False},
-            "statistics": {
-                "total_sleep_cycles": cycles,
-                "last_sleep": datetime.now().isoformat(),
-            },
-        })
+        # Sleep bookkeeping is a per-process runtime concern, not
+        # something Self needs to remember across restarts. Bumping
+        # the in-memory counter is enough for /status output + the
+        # dashboard's last_sleep stamp (set client-side on the
+        # `sleep_done` event).
+        self._sleep_cycles += 1
 
         # Wake-up stimulus
         await self.buffer.push(Stimulus(
