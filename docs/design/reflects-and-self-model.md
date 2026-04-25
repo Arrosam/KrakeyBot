@@ -85,36 +85,85 @@ stimuli + window → 回忆层 LLM → [
 ] → 每个 anchor 分别触发召回（向量 / FTS / name 精确匹配）→ 合并权重
 ```
 
-LLM 的 prompt 模板（待细化，示例）：
+LLM 的 prompt 模板（finalized 2026-04-25）：
 
 ```
-这是你的当前刺激和近期历史：
-<stimuli>...</stimuli>
-<history>...</history>
+# Memory Recall Guide
 
-作为回忆引导员，你的任务是提取出需要召回的特征点关键词，帮助意识层
-（Self）更好地回应。
+为下一轮决策挑选回忆关键词。读输入, 输出关键词列表, 用于检索图记忆。
 
-只输出 JSON，不要任何其他文字：
+## 输入
 
-{
-  "anchors": ["关键词1", "关键词2", "..."]
-}
+[CURRENT_STIMULI]
+{stimuli}
+
+[RECENT_HISTORY]
+{history}
+
+## 提取标准
+
+✅ 选作 anchor:
+- 具体人名
+- 具体话题或概念
+- 具体事件或里程碑
+- 领域术语
+- 时间关联指代
+
+❌ 不选:
+- 功能词、问候语
+- 宽泛词
+- 刺激原文里的整句
+- 长句子
+
+最多 8 个 anchor。无明显可回忆点时输出空列表。
+
+## 输出 (严格 JSON, 无其他文字, 无 markdown 代码块)
+
+{"anchors": ["..."]}
+
+## 示例
+
+示例 1
+[CURRENT_STIMULI]
+[1] user_message from sensory:chat:
+    "Alex: 那个优化方案最后跑出来速度怎么样？"
+[RECENT_HISTORY]
+Heartbeat #N-1: Decision: "用 Cython 重写 hot loop"
+预期输出: {"anchors": ["Alex", "Cython optimization", "performance benchmark"]}
+
+示例 2
+[CURRENT_STIMULI]
+[1] user_message from sensory:chat: "Bob: 哦。"
+[RECENT_HISTORY]
+(空)
+预期输出: {"anchors": []}
+
+示例 3
+[CURRENT_STIMULI]
+[1] tentacle_feedback from tentacle:weather_check: "Sunny, 22°C"
+[2] batch_complete from sensory:batch_tracker: "All dispatched."
+[RECENT_HISTORY]
+Heartbeat #N-1: Decision: "Check the weather to plan tomorrow's hike"
+预期输出: {"anchors": ["weather check", "hiking plan"]}
 ```
 
-**输出结构选择的理由**：
-- ``anchors`` 是扁平字符串列表，下游直接当作召回 query 用 —— 不带
-  ``reason`` / ``kind`` / ``rationale`` 等字段，因为下游不消费它们，
-  传输纯浪费。
-- **不带 ``<thinking>`` 块或任何 CoT 脚手架**：让用户自己挑模型。
-  推理模型用自己的内部 reasoning 输出高质量结果；非推理模型表现差
-  是模型选择的代价，不应该让 prompt 替模型去 compensate。这条路径
-  和 Reflect #1 (`hypothalamus`) 的设计哲学一致 —— 不在核心机制里
-  烘焙"为弱模型提供拐杖"的逻辑，强模型走直接路径，弱模型表现不好
-  是正常的取舍。
-- ``reason``-in-JSON 的方案也被刻意拒绝：要么字段顺序导致事后合理化
-  （reason 在 answer 之后写，对决策没影响），要么 reason 字段下游
-  不消费纯浪费 token。
+**模板设计决策**：
+
+- **没有 role 介绍 / 不解释 KrakeyBot 是什么** —— 任务一行话讲清楚。
+  少说一句话就少一个出错点（不需要再交代"你不是 KrakeyBot"）。
+- **没有 ``<thinking>`` 块或任何 CoT 脚手架** —— 让用户自己挑模型。
+  推理模型自己 reason；非推理模型表现差是模型选择的代价，不在核心
+  机制里烘焙拐杖（和 Reflect #1 默认关闭的哲学一致）。
+- **anchors 是扁平字符串列表**，没有 ``reason`` / ``kind`` /
+  ``rationale`` 等字段，因为下游不消费，传输纯浪费。
+- **不传 GM 现状** —— 黑箱。anchor 来自情境语义而非"已存在性"，让
+  vec_search / FTS / name 精确匹配自己处理"找不到"的情况。
+- **不传 agent identity slot** —— in_mind 通过历史层最近端注入
+  （见 Reflect #3 设计），其他自我相关的上下文从历史 / stimulus 里
+  天然可推。
+- **示例用通用人名 / 话题（Alex / Bob / Cython / weather）** —— 不
+  污染 prompt 模板自身的语义中性，避免 LLM 把示例里的 "Samuel" /
+  "ReAct" 这种实际对话内容当成隐含上下文。
 
 ### 与 Reflect #2 的关系
 
@@ -221,15 +270,43 @@ class Reflect(Protocol):
 **Self 怎么更新它**：
 - 通过新的 tentacle `update_in_mind`（走 Hypothalamus 或 direct action path），传 3 个字段
 - Reflect 存储在 `workspace/data/in_mind.json`（或 self_model.yaml 里留一块？待定）
-- 每跳 `on_heartbeat_start` 时把内容注入到 prompt layer
+
+**注入到 prompt 的方式：通过历史层最近端虚拟 round**（finalized 2026-04-25）
+
+不开新的 prompt layer，而是让 prompt builder 在渲染 ``[HISTORY]`` 层时
+**虚拟一条最新的 round 插在头部**，内容就是当前的 in_mind 三个字段。例如：
+
+```
+[HISTORY]
+--- Heartbeat #now (in mind) ---
+Thoughts: 正在思考如何回应 Alex 的优化问题
+Mood: 略微紧张, 因为 benchmark 数字还没跑完
+Focus: 把 hot loop 从 Python 换到 Cython
+--- Heartbeat #N-1 ---
+Stimulus: ...
+Decision: ...
+...
+```
+
+**为什么这样而不是开独立 layer**：
+
+1. **零新 slot**：所有 prompt 消费者（Self LLM、回忆 LLM、未来其他
+   Reflect）只要读历史层就自动拿到 in_mind，不需要每个消费者各自支持。
+2. **时间感正确**：in_mind 是"现在心里的事"，放在历史最近端语义自然。
+3. **单一真源**：in_mind 渲染逻辑只在 prompt builder 一处，其他地方
+   零感知。
+4. **缓存友好**：in_mind 变化频率介于 history 层（每跳变）和
+   self-model 层（几乎不变）之间，正好处在 history 层的位置不会破坏
+   更高层的稳定缓存。
+5. **回忆 LLM 自动受益**：in_mind 里的"focus" / "thoughts"成为下跳
+   anchor 抽取的天然种子。Self 上跳记下"在思考 Cython 优化"，下跳
+   回忆 LLM 看到"Cython optimization"作为最近 history，自然就会去
+   GM 召回相关节点。**自我引导回忆**这个机制免费拿到。
 
 **与删除的 self_model 字段的关系**：
 - 替换了 `state.focus_topic`、`state.mood_baseline`
-- 替换了 `goals.active` 的"当下心头目标"这部分（完整的目标体系走 GM TARGET 节点，in_mind 只是"此刻关注的一两件"）
-
-**Prompt layer 位置**：
-- 比较稳定（几跳才变一次），放在 `[SELF-MODEL]` 附近更利于缓存
-- 建议顺序：DNA → SELF-MODEL → IN MIND → CAPABILITIES → STIMULUS → ...
+- 替换了 `goals.active` 的"当下心头目标"这部分（完整的目标体系走
+  GM TARGET 节点，in_mind 只是"此刻关注的一两件"）
 
 ---
 
@@ -250,7 +327,8 @@ Samuel 最终拍板，这里是我的推荐：
 
 - [ ] Reflect #1 的 action tag 用哪种格式？XML-ish `<use>` 还是函数调用风格 `@tentacle(...)`？
 - [ ] Reflect #2 默认开还是默认关？LLM-anchor 模式会让每跳多一次 LLM 往返，对延迟敏感。
-- [ ] Reflect #3 `in_mind` 存在哪里？独立文件 / self_model 子块 / GM 节点？
+- [ ] Reflect #3 `in_mind` **存储**在哪里？独立文件 / self_model 子块 / GM 节点？
+      （**注入路径**已定 2026-04-25：通过历史层最近端虚拟 round；存储位置仍待定）
 - [ ] Reflect 可以禁用/启用吗？通过 dashboard UI 开关？还是只能在 config.yaml？
 - [ ] 多个 Reflect 同 kind 能共存吗？(e.g. 两个 `recall_anchor` 同时跑、结果合并？)
 - [x] ~~`statistics` 搬到哪里？~~ 2026-04-25 已落地：sleep_cycles 改成
