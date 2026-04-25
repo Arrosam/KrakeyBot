@@ -6,6 +6,28 @@
 
 ---
 
+## 🔒 核心设计原则（载重不变量, 2026-04-25）
+
+> **删除 / 关闭任何插件 (Reflects, tentacles, sensories) 都不应该
+> 影响本体 (runtime) 的运行。**
+
+含义:
+- runtime 的核心 heartbeat 循环必须能在**零插件**状态下跑起来。
+  Self 拿到没有 recall 节点的空 `[GRAPH MEMORY]`、没有外部 stimuli、
+  没有 tentacles 可调用的 prompt, 仍然能完成完整 heartbeat。
+- 所有插件**严格加性**。任何一个被禁用 / 卸载, runtime 不抛异常、
+  不挂 phase、不进入坏状态。
+- 落实方式: 每个插件在 runtime 调用站点都**有 fallback** ——
+  null-object (e.g. `NoopRecall`) 或者 soft-fail (e.g. tentacle 派发
+  时找不到名字 → 推 `Unknown tentacle: X` 系统事件给 Self 看, 不抛)。
+- 测试上要求: 无任何 Reflect 注册时 runtime 仍能跑完整 heartbeat。
+  这是 regression 防线, 任何破坏这个不变量的改动会被测试拒绝。
+
+这条原则**优先级高于**"默认行为"——本节决定了**结构上的可靠性**,
+"默认开启什么 Reflect"只是 UX 选择。
+
+---
+
 ## 背景 / 动机
 
 讨论 Self-model 字段时发现几个长期问题：

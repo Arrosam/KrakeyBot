@@ -1,5 +1,27 @@
 # Project conventions for Claude Code
 
+## 🔒 Core architectural invariant — plugins are strictly additive
+
+**Disabling or removing ANY plugin (Reflects, tentacles, sensories)
+must NOT break the runtime's core loop.** Set 2026-04-25 by Samuel.
+
+This is load-bearing. Every plugin call site in `src/` must have a
+graceful fallback — null-object (e.g. `NoopRecall`), soft-fail (e.g.
+tentacle dispatch produces a `Unknown tentacle: X` system event for
+Self instead of raising), or a phase skip. **No `raise RuntimeError`
+when a plugin is missing.**
+
+Test the invariant: `tests/test_zero_plugin_runtime.py` runs Runtime
+with all Reflects unregistered + zero tentacles + zero sensories and
+asserts it completes a heartbeat. New code that requires a plugin
+to function will break that test — fix the missing-plugin path
+before merging.
+
+UX defaults (which Reflects auto-register, what tentacles ship
+in-tree) are a separate concern from this invariant. Default-on
+plugins exist for convenience; the architecture must work with
+ALL of them disabled.
+
 ## Source documentation — regenerate after edits
 
 `docs/architecture.html` is an auto-generated per-file / per-class /

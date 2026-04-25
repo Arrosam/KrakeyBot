@@ -141,6 +141,40 @@ class RecallResult:
     uncovered_stimuli: list[Any] = field(default_factory=list)
 
 
+class NoopRecall:
+    """No-op stand-in for ``IncrementalRecall``.
+
+    Returned by ``ReflectRegistry.make_recall`` when no
+    ``recall_anchor`` Reflect is registered. Honors the core design
+    principle (Samuel 2026-04-25): **disabling any plugin must not
+    break runtime operation**. Without recall, Self simply sees an
+    empty ``[GRAPH MEMORY]`` layer every beat — graceful degradation,
+    not a crash.
+
+    Implements the duck-typed surface that ``Runtime`` consumes:
+    ``processed_stimuli`` (read), ``add_stimuli`` (no-op),
+    ``finalize`` (returns empty ``RecallResult``).
+    """
+
+    def __init__(self) -> None:
+        self.processed_stimuli: list[Any] = []
+        # _per_stimulus_ids and merged are read by some test paths and
+        # by recall-result rebuilding logic. Empty containers are fine
+        # — the runtime never iterates them past length zero.
+        self._per_stimulus_ids: list[set[int]] = []
+        self.merged: dict[int, dict[str, Any]] = {}
+
+    async def add_stimuli(self, stimuli: list[Any]) -> None:
+        # Track them as "processed" so the dedup logic in
+        # _phase_drain_and_seed_recall doesn't keep re-feeding the
+        # same Stimulus across beats (which would be harmless here
+        # but pointless).
+        self.processed_stimuli.extend(stimuli)
+
+    async def finalize(self) -> RecallResult:
+        return RecallResult()
+
+
 class IncrementalRecall:
     """Per-stimulus vector search + weighted merge (DevSpec §9.2).
 

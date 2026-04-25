@@ -138,13 +138,22 @@ class ReflectRegistry:
 
     def make_recall(self, runtime: Any) -> "IncrementalRecall":
         """Build a fresh per-beat recall instance via the
-        ``recall_anchor`` chain. Skeleton supports length-1 only."""
+        ``recall_anchor`` chain.
+
+        **No registered Reflect → returns a ``NoopRecall``** (not an
+        exception). This is load-bearing per Samuel's 2026-04-25
+        principle: disabling any plugin must not break the runtime's
+        core loop. Without recall, Self heartbeats with an empty
+        ``[GRAPH MEMORY]`` layer — graceful degradation.
+
+        Skeleton supports length-1 chains only; multi-Reflect
+        composition lands when Reflect #2 forces semantics.
+        """
+        from src.memory.recall import NoopRecall
+
         chain = self._by_kind.get("recall_anchor") or []
         if not chain:
-            raise RuntimeError(
-                "no recall_anchor Reflect registered — runtime needs "
-                "at least the default built-in"
-            )
+            return NoopRecall()  # type: ignore[return-value]
         if len(chain) > 1:
             raise NotImplementedError(
                 "recall_anchor chain length > 1 — semantics will land "
