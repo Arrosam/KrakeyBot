@@ -111,56 +111,13 @@ class LLMParams:
     )
 
 
-# Role → default param overrides applied before YAML overlay. Any field
-# not mentioned here falls back to LLMParams' universal defaults.
-#
-# Note on `response_format`: deliberately *not* defaulted to "json_object"
-# for Hypothalamus / compact / classifier. Many OpenAI-compatible
-# providers (xunfei / zhipu / moonshot / baichuan / …) either ignore the
-# field or crash their backends with "EngineInternalError:Unexpected EOF"
-# style 500s when they see it. Hypothalamus already has a robust JSON
-# extractor (markdown fence, regex, smart-quote/trailing-comma fixups)
-# that works without JSON mode, so turning it on is a cost/benefit loss
-# in the general case. Users whose provider supports it (Anthropic does
-# not, OpenAI + Gemini do) can opt in via YAML per-role.
-_ROLE_DEFAULTS: dict[str, dict[str, Any]] = {
-    "self": {
-        "max_output_tokens": 8192,
-        "temperature": 0.7,
-        "reasoning_mode": "medium",
-        "reasoning_budget_tokens": 4096,
-        "timeout_seconds": 180.0,
-    },
-    "hypothalamus": {
-        # 2048 not 512 — multi-action decisions with Chinese tentacle
-        # intents blow past 512 easily and get truncated mid-JSON,
-        # which some providers surface as an "Unexpected EOF" 500.
-        "max_output_tokens": 2048,
-        "temperature": 0.0,
-        "reasoning_mode": "off",
-        "timeout_seconds": 20.0,
-    },
-    "compact": {
-        "max_output_tokens": 2048,
-        "temperature": 0.2,
-        "reasoning_mode": "off",
-        "timeout_seconds": 60.0,
-    },
-    "classifier": {
-        "max_output_tokens": 1024,
-        "temperature": 0.0,
-        "reasoning_mode": "off",
-        "timeout_seconds": 30.0,
-    },
-    "embedding": {
-        # Embedding endpoints don't use generation params; keep a short
-        # timeout since embedding calls should be fast.
-        "timeout_seconds": 20.0,
-    },
-    "reranker": {
-        "timeout_seconds": 20.0,
-    },
-}
+# NOTE: per-role default param overrides were removed in the
+# tag-based LLM refactor (Samuel 2026-04-26). Tags now stand alone:
+# each tag's params are exactly what the user wrote, with anything
+# unset falling through to the LLMParams dataclass field defaults.
+# If you need different defaults for different use cases, define
+# multiple tags (e.g. `fast_generation` vs `high_performance`) and
+# bind purposes to them in `core_purposes` / per-plugin config.
 
 
 # Human-readable descriptions used both for docstrings and for the
@@ -185,20 +142,77 @@ _LLM_PARAM_HELP: dict[str, str] = {
 
 
 @dataclass
-class RoleBinding:
-    provider: str = ""
-    model: str = ""
+class TagBinding:
+    """A named tag mapping a logical purpose to a concrete model.
+
+    ``provider`` is a combined ``"<provider_name>/<model_name>"`` string
+    so YAML stays compact. Splits on the FIRST ``/`` — provider names
+    must not contain ``/``, but model names may (e.g. ``BAAI/bge-m3``).
+    """
+    provider: str = ""   # e.g. "One API/qwen3.6-9b"
     params: LLMParams = field(default_factory=LLMParams)
+
+    def split_provider(self) -> tuple[str, str]:
+        """Return ``(provider_name, model_name)``. Raises ``ValueError``
+        when the value lacks a ``/`` separator."""
+        provider, sep, model = self.provider.partition("/")
+        if not sep:
+            raise ValueError(
+                f"tag provider must be '<provider>/<model>'; got "
+                f"{self.provider!r}"
+            )
+        return provider, model
 
 
 @dataclass
 class LLMSection:
-    # Both empty by default — the first-run file will be a usable
-    # scaffold and the user fills in providers + role bindings. The
-    # runtime bootstrap validates presence of required roles (`self`,
-    # `hypothalamus`, `embedding`) and fails loud with guidance.
+    """Tag-based LLM config (Samuel 2026-04-26).
+
+    Three layers of indirection:
+
+    1. ``providers`` — physical API connections (URL + key). Sensitive;
+       only the runtime ever sees these. Plugins **never** receive
+       provider config.
+    2. ``tags`` — user-named pools each binding a single
+       ``(provider, model, params)`` triple. Tags are how users
+       give human-readable names to model choices and reuse one
+       choice across many purposes.
+    3. ``core_purposes`` — runtime-internal use cases (Self's
+       thinking, history compaction, ...) that need an LLM, mapped
+       to a tag name. Plugins have their own purposes that are
+       declared in their per-folder ``meta.yaml`` and bound in
+       ``workspace/reflects/<name>/config.yaml`` — those are
+       OUTSIDE this section so plugin code can't reach into the
+       central config and read API keys.
+
+    Embedding + reranker are NOT purposes (they're capabilities
+    intrinsic to specific models), so they get their own dedicated
+    fields holding a tag name directly.
+    """
     providers: dict[str, Provider] = field(default_factory=dict)
-    roles: dict[str, RoleBinding] = field(default_factory=dict)
+    tags: dict[str, TagBinding] = field(default_factory=dict)
+    # Core (runtime-owned, non-plugin) chat purpose → tag name
+    core_purposes: dict[str, str] = field(default_factory=dict)
+    # Special model-type slots
+    embedding: str | None = None  # name of an embedding-capable tag
+    reranker: str | None = None   # name of a rerank-capable tag (optional)
+
+    # ---- helpers ---------------------------------------------------
+
+    def tag(self, name: str) -> TagBinding | None:
+        return self.tags.get(name)
+
+    def core_tag(self, purpose: str) -> TagBinding | None:
+        tag_name = self.core_purposes.get(purpose)
+        if tag_name is None:
+            return None
+        return self.tags.get(tag_name)
+
+    def core_params(self, purpose: str) -> LLMParams | None:
+        """Convenience for callers that only care about the params
+        of a core purpose (e.g. Self's max_input_tokens)."""
+        tag = self.core_tag(purpose)
+        return tag.params if tag is not None else None
 
 
 @dataclass
@@ -384,45 +398,6 @@ def _substitute_env(value: Any) -> Any:
 # explicit empty value (e.g. `thresholds: {}`) is honored as empty.
 
 
-def _build_llm_params(
-    role_name: str, raw_params: dict[str, Any] | None,
-) -> LLMParams:
-    """Build LLMParams for `role_name`.
-
-    Precedence (highest to lowest):
-      1. User-supplied fields in config YAML (`raw_params`)
-      2. Role-specific defaults from `_ROLE_DEFAULTS[role_name]`
-      3. Universal defaults on the LLMParams dataclass itself
-
-    Unknown keys in raw_params are ignored (forward compatibility — a
-    future LLMParams field can appear in configs without errors).
-    """
-    # Normalize the legacy alias on the user's raw input first, BEFORE
-    # merging with role defaults. Older configs may say `max_tokens`;
-    # the current dataclass field is `max_output_tokens` (direction
-    # made explicit). If both appear in the user's block, the explicit
-    # new name wins and the alias is discarded.
-    user: dict[str, Any] = dict(raw_params or {})
-    if "max_tokens" in user:
-        if "max_output_tokens" not in user:
-            user["max_output_tokens"] = user["max_tokens"]
-        user.pop("max_tokens")
-
-    merged: dict[str, Any] = {}
-    merged.update(_ROLE_DEFAULTS.get(role_name, {}))
-    for k, v in user.items():
-        merged[k] = v
-    # Filter to known fields so unknown keys don't crash dataclass init.
-    known = {f.name for f in fields(LLMParams)}
-    safe = {k: v for k, v in merged.items() if k in known}
-    # Light coercion: YAML lists for list fields, numeric strings for numbers.
-    if "stop_sequences" in safe and safe["stop_sequences"] is not None:
-        safe["stop_sequences"] = list(safe["stop_sequences"])
-    if "retry_on_status" in safe and safe["retry_on_status"] is not None:
-        safe["retry_on_status"] = [int(x) for x in safe["retry_on_status"]]
-    return LLMParams(**safe)
-
-
 def _build_llm(raw: dict[str, Any]) -> LLMSection:
     providers: dict[str, Provider] = {}
     for pname, pdata in (raw.get("providers") or {}).items():
@@ -439,23 +414,97 @@ def _build_llm(raw: dict[str, Any]) -> LLMSection:
             api_key=pdata.get("api_key"),
             models=models,
         )
-    roles: dict[str, RoleBinding] = {}
-    for rname, rdata in (raw.get("roles") or {}).items():
-        model = rdata.get("model", "")
-        params = _build_llm_params(rname, rdata.get("params"))
-        # Resolve max_input_tokens NOW (rather than lazily at call
-        # time) so the runtime sees a concrete int everywhere and
-        # budget math doesn't have to keep checking for None.
-        # Order: YAML-pinned value > model_context lookup > default.
+    # Detect old `roles:` shape — Samuel's tag-based refactor 2026-04-26
+    # removed it. Legacy configs must migrate; we exit loud rather than
+    # silently doing the wrong thing.
+    if "roles" in raw:
+        _raise_old_roles_migration_error()
+
+    tags: dict[str, TagBinding] = {}
+    for tag_name, tdata in (raw.get("tags") or {}).items():
+        tdata = tdata or {}
+        params = _build_llm_params_for_tag(tdata.get("params"))
+        # Resolve max_input_tokens NOW from model name (split out of
+        # the combined "provider/model" field) so the runtime sees a
+        # concrete int everywhere.
         if params.max_input_tokens is None:
             from src.utils.model_context import resolve_max_input_tokens
-            params.max_input_tokens = resolve_max_input_tokens(model)
-        roles[rname] = RoleBinding(
-            provider=rdata.get("provider", ""),
-            model=model,
+            provider_field = str(tdata.get("provider", ""))
+            _, _, model_name = provider_field.partition("/")
+            params.max_input_tokens = resolve_max_input_tokens(model_name)
+        tags[tag_name] = TagBinding(
+            provider=str(tdata.get("provider", "")),
             params=params,
         )
-    return LLMSection(providers=providers, roles=roles)
+    core_purposes: dict[str, str] = {}
+    for purpose, tag_name in (raw.get("core_purposes") or {}).items():
+        if not isinstance(tag_name, str):
+            continue
+        core_purposes[purpose] = tag_name
+    embedding = raw.get("embedding")
+    if embedding is not None and not isinstance(embedding, str):
+        embedding = None
+    reranker = raw.get("reranker")
+    if reranker is not None and not isinstance(reranker, str):
+        reranker = None
+    return LLMSection(
+        providers=providers, tags=tags,
+        core_purposes=core_purposes,
+        embedding=embedding, reranker=reranker,
+    )
+
+
+def _raise_old_roles_migration_error() -> None:
+    """Loud failure for users on the pre-2026-04-26 ``llm.roles:``
+    shape. We exit rather than silently mis-parsing.
+    """
+    msg = (
+        "config.yaml uses the deprecated `llm.roles:` shape that was\n"
+        "removed in the tag-based LLM refactor (2026-04-26). Migrate by:\n\n"
+        "  OLD:\n"
+        "    llm:\n"
+        "      roles:\n"
+        "        self:\n"
+        "          provider: \"One API\"\n"
+        "          model: \"astron\"\n"
+        "          params: {...}\n\n"
+        "  NEW:\n"
+        "    llm:\n"
+        "      tags:\n"
+        "        my_self_tag:\n"
+        "          provider: \"One API/astron\"   # combined provider/model\n"
+        "          params: {...}\n"
+        "      core_purposes:\n"
+        "        self_thinking: my_self_tag\n"
+        "        compact: my_compact_tag\n"
+        "        classifier: my_compact_tag\n"
+        "      embedding: my_embed_tag\n"
+        "      reranker: my_rerank_tag    # optional\n\n"
+        "  Per-plugin (workspace/reflects/<name>/config.yaml):\n"
+        "    llm_purposes:\n"
+        "      <purpose_name>: <tag_name>\n\n"
+        "See docs/design/reflects-and-self-model.md for the full spec.\n"
+        "Krakey will not start until this migrates."
+    )
+    print(msg, file=sys.stderr)
+    raise _ConfigBootstrapExit(2)
+
+
+def _build_llm_params_for_tag(
+    raw_params: dict[str, Any] | None,
+) -> LLMParams:
+    """Build an LLMParams with no per-purpose default injection —
+    every tag stands on its own; users specify the params they want."""
+    user: dict[str, Any] = dict(raw_params or {})
+    # Legacy alias: older configs may say `max_tokens`. Translate
+    # silently — same behavior as the previous _build_llm_params.
+    if "max_tokens" in user:
+        if "max_output_tokens" not in user:
+            user["max_output_tokens"] = user["max_tokens"]
+        user.pop("max_tokens")
+    known = {f.name for f in fields(LLMParams)}
+    safe = {k: v for k, v in user.items() if k in known}
+    return LLMParams(**safe)
 
 
 # ---------------- schema introspection (for dashboard UI) ----------------
@@ -509,17 +558,6 @@ def llm_params_schema() -> list[dict[str, Any]]:
             entry["choices"] = choices
         out.append(entry)
     return out
-
-
-def role_default_params(role_name: str) -> dict[str, Any]:
-    """Expose the role-specific default overrides for the dashboard.
-
-    The UI can use this to pre-fill the params form when the user first
-    opens a role (so the Self role shows max_tokens=8192 etc. rather
-    than the universal 4096). Returning a fresh dict each time so
-    callers can safely mutate.
-    """
-    return dict(_ROLE_DEFAULTS.get(role_name, {}))
 
 
 def _build_hibernate(raw: dict[str, Any]) -> HibernateSection:

@@ -163,9 +163,13 @@ def test_update_persists_across_reflect_instances(tmp_path):
 
 
 def test_build_reflect_factory_signature():
-    """build_reflect ignores deps; should accept any deps-shaped
-    object so future Reflects can share the factory contract."""
-    r = build_reflect(SimpleNamespace())
+    """build_reflect takes a PluginContext; reads the deps' state
+    path override (None for the default behavior)."""
+    from src.reflects.context import PluginContext
+    fake_deps = SimpleNamespace(in_mind_state_path=None)
+    ctx = PluginContext(deps=fake_deps, plugin_name="default_in_mind",
+                          config={}, llms={})
+    r = build_reflect(ctx)
     assert isinstance(r, InMindReflectImpl)
     assert r.kind == "in_mind"
     assert r.name == "default_in_mind"

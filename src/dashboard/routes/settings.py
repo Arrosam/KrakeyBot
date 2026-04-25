@@ -18,11 +18,7 @@ from __future__ import annotations
 from fastapi import Body, FastAPI, HTTPException
 
 from src.dashboard.services.config import ConfigService
-from src.models.config import (
-    _ROLE_DEFAULTS,
-    llm_params_schema,
-    role_default_params,
-)
+from src.models.config import llm_params_schema
 
 
 def register(app: FastAPI, *, config: ConfigService) -> None:
@@ -42,22 +38,14 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
         """Field descriptors for dynamic UI rendering.
 
         Current sections:
-          * ``llm_params``   \u2014 per-role LLM parameters (max_tokens,
+          * ``llm_params`` \u2014 LLMParams field descriptors (max_tokens,
             temperature, reasoning_mode, ...). Returned as
-            ``[{field, type, default, help, choices?}, ...]`` with
-            shape matching the plugin ``config_schema`` contract the
-            dashboard already knows how to render.
-          * ``llm_role_defaults`` \u2014 role-specific overrides the UI
-            can pre-fill when a role is created (so the Self role
-            shows max_tokens=8192 out of the box).
+            ``[{field, type, default, help, choices?}, ...]``. The
+            dashboard renders this under each tag's params editor;
+            the same shape is reused by plugin ``config_schema``
+            entries.
         """
-        return {
-            "llm_params": llm_params_schema(),
-            "llm_role_defaults": {
-                name: role_default_params(name)
-                for name in _ROLE_DEFAULTS
-            },
-        }
+        return {"llm_params": llm_params_schema()}
 
     @app.post("/api/settings")
     async def post_settings(payload: dict = Body(...)):  # noqa: ANN201

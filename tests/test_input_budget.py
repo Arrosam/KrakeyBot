@@ -80,7 +80,7 @@ async def test_oversized_prompt_prunes_oldest_round(tmp_path):
     # Starve the budget artificially. 200 tokens is far below DNA's
     # natural size, guaranteeing the prompt is always "too big" until
     # we've popped every round.
-    runtime.config.llm.roles["self"].params.max_input_tokens = 200
+    runtime.config.llm.core_params("self_thinking").max_input_tokens = 200
 
     # Three fat rounds to make sure at least one gets popped.
     for i in range(3):
@@ -116,7 +116,7 @@ async def test_enforcer_tolerates_compact_llm_failure(tmp_path):
     await runtime.gm.initialize()
     await _seed_recall(runtime)
 
-    runtime.config.llm.roles["self"].params.max_input_tokens = 200
+    runtime.config.llm.core_params("self_thinking").max_input_tokens = 200
     runtime.window.append(SlidingWindowRound(
         heartbeat_id=1, stimulus_summary="x" * 500,
         decision_text="y" * 500, note_text="",
@@ -141,7 +141,7 @@ async def test_enforcer_stops_when_window_empty(tmp_path):
     await runtime.gm.initialize()
     await _seed_recall(runtime)
 
-    runtime.config.llm.roles["self"].params.max_input_tokens = 50
+    runtime.config.llm.core_params("self_thinking").max_input_tokens = 50
     assert len(runtime.window.rounds) == 0
     empty_recall = RecallResult(nodes=[], edges=[],
                                   covered_stimuli=[], uncovered_stimuli=[])

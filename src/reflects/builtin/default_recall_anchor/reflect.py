@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING
 from src.memory.recall import IncrementalRecall
 
 if TYPE_CHECKING:
-    from src.main import Runtime, RuntimeDeps
+    from src.main import Runtime
+    from src.reflects.context import PluginContext
 
 
 class DefaultRecallAnchorReflect:
@@ -29,7 +30,10 @@ class DefaultRecallAnchorReflect:
         # Reflects can vary it independently — different embedder,
         # different per_k, an LLM-anchor preprocessor — without
         # Runtime knowing the difference.
-        self_params = runtime.config.llm.roles["self"].params
+        from src.models.config import LLMParams
+        self_params = (
+            runtime.config.llm.core_params("self_thinking") or LLMParams()
+        )
         return IncrementalRecall(
             runtime.gm,
             embedder=runtime.embedder,
@@ -40,9 +44,10 @@ class DefaultRecallAnchorReflect:
         )
 
 
-def build_reflect(deps: "RuntimeDeps") -> DefaultRecallAnchorReflect:
-    """Factory invoked by ``load_reflect``. ``deps`` unused here —
+def build_reflect(ctx: "PluginContext") -> DefaultRecallAnchorReflect:
+    """Factory invoked by ``load_reflect``. ``ctx`` unused here —
     DefaultRecallAnchorReflect reads everything off ``runtime`` at
-    ``make_recall`` call time, not at construction."""
-    del deps
+    ``make_recall`` call time, not at construction. No LLM purposes
+    declared in meta.yaml so ctx.get_llm is never needed."""
+    del ctx
     return DefaultRecallAnchorReflect()

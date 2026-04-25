@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -34,7 +34,7 @@ from src.llm.client import LLMClient
 from src.memory.graph_memory import GraphMemory
 from src.memory.knowledge_base import KBRegistry
 from src.memory.recall import IncrementalRecall, Reranker
-from src.models.config import Config, load_config
+from src.models.config import Config, LLMParams, load_config
 from src.models.config_backup import backup_config
 from src.models.stimulus import Stimulus
 from src.prompt.builder import PromptBuilder, SlidingWindowRound
@@ -95,6 +95,18 @@ class RuntimeDeps:
     # Tests pass a tmpdir so update_in_mind dispatches don't bleed
     # into the production state.
     in_mind_state_path: str | None = None
+    # Root directory for per-Reflect config files. Each enabled Reflect
+    # reads ``<root>/<name>/config.yaml`` (a pure-text settings file
+    # the plugin can safely access). None → ``workspace/reflects``.
+    # Tests pass a tmpdir so plugin config edits don't bleed into the
+    # production workspace.
+    reflect_configs_root: str | None = None
+    # Shared LLMClient cache keyed by tag name. Populated by
+    # build_runtime_from_config for core purposes; Runtime adds plugin
+    # purpose entries on top. Sharing the cache means two purposes that
+    # map to the same tag share one client (saves connections + keeps
+    # rate-limit accounting consistent).
+    llm_clients_by_tag: dict[str, Any] = field(default_factory=dict)
 
 
 MAX_RECALL_RETRIES = 1
@@ -144,7 +156,7 @@ class Runtime:
         # loader (YAML > model lookup > 128k default) so `int()` is
         # safe. Only Self consumes this window, so we key it off
         # Self's role config.
-        self_params = self.config.llm.roles["self"].params
+        self_params = self.config.llm.core_params("self_thinking") or LLMParams()
         _history_budget = int(
             (self_params.max_input_tokens or 128_000)
             * self_params.history_token_fraction
@@ -300,26 +312,26 @@ class Runtime:
     ) -> None:
         """Walk ``config.reflects`` and lazily load each named Reflect.
 
-        Two input states (see ``Config.reflects`` docstring):
-          * ``None`` or ``[]`` — zero Reflects. Honored without
-            offering "legacy defaults". Per Samuel's 2026-04-25
-            principle, plugins are strictly additive and the core
-            never enables them implicitly. ``None`` (field absent)
-            gets a one-line stderr nudge to add an explicit list;
-            ``[]`` is silent (the user said exactly what they want).
-          * ``[...]`` — explicit list. Each entry is resolved via
-            ``src.reflects.discovery.load_reflect``: unknown names
-            are skipped with a log so a typo doesn't crash startup;
-            factory exceptions are caught for the same reason.
+        For each enabled name:
+          1. Look up its metadata (without importing plugin code).
+          2. Read its per-plugin config from
+             ``<reflect_configs_root>/<name>/config.yaml`` —
+             pure-text settings the plugin is allowed to see (no
+             API keys / providers).
+          3. Resolve every declared ``llm_purposes`` entry to an
+             ``LLMClient`` via the shared tag cache, using the user's
+             ``llm_purposes`` mapping in the per-plugin config.
+          4. Build a ``PluginContext`` and call the plugin's factory
+             with it. The factory imports plugin code (the only
+             place that does) and returns a Reflect instance.
 
-        ``load_reflect`` imports the plugin's module on first
-        invocation. Names that never appear in any user's config
-        keep their Python module out of ``sys.modules`` entirely —
-        the architectural invariant.
+        Failure modes are isolated per-plugin: unknown name, missing
+        plugin config file, broken factory, and unbound purpose all
+        log + skip without blocking startup of the rest. Plugin model
+        is strictly additive (CLAUDE.md invariant).
         """
-        from src.reflects.discovery import (
-            discover_reflects, load_reflect,
-        )
+        from src.reflects.context import PluginContext, load_plugin_config
+        from src.reflects.discovery import discover_reflects, load_reflect
 
         names = self.config.reflects
         if names is None:
@@ -334,25 +346,69 @@ class Runtime:
             return
         if not names:
             return  # explicit empty list: respect, no nag
+
+        all_meta = discover_reflects()
+        cfg_root = Path(deps.reflect_configs_root or "workspace/reflects")
+
         for name in names:
-            try:
-                reflect = load_reflect(name, deps)
-            except KeyError:
+            meta = all_meta.get(name)
+            if meta is None:
                 print(
                     f"config: unknown Reflect name {name!r} — skipping. "
-                    f"Available: {sorted(discover_reflects().keys())}",
+                    f"Available: {sorted(all_meta.keys())}",
                     file=sys.stderr,
                 )
                 continue
+
+            # Per-plugin config (pure-text, plugin-readable).
+            plugin_cfg = load_plugin_config(name, cfg_root)
+            user_purposes = plugin_cfg.get("llm_purposes") or {}
+            if not isinstance(user_purposes, dict):
+                print(
+                    f"config: {name}/config.yaml `llm_purposes:` must be "
+                    "a mapping; ignoring all purpose bindings",
+                    file=sys.stderr,
+                )
+                user_purposes = {}
+
+            # Resolve each declared purpose to an LLMClient.
+            ctx_llms: dict[str, Any] = {}
+            for purpose_decl in meta.llm_purposes:
+                purpose_name = str(purpose_decl.get("name", "")).strip()
+                if not purpose_name:
+                    continue
+                tag_name = user_purposes.get(purpose_name)
+                if not isinstance(tag_name, str) or not tag_name:
+                    # User hasn't bound this purpose. Plugin will see
+                    # ctx.get_llm() return None and decide what to do.
+                    continue
+                client = resolve_llm_for_tag(
+                    self.config, tag_name, deps.llm_clients_by_tag,
+                )
+                if client is None:
+                    # resolve_llm_for_tag already logged the reason
+                    continue
+                ctx_llms[purpose_name] = client
+
+            ctx = PluginContext(
+                deps=deps, plugin_name=name,
+                config=plugin_cfg, llms=ctx_llms,
+            )
+
+            try:
+                reflect = load_reflect(name, ctx)
             except Exception as e:  # noqa: BLE001
-                # Bad factory / import error must not block startup —
-                # plugins are strictly additive (CLAUDE.md invariant).
                 print(
                     f"config: Reflect {name!r} failed to load: "
                     f"{type(e).__name__}: {e}; skipping. Runtime will "
                     "run without it.",
                     file=sys.stderr,
                 )
+                continue
+            if reflect is None:
+                # Factory may return None to opt out (e.g. its required
+                # LLM purpose wasn't bound). That's a soft skip with no
+                # extra noise — the factory or resolver already logged.
                 continue
             try:
                 self.reflects.register(reflect)
@@ -939,7 +995,7 @@ class Runtime:
         from src.runtime.compact import compact_round
         from src.utils.tokens import estimate_tokens
 
-        self_params = self.config.llm.roles["self"].params
+        self_params = self.config.llm.core_params("self_thinking") or LLMParams()
         budget = int(self_params.max_input_tokens or 128_000)
 
         async def _recall_fn(text: str):
@@ -1336,47 +1392,125 @@ def _summarize_stimuli(stimuli: list[Stimulus]) -> str:
 # ---------------- production builder ----------------
 
 
-def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
-    cfg = load_config(config_path)
-    self_role = cfg.llm.roles["self"]
-    hypo_role = cfg.llm.roles["hypothalamus"]
-    compact_role = cfg.llm.roles.get("compact", self_role)
-    embedding_role = cfg.llm.roles["embedding"]
+def resolve_llm_for_tag(
+    cfg: Config, tag_name: str | None,
+    cache: dict[str, "LLMClient"],
+) -> "LLMClient | None":
+    """Build (or fetch from cache) the LLMClient for a tag name.
 
-    self_llm = LLMClient(cfg.llm.providers[self_role.provider],
-                           self_role.model, params=self_role.params)
-    hypo_llm = LLMClient(cfg.llm.providers[hypo_role.provider],
-                           hypo_role.model, params=hypo_role.params)
-    compact_llm = LLMClient(cfg.llm.providers[compact_role.provider],
-                              compact_role.model,
-                              params=compact_role.params)
-    classify_llm = compact_llm  # reuse
-    embed_client = LLMClient(cfg.llm.providers[embedding_role.provider],
-                               embedding_role.model,
-                               params=embedding_role.params)
+    Shared between the core-purpose loader (build_runtime_from_config)
+    and the per-plugin loader (Runtime._register_reflects_from_config)
+    so that two purposes pointing at the same tag share one client
+    instance — keeps connection state + future rate-limit accounting
+    consistent.
+
+    Returns None for: empty tag_name, missing tag in cfg.llm.tags,
+    malformed provider field, or provider name not in cfg.llm.providers.
+    Each failure mode logs a single stderr warning so the user can
+    see what to fix; the runtime continues without that LLM (strictly
+    additive plugin model — bad config doesn't crash startup).
+    """
+    if not tag_name:
+        return None
+    cached = cache.get(tag_name)
+    if cached is not None:
+        return cached
+    tag = cfg.llm.tags.get(tag_name)
+    if tag is None:
+        print(f"warning: tag {tag_name!r} not defined in llm.tags",
+              file=sys.stderr)
+        return None
+    try:
+        provider_name, model_name = tag.split_provider()
+    except ValueError as e:
+        print(f"warning: tag {tag_name!r} has bad provider field: {e}",
+              file=sys.stderr)
+        return None
+    provider = cfg.llm.providers.get(provider_name)
+    if provider is None:
+        print(
+            f"warning: tag {tag_name!r} references unknown provider "
+            f"{provider_name!r}", file=sys.stderr,
+        )
+        return None
+    client = LLMClient(provider, model_name, params=tag.params)
+    cache[tag_name] = client
+    return client
+
+
+def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
+    """Construct a production Runtime from ``config.yaml``.
+
+    Tag-based resolution path (Samuel 2026-04-26 refactor):
+      1. ``cfg.llm.tags`` → name → (provider, model, params)
+      2. ``cfg.llm.core_purposes`` → core purpose name → tag name
+      3. ``cfg.llm.embedding`` / ``cfg.llm.reranker`` → tag name
+         (model-type slots, not "purposes")
+
+    Each LLMClient is built once per tag name and reused across all
+    purposes that share it.
+    """
+    cfg = load_config(config_path)
+
+    # Build LLMClient cache keyed by tag name. Multiple purposes that
+    # point at the same tag share a single client. The cache is also
+    # passed through to plugin loaders via RuntimeDeps so plugin
+    # purposes resolve from the same cache.
+    client_cache: dict[str, LLMClient] = {}
+
+    def _client_for_tag(tag_name: str | None) -> LLMClient | None:
+        return resolve_llm_for_tag(cfg, tag_name, client_cache)
+
+    # Core purposes (Self / compact / classifier ...). Self is required;
+    # the rest are optional — Runtime checks at use time.
+    self_llm = _client_for_tag(cfg.llm.core_purposes.get("self_thinking"))
+    if self_llm is None:
+        raise RuntimeError(
+            "config.yaml must bind core purpose 'self_thinking' to a "
+            "tag — Self has no LLM otherwise. See "
+            "docs/design/reflects-and-self-model.md for the tag system."
+        )
+    compact_llm = _client_for_tag(cfg.llm.core_purposes.get("compact"))
+    classify_llm = (
+        _client_for_tag(cfg.llm.core_purposes.get("classifier"))
+        or compact_llm  # historical reuse
+    )
+    if compact_llm is None:
+        compact_llm = self_llm  # last-resort fallback so sleep doesn't crash
+
+    # Embedding + reranker (model-type slots, not purposes)
+    embed_client = _client_for_tag(cfg.llm.embedding)
 
     async def embedder(text: str) -> list[float]:
+        if embed_client is None:
+            raise RuntimeError(
+                "no embedding tag bound — set llm.embedding to a tag name "
+                "in config.yaml"
+            )
         return await embed_client.embed(text)
 
     reranker = None
-    rerank_role = cfg.llm.roles.get("reranker")
-    if rerank_role is not None:
-        reranker_client = LLMClient(
-            cfg.llm.providers[rerank_role.provider], rerank_role.model,
-            params=rerank_role.params,
-        )
-
+    reranker_client = _client_for_tag(cfg.llm.reranker)
+    if reranker_client is not None:
         class _RerankerAdapter:
             async def rerank(self, query, docs):
                 return await reranker_client.rerank(query, docs)
-
         reranker = _RerankerAdapter()
+
+    # hypo_llm is no longer eagerly required at the core level — it's
+    # bound through the per-plugin config of `default_hypothalamus`.
+    # We still keep the field on RuntimeDeps for back-compat with
+    # existing plugin factories that pull `deps.hypo_llm`. Resolve
+    # from the dedicated `hypothalamus` core purpose if the user
+    # mapped one (compat shim), else None.
+    hypo_llm = _client_for_tag(cfg.llm.core_purposes.get("hypothalamus"))
 
     deps = RuntimeDeps(
         config=cfg, self_llm=self_llm, hypo_llm=hypo_llm,
         compact_llm=compact_llm,
         classify_llm=classify_llm, embedder=embedder, reranker=reranker,
         config_path=str(config_path),
+        llm_clients_by_tag=client_cache,  # shared with plugin loader
     )
     return Runtime(deps)
 

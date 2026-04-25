@@ -177,7 +177,8 @@ async def test_make_recall_dispatches_through_default(tmp_path):
     # Knobs match the runtime's config slots.
     assert rec.per_k == runtime.config.graph_memory.recall_per_stimulus_k
     assert rec.recall_token_budget == (
-        runtime.config.llm.roles["self"].params.recall_token_budget
+        (runtime.config.llm.core_params("self_thinking")
+         .recall_token_budget)
     )
     assert rec.neighbor_depth == (
         runtime.config.graph_memory.neighbor_expand_depth

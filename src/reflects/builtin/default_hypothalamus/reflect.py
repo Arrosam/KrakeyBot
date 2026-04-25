@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from src.hypothalamus import Hypothalamus, HypothalamusResult
 
 if TYPE_CHECKING:
-    from src.main import RuntimeDeps
+    from src.reflects.context import PluginContext
 
 
 class DefaultHypothalamusReflect:
@@ -35,7 +35,22 @@ class DefaultHypothalamusReflect:
         return await self._inner.translate(decision, tentacles)
 
 
-def build_reflect(deps: "RuntimeDeps") -> DefaultHypothalamusReflect:
-    """Factory invoked by ``load_reflect``. Receives the runtime's
-    ``RuntimeDeps`` bundle and pulls whatever LLM / config it needs."""
-    return DefaultHypothalamusReflect(deps.hypo_llm)
+def build_reflect(ctx: "PluginContext") -> DefaultHypothalamusReflect | None:
+    """Factory invoked by ``load_reflect``.
+
+    Pulls the ``translator`` LLM via the plugin's per-plugin config
+    binding (``workspace/reflects/default_hypothalamus/config.yaml``
+    -> ``llm_purposes.translator: <tag_name>``). When the user hasn't
+    bound the tag, returns ``None`` — the loader skips this Reflect
+    rather than crashing the runtime.
+    """
+    import logging
+    llm = ctx.get_llm("translator")
+    if llm is None:
+        logging.getLogger(__name__).warning(
+            "default_hypothalamus: no LLM bound for purpose 'translator' "
+            "(check workspace/reflects/default_hypothalamus/config.yaml "
+            "and llm.tags in central config). Skipping registration."
+        )
+        return None
+    return DefaultHypothalamusReflect(llm)

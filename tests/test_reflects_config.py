@@ -32,13 +32,29 @@ def _write(tmp_path, body: str):
     return p
 
 
+def _minimal_deps_for_runtime(runtime):
+    """Re-derive a deps-shaped namespace from a runtime built by the
+    helper, so tests can re-invoke ``_register_reflects_from_config``
+    with the same plugin-isolation setup the helper provisioned.
+    """
+    from types import SimpleNamespace
+    return SimpleNamespace(
+        reflect_configs_root=runtime._test_reflect_configs_root,
+        llm_clients_by_tag=runtime._test_llm_clients_by_tag,
+        hypo_llm=ScriptedLLM([]),
+        in_mind_state_path=None,
+    )
+
+
 def test_loader_returns_none_when_reflects_key_absent(tmp_path):
     p = _write(tmp_path, """
         llm:
           providers:
             p: {type: "openai_compatible", base_url: "http://x", api_key: "k", models: []}
-          roles:
-            self: {provider: "p", model: "claude-sonnet-4-5"}
+          tags:
+            t1: {provider: "p/claude-sonnet-4-5"}
+          core_purposes:
+            self_thinking: t1
     """)
     cfg = load_config(p)
     assert cfg.reflects is None
@@ -49,8 +65,10 @@ def test_loader_returns_empty_list_when_reflects_is_empty(tmp_path):
         llm:
           providers:
             p: {type: "openai_compatible", base_url: "http://x", api_key: "k", models: []}
-          roles:
-            self: {provider: "p", model: "claude-sonnet-4-5"}
+          tags:
+            t1: {provider: "p/claude-sonnet-4-5"}
+          core_purposes:
+            self_thinking: t1
         reflects: []
     """)
     cfg = load_config(p)
@@ -62,8 +80,10 @@ def test_loader_returns_ordered_list_when_specified(tmp_path):
         llm:
           providers:
             p: {type: "openai_compatible", base_url: "http://x", api_key: "k", models: []}
-          roles:
-            self: {provider: "p", model: "claude-sonnet-4-5"}
+          tags:
+            t1: {provider: "p/claude-sonnet-4-5"}
+          core_purposes:
+            self_thinking: t1
         reflects:
           - default_recall_anchor
           - default_hypothalamus
@@ -127,9 +147,16 @@ def test_discover_does_not_import_reflect_modules():
 
 def test_load_reflect_imports_and_calls_factory():
     """load_reflect is the *only* path that imports plugin modules.
-    It returns a Reflect instance built via the factory."""
-    deps = type("_FakeDeps", (), {"hypo_llm": ScriptedLLM([])})()
-    r = load_reflect("default_hypothalamus", deps)
+    It builds a fake PluginContext that pretends the user has bound
+    the `translator` purpose to a stand-in LLMClient — the factory
+    sees `ctx.get_llm("translator")` return the fake and returns a
+    Reflect."""
+    from src.reflects.context import PluginContext
+    fake_llm = ScriptedLLM([])
+    ctx = PluginContext(deps=None, plugin_name="default_hypothalamus",
+                          config={}, llms={"translator": fake_llm})
+    r = load_reflect("default_hypothalamus", ctx)
+    assert r is not None
     assert r.kind == "hypothalamus"
     assert r.name == "default_hypothalamus"
 
@@ -181,9 +208,7 @@ async def test_runtime_warns_when_reflects_field_is_none(tmp_path, capsys):
     runtime.config.reflects = None
     capsys.readouterr()  # discard prior output
 
-    runtime._register_reflects_from_config(
-        type("_FakeDeps", (), {"hypo_llm": ScriptedLLM([])})(),
-    )
+    runtime._register_reflects_from_config(_minimal_deps_for_runtime(runtime))
     err = capsys.readouterr().err
     assert "no `reflects:`" in err
     # No legacy default registered — explicit principle.
@@ -202,9 +227,7 @@ async def test_runtime_skips_unknown_reflect_names_loudly(tmp_path, capsys):
     ]
     capsys.readouterr()
 
-    runtime._register_reflects_from_config(
-        type("_FakeDeps", (), {"hypo_llm": ScriptedLLM([])})(),
-    )
+    runtime._register_reflects_from_config(_minimal_deps_for_runtime(runtime))
     err = capsys.readouterr().err
     assert "typo_reflect" in err
     assert set(runtime.reflects.names()) == {

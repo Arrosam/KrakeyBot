@@ -6,10 +6,114 @@
 
 ---
 
-## 🔒 核心设计原则（载重不变量, 2026-04-25）
+## 🔒 核心设计原则（载重不变量, 2026-04-25 / 2026-04-26）
 
 > **删除 / 关闭任何插件 (Reflects, tentacles, sensories) 都不应该
 > 影响本体 (runtime) 的运行。**
+
+> **插件代码在用户启用前不会被加载。** 启用前唯一允许的影响是
+> 把"配置选项"以纯文本格式暴露给 Web UI（Web UI 读 ``meta.yaml`` 得到
+> 元数据，**不会** import 任何 plugin 代码）。
+
+> **插件无法访问中央 ``config.yaml`` (含 API key + provider 配置)。**
+> 插件 Python 代码看到的只有：(1) 自己 folder 下的 ``config.yaml``
+> 纯文本设置；(2) ``ctx.get_llm(purpose_name)`` 返回的 ``LLMClient``
+> 实例。LLMClient 内部封装 provider 信息，但插件**拿不到底层 API
+> key**。
+
+## 🏷️ Tag-based LLM 系统（2026-04-26）
+
+三级抽象，每一级单一职责：
+
+```
+1. providers (中央 config.yaml)
+   API 连接 + 密钥。runtime 唯一可见, 插件永远看不到。
+
+2. tags (中央 config.yaml)
+   语义命名 → (provider, model, params) 三元组。
+   provider 字段 = "<provider_name>/<model_name>" 紧凑字符串
+   (按第一个 / 切; provider 名不能含 /; model 名可以)。
+
+3. assignments (purpose → tag)
+   - core 用途 (Self/compact/classifier ...): 中央
+     llm.core_purposes:
+   - 插件用途: 该插件 folder 下的 config.yaml
+     llm_purposes:
+       <purpose>: <tag>
+```
+
+**特殊 model-type slot**（不是 purpose, 是 capability):
+
+```yaml
+llm:
+  embedding: <tag_name>     # 必填用于 GM auto-recall
+  reranker: <tag_name>      # 可选, 用于 recall 重排
+```
+
+**完整中央配置示例**:
+
+```yaml
+llm:
+  providers:
+    "One API": {type: openai_compatible, base_url: ..., api_key: ...}
+    SiliconFlow: {type: openai_compatible, ..., api_key: ...}
+  tags:
+    fast_generation:
+      provider: "One API/qwen3.6-9b"
+      params: {max_output_tokens: 512, temperature: 0.3}
+    high_performance:
+      provider: "One API/astron"
+      params: {max_output_tokens: 8192, reasoning_mode: medium}
+    text_compression:
+      provider: "SiliconFlow/qwen3.6-27b"
+      params: {max_output_tokens: 4096}
+    embed_tag:
+      provider: "SiliconFlow/BAAI/bge-m3"
+    rerank_tag:
+      provider: "SiliconFlow/BAAI/bge-reranker-v2-m3"
+  core_purposes:
+    self_thinking: high_performance
+    compact: text_compression
+    classifier: text_compression
+  embedding: embed_tag
+  reranker: rerank_tag
+```
+
+**插件端**（``workspace/reflects/<name>/config.yaml``）:
+
+```yaml
+llm_purposes:
+  <plugin's purpose name>: <tag name>
+```
+
+**插件 ``meta.yaml`` 端**:
+
+```yaml
+llm_purposes:
+  - name: <purpose name>
+    description: ...
+    suggested_tag: <hint, optional>     # 不会自动绑定
+```
+
+**Plugin factory 签名**:
+
+```python
+def build_reflect(ctx: PluginContext) -> Reflect | None:
+    llm = ctx.get_llm("translator")
+    if llm is None:
+        return None    # 没绑定 → 跳过自己注册 (additive 原则)
+    return MyReflect(llm)
+```
+
+**LLMClient 共享**: 多个 purpose 映射到同一个 tag → 共用一个客户端
+实例 (省连接 + 一致的 rate-limit 计数)。共享缓存 ``deps.llm_clients_by_tag``
+跨 core 和插件路径共用。
+
+**迁移**: 旧 ``llm.roles:`` shape 已删除。loader 检测到则**loud 报错并
+退出**，附详细迁移说明。配置无变化时 runtime 无法启动 — 强制用户显式
+迁移。
+
+
 
 含义:
 - runtime 的核心 heartbeat 循环必须能在**零插件**状态下跑起来。

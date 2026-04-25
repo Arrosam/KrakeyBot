@@ -70,6 +70,14 @@ class ReflectMetadata:
     factory_module: str
     factory_attr: str
     config_schema: list[dict[str, Any]] = field(default_factory=list)
+    # LLM purposes the plugin needs. Each entry:
+    #   {"name": "translator",
+    #    "description": "...",
+    #    "suggested_tag": "fast_generation"}   # optional
+    # User binds these in workspace/reflects/<name>/config.yaml under
+    # an ``llm_purposes:`` mapping. Plugin factory pulls each via
+    # ``ctx.get_llm(purpose_name)``.
+    llm_purposes: list[dict[str, Any]] = field(default_factory=list)
     source_path: Path | None = None  # which meta.yaml this came from
 
 
@@ -105,10 +113,16 @@ def discover_reflects() -> dict[str, ReflectMetadata]:
     return out
 
 
-def load_reflect(name: str, deps: Any) -> "Reflect":
+def load_reflect(name: str, ctx: Any) -> "Reflect":
     """Look up ``name`` in discovery, lazily import its
-    ``factory_module``, invoke ``factory_attr(deps)``, return the
-    resulting Reflect instance.
+    ``factory_module``, invoke ``factory_attr(ctx)``, return the
+    resulting Reflect instance (or whatever the factory returns —
+    factories may return ``None`` to opt out of registration).
+
+    ``ctx`` is whatever the caller wants to pass through; production
+    callers (Runtime._register_reflects_from_config) pass a
+    ``PluginContext`` with the plugin's per-plugin config + resolved
+    LLM clients. Tests may pass simpler stand-ins.
 
     Raises ``KeyError`` if the name isn't in discovery (caller
     typically logs + skips per the strictly-additive plugin rule).
@@ -120,7 +134,7 @@ def load_reflect(name: str, deps: Any) -> "Reflect":
         raise KeyError(name)
     module = importlib.import_module(metadata.factory_module)
     factory = getattr(module, metadata.factory_attr)
-    return factory(deps)
+    return factory(ctx)
 
 
 def _parse_meta(path: Path) -> ReflectMetadata:
@@ -135,6 +149,9 @@ def _parse_meta(path: Path) -> ReflectMetadata:
     schema = raw.get("config_schema") or []
     if not isinstance(schema, list):
         raise ValueError("config_schema must be a list of field entries")
+    purposes = raw.get("llm_purposes") or []
+    if not isinstance(purposes, list):
+        raise ValueError("llm_purposes must be a list of purpose entries")
     return ReflectMetadata(
         name=str(raw["name"]),
         kind=str(raw["kind"]),
@@ -142,5 +159,6 @@ def _parse_meta(path: Path) -> ReflectMetadata:
         factory_module=str(raw["factory_module"]),
         factory_attr=str(raw["factory_attr"]),
         config_schema=list(schema),
+        llm_purposes=list(purposes),
         source_path=path,
     )

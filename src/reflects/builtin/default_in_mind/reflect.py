@@ -17,7 +17,8 @@ from src.reflects.builtin.default_in_mind.tentacle import (
 )
 
 if TYPE_CHECKING:
-    from src.main import Runtime, RuntimeDeps
+    from src.main import Runtime
+    from src.reflects.context import PluginContext
 
 _log = logging.getLogger(__name__)
 
@@ -109,16 +110,16 @@ class InMindReflectImpl:
             )
 
 
-def build_reflect(deps: "RuntimeDeps") -> InMindReflectImpl:
+def build_reflect(ctx: "PluginContext") -> InMindReflectImpl:
     """Factory invoked by ``load_reflect``.
 
-    ``deps.in_mind_state_path`` is honored when provided so tests
+    ``ctx.deps.in_mind_state_path`` is honored when provided so tests
     can isolate the state file. Production leaves it ``None`` and
     the Reflect uses the locked-in
-    ``workspace/data/in_mind.json``. No LLM / embedder needed.
+    ``workspace/data/in_mind.json``. No LLM purposes declared.
     """
     state_path = (
-        getattr(deps, "in_mind_state_path", None)
+        getattr(ctx.deps, "in_mind_state_path", None)
         or DEFAULT_STATE_PATH
     )
     return InMindReflectImpl(state_path=state_path)

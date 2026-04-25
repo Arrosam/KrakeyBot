@@ -13,3 +13,10 @@ description: >
 factory_module: src.reflects.builtin.default_hypothalamus.reflect
 factory_attr: build_reflect
 config_schema: []
+llm_purposes:
+  - name: translator
+    description: >
+      Translates Self's natural-language [DECISION] into structured
+      tentacle calls. Light JSON parsing task; a fast cheap model is
+      usually fine.
+    suggested_tag: fast_generation
