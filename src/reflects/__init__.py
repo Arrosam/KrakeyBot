@@ -22,6 +22,7 @@ built-in Reflects, with no behavior change. See
 ``docs/design/reflects-and-self-model.md`` for the full design.
 """
 from src.reflects.protocol import (  # noqa: F401
-    HeartbeatContext, HypothalamusReflect, RecallAnchorReflect, Reflect,
+    HeartbeatContext, HypothalamusReflect, InMindReflect,
+    RecallAnchorReflect, Reflect,
 )
 from src.reflects.registry import ReflectRegistry  # noqa: F401

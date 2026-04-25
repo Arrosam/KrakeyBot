@@ -77,6 +77,13 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     # rewrite it. Without an override, concurrent test writes trample
     # the production workspace/self_model.yaml.
     self_model_path = f"{tempfile.mkdtemp(prefix='krakey_test_sm_')}/self_model.yaml"
+    # And the in_mind Reflect's state file. Tests that enable
+    # default_in_mind would otherwise dispatch update_in_mind into
+    # the production workspace/data/in_mind.json — same class of
+    # leak as the web_chat history bug.
+    in_mind_state_path = (
+        f"{tempfile.mkdtemp(prefix='krakey_test_im_')}/in_mind.json"
+    )
     from src.models.config import (
         Config, DashboardSection, FatigueSection, GraphMemorySection,
         HibernateSection, KnowledgeBaseSection, LLMParams, LLMSection,
@@ -145,6 +152,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         reranker=reranker,
         plugin_configs_root=plugin_configs_dir,
         self_model_path=self_model_path,
+        in_mind_state_path=in_mind_state_path,
     )
     return Runtime(
         deps, hibernate_min=hibernate_min, hibernate_max=hibernate_max,

@@ -88,15 +88,23 @@ class PromptBuilder:
         stimuli: list[Stimulus],
         current_time: datetime | None = None,
         suppress_action_format: bool = False,
+        in_mind: dict[str, str] | None = None,
+        in_mind_instructions: str | None = None,
     ) -> str:
         """Assemble the Self prompt.
 
         ``suppress_action_format``: True → omit the ``[ACTION FORMAT]``
-        layer. Set when a Reflect of kind="hypothalamus" is registered:
-        Hypothalamus translates Self's natural-language decisions into
-        tentacle calls, so teaching Self to write structured ACTION
-        tags would actively conflict with the translator. See
-        docs/design/reflects-and-self-model.md Reflect #1 design.
+        layer. Set when a Reflect of kind="hypothalamus" is registered.
+
+        ``in_mind`` / ``in_mind_instructions``: when an in_mind Reflect
+        is registered, Runtime passes its state snapshot (``in_mind``)
+        + the standing instruction text (``in_mind_instructions``) to
+        the builder. The instructions block is added as a stable layer
+        between [ACTION FORMAT] and [STIMULUS]; the state is
+        prepended as a virtual "Heartbeat #now (in mind)" round at
+        the head of [HISTORY] when at least one field is non-empty.
+        Both are absent (no virtual round, no instruction layer) when
+        no in_mind Reflect is registered — zero-plugin invariant.
         """
         layers: list[str] = [
             DNA,
@@ -105,10 +113,12 @@ class PromptBuilder:
         ]
         if not suppress_action_format:
             layers.append(ACTION_FORMAT_LAYER)
+        if in_mind_instructions:
+            layers.append(in_mind_instructions)
         layers.extend([
             self._layer_stimulus(stimuli, current_time),
             self._layer_recall(recall),
-            self._layer_history(window),
+            self._layer_history(window, in_mind=in_mind),
             self._layer_status(status),
             HEARTBEAT_QUESTION,
         ])
@@ -165,10 +175,31 @@ class PromptBuilder:
             )
         return "\n".join(lines)
 
-    def _layer_history(self, window: list[SlidingWindowRound]) -> str:
-        if not window:
-            return "# [HISTORY]\n(empty)"
+    def _layer_history(
+        self, window: list[SlidingWindowRound],
+        *, in_mind: dict[str, str] | None = None,
+    ) -> str:
+        """Render the [HISTORY] layer.
+
+        When ``in_mind`` is provided and at least one of its content
+        fields (``thoughts`` / ``mood`` / ``focus``) is non-empty, a
+        virtual "Heartbeat #now (in mind)" round is prepended before
+        the real heartbeat history. This is the single channel by
+        which Self's current mental state reaches every prompt
+        consumer (Self LLM, recall LLM, future Reflects) — see
+        docs/design/reflects-and-self-model.md Reflect #3 (Part 3).
+        """
         lines = ["# [HISTORY]"]
+        virtual = self._format_in_mind_round(in_mind)
+        if virtual is not None:
+            lines.append(virtual)
+        if not window:
+            if virtual is None:
+                # Nothing at all in history — keep the historical
+                # "(empty)" sentinel so existing tests / Self's
+                # mental model stay consistent.
+                return "# [HISTORY]\n(empty)"
+            return "\n".join(lines)
         for r in window:
             lines.append(f"--- Heartbeat #{r.heartbeat_id} ---")
             lines.append(f"Stimulus: {r.stimulus_summary}")
@@ -176,6 +207,32 @@ class PromptBuilder:
             if r.note_text:
                 lines.append(f"Note: {r.note_text}")
         return "\n".join(lines)
+
+    def _format_in_mind_round(
+        self, in_mind: dict[str, str] | None,
+    ) -> str | None:
+        """Format the virtual round at the head of [HISTORY], or
+        return None if no in_mind state was passed / every field is
+        empty. Lives on the builder rather than in the in_mind
+        Reflect's prompt.py because the builder owns the [HISTORY]
+        layer's exact line shape — keeping the formatting consistent
+        with real heartbeat rounds matters for Self's pattern-match.
+        """
+        if not in_mind:
+            return None
+        thoughts = (in_mind.get("thoughts") or "").strip()
+        mood = (in_mind.get("mood") or "").strip()
+        focus = (in_mind.get("focus") or "").strip()
+        if not (thoughts or mood or focus):
+            return None
+        out = ["--- Heartbeat #now (in mind) ---"]
+        if thoughts:
+            out.append(f"Thoughts: {thoughts}")
+        if mood:
+            out.append(f"Mood: {mood}")
+        if focus:
+            out.append(f"Focus: {focus}")
+        return "\n".join(out)
 
     def _layer_stimulus(
         self,

@@ -71,6 +71,52 @@ class ReflectRegistry:
         """
         return bool(self._by_kind.get("hypothalamus"))
 
+    def in_mind_state(self) -> dict[str, str] | None:
+        """Snapshot of the in_mind state, or ``None`` if no in_mind
+        Reflect is registered (zero-plugin invariant — runtime keeps
+        working, prompt builder just won't insert the virtual
+        round / instruction layer).
+
+        Skeleton supports length-1 in_mind chain; multi-Reflect
+        in_mind composition isn't a real use case yet — if more than
+        one in_mind Reflect is registered, the FIRST one's state is
+        returned and a warning is logged on the chain rather than
+        raising (better to keep running with the first state than
+        crash).
+        """
+        chain = self._by_kind.get("in_mind") or []
+        if not chain:
+            return None
+        return chain[0].read()  # type: ignore[attr-defined]
+
+    def attach_all(self, runtime: Any) -> None:
+        """One-time post-registration lifecycle hook.
+
+        Each registered Reflect that defines an ``attach`` method
+        gets called with the runtime so it can wire up its own
+        runtime-coupled assets — e.g. the in_mind Reflect uses this
+        to register its ``update_in_mind`` tentacle into
+        ``runtime.tentacles``.
+
+        Errors in one Reflect's attach must not block the others —
+        plugins are strictly additive (CLAUDE.md invariant).
+        """
+        import logging
+        log = logging.getLogger(__name__)
+        for kind_chain in self._by_kind.values():
+            for reflect in kind_chain:
+                attach = getattr(reflect, "attach", None)
+                if attach is None:
+                    continue
+                try:
+                    attach(runtime)
+                except Exception as e:  # noqa: BLE001
+                    log.warning(
+                        "Reflect %r attach() raised %s; continuing "
+                        "without its runtime hooks",
+                        getattr(reflect, "name", "?"), e,
+                    )
+
     async def dispatch_decision(
         self, self_text: str, decision: str,
         tentacles: list[dict[str, Any]],

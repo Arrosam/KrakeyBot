@@ -28,6 +28,7 @@ _PROD_ROOT = Path(__file__).resolve().parent.parent
 _FORBIDDEN = [
     _PROD_ROOT / "workspace" / "data" / "web_chat.jsonl",
     _PROD_ROOT / "workspace" / "self_model.yaml",
+    _PROD_ROOT / "workspace" / "data" / "in_mind.json",
 ]
 
 

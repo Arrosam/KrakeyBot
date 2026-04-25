@@ -90,6 +90,11 @@ class RuntimeDeps:
     # ``workspace/plugin-configs/web_chat.yaml`` that FilePluginConfigStore
     # reads first, and test messages leak into the real user chat log.
     plugin_configs_root: str | None = None  # default: workspace/plugin-configs
+    # in_mind Reflect's state file. None → workspace/data/in_mind.json
+    # (the locked-in production path, see design doc Reflect #3).
+    # Tests pass a tmpdir so update_in_mind dispatches don't bleed
+    # into the production state.
+    in_mind_state_path: str | None = None
 
 
 MAX_RECALL_RETRIES = 1
@@ -128,6 +133,10 @@ class Runtime:
         from src.reflects import ReflectRegistry
         self.reflects = ReflectRegistry()
         self._register_reflects_from_config(deps)
+        # Reflects' attach() hooks fire near the END of __init__
+        # (search "attach_all" below) — when self.tentacles +
+        # plugin loader + other subsystems already exist so a
+        # Reflect (e.g. in_mind) can register its own tentacle.
         self.buffer = StimulusBuffer()
         # History token budget is derived from the Self role's input
         # context window × history_token_fraction. The Self role's
@@ -277,6 +286,14 @@ class Runtime:
                 backup_config(self._config_path, self._backup_dir)
             except Exception as e:  # noqa: BLE001
                 self.log.runtime_error(f"config backup failed: {e}")
+
+        # Reflect attach() lifecycle hook — fires after every other
+        # subsystem (TentacleRegistry, plugin loader, etc.) is up so
+        # Reflects that need to register their own tentacles
+        # (in_mind's update_in_mind, and future hooks) can do so
+        # without ordering surprises. attach_all is exception-tolerant
+        # by contract; one bad Reflect won't block the others.
+        self.reflects.attach_all(self)
 
     def _register_reflects_from_config(
         self, deps: "RuntimeDeps",
@@ -868,6 +885,17 @@ class Runtime:
         # path, and teaching Self structured tags would conflict with
         # its job. See docs/design/reflects-and-self-model.md
         # Reflect #1 design.
+        in_mind_state = self.reflects.in_mind_state()
+        # Standing instruction layer for in_mind. Imported lazily so
+        # the IN_MIND_INSTRUCTIONS_LAYER constant only enters memory
+        # when an in_mind Reflect is registered — keeps the lazy-load
+        # discipline of the plugin folder.
+        in_mind_instructions: str | None = None
+        if in_mind_state is not None:
+            from src.reflects.builtin.default_in_mind.prompt import (
+                IN_MIND_INSTRUCTIONS_LAYER,
+            )
+            in_mind_instructions = IN_MIND_INSTRUCTIONS_LAYER
         prompt = self.builder.build(
             self_model=self.self_model,
             capabilities=self._capabilities(),
@@ -879,6 +907,8 @@ class Runtime:
             stimuli=stimuli,
             current_time=datetime.now(),
             suppress_action_format=self.reflects.has_hypothalamus(),
+            in_mind=in_mind_state,
+            in_mind_instructions=in_mind_instructions,
         )
         if self.is_bootstrap:
             prompt = (BOOTSTRAP_PROMPT.format(genesis_text=self._get_genesis_text())

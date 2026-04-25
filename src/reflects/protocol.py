@@ -86,3 +86,41 @@ class RecallAnchorReflect(Protocol):
     kind: str  # always "recall_anchor"
 
     def make_recall(self, runtime: Any) -> "IncrementalRecall": ...
+
+
+@runtime_checkable
+class InMindReflect(Protocol):
+    """A Reflect that owns Self's persistent "in-mind" state — the
+    three short fields (``thoughts`` / ``mood`` / ``focus``) that
+    capture what Self currently has at the front of its mental
+    workspace. Kind = "in_mind".
+
+    Architecture (see docs/design/reflects-and-self-model.md
+    Reflect #3):
+
+      * ``read()`` returns the current state dict; consumed by the
+        prompt builder which prepends a "Heartbeat #now (in mind)"
+        virtual round at the head of ``[HISTORY]``.
+      * ``update(thoughts=, mood=, focus=)`` patches state and
+        persists. ``None`` for a field = leave alone; empty string =
+        clear; non-empty string = set.
+      * ``attach(runtime)`` is the one-time lifecycle hook called by
+        ``ReflectRegistry.attach_all`` after registration. The
+        in_mind Reflect uses it to register its own ``update_in_mind``
+        tentacle into ``runtime.tentacles``. Other Reflect kinds may
+        also implement ``attach`` (the protocol allows it
+        optionally), but in_mind is the first that needs it.
+    """
+    name: str
+    kind: str  # always "in_mind"
+
+    def read(self) -> dict[str, str]: ...
+
+    def update(
+        self,
+        thoughts: str | None = None,
+        mood: str | None = None,
+        focus: str | None = None,
+    ) -> dict[str, str]: ...
+
+    def attach(self, runtime: Any) -> None: ...
