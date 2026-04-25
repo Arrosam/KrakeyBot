@@ -95,12 +95,7 @@ LLM 的 prompt 模板（待细化，示例）：
 作为回忆引导员，你的任务是提取出需要召回的特征点关键词，帮助意识层
 （Self）更好地回应。
 
-先在 <thinking> 块里分析：发言人是谁、话题在延续什么、时间上下文如何，
-然后给出干净的 JSON。
-
-<thinking>
-（你的分析过程）
-</thinking>
+只输出 JSON，不要任何其他文字：
 
 {
   "anchors": ["关键词1", "关键词2", "..."]
@@ -111,18 +106,15 @@ LLM 的 prompt 模板（待细化，示例）：
 - ``anchors`` 是扁平字符串列表，下游直接当作召回 query 用 —— 不带
   ``reason`` / ``kind`` / ``rationale`` 等字段，因为下游不消费它们，
   传输纯浪费。
-- 但保留 ``<thinking>`` 块作为输出前的推理痕迹（chain-of-thought）：
-  - 对**非推理模型**（GPT-4o / Haiku / 大多数中小模型），先想后答
-    在中等任务上提升明显（CoT 经典效应）。无 thinking 容易漏 / 过召回。
-  - 对**推理模型**（Claude thinking / o-series / DeepSeek R1），
-    它们用自己的内部 reasoning 替代这个块；prompt 里要求 thinking
-    它们会忽略，直接出 JSON。无副作用。
-  - 下游 parser 只 grep ``{`` 到 ``}`` 之间的内容 —— thinking 自然
-    被忽略，不污染数据流。
-- ``reason``-in-JSON 的方案被刻意拒绝：要么字段顺序导致事后合理化
+- **不带 ``<thinking>`` 块或任何 CoT 脚手架**：让用户自己挑模型。
+  推理模型用自己的内部 reasoning 输出高质量结果；非推理模型表现差
+  是模型选择的代价，不应该让 prompt 替模型去 compensate。这条路径
+  和 Reflect #1 (`hypothalamus`) 的设计哲学一致 —— 不在核心机制里
+  烘焙"为弱模型提供拐杖"的逻辑，强模型走直接路径，弱模型表现不好
+  是正常的取舍。
+- ``reason``-in-JSON 的方案也被刻意拒绝：要么字段顺序导致事后合理化
   （reason 在 answer 之后写，对决策没影响），要么 reason 字段下游
-  不消费纯浪费 token。``<thinking>`` 块在结构外，比 reason 字段更
-  干净也更安全。
+  不消费纯浪费 token。
 
 ### 与 Reflect #2 的关系
 
@@ -265,8 +257,9 @@ Samuel 最终拍板，这里是我的推荐：
       `Runtime._sleep_cycles` 内存计数器，其他字段直接删除（自 commit
       `ce59ab4`，self-model slim 重构）。
 - [x] ~~回忆 LLM 输出结构里要不要 `reason` 字段？~~ 2026-04-25 决定：
-      不要。改用 ``<thinking>`` 块在 JSON 之前的形式（CoT 痕迹保留，但不
-      污染数据流）。详见 Part 2。
+      不要。**纯 JSON 输出，连 ``<thinking>`` 块都不加** —— 让用户自己
+      选模型，弱模型表现差是用户选择的代价，不在核心机制里烘焙拐杖
+      （和 Reflect #1 默认关闭的哲学一致）。详见 Part 2。
 
 ---
 
