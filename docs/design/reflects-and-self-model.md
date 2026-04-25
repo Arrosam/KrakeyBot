@@ -92,16 +92,37 @@ LLM 的 prompt 模板（待细化，示例）：
 <stimuli>...</stimuli>
 <history>...</history>
 
-作为回忆引导员，你的任务是提取出需要召回的特征点，帮助意识层（Self）
-更好地回应。输出 JSON：
+作为回忆引导员，你的任务是提取出需要召回的特征点关键词，帮助意识层
+（Self）更好地回应。
+
+先在 <thinking> 块里分析：发言人是谁、话题在延续什么、时间上下文如何，
+然后给出干净的 JSON。
+
+<thinking>
+（你的分析过程）
+</thinking>
+
 {
-  "anchors": [
-    {"kind": "user"|"topic"|"event"|"emotion"|"fact",
-     "query": "召回关键词或人名",
-     "rationale": "为什么要召回它"}
-  ]
+  "anchors": ["关键词1", "关键词2", "..."]
 }
 ```
+
+**输出结构选择的理由**：
+- ``anchors`` 是扁平字符串列表，下游直接当作召回 query 用 —— 不带
+  ``reason`` / ``kind`` / ``rationale`` 等字段，因为下游不消费它们，
+  传输纯浪费。
+- 但保留 ``<thinking>`` 块作为输出前的推理痕迹（chain-of-thought）：
+  - 对**非推理模型**（GPT-4o / Haiku / 大多数中小模型），先想后答
+    在中等任务上提升明显（CoT 经典效应）。无 thinking 容易漏 / 过召回。
+  - 对**推理模型**（Claude thinking / o-series / DeepSeek R1），
+    它们用自己的内部 reasoning 替代这个块；prompt 里要求 thinking
+    它们会忽略，直接出 JSON。无副作用。
+  - 下游 parser 只 grep ``{`` 到 ``}`` 之间的内容 —— thinking 自然
+    被忽略，不污染数据流。
+- ``reason``-in-JSON 的方案被刻意拒绝：要么字段顺序导致事后合理化
+  （reason 在 answer 之后写，对决策没影响），要么 reason 字段下游
+  不消费纯浪费 token。``<thinking>`` 块在结构外，比 reason 字段更
+  干净也更安全。
 
 ### 与 Reflect #2 的关系
 
@@ -240,7 +261,12 @@ Samuel 最终拍板，这里是我的推荐：
 - [ ] Reflect #3 `in_mind` 存在哪里？独立文件 / self_model 子块 / GM 节点？
 - [ ] Reflect 可以禁用/启用吗？通过 dashboard UI 开关？还是只能在 config.yaml？
 - [ ] 多个 Reflect 同 kind 能共存吗？(e.g. 两个 `recall_anchor` 同时跑、结果合并？)
-- [ ] `statistics` 搬到哪里？runtime_stats.json / GM `system:*` 节点 / dashboard-only？
+- [x] ~~`statistics` 搬到哪里？~~ 2026-04-25 已落地：sleep_cycles 改成
+      `Runtime._sleep_cycles` 内存计数器，其他字段直接删除（自 commit
+      `ce59ab4`，self-model slim 重构）。
+- [x] ~~回忆 LLM 输出结构里要不要 `reason` 字段？~~ 2026-04-25 决定：
+      不要。改用 ``<thinking>`` 块在 JSON 之前的形式（CoT 痕迹保留，但不
+      污染数据流）。详见 Part 2。
 
 ---
 
