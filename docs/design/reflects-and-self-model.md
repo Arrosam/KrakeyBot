@@ -325,12 +325,24 @@ Samuel 最终拍板，这里是我的推荐：
 
 ## Part 5 — 待 Samuel 决策的开放问题
 
-- [ ] Reflect #1 的 action tag 用哪种格式？XML-ish `<use>` 还是函数调用风格 `@tentacle(...)`？
-- [ ] Reflect #2 默认开还是默认关？LLM-anchor 模式会让每跳多一次 LLM 往返，对延迟敏感。
-- [ ] Reflect #3 `in_mind` **存储**在哪里？独立文件 / self_model 子块 / GM 节点？
-      （**注入路径**已定 2026-04-25：通过历史层最近端虚拟 round；存储位置仍待定）
-- [ ] Reflect 可以禁用/启用吗？通过 dashboard UI 开关？还是只能在 config.yaml？
-- [ ] 多个 Reflect 同 kind 能共存吗？(e.g. 两个 `recall_anchor` 同时跑、结果合并？)
+- [ ] Reflect #1 的 action tag 用哪种格式？XML-ish `<use>` 还是
+      函数调用风格 `@tentacle(...)`？(实现 #1 时再定，可以拿目标模型
+      实测两种格式 parse 成功率)
+- [x] ~~Reflect #2 默认开关~~ — 2026-04-25：**默认关**。每跳多一次
+      LLM 调用是延迟 / 成本代价；用户主动开就是接受这个代价。和
+      Reflect #1 默认关同哲学（不为弱模型烘焙拐杖）。
+- [ ] Reflect #3 `in_mind` 状态文件存哪：`workspace/data/in_mind.json`
+      还是 `workspace/reflects/in_mind/state.json`？（注入路径 2026-04-25
+      已定：通过历史层最近端虚拟 round；存储位置仍待 Samuel 拍板）
+- [x] ~~Reflect 启停 / UI~~ — 2026-04-25：**config.yaml 是单一真源**，
+      dashboard 仅显示运行状态 + 提供 config 编辑界面。Reflects 各自的
+      详细配置在各自文件夹（`workspace/reflects/<name>/config.yaml`,
+      沿用现有 plugin 模式）。改 config 要重启。
+- [x] ~~多 Reflect 同 kind 共存~~ — 2026-04-25：**允许，顺序执行**。
+      `config.yaml` 里有一个 reflects 列表，注册顺序 = 执行顺序。同
+      kind 的 Reflects 链式调用：前一个的输出（e.g. anchors 列表 / 翻译
+      结果）作为后一个的输入。允许后续 Reflect 增补 / 改写 / 否决前一个
+      的输出，组合行为通过链式表达，不开"并行 + 合并"的复杂语义。
 - [x] ~~`statistics` 搬到哪里？~~ 2026-04-25 已落地：sleep_cycles 改成
       `Runtime._sleep_cycles` 内存计数器，其他字段直接删除（自 commit
       `ce59ab4`，self-model slim 重构）。
