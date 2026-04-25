@@ -17,8 +17,13 @@ from __future__ import annotations
 
 from fastapi import Body, FastAPI, HTTPException
 
+from pathlib import Path
+
+import yaml
+
 from src.dashboard.services.config import ConfigService
 from src.models.config import llm_params_schema
+from src.reflects.discovery import discover_reflects
 
 
 def register(app: FastAPI, *, config: ConfigService) -> None:
@@ -75,3 +80,71 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
             raise HTTPException(status_code=500,
                                   detail=f"restart failed: {e}")
         return {"status": "restarting"}
+
+    @app.get("/api/reflects/available")
+    async def get_available_reflects():  # noqa: ANN201
+        """List Reflects discoverable on disk.
+
+        Pure-text scan — never imports any plugin module
+        (architectural invariant). The dashboard renders this list
+        as the "Available Reflects" UI on the settings page so users
+        see what they can enable + which LLM purposes each declares.
+        """
+        out = []
+        for name, meta in discover_reflects().items():
+            out.append({
+                "name": meta.name,
+                "kind": meta.kind,
+                "description": meta.description,
+                "config_schema": meta.config_schema,
+                "llm_purposes": meta.llm_purposes,
+            })
+        out.sort(key=lambda r: r["name"])
+        return {"reflects": out}
+
+    @app.get("/api/reflects/{name}/config")
+    async def get_reflect_config(name: str):  # noqa: ANN201
+        """Read the per-Reflect config file
+        (``workspace/reflects/<name>/config.yaml``).
+
+        Returns ``{}`` if the file doesn't exist yet — that's the
+        valid initial state, the plugin operates with whatever
+        defaults its code defines.
+        """
+        path = Path("workspace") / "reflects" / name / "config.yaml"
+        if not path.exists():
+            return {"path": str(path), "config": {}}
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"plugin config parse failed: {e}",
+            )
+        if not isinstance(raw, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="plugin config top-level must be a mapping",
+            )
+        return {"path": str(path), "config": raw}
+
+    @app.post("/api/reflects/{name}/config")
+    async def post_reflect_config(name: str, payload: dict = Body(...)):  # noqa: ANN201
+        """Write the per-Reflect config file. Creates directory if
+        needed; replaces existing content."""
+        new_cfg = payload.get("config")
+        if not isinstance(new_cfg, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="payload must include 'config' (mapping)",
+            )
+        path = Path("workspace") / "reflects" / name / "config.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            yaml.safe_dump(new_cfg, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        return {
+            "status": "saved", "path": str(path),
+            "restart_required": True,
+        }

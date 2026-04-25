@@ -209,3 +209,67 @@ async def test_upload_endpoint_saves_files_and_serves_them(tmp_path, monkeypatch
         r2 = await c.get(f["url"])
         assert r2.status_code == 200
         assert r2.content == b"hi there"
+
+
+# ---- Reflects discovery + per-plugin config endpoints ----------------
+
+
+async def test_reflects_available_lists_metadata(tmp_path):
+    """The /api/reflects/available endpoint exposes every Reflect's
+    static metadata so the dashboard can render the available-plugin
+    list without importing plugin code."""
+    p = tmp_path / "config.yaml"
+    p.write_text("a: 1\n", encoding="utf-8")
+    async with _client(config_path=p) as c:
+        r = await c.get("/api/reflects/available")
+    assert r.status_code == 200
+    names = {entry["name"] for entry in r.json()["reflects"]}
+    # All three in-tree built-ins must be discovered
+    assert {"default_hypothalamus", "default_recall_anchor",
+            "default_in_mind"} <= names
+
+    # Hypothalamus declares its `translator` purpose
+    by_name = {e["name"]: e for e in r.json()["reflects"]}
+    purposes = by_name["default_hypothalamus"]["llm_purposes"]
+    assert any(p.get("name") == "translator" for p in purposes)
+
+
+async def test_reflect_config_get_missing_returns_empty(tmp_path):
+    p = tmp_path / "config.yaml"
+    p.write_text("a: 1\n", encoding="utf-8")
+    async with _client(config_path=p) as c:
+        r = await c.get("/api/reflects/some_reflect/config")
+    assert r.status_code == 200
+    assert r.json()["config"] == {}
+
+
+async def test_reflect_config_save_and_read_back(tmp_path, monkeypatch):
+    """POST /api/reflects/<name>/config writes the workspace file;
+    a follow-up GET reads it back. Path is rooted under
+    `workspace/reflects/`; isolate to tmp_path so the test doesn't
+    write into the real workspace."""
+    monkeypatch.chdir(tmp_path)
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text("a: 1\n", encoding="utf-8")
+
+    async with _client(config_path=cfg_path) as c:
+        save = await c.post(
+            "/api/reflects/default_hypothalamus/config",
+            json={"config": {
+                "llm_purposes": {"translator": "fast_generation"},
+            }},
+        )
+        assert save.status_code == 200
+        assert save.json()["restart_required"] is True
+
+        read = await c.get("/api/reflects/default_hypothalamus/config")
+        assert read.status_code == 200
+        body = read.json()["config"]
+        assert body["llm_purposes"] == {"translator": "fast_generation"}
+
+    # File actually landed under workspace/reflects/
+    written = (tmp_path / "workspace" / "reflects"
+               / "default_hypothalamus" / "config.yaml")
+    assert written.exists()
+    parsed = yaml.safe_load(written.read_text(encoding="utf-8"))
+    assert parsed["llm_purposes"]["translator"] == "fast_generation"
