@@ -21,7 +21,11 @@ from src.dashboard.app_factory import create_app as create_dashboard_app
 from src.dashboard.events import EventBroadcaster
 from src.dashboard.server import DashboardServer
 from src.dashboard.web_chat import WebChatHistory
-from src.hypothalamus import Hypothalamus, TentacleCall
+# Hypothalamus class itself is no longer instantiated by Runtime —
+# wrapped by DefaultHypothalamusReflect inside the Reflect registry
+# since 2026-04-25. Only TentacleCall (the dataclass we receive from
+# the translate() result) is still used directly here.
+from src.hypothalamus import TentacleCall
 from src.models.self_model import SelfModelStore
 from src.interfaces.sensory import SensoryRegistry
 from src.interfaces.tentacle import TentacleRegistry
@@ -113,7 +117,18 @@ class Runtime:
         self.compact_llm = deps.compact_llm
         self.embedder = deps.embedder
         self.reranker = deps.reranker
-        self.hypothalamus = Hypothalamus(deps.hypo_llm)
+        # Reflect registry — kind-grouped, ordered storage of pluggable
+        # mechanisms. Built-in defaults register here; user Reflects
+        # (#1 hypothalamus toggle, #2 LLM recall anchor, #3 in_mind)
+        # will register from config.yaml when implemented. See
+        # src/reflects/__init__.py + docs/design/reflects-and-self-model.md.
+        from src.reflects import ReflectRegistry
+        from src.reflects.builtin import (
+            DefaultHypothalamusReflect, DefaultRecallAnchorReflect,
+        )
+        self.reflects = ReflectRegistry()
+        self.reflects.register(DefaultHypothalamusReflect(deps.hypo_llm))
+        self.reflects.register(DefaultRecallAnchorReflect())
         self.buffer = StimulusBuffer()
         # History token budget is derived from the Self role's input
         # context window × history_token_fraction. The Self role's
@@ -265,18 +280,11 @@ class Runtime:
                 self.log.runtime_error(f"config backup failed: {e}")
 
     def _new_recall(self) -> IncrementalRecall:
-        # Recall is budgeted in tokens off Self's role params (NOT a
-        # fraction of max_input_tokens — an absolute cap; too many
-        # recall items pollute the prompt regardless of context size).
-        self_params = self.config.llm.roles["self"].params
-        return IncrementalRecall(
-            self.gm,
-            embedder=self.embedder,
-            per_stimulus_k=self.config.graph_memory.recall_per_stimulus_k,
-            recall_token_budget=self_params.recall_token_budget,
-            reranker=self.reranker,
-            neighbor_depth=self.config.graph_memory.neighbor_expand_depth,
-        )
+        # Routed through the Reflect registry (kind="recall_anchor")
+        # since 2026-04-25. The default built-in mirrors the previous
+        # in-line factory; future Reflects (#2 LLM-anchor) will replace
+        # it from config without Runtime needing to know the difference.
+        return self.reflects.make_recall(self)
 
     async def run(self, iterations: int | None = None) -> None:
         await self.gm.initialize()
@@ -960,7 +968,11 @@ class Runtime:
         if not decision or decision in ("no action", "无行动"):
             return False
         try:
-            result = await self.hypothalamus.translate(
+            # Routed through the Reflect registry (kind="hypothalamus")
+            # since 2026-04-25. Skeleton only ships the default built-in
+            # so this is a length-1 chain; semantics for length >1
+            # land with Reflect #1.
+            result = await self.reflects.translate(
                 parsed.decision, self.tentacles.list_descriptions(),
             )
         except Exception as e:  # noqa: BLE001
