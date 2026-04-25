@@ -121,12 +121,13 @@ class Runtime:
         # Reflect registry — kind-grouped, ordered storage of pluggable
         # mechanisms. Names + order come from ``config.reflects``;
         # registration honors that order so chain semantics (when chain
-        # length >1 lands) match the user's declared sequence.
-        # See src/reflects/__init__.py + docs/design/reflects-and-self-model.md.
+        # length >1 lands) match the user's declared sequence. Reflect
+        # modules are imported lazily via load_reflect() — only enabled
+        # plugins ever execute Python code, see
+        # docs/design/reflects-and-self-model.md.
         from src.reflects import ReflectRegistry
-        from src.reflects.builtin import BUILTIN_FACTORIES
         self.reflects = ReflectRegistry()
-        self._register_reflects_from_config(deps, BUILTIN_FACTORIES)
+        self._register_reflects_from_config(deps)
         self.buffer = StimulusBuffer()
         # History token budget is derived from the Self role's input
         # context window × history_token_fraction. The Self role's
@@ -278,55 +279,70 @@ class Runtime:
                 self.log.runtime_error(f"config backup failed: {e}")
 
     def _register_reflects_from_config(
-        self, deps: "RuntimeDeps", factories: dict,
+        self, deps: "RuntimeDeps",
     ) -> None:
-        """Walk ``config.reflects`` and register each built-in factory
-        in declared order.
+        """Walk ``config.reflects`` and lazily load each named Reflect.
 
-        Three input states (see ``Config.reflects`` docstring):
-          * ``None``   — migration sentinel: the YAML had no
-                         ``reflects:`` section. Fall back to the
-                         legacy default (both built-ins) and log a
-                         loud deprecation. Existing users see no
-                         behavior change.
-          * ``[]``     — explicit zero Reflects. Honored without
-                         warning. The zero-plugin invariant
-                         (CLAUDE.md, design doc) guarantees runtime
-                         keeps working.
-          * ``[...]``  — explicit list. Each entry is looked up in
-                         ``factories``; unknown names are logged + skipped
-                         so a typo doesn't crash startup.
+        Two input states (see ``Config.reflects`` docstring):
+          * ``None`` or ``[]`` — zero Reflects. Honored without
+            offering "legacy defaults". Per Samuel's 2026-04-25
+            principle, plugins are strictly additive and the core
+            never enables them implicitly. ``None`` (field absent)
+            gets a one-line stderr nudge to add an explicit list;
+            ``[]`` is silent (the user said exactly what they want).
+          * ``[...]`` — explicit list. Each entry is resolved via
+            ``src.reflects.discovery.load_reflect``: unknown names
+            are skipped with a log so a typo doesn't crash startup;
+            factory exceptions are caught for the same reason.
+
+        ``load_reflect`` imports the plugin's module on first
+        invocation. Names that never appear in any user's config
+        keep their Python module out of ``sys.modules`` entirely —
+        the architectural invariant.
         """
+        from src.reflects.discovery import (
+            discover_reflects, load_reflect,
+        )
+
         names = self.config.reflects
         if names is None:
             print(
-                "config: no `reflects:` section found in config.yaml — "
-                "using legacy defaults (default_hypothalamus + "
-                "default_recall_anchor). Add an explicit `reflects:` "
-                "list to silence this warning. The recommended new "
-                "default is `reflects: [default_recall_anchor]` "
-                "(Reflect #1 default OFF, see "
-                "docs/design/reflects-and-self-model.md).",
+                "config: no `reflects:` section in config.yaml — "
+                "starting with zero Reflects. Add an explicit list "
+                "(e.g. `reflects: [default_recall_anchor]`) to enable "
+                "any. Available built-ins: "
+                f"{sorted(discover_reflects().keys())}",
                 file=sys.stderr,
             )
-            names = ["default_hypothalamus", "default_recall_anchor"]
+            return
+        if not names:
+            return  # explicit empty list: respect, no nag
         for name in names:
-            factory = factories.get(name)
-            if factory is None:
+            try:
+                reflect = load_reflect(name, deps)
+            except KeyError:
                 print(
                     f"config: unknown Reflect name {name!r} — skipping. "
-                    f"Known: {sorted(factories.keys())}",
+                    f"Available: {sorted(discover_reflects().keys())}",
+                    file=sys.stderr,
+                )
+                continue
+            except Exception as e:  # noqa: BLE001
+                # Bad factory / import error must not block startup —
+                # plugins are strictly additive (CLAUDE.md invariant).
+                print(
+                    f"config: Reflect {name!r} failed to load: "
+                    f"{type(e).__name__}: {e}; skipping. Runtime will "
+                    "run without it.",
                     file=sys.stderr,
                 )
                 continue
             try:
-                self.reflects.register(factory(deps))
+                self.reflects.register(reflect)
             except Exception as e:  # noqa: BLE001
-                # A bad factory must not block runtime startup —
-                # plugins are strictly additive (CLAUDE.md invariant).
                 print(
-                    f"config: Reflect {name!r} factory raised {e!r}; "
-                    "skipping registration. Runtime will run without it.",
+                    f"config: Reflect {name!r} registration failed: "
+                    f"{type(e).__name__}: {e}; skipping.",
                     file=sys.stderr,
                 )
 

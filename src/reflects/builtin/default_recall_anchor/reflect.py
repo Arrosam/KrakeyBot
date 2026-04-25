@@ -1,12 +1,9 @@
 """Default recall-anchor Reflect — wraps the scripted
-``IncrementalRecall`` factory that Runtime used to call directly via
-``_new_recall``.
+``IncrementalRecall`` factory.
 
-This Reflect represents "auto-recall" mode: vec_search + scripted
-weighted scoring against GM, no LLM in the recall path. It's the
-default because it's fast, deterministic, and free of extra LLM
-round-trips. Reflect #2 (LLM-driven anchor extractor) is the planned
-opt-in alternative, defaulting OFF per the 2026-04-25 design.
+Imported lazily by ``src.reflects.discovery.load_reflect`` only when
+the user enables ``default_recall_anchor`` in ``config.yaml``'s
+``reflects:`` list.
 """
 from __future__ import annotations
 
@@ -15,7 +12,7 @@ from typing import TYPE_CHECKING
 from src.memory.recall import IncrementalRecall
 
 if TYPE_CHECKING:
-    from src.main import Runtime
+    from src.main import Runtime, RuntimeDeps
 
 
 class DefaultRecallAnchorReflect:
@@ -27,11 +24,11 @@ class DefaultRecallAnchorReflect:
     kind = "recall_anchor"
 
     def make_recall(self, runtime: "Runtime") -> IncrementalRecall:
-        # Reads config + deps off the runtime. Keeping construction
-        # logic here (rather than on Runtime) means future recall
-        # Reflects can vary it independently — e.g. a different
-        # embedder, a different per_k, an LLM-anchor preprocessor —
-        # without Runtime knowing the difference.
+        # Reads config + deps off the runtime. Construction logic
+        # lives here (rather than on Runtime) so future recall
+        # Reflects can vary it independently — different embedder,
+        # different per_k, an LLM-anchor preprocessor — without
+        # Runtime knowing the difference.
         self_params = runtime.config.llm.roles["self"].params
         return IncrementalRecall(
             runtime.gm,
@@ -41,3 +38,11 @@ class DefaultRecallAnchorReflect:
             reranker=runtime.reranker,
             neighbor_depth=runtime.config.graph_memory.neighbor_expand_depth,
         )
+
+
+def build_reflect(deps: "RuntimeDeps") -> DefaultRecallAnchorReflect:
+    """Factory invoked by ``load_reflect``. ``deps`` unused here —
+    DefaultRecallAnchorReflect reads everything off ``runtime`` at
+    ``make_recall`` call time, not at construction."""
+    del deps
+    return DefaultRecallAnchorReflect()

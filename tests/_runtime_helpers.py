@@ -44,11 +44,22 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
                               hibernate_max: float = 5.0,
                               gm_path: str = ":memory:",
                               kb_dir: str | None = None,
-                              skip_bootstrap: bool = True) -> Runtime:
+                              skip_bootstrap: bool = True,
+                              reflects: list[str] | None = None) -> Runtime:
     """In-memory Runtime with injectable doubles. CLI sensory disabled.
 
     `kb_dir` defaults to a fresh `tempfile.mkdtemp()` so KB files written
     during sleep migration never touch the production workspace.
+
+    `reflects` is the ordered list of Reflect names to register at
+    startup. ``None`` (the default) opts the test helper into the two
+    in-tree Reflects that almost every existing test expects to be
+    available — preserves the historical "Hypothalamus translates,
+    recall populates [GRAPH MEMORY]" assumption without forcing every
+    test to opt in. Tests exercising the zero-plugin path pass
+    ``reflects=[]`` explicitly. This default is a TEST convenience
+    only; production config defaults to registering nothing per the
+    "all plugins default off" architectural rule.
     """
     if kb_dir is None:
         kb_dir = tempfile.mkdtemp(prefix="krakey_test_kb_")
@@ -89,12 +100,17 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         fatigue=FatigueSection(gm_node_soft_limit=200,
                                 force_sleep_threshold=120,
                                 thresholds={}),
-        # Explicit reflect list — silences the "no reflects: section,
-        # falling back to legacy default" deprecation warning that
-        # would otherwise fire in every test run. Tests that want to
-        # exercise specific Reflects override this on the returned
-        # runtime by clearing/refilling self.reflects directly.
-        reflects=["default_hypothalamus", "default_recall_anchor"],
+        # Test convenience: opt into both built-in Reflects when the
+        # caller didn't say otherwise. Production config default is
+        # zero plugins, but most existing tests assume the historical
+        # "Hypothalamus + recall both registered" shape and shouldn't
+        # have to re-state it. Tests on the zero-plugin path pass
+        # ``reflects=[]`` to opt out explicitly.
+        reflects=(
+            list(reflects)
+            if reflects is not None
+            else ["default_hypothalamus", "default_recall_anchor"]
+        ),
         graph_memory=GraphMemorySection(
             db_path=gm_path, auto_ingest_similarity_threshold=0.9,
             recall_per_stimulus_k=5, neighbor_expand_depth=1,

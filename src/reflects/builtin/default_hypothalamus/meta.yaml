@@ -1,0 +1,15 @@
+name: default_hypothalamus
+kind: hypothalamus
+description: >
+  LLM-based natural language → tentacle call translator.
+  Takes Self's free-form [DECISION] text and produces a structured
+  list of tentacle invocations via a dedicated translator LLM.
+  When this Reflect is registered the [ACTION FORMAT] prompt block
+  is suppressed automatically — Self stays in natural-language mode
+  and lets this Reflect handle the structuring. Recommended only
+  for weaker models that can't reliably emit [ACTION] JSONL on
+  their own; strong models should leave this OFF and use the direct
+  action executor path.
+factory_module: src.reflects.builtin.default_hypothalamus.reflect
+factory_attr: build_reflect
+config_schema: []
