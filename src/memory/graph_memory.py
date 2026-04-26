@@ -1,14 +1,16 @@
 """Graph Memory — middle-tier working memory (DevSpec §7).
 
-Connection / vector / FTS helpers live in `src/memory/_db.py` and are
-shared with KnowledgeBase. This module owns the GM-specific schema usage,
-LLM-driven writers (auto_ingest, explicit_write, classify), and
-cycle-safe edge insertion.
+Storage + categorical CRUD + cycle-safe edge insertion. The
+table-agnostic primitives (cosine vec_search, FTS scan, graph walk)
+live in ``src/memory/tools/`` and are shared with KnowledgeBase.
+The LLM-driven write strategies (auto_ingest, explicit_write,
+classify_and_link_pending) live in ``src/memory/writer.py``;
+this module exposes them as thin wrapper methods so call sites
+stay ``gm.method(...)``.
 """
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -22,140 +24,17 @@ from src.memory._db import (
 )
 
 
+# Re-exports used by callers / tests that import from graph_memory.
+# `cosine_similarity` is re-exposed here because tests import it from
+# this module by historical convention; new code should pull it from
+# `src.memory._db` directly.
+__all__ = [
+    "GraphMemory", "AsyncChatLLM", "AsyncEmbedder", "cosine_similarity",
+]
+
+
 class AsyncChatLLM(Protocol):
     async def chat(self, messages, **kwargs) -> str: ...
-
-
-EXPLICIT_WRITE_PROMPT = """Extract nodes and edges from the content below.
-
-## Content
-{content}
-
-## Existing nodes (reuse these names when relevant; do not duplicate)
-{existing}
-
-## Output (strict JSON, no commentary)
-{{
-  "nodes": [
-    {{"name": "short entity label",
-      "category": "FACT|RELATION|KNOWLEDGE|TARGET|FOCUS",
-      "description": "full description"}}
-  ],
-  "edges": [
-    {{"source_name": "name", "target_name": "name",
-      "predicate": "RELATED_TO|SERVES|DEPENDS_ON|INDUCES|SUMMARIZES|"
-                   "SUPPORTS|CONTRADICTS|FOLLOWS|CAUSES"}}
-  ]
-}}
-
-Rules:
-1. Extract only what is worth remembering. Skip small talk.
-2. Prefer reusing existing node names over creating duplicates.
-3. Respect predicate-type constraints (e.g. SERVES: FOCUS→TARGET).
-4. Graph must remain acyclic.
-"""
-
-
-CLASSIFY_PROMPT = """Classify each pending node into a category and optionally
-add relational edges to existing classified nodes.
-
-## Pending (choose one category per node)
-{pending}
-
-## Existing classified nodes (reference only — may be edge targets)
-{existing}
-
-## Output (strict JSON, no commentary)
-{{
-  "classifications": [
-    {{"node_id": <int>, "category": "FACT|RELATION|KNOWLEDGE|TARGET|FOCUS"}}
-  ],
-  "edges": [
-    {{"source_id": <int>, "target_id": <int>,
-      "predicate": "RELATED_TO|SERVES|DEPENDS_ON|INDUCES|SUMMARIZES|"
-                   "SUPPORTS|CONTRADICTS|FOLLOWS|CAUSES"}}
-  ]
-}}
-
-Rules:
-1. Classify every pending node.
-2. Edges optional; include only if clearly justified.
-3. Honor predicate/category constraints.
-4. Resulting graph must remain acyclic.
-"""
-
-
-def _format_pending(pending: list[dict[str, Any]]) -> str:
-    return "\n".join(
-        f"- id={p['id']}  name={p['name']!r}  desc={p['description']!r}"
-        for p in pending
-    ) or "(none)"
-
-
-def _format_existing(existing: list[dict[str, Any]]) -> str:
-    return "\n".join(
-        f"- id={e['id']}  ({e['category']}) name={e['name']!r}"
-        for e in existing
-    ) or "(none)"
-
-
-_JSON_BLOCK_PATTERN = re.compile(r"\{.*\}", re.DOTALL)
-
-
-def _parse_extraction_json(raw: str) -> dict[str, Any]:
-    text = raw.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        m = _JSON_BLOCK_PATTERN.search(raw)
-        if not m:
-            raise
-        return json.loads(m.group(0))
-
-
-def _build_fts_query(text: str) -> str | None:
-    """Backwards-compat alias — moved to src.memory._db.build_fts_query."""
-    return build_fts_query(text)
-
-
-def _format_recall_for_prompt(recall: list[dict[str, Any]]) -> str:
-    if not recall:
-        return "(no prior nodes)"
-    lines = []
-    for r in recall:
-        lines.append(f"- [{r.get('name', '')}] ({r.get('category', '?')}) "
-                     f"— {r.get('description', '')}")
-    return "\n".join(lines)
-
-
-_MIN_INGEST_CHARS = 4
-"""Below this length, auto_ingest treats content as noise and skips it."""
-
-
-def _is_meaningful(content: str) -> bool:
-    """Reject pure-symbol / emoji / whitespace blobs ("✓", "...", "❤️").
-
-    Need at least one alphanumeric char (Unicode letters + digits count, so
-    Chinese/Cyrillic/etc. work) AND total length above the floor.
-    """
-    if content is None:
-        return False
-    stripped = content.strip()
-    if len(stripped) < _MIN_INGEST_CHARS:
-        # tiny strings (e.g., "hi", "ok") are still skipped: too low signal
-        # for a memory node.
-        return False
-    return any(ch.isalnum() for ch in stripped)
-
-
-def _short_name(text: str, max_len: int = 80) -> str:
-    stripped = " ".join(text.split())
-    if len(stripped) <= max_len:
-        return stripped
-    return stripped[: max_len - 1].rstrip() + "…"
 
 
 class AsyncEmbedder(Protocol):
@@ -396,64 +275,23 @@ class GraphMemory:
     # ---------- cycle-safe edges ----------
 
     async def would_create_cycle(self, a: int, b: int) -> bool:
-        """Undirected connectivity check (DevSpec §7.7)."""
-        if a == b:
-            return True
-        db = self._require()
-        async with db.execute(
-            """
-            WITH RECURSIVE walk(nid, visited) AS (
-                SELECT ?, CAST(? AS TEXT)
-                UNION ALL
-                SELECT CASE WHEN e.node_a = w.nid THEN e.node_b ELSE e.node_a END,
-                       w.visited || ',' ||
-                       CAST(CASE WHEN e.node_a = w.nid THEN e.node_b
-                                 ELSE e.node_a END AS TEXT)
-                FROM walk w
-                JOIN gm_edges e ON (e.node_a = w.nid OR e.node_b = w.nid)
-                WHERE INSTR(
-                    ',' || w.visited || ',',
-                    ',' || CAST(CASE WHEN e.node_a = w.nid THEN e.node_b
-                                     ELSE e.node_a END AS TEXT) || ','
-                ) = 0
-            )
-            SELECT 1 FROM walk WHERE nid = ? LIMIT 1
-            """,
-            (a, str(a), b),
-        ) as cur:
-            row = await cur.fetchone()
-            return row is not None
+        """Undirected connectivity check (DevSpec §7.7) — thin wrapper
+        around the generic ``tools.graph`` walker."""
+        from src.memory.tools.graph import would_create_cycle as _cycle
+        return await _cycle(self._require(), edges_table="gm_edges",
+                              a=a, b=b)
 
     async def insert_edge_with_cycle_check(self, src: int, tgt: int,
                                              predicate: str) -> dict[str, Any]:
         """Normalize (a<b) and skip the edge if it would close a cycle.
-
-        Phase 1 took out the procedural bridge-node mechanism: each generated
-        bridge could itself become part of a fresh cycle, leading to runaway
-        chains (bridge_X_Y → bridge_Y_Z → ...). Skipping is information-lossy
-        but preserves the acyclic invariant cheaply. A future phase may
-        reintroduce LLM-extracted *semantic* intermediate nodes.
-        """
-        if src == tgt:
-            raise ValueError("self-loop edges not allowed")
-        a, b = (src, tgt) if src < tgt else (tgt, src)
-        db = self._require()
-
-        if await self.would_create_cycle(a, b):
-            return {"skipped": True, "reason": "would create cycle"}
-
-        try:
-            await db.execute(
-                "INSERT INTO gm_edges(node_a, node_b, predicate) "
-                "VALUES(?, ?, ?)",
-                (a, b, predicate),
-            )
-        except Exception:  # noqa: BLE001
-            # Most likely a UNIQUE violation on (a,b,predicate) — same edge
-            # already there. Treat as a no-op skip rather than raise.
-            return {"skipped": True, "reason": "duplicate edge"}
-        await db.commit()
-        return {"skipped": False}
+        Delegates to ``tools.graph.insert_edge_with_cycle_check``."""
+        from src.memory.tools.graph import (
+            insert_edge_with_cycle_check as _insert,
+        )
+        return await _insert(
+            self._require(), edges_table="gm_edges",
+            src=src, tgt=tgt, predicate=predicate,
+        )
 
     # ---------- vector search ----------
 
@@ -466,88 +304,38 @@ class GraphMemory:
         Adequate for Phase 1 scale (≤ soft_limit nodes). Returns
         (node_dict, similarity) pairs sorted descending by similarity.
         """
-        db = self._require()
-        async with db.execute(
-            "SELECT * FROM gm_nodes WHERE embedding IS NOT NULL"
-        ) as cur:
-            rows = await cur.fetchall()
-        scored: list[tuple[dict[str, Any], float]] = []
-        for row in rows:
-            node = _row_to_node(row)
-            sim = cosine_similarity(query_vec, node["embedding"])
-            if sim >= min_similarity:
-                scored.append((node, sim))
-        scored.sort(key=lambda x: x[1], reverse=True)
-        return scored[:top_k]
-
-    # Backwards-compat alias used by auto_ingest
-    async def _top_similar(self, query_vec, *, top_k=1, min_similarity=0.0):
-        return await self.vec_search(query_vec, top_k=top_k,
-                                       min_similarity=min_similarity)
+        from src.memory.tools.vec_search import vec_scan
+        return await vec_scan(
+            self._require(), table="gm_nodes",
+            query_vec=query_vec, row_decoder=_row_to_node,
+            top_k=top_k, min_similarity=min_similarity,
+        )
 
     # ---------- neighbor expansion + edges among a set ----------
 
     async def get_neighbor_keywords(self, node_ids: list[int], *,
                                       depth: int = 1) -> dict[int, list[str]]:
         """For each node in `node_ids`, return a de-duplicated list of
-        neighbor names (names only, as keyword hints per DevSpec §9.3).
-        Phase 1 supports depth=1.
-        """
-        if not node_ids:
-            return {}
-        db = self._require()
-        placeholders = ",".join("?" * len(node_ids))
-        async with db.execute(
-            f"""
-            SELECT center.id AS center_id, neighbor.name AS neighbor_name
-            FROM gm_nodes AS center
-            JOIN gm_edges AS e
-              ON (e.node_a = center.id OR e.node_b = center.id)
-            JOIN gm_nodes AS neighbor
-              ON neighbor.id = CASE WHEN e.node_a = center.id
-                                    THEN e.node_b ELSE e.node_a END
-            WHERE center.id IN ({placeholders})
-            """,
-            list(node_ids),
-        ) as cur:
-            rows = await cur.fetchall()
-
-        out: dict[int, list[str]] = {nid: [] for nid in node_ids}
-        seen: dict[int, set[str]] = {nid: set() for nid in node_ids}
-        for row in rows:
-            cid = row["center_id"]
-            name = row["neighbor_name"]
-            if name not in seen[cid]:
-                seen[cid].add(name)
-                out[cid].append(name)
-        return out
+        neighbor names (DevSpec §9.3 keyword hints). Phase 1 supports
+        depth=1. Delegates to the generic graph walker."""
+        from src.memory.tools.graph import (
+            get_neighbor_keywords as _neighbors,
+        )
+        return await _neighbors(
+            self._require(), nodes_table="gm_nodes",
+            edges_table="gm_edges", node_ids=node_ids, depth=depth,
+        )
 
     async def get_edges_among(self, node_ids: list[int]
                                 ) -> list[dict[str, Any]]:
-        """Return edges whose both endpoints are within `node_ids`, with
-        source/target node names included for prompt rendering.
-
-        Keys match DevSpec §3.6 Layer-2 renderer: source, target, predicate.
-        """
-        if not node_ids:
-            return []
-        db = self._require()
-        placeholders = ",".join("?" * len(node_ids))
-        async with db.execute(
-            f"""
-            SELECT e.predicate AS predicate,
-                   na.id AS source_id, na.name AS source,
-                   nb.id AS target_id, nb.name AS target
-            FROM gm_edges AS e
-            JOIN gm_nodes AS na ON na.id = e.node_a
-            JOIN gm_nodes AS nb ON nb.id = e.node_b
-            WHERE e.node_a IN ({placeholders})
-              AND e.node_b IN ({placeholders})
-            """,
-            list(node_ids) + list(node_ids),
-        ) as cur:
-            rows = await cur.fetchall()
-        return [dict(r) for r in rows]
+        """Return edges whose both endpoints are within `node_ids`,
+        with source/target names. Delegates to the generic graph
+        walker. Keys match DevSpec §3.6 Layer-2 renderer."""
+        from src.memory.tools.graph import get_edges_among as _among
+        return await _among(
+            self._require(), nodes_table="gm_nodes",
+            edges_table="gm_edges", node_ids=node_ids,
+        )
 
     # ---------- FTS5 fallback search ----------
 
@@ -557,63 +345,22 @@ class GraphMemory:
 
         Tokens are sanitized so MATCH never sees FTS5 operators.
         """
-        fts_query = _build_fts_query(query)
-        if fts_query is None:
-            return []
-        db = self._require()
-        async with db.execute(
-            """
-            SELECT gm_nodes.*
-            FROM gm_nodes
-            JOIN gm_nodes_fts ON gm_nodes_fts.rowid = gm_nodes.id
-            WHERE gm_nodes_fts MATCH ?
-            ORDER BY rank
-            LIMIT ?
-            """,
-            (fts_query, top_k),
-        ) as cur:
-            rows = await cur.fetchall()
-        return [_row_to_node(r) for r in rows]
+        from src.memory.tools.fts_search import fts_scan
+        return await fts_scan(
+            self._require(), table="gm_nodes", fts_table="gm_nodes_fts",
+            query=query, row_decoder=_row_to_node, top_k=top_k,
+        )
 
-    # ---------- auto_ingest ----------
+    # ---------- LLM-driven writes (impl in src/memory/writer.py) ----------
 
     async def auto_ingest(self, content: str,
                             *, source_heartbeat: int | None = None
                             ) -> dict[str, Any]:
-        """Zero-LLM write (DevSpec §7.5). Embed content; if a similar node
-        exists (cosine ≥ threshold), bump its importance; otherwise insert
-        a new FACT node. Returns {"created": bool, "node_id": int|None,
-        "skipped": bool}.
-        """
-        if not _is_meaningful(content):
-            return {"created": False, "node_id": None, "skipped": True}
-        db = self._require()
-        embedding = await self._embedder(content)
-        matches = await self._top_similar(
-            embedding, top_k=1, min_similarity=self._auto_ingest_threshold,
+        """Zero-LLM write — see ``src.memory.writer.auto_ingest``."""
+        from src.memory import writer
+        return await writer.auto_ingest(
+            self, content, source_heartbeat=source_heartbeat,
         )
-        if matches:
-            node, _sim = matches[0]
-            new_imp = float(node["importance"]) + 0.5
-            await db.execute(
-                "UPDATE gm_nodes SET importance=?, updated_at=CURRENT_TIMESTAMP "
-                "WHERE id=?",
-                (new_imp, node["id"]),
-            )
-            await db.commit()
-            return {"created": False, "node_id": node["id"]}
-
-        node_id = await self.insert_node(
-            name=_short_name(content),
-            category="FACT",
-            description=content,
-            embedding=embedding,
-            source_type="auto",
-            source_heartbeat=source_heartbeat,
-        )
-        return {"created": True, "node_id": node_id}
-
-    # ---------- explicit write ----------
 
     async def find_by_name(self, name: str) -> int | None:
         db = self._require()
@@ -623,61 +370,22 @@ class GraphMemory:
             row = await cur.fetchone()
             return int(row["id"]) if row else None
 
-    # Backwards-compat alias
-    async def _find_by_name(self, name: str) -> int | None:
-        return await self.find_by_name(name)
-
     async def explicit_write(self, content: str, *,
                                importance: str = "normal",
                                recall_context: list[dict[str, Any]] | None = None,
                                source_heartbeat: int | None = None
                                ) -> dict[str, Any]:
-        """LLM-assisted write (DevSpec §7.5): ask the extractor LLM to parse
-        `content` into nodes + edges, upsert them, and insert edges with
-        cycle checking. Returns {"node_ids": [...]}.
-        """
+        """LLM-assisted write — see ``src.memory.writer.explicit_write``."""
         if self._extractor_llm is None:
             raise RuntimeError("explicit_write requires an extractor_llm")
-
-        existing_text = _format_recall_for_prompt(recall_context or [])
-        prompt = EXPLICIT_WRITE_PROMPT.format(content=content,
-                                                existing=existing_text)
-        raw = await self._extractor_llm.chat(
-            [{"role": "user", "content": prompt}]
+        from src.memory import writer
+        return await writer.explicit_write(
+            self, content,
+            extractor_llm=self._extractor_llm,
+            importance=importance,
+            recall_context=recall_context,
+            source_heartbeat=source_heartbeat,
         )
-        parsed = _parse_extraction_json(raw)
-
-        imp_value = 2.0 if importance == "high" else 1.0
-        node_ids_by_name: dict[str, int] = {}
-        for n in parsed.get("nodes", []):
-            nid = await self.upsert_node({
-                "name": n["name"],
-                "category": n["category"],
-                "description": n.get("description", ""),
-                "source_type": "explicit",
-                "importance": imp_value,
-                "source_heartbeat": source_heartbeat,
-                "metadata": {"classified": True},
-            })
-            # upsert_node only writes metadata for fresh inserts; force-merge
-            # so an existing node also picks up the flag.
-            await self.set_metadata(nid, {"classified": True})
-            node_ids_by_name[n["name"]] = nid
-
-        for e in parsed.get("edges", []):
-            src = node_ids_by_name.get(e.get("source_name"))
-            if src is None:
-                src = await self._find_by_name(e.get("source_name", ""))
-            tgt = node_ids_by_name.get(e.get("target_name"))
-            if tgt is None:
-                tgt = await self._find_by_name(e.get("target_name", ""))
-            if src is None or tgt is None or src == tgt:
-                continue
-            await self.insert_edge_with_cycle_check(src, tgt, e["predicate"])
-
-        return {"node_ids": list(node_ids_by_name.values())}
-
-    # ---------- category update + async classify ----------
 
     async def update_node_category(self, node_name: str,
                                       new_category: str) -> bool:
@@ -693,94 +401,16 @@ class GraphMemory:
         return cur.rowcount > 0
 
     async def classify_and_link_pending(self) -> dict[str, int]:
-        """Background job (DevSpec §7.6): LLM-classify up to N auto-source
-        nodes that aren't yet classified, and optionally add edges between
-        them and existing classified nodes.
-        Returns counters: {"classified": n, "edges": m}.
-        """
+        """Background classifier — see ``src.memory.writer.classify_and_link_pending``."""
         if self._classifier_llm is None:
             return {"classified": 0, "edges": 0}
-
-        db = self._require()
-        async with db.execute(
-            """
-            SELECT id, name, description FROM gm_nodes
-            WHERE source_type='auto'
-              AND (metadata IS NULL
-                   OR json_extract(metadata, '$.classified') IS NULL
-                   OR json_extract(metadata, '$.classified') = 0)
-            ORDER BY created_at ASC
-            LIMIT ?
-            """,
-            (self._classify_batch_size,),
-        ) as cur:
-            pending_rows = await cur.fetchall()
-
-        if not pending_rows:
-            return {"classified": 0, "edges": 0}
-
-        async with db.execute(
-            """
-            SELECT id, name, category, description FROM gm_nodes
-            WHERE json_extract(metadata, '$.classified') = 1
-            ORDER BY last_accessed DESC
-            LIMIT ?
-            """,
-            (self._classify_existing_context,),
-        ) as cur:
-            existing_rows = await cur.fetchall()
-
-        pending = [{"id": r["id"], "name": r["name"],
-                     "description": r["description"]} for r in pending_rows]
-        existing = [{"id": r["id"], "name": r["name"],
-                      "category": r["category"],
-                      "description": r["description"]} for r in existing_rows]
-
-        prompt = CLASSIFY_PROMPT.format(
-            pending=_format_pending(pending),
-            existing=_format_existing(existing),
+        from src.memory import writer
+        return await writer.classify_and_link_pending(
+            self,
+            classifier_llm=self._classifier_llm,
+            batch_size=self._classify_batch_size,
+            existing_context=self._classify_existing_context,
         )
-        raw = await self._classifier_llm.chat(
-            [{"role": "user", "content": prompt}]
-        )
-        parsed = _parse_extraction_json(raw)
-
-        classified_count = 0
-        for c in parsed.get("classifications", []):
-            node_id = c.get("node_id")
-            category = c.get("category")
-            if node_id is None or category is None:
-                continue
-            await db.execute(
-                """
-                UPDATE gm_nodes
-                SET category = ?,
-                    metadata = json_set(COALESCE(metadata, '{}'),
-                                         '$.classified', json('true')),
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (category, node_id),
-            )
-            classified_count += 1
-        await db.commit()
-
-        edge_count = 0
-        for e in parsed.get("edges", []):
-            src = e.get("source_id")
-            tgt = e.get("target_id")
-            predicate = e.get("predicate")
-            if src is None or tgt is None or predicate is None or src == tgt:
-                continue
-            try:
-                await self.insert_edge_with_cycle_check(int(src), int(tgt),
-                                                          predicate)
-                edge_count += 1
-            except Exception:  # noqa: BLE001
-                # malformed ids or FK violation — skip silently (background job)
-                continue
-
-        return {"classified": classified_count, "edges": edge_count}
 
     # ---------- low-level escape hatch for tests ----------
 

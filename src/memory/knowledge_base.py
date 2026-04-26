@@ -168,41 +168,23 @@ class KnowledgeBase:
     async def _vec_search(self, query_vec: list[float], *,
                             top_k: int,
                             min_similarity: float) -> list[dict[str, Any]]:
-        db = self._require()
-        async with db.execute(
-            "SELECT * FROM kb_entries WHERE embedding IS NOT NULL "
-            "AND is_active = 1"
-        ) as cur:
-            rows = await cur.fetchall()
-        scored: list[tuple[dict[str, Any], float]] = []
-        for row in rows:
-            entry = _row_to_entry(row)
-            sim = cosine_similarity(query_vec, entry["embedding"])
-            if sim >= min_similarity:
-                scored.append((entry, sim))
-        scored.sort(key=lambda x: x[1], reverse=True)
-        return [e for (e, _s) in scored[:top_k]]
+        from src.memory.tools.vec_search import vec_scan
+        scored = await vec_scan(
+            self._require(), table="kb_entries",
+            query_vec=query_vec, row_decoder=_row_to_entry,
+            top_k=top_k, min_similarity=min_similarity,
+            extra_where="is_active = 1",
+        )
+        return [e for (e, _s) in scored]
 
     async def fts_search(self, query: str, *,
                            top_k: int = 5) -> list[dict[str, Any]]:
-        fts_q = build_fts_query(query)
-        if fts_q is None:
-            return []
-        db = self._require()
-        async with db.execute(
-            f"""
-            SELECT kb_entries.*
-            FROM kb_entries
-            JOIN kb_entries_fts ON kb_entries_fts.rowid = kb_entries.id
-            WHERE kb_entries_fts MATCH ?
-              AND kb_entries.is_active = 1
-            ORDER BY rank
-            LIMIT ?
-            """,
-            (fts_q, top_k),
-        ) as cur:
-            rows = await cur.fetchall()
-        return [_row_to_entry(r) for r in rows]
+        from src.memory.tools.fts_search import fts_scan
+        return await fts_scan(
+            self._require(), table="kb_entries", fts_table="kb_entries_fts",
+            query=query, row_decoder=_row_to_entry, top_k=top_k,
+            extra_where="kb_entries.is_active = 1",
+        )
 
 
 # ---------------------------------------------------------------------------
