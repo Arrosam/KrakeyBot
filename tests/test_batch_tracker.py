@@ -9,7 +9,7 @@ from src.runtime.stimulus_buffer import StimulusBuffer
 async def _tracker(buffer=None):
     buf = buffer or StimulusBuffer()
     t = BatchTrackerSensory()
-    await t.start(buf)
+    await t.start(buf.push)
     return t, buf
 
 
@@ -71,7 +71,7 @@ async def test_sensory_interface():
     assert t.name == "batch_tracker"
     assert t.default_adrenalin is True
     buf = StimulusBuffer()
-    await t.start(buf)
+    await t.start(buf.push)
     await t.stop()  # no-op, must not raise
 
 

@@ -15,31 +15,32 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from src.interfaces.sensory import Sensory
+from src.interfaces.sensory import PushCallback, Sensory
 from src.models.stimulus import Stimulus
 
 
 class WebChatSensory(Sensory):
     def __init__(self) -> None:
-        self._buffer = None
+        self._push: PushCallback | None = None
 
     @property
     def name(self) -> str:
         return "web_chat"
 
-    async def start(self, buffer) -> None:
+    async def start(self, push: PushCallback) -> None:
         # Passive sensory — no background loop to spawn. Just capture
-        # the buffer so the dashboard callback can push into it.
-        self._buffer = buffer
+        # the push callback so the dashboard callback can ship inbound
+        # messages into the runtime queue.
+        self._push = push
 
     async def stop(self) -> None:
-        self._buffer = None
+        self._push = None
 
     async def push_user_message(self, text: str,
                                    attachments: list[dict[str, Any]] | None
                                    = None) -> None:
         """Called by the dashboard WS handler on every inbound message."""
-        if self._buffer is None:
+        if self._push is None:
             # Pre-start or post-stop — silently drop; the runtime owns
             # the lifecycle and any misuse is a programmer error, not
             # user data worth surfacing.
@@ -56,7 +57,7 @@ class WebChatSensory(Sensory):
                 lines.append(f"[附件: {name} ({typ}, {size} bytes) {url}]")
             content = "\n".join(lines)
             md["attachments"] = attachments
-        await self._buffer.push(Stimulus(
+        await self._push(Stimulus(
             type="user_message",
             source=f"sensory:{self.name}",
             content=content,

@@ -24,7 +24,6 @@ from typing import Any, Protocol
 from src.bootstrap import load_self_model_or_default
 from src.dashboard.web_chat import WebChatHistory
 from src.models.self_model import SelfModelStore
-from src.interfaces.sensory import SensoryRegistry
 from src.interfaces.tentacle import TentacleRegistry
 from src.llm.client import LLMClient
 from src.memory.graph_memory import GraphMemory
@@ -215,12 +214,18 @@ class Runtime:
                                    "workspace/data/web_chat.jsonl")
         self.web_chat_history = WebChatHistory(chat_path)
 
-        self.sensories = SensoryRegistry()
+        # Sensory ownership lives on ``self.buffer`` (see
+        # src/runtime/stimulus_buffer.py). The buffer is the single
+        # owner of the live sensory set + the live stimulus queue;
+        # ``self.sensories`` is a backward-compat alias so legacy
+        # call sites keep reading ``runtime.sensories`` if any sneak
+        # in. New code should reach for ``self.buffer`` directly.
+        self.sensories = self.buffer
         # BatchTracker is core runtime infrastructure (dispatch wake-up
         # mechanism) — kept out of the plugin system so it can't be
         # disabled by accident.
         self.batch_tracker = BatchTrackerSensory()
-        self.sensories.register(self.batch_tracker)
+        self.buffer.register(self.batch_tracker)
 
         # Unified-format plugins (meta.yaml + components list). Each
         # plugin can contribute reflect / tentacle / sensory components
@@ -233,7 +238,7 @@ class Runtime:
             config=self.config,
             reflects=self.reflects,
             tentacles=self.tentacles,
-            sensories=self.sensories,
+            sensories=self.buffer,
             plugin_config_store=self._plugin_config_store,
             services={
                 "gm": self.gm,
@@ -394,12 +399,12 @@ class Runtime:
         await self.gm.initialize()
         await self._preflight_sandbox()
         await self._refine_bootstrap_from_data()
-        await self.sensories.start_all(self.buffer)
+        await self.buffer.start_all()
         await self._maybe_start_dashboard()
 
         if self.is_setup_mode:
             await self._run_setup_mode()
-            await self.sensories.stop_all()
+            await self.buffer.stop_all()
             return
 
         self._recall = self._new_recall()
@@ -411,7 +416,7 @@ class Runtime:
                 if iterations is not None and count >= iterations:
                     return
         finally:
-            await self.sensories.stop_all()
+            await self.buffer.stop_all()
             # Cancel in-flight background classify tasks so asyncio doesn't warn.
             pending = [t for t in self._classify_tasks if not t.done()]
             for t in pending:

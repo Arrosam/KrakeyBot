@@ -9,9 +9,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 
-from src.interfaces.sensory import Sensory
+from src.interfaces.sensory import PushCallback, Sensory
 from src.models.stimulus import Stimulus
-from src.runtime.stimulus_buffer import StimulusBuffer
 
 from .client import TelegramClient
 
@@ -23,7 +22,7 @@ class TelegramSensory(Sensory):
         self._client = client
         self._allowed = allowed_chat_ids
         self._error_backoff = error_backoff
-        self._buffer: StimulusBuffer | None = None
+        self._push: PushCallback | None = None
         self._task: asyncio.Task | None = None
         self._stopped = False
         self._offset = 0
@@ -36,10 +35,10 @@ class TelegramSensory(Sensory):
     def default_adrenalin(self) -> bool:
         return True
 
-    async def start(self, buffer: StimulusBuffer) -> None:
+    async def start(self, push: PushCallback) -> None:
         if self._task and not self._task.done():
             return
-        self._buffer = buffer
+        self._push = push
         self._stopped = False
         self._task = asyncio.create_task(self._poll_loop())
 
@@ -54,7 +53,7 @@ class TelegramSensory(Sensory):
             self._task = None
 
     async def _poll_loop(self) -> None:
-        assert self._buffer is not None
+        assert self._push is not None
         while not self._stopped:
             try:
                 updates = await self._client.get_updates(self._offset)
@@ -71,7 +70,7 @@ class TelegramSensory(Sensory):
                     continue
                 if self._allowed and chat_id not in self._allowed:
                     continue
-                await self._buffer.push(Stimulus(
+                await self._push(Stimulus(
                     type="user_message",
                     source=f"sensory:telegram:{chat_id}",
                     content=text,

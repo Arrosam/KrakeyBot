@@ -10,15 +10,17 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from src.interfaces.sensory import SensoryRegistry
 from src.memory.graph_memory import GraphMemory
 from src.memory.knowledge_base import KBRegistry
 from src.memory.sleep.clustering import run_leiden_clustering
 from src.memory.sleep.index_rebuild import rebuild_index_graph
 from src.memory.sleep.kb_lifecycle import archive_excess_kbs, consolidate_kbs
 from src.memory.sleep.migration import migrate_gm_to_kb
+
+if TYPE_CHECKING:
+    from src.runtime.stimulus_buffer import StimulusBuffer
 
 
 class AsyncChatLLM(Protocol):
@@ -30,7 +32,7 @@ class AsyncEmbedder(Protocol):
 
 
 async def enter_sleep_mode(
-    gm: GraphMemory, reg: KBRegistry, sensories: SensoryRegistry,
+    gm: GraphMemory, reg: KBRegistry, sensories: "StimulusBuffer",
     *, llm: AsyncChatLLM, embedder: AsyncEmbedder,
     log_dir: str | Path = "workspace/logs",
     min_community_size: int = 1,
@@ -109,14 +111,11 @@ async def enter_sleep_mode(
         await _write_daily_log(log_dir, result)
         return result
     finally:
-        # resume_all needs a buffer; reuse the one a still-registered
-        # sensory was started with, else a fresh one (resume_all is a
-        # no-op anyway when nothing was paused).
-        buffer = sensories.active_buffer()
-        if buffer is None:
-            from src.runtime.stimulus_buffer import StimulusBuffer
-            buffer = StimulusBuffer()
-        await sensories.resume_all(buffer)
+        # The buffer owns the sensories AND the queue, so resume_all
+        # needs no arg — it just hands each paused sensory its push
+        # callback again. The legacy ``active_buffer()`` workaround
+        # disappeared with the SensoryRegistry merge.
+        await sensories.resume_all()
 
 
 # ---------------- helpers ----------------

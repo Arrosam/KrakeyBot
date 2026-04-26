@@ -9,15 +9,14 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from src.interfaces.sensory import Sensory
+from src.interfaces.sensory import PushCallback, Sensory
 from src.models.stimulus import Stimulus
-from src.runtime.stimulus_buffer import StimulusBuffer
 
 
 class BatchTrackerSensory(Sensory):
     def __init__(self):
         self._pending: set[str] = set()
-        self._buffer: StimulusBuffer | None = None
+        self._push: PushCallback | None = None
 
     @property
     def name(self) -> str:
@@ -27,8 +26,8 @@ class BatchTrackerSensory(Sensory):
     def default_adrenalin(self) -> bool:
         return True
 
-    async def start(self, buffer: StimulusBuffer) -> None:
-        self._buffer = buffer
+    async def start(self, push: PushCallback) -> None:
+        self._push = push
 
     async def stop(self) -> None:
         # No background task to cancel.
@@ -46,9 +45,9 @@ class BatchTrackerSensory(Sensory):
         self._pending.discard(call_id)
         if self._pending:
             return
-        if self._buffer is None:
+        if self._push is None:
             return
-        await self._buffer.push(Stimulus(
+        await self._push(Stimulus(
             type="batch_complete",
             source=f"sensory:{self.name}",
             content="All dispatched tentacles completed.",

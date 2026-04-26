@@ -577,7 +577,7 @@ class HeartbeatOrchestrator:
         try:
             sl = rt.config.sleep
             stats = await enter_sleep_mode(
-                rt.gm, rt.kb_registry, rt.sensories,
+                rt.gm, rt.kb_registry, rt.buffer,
                 llm=rt.compact_llm, embedder=rt.embedder,
                 log_dir=rt.sleep_log_dir,
                 min_community_size=sl.min_community_size,

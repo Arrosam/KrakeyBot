@@ -34,11 +34,11 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from src.interfaces.reflect import ReflectRegistry
-    from src.interfaces.sensory import SensoryRegistry
     from src.interfaces.tentacle import TentacleRegistry
     from src.models.config import Config
     from src.plugins.plugin_config import FilePluginConfigStore
     from src.runtime.runtime import RuntimeDeps
+    from src.runtime.stimulus_buffer import StimulusBuffer
 
 
 @dataclass
@@ -79,13 +79,16 @@ class PluginRegistrar:
         config: "Config",
         reflects: "ReflectRegistry",
         tentacles: "TentacleRegistry",
-        sensories: "SensoryRegistry",
+        sensories: "StimulusBuffer",
         plugin_config_store: "FilePluginConfigStore",
         services: dict[str, Any],
     ):
         self._config = config
         self._reflects = reflects
         self._tentacles = tentacles
+        # ``sensories`` is the StimulusBuffer (it owns the registered
+        # sensories now). Kept the ``sensories`` parameter name so
+        # Runtime's call site stays self-documenting.
         self._sensories = sensories
         self._store = plugin_config_store
         self._services = services
@@ -250,8 +253,8 @@ class PluginRegistrar:
                 path="", project=name,
                 instance=self._tentacles._tentacles[name],  # noqa: SLF001
             ))
-        for s in self._sensories._sensories.values():  # noqa: SLF001
-            sname = getattr(s, "name", type(s).__name__)
+        for sname in self._sensories.sensory_names():
+            s = self._sensories.get_sensory(sname)
             infos.append(PluginInfo(
                 name=sname, kind="sensory", source="builtin",
                 path="", project=sname, instance=s,
@@ -295,7 +298,7 @@ class PluginRegistrar:
         plugin_s_names = {i.name for i in self._infos
                           if i.kind == "sensory"}
         loaded_t = {n for n in self._tentacles._tentacles}  # noqa: SLF001
-        loaded_s = {n for n in self._sensories._sensories}  # noqa: SLF001
+        loaded_s = set(self._sensories.sensory_names())
 
         core_tentacles = [
             {"name": t.name, "kind": "tentacle", "source": "core",
@@ -307,13 +310,13 @@ class PluginRegistrar:
             if t.name not in plugin_t_names
         ]
         core_sensories = [
-            {"name": s.name, "kind": "sensory", "source": "core",
+            {"name": sname, "kind": "sensory", "source": "core",
              "path": "", "project": "", "description": "",
              "config_schema": [],
              "enabled": True, "values": {},
              "loaded": True, "error": None}
-            for s in self._sensories._sensories.values()  # noqa: SLF001
-            if s.name not in plugin_s_names
+            for sname in self._sensories.sensory_names()
+            if sname not in plugin_s_names
         ]
         t_infos = [i for i in self._infos if i.kind == "tentacle"]
         s_infos = [i for i in self._infos if i.kind == "sensory"]

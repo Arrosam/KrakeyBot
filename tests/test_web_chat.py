@@ -97,7 +97,7 @@ async def test_sensory_push_creates_user_message_stimulus(tmp_path):
         async def push(self, s): pushed.append(s)
 
     sens = WebChatSensory()
-    await sens.start(_Buf())
+    await sens.start(_Buf().push)
     await sens.push_user_message("hello krakey")
     assert len(pushed) == 1
     s = pushed[0]
@@ -117,7 +117,7 @@ async def test_sensory_push_appends_attachment_notices(tmp_path):
         async def push(self, s): pushed.append(s)
 
     sens = WebChatSensory()
-    await sens.start(_Buf())
+    await sens.start(_Buf().push)
     await sens.push_user_message(
         "see file",
         attachments=[{"name": "a.png", "type": "image/png",
@@ -146,7 +146,7 @@ async def test_sensory_push_after_stop_silently_drops():
         async def push(self, s): pushed.append(s)
 
     sens = WebChatSensory()
-    await sens.start(_Buf())
+    await sens.start(_Buf().push)
     await sens.stop()
     await sens.push_user_message("dropped")
     assert pushed == []

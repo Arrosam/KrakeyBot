@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src.interfaces.sensory import Sensory, SensoryRegistry
+from src.interfaces.sensory import PushCallback, Sensory
 from src.memory.graph_memory import GraphMemory
 from src.memory.knowledge_base import KBRegistry
 from src.runtime.stimulus_buffer import StimulusBuffer
@@ -46,7 +46,7 @@ class _SpySensory(Sensory):
     @property
     def default_adrenalin(self): return self._urgent
 
-    async def start(self, buf):
+    async def start(self, push: PushCallback):
         self.resumed += 1
 
     async def stop(self):
@@ -58,14 +58,16 @@ async def _setup(tmp_path, with_sensory=False):
     gm = GraphMemory(tmp_path / "gm.sqlite", embedder=embed)
     await gm.initialize()
     reg = KBRegistry(gm, kb_dir=tmp_path / "kbs", embedder=embed)
-    sensories = SensoryRegistry()
+    # The buffer now also owns the sensory set (SensoryRegistry merged
+    # into StimulusBuffer). Pass the buffer to enter_sleep_mode.
+    sensories = StimulusBuffer()
     spies = []
     if with_sensory:
         calm = _SpySensory("calm", urgent=False)
         urgent = _SpySensory("urgent", urgent=True)
         sensories.register(calm)
         sensories.register(urgent)
-        await sensories.start_all(StimulusBuffer())
+        await sensories.start_all()
         spies = [calm, urgent]
     return gm, reg, sensories, spies
 

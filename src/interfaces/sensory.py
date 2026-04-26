@@ -1,13 +1,29 @@
-"""Sensory ABC + Registry (DevSpec §5.4).
+"""Sensory ABC (DevSpec §5.4).
 
-Sensory = passive input channel. Registry tracks running state so
-Sleep phase-1 can pause_non_urgent() and later resume_all().
+Sensory = passive input channel. Each implementation knows how to
+produce ``Stimulus`` objects from its own external surface (Telegram
+poll, Web WS receive, batch-completion event, …) and ships each
+stimulus by invoking the ``push`` callback handed to it at
+``start()``.
+
+Ownership inversion (Samuel 2026-04-26): sensories used to take a
+``StimulusBuffer`` reference at start() and call buffer.push()
+themselves — making the buffer (a high-level runtime object) a
+dependency of every sensory implementation. Now the buffer owns
+sensories, hands each one a bare push callback at start(), and the
+sensory has no knowledge of (and no import on) the buffer class.
 """
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Awaitable, Callable
 
-from src.runtime.stimulus_buffer import StimulusBuffer
+from src.models.stimulus import Stimulus
+
+
+PushCallback = Callable[[Stimulus], Awaitable[None]]
+"""Async callable a sensory invokes once per stimulus it produces.
+The buffer (or any other consumer) supplies it at ``start()``."""
 
 
 class Sensory(ABC):
@@ -20,62 +36,9 @@ class Sensory(ABC):
         return False
 
     @abstractmethod
-    async def start(self, buffer: StimulusBuffer) -> None: ...
+    async def start(self, push: PushCallback) -> None:
+        """Begin producing stimuli. Each call to ``push`` enqueues one
+        stimulus into whatever consumer wired this sensory up."""
 
     @abstractmethod
     async def stop(self) -> None: ...
-
-
-class SensoryRegistry:
-    def __init__(self):
-        self._sensories: dict[str, Sensory] = {}
-        self._running: set[str] = set()
-        self._paused: set[str] = set()
-
-    def register(self, sensory: Sensory) -> None:
-        if sensory.name in self._sensories:
-            raise ValueError(f"sensory '{sensory.name}' already registered")
-        self._sensories[sensory.name] = sensory
-
-    def get(self, name: str) -> Sensory:
-        return self._sensories[name]
-
-    async def start_all(self, buffer: StimulusBuffer) -> None:
-        for s in self._sensories.values():
-            if s.name not in self._running:
-                await s.start(buffer)
-                self._running.add(s.name)
-
-    async def pause_non_urgent(self) -> None:
-        for s in list(self._sensories.values()):
-            if not s.default_adrenalin and s.name in self._running:
-                await s.stop()
-                self._running.discard(s.name)
-                self._paused.add(s.name)
-
-    async def resume_all(self, buffer: StimulusBuffer) -> None:
-        for name in list(self._paused):
-            s = self._sensories[name]
-            await s.start(buffer)
-            self._running.add(name)
-            self._paused.discard(name)
-
-    async def stop_all(self) -> None:
-        for s in list(self._sensories.values()):
-            if s.name in self._running:
-                await s.stop()
-                self._running.discard(s.name)
-
-    def active_buffer(self) -> StimulusBuffer | None:
-        """Return the StimulusBuffer that any currently-registered sensory
-        was started with, or ``None`` if no sensory has a stashed buffer.
-
-        Sleep's ``resume_all`` needs a buffer to hand to paused sensories
-        when they restart; this avoids reaching into ``_sensories`` and
-        each sensory's private ``_buffer`` from the orchestrator.
-        """
-        for s in self._sensories.values():
-            buf = getattr(s, "_buffer", None)
-            if buf is not None:
-                return buf
-        return None
