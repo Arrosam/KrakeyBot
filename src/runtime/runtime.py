@@ -21,9 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from src.bootstrap import (
-    BOOTSTRAP_PROMPT, load_genesis, load_self_model_or_default,
-)
+from src.bootstrap import load_self_model_or_default
 from src.dashboard.app_factory import create_app as create_dashboard_app
 from src.dashboard.events import EventBroadcaster
 from src.dashboard.server import DashboardServer
@@ -38,25 +36,12 @@ from src.memory.recall import IncrementalRecall, Reranker
 from src.models.config import Config, LLMParams
 from src.models.config_backup import backup_config
 from src.models.stimulus import Stimulus
-from src.prompt.builder import PromptBuilder, SlidingWindowRound
+from src.prompt.builder import PromptBuilder
 from src.runtime.batch_tracker import BatchTrackerSensory
-from src.runtime.event_bus import (
-    DecisionEvent, EventBus, GMStatsEvent, HeartbeatStartEvent,
-    HibernateEvent, NoteEvent, PromptBuiltEvent,
-    SleepDoneEvent, SleepStartEvent, StimuliQueuedEvent,
-    ThinkingEvent,
-)
+from src.runtime.event_bus import EventBus
 from src.runtime.heartbeat_logger import HeartbeatLogger
-from src.runtime.override_commands import (
-    OverrideAction, handle_override, parse_override,
-)
-from src.memory.sleep.sleep_manager import enter_sleep_mode
-from src.runtime.compact import compact_if_needed
-from src.runtime.fatigue import calculate_fatigue
-from src.runtime.hibernate import hibernate_with_recall
 from src.runtime.sliding_window import SlidingWindow
 from src.runtime.stimulus_buffer import StimulusBuffer
-from src.self_agent import parse_self_output
 # All tentacle / sensory classes now load via the plugin system
 # (src.plugins.builtin.<project>/). SubprocessRunner stays imported
 # here because Runtime._build_code_runner owns the sandbox-vs-subprocess
@@ -348,6 +333,13 @@ class Runtime:
             events=self.events,
         )
 
+        # Heartbeat algorithm — owns the per-beat orchestration but
+        # holds no state. Reads + mutates Runtime fields through the
+        # `runtime` ref. Built last (after all collaborators exist) so
+        # nothing in its phase methods sees a half-constructed Runtime.
+        from src.runtime.heartbeat_orchestrator import HeartbeatOrchestrator
+        self._orchestrator = HeartbeatOrchestrator(self)
+
         # Per-run ring buffer of assembled heartbeat prompts for the
         # dashboard Prompts tab. Size from config; not persisted.
         dash_cfg = getattr(self.config, "dashboard", None)
@@ -383,11 +375,8 @@ class Runtime:
         self._plugin_registrar.register_from_config(deps)
 
     def _new_recall(self) -> IncrementalRecall:
-        # Routed through the Reflect registry (kind="recall_anchor")
-        # since 2026-04-25. The default built-in mirrors the previous
-        # in-line factory; future Reflects (#2 LLM-anchor) will replace
-        # it from config without Runtime needing to know the difference.
-        return self.reflects.make_recall(self)
+        # Facade — heartbeat algorithm lives in HeartbeatOrchestrator.
+        return self._orchestrator.new_recall()
 
     @property
     def is_setup_mode(self) -> bool:
@@ -519,11 +508,8 @@ class Runtime:
         ))
 
     def _record_prompt(self, heartbeat_id: int, prompt: str) -> None:
-        self._prompt_log.append({
-            "heartbeat_id": heartbeat_id,
-            "ts": datetime.now().isoformat(),
-            "full_prompt": prompt,
-        })
+        # Facade — heartbeat algorithm lives in HeartbeatOrchestrator.
+        self._orchestrator.record_prompt(heartbeat_id, prompt)
 
     def recent_prompts(self, limit: int | None = None) -> list[dict[str, Any]]:
         """Newest-first list of recorded prompts. Used by the dashboard
@@ -652,506 +638,29 @@ class Runtime:
             self.log.runtime_error(f"dashboard startup error: {e}")
             self._dashboard = None
 
+    # ---------- heartbeat algorithm ----------
+
     async def _heartbeat(self) -> None:
-        """Orchestration only. Each phase is its own method.
+        # Facade — algorithm lives in HeartbeatOrchestrator.
+        await self._orchestrator.beat()
 
-        Sleep can short-circuit the heartbeat at two points:
-          - immediately after fatigue compute (force-sleep at threshold)
-          - after Hypothalamus translation if Self requested 'enter sleep'
-        Override commands (/kill, /sleep) can also short-circuit.
-        """
-        self.heartbeat_count += 1
-        self.log.set_heartbeat(self.heartbeat_count)
-        stimuli = await self._phase_drain_and_seed_recall()
+    # The next four facades exist because tests reach in directly to
+    # exercise prompt assembly + budget enforcement + GENESIS lazy-load
+    # without running a whole heartbeat. Production callers go through
+    # the orchestrator.
 
-        # Override commands run out-of-band (Self never sees /<cmd>).
-        stimuli, override_action = await self._phase_handle_overrides(stimuli)
-        if override_action is OverrideAction.KILL:
-            return
-        if override_action is OverrideAction.SLEEP:
-            await self._perform_sleep(
-                "manual /sleep override",
-                wake_msg="完成了一次手动触发的睡眠。",
-            )
-            return
-
-        counts = await self._phase_compute_fatigue()
-
-        if counts.fatigue_pct >= self.config.fatigue.force_sleep_threshold:
-            await self._perform_sleep(
-                f"force-sleep at fatigue {counts.fatigue_pct}%",
-                wake_msg="之前因过于疲劳昏睡过去了。",
-            )
-            return
-
-        await self._phase_compact()
-        recall_result = await self._phase_finalize_recall_and_pushback()
-        parsed = await self._phase_run_self(stimuli, recall_result, counts)
-        if parsed is None:
-            return  # Self LLM error already logged + slept
-        self._phase_save_round(parsed, stimuli)
-        self._phase_log_self_output(parsed)
-        if self.bootstrap.is_active:
-            self._phase_apply_bootstrap_signals(parsed)
-        await self._phase_auto_ingest_feedback(stimuli)
-        sleep_requested = await self._phase_apply_hypothalamus(
-            parsed, recall_result,
-        )
-        if sleep_requested:
-            await self._perform_sleep(
-                "voluntary sleep requested by Self",
-                wake_msg=("完成了一次完整睡眠 (聚类 + KB 迁移 + Index 重建)。"
-                          "醒来感觉清爽一些。"),
-            )
-            return
-        self._phase_schedule_classify()
-        await self._phase_hibernate(parsed, recall_result)
-
-    # ---------- heartbeat phases ----------
-
-    async def _phase_handle_overrides(
-        self, stimuli: list[Stimulus],
-    ) -> tuple[list[Stimulus], "OverrideAction | None"]:
-        """Scan drained stimuli for /<cmd>. Each match is consumed (Self
-        never sees it) and executed out-of-band. Returns the filtered
-        stimulus list + the highest-priority action triggered (KILL > SLEEP)."""
-        filtered: list[Stimulus] = []
-        triggered: OverrideAction | None = None
-        for s in stimuli:
-            if s.type != "user_message":
-                filtered.append(s)
-                continue
-            cmd = parse_override(s.content)
-            if cmd is None:
-                filtered.append(s)
-                continue
-            result = await handle_override(cmd, self)
-            self.log.hb(f"override /{cmd}: {result.output}")
-            if result.action is OverrideAction.KILL:
-                triggered = OverrideAction.KILL
-                self._stop = True
-                break
-            if (result.action is OverrideAction.SLEEP
-                    and triggered is not OverrideAction.KILL):
-                triggered = OverrideAction.SLEEP
-            # Self can still see informational overrides as system events
-            if result.action is OverrideAction.NONE:
-                await self.buffer.push(Stimulus(
-                    type="system_event", source="system:override",
-                    content=f"/{cmd}: {result.output}",
-                    timestamp=datetime.now(), adrenalin=False,
-                ))
-        return filtered, triggered
-
-    async def _phase_drain_and_seed_recall(self) -> list[Stimulus]:
-        stimuli = self.buffer.drain()
-        self.log.hb(f"stimuli={len(stimuli)} (thinking...)")
-        self.events.publish(HeartbeatStartEvent(
-            heartbeat_id=self.heartbeat_count, stimulus_count=len(stimuli),
-        ))
-        self.events.publish(StimuliQueuedEvent(stimuli=[
-            {"type": s.type, "source": s.source, "content": s.content,
-             "adrenalin": s.adrenalin, "ts": s.timestamp.isoformat()}
-            for s in stimuli
-        ]))
-        assert self._recall is not None
-        already = {id(s) for s in self._recall.processed_stimuli}
-        new_for_recall = [s for s in stimuli if id(s) not in already]
-        if new_for_recall:
-            await self._recall.add_stimuli(new_for_recall)
-        return stimuli
-
-    async def _phase_compute_fatigue(self) -> _GMCounts:
-        node_count = await self.gm.count_nodes()
-        edge_count = await self.gm.count_edges()
-        pct, hint = calculate_fatigue(
-            node_count=node_count,
-            soft_limit=self.config.fatigue.gm_node_soft_limit,
-            thresholds=self.config.fatigue.thresholds,
-        )
-        node_delta = node_count - self._last_node_count
-        edge_delta = edge_count - self._last_edge_count
-        self._last_node_count = node_count
-        self._last_edge_count = edge_count
-        self.log.hb(
-            f"gm: nodes={node_count}{_delta_str(node_delta)}, "
-            f"edges={edge_count}{_delta_str(edge_delta)}, fatigue={pct}%"
-        )
-        if pct >= self.config.fatigue.force_sleep_threshold:
-            self.log.hb_warn(f"force-sleep threshold reached (fatigue={pct}%);"
-                              " Sleep mode lands in Phase 2.")
-        self.events.publish(GMStatsEvent(
-            heartbeat_id=self.heartbeat_count,
-            node_count=node_count, edge_count=edge_count, fatigue_pct=pct,
-        ))
-        return _GMCounts(node_count=node_count, edge_count=edge_count,
-                          fatigue_pct=pct, fatigue_hint=hint)
-
-    async def _phase_compact(self) -> None:
-        async def _recall_fn(text: str):
-            return await self.gm.fts_search(text, top_k=10)
-        await compact_if_needed(self.window, self.gm, self.compact_llm,
-                                 recall_fn=_recall_fn)
-
-    async def _phase_finalize_recall_and_pushback(self):
-        """Finalize recall + cap-1 retry of uncovered stimuli."""
-        assert self._recall is not None
-        recall_result = await self._recall.finalize()
-        for s in recall_result.uncovered_stimuli:
-            retries = s.metadata.get("recall_retries", 0)
-            if retries >= MAX_RECALL_RETRIES:
-                continue
-            s.metadata["recall_retries"] = retries + 1
-            await self.buffer.push(s)
-        return recall_result
-
-    def _get_genesis_text(self) -> str:
-        """Lazy-load GENESIS.md on first use.
-
-        Bootstrap is the ONLY consumer of this text — after
-        bootstrap_complete flips to True, the agent should never see
-        GENESIS again. Reading the file unconditionally at startup
-        was both wasteful I/O (80% of runs are steady-state) and a
-        correctness trap: once stale genesis bytes live on ``self``
-        it's too easy to accidentally surface them later.
-
-        Cached on first call so repeat heartbeats during a long
-        Bootstrap don't re-read the file 50 times.
-        """
-        if self._genesis_text is None:
-            self._genesis_text = load_genesis(self._genesis_path)
-        return self._genesis_text
-
-    def _build_self_prompt(self, stimuli, recall_result,
-                              counts: "_GMCounts") -> str:
-        # Suppress the [ACTION FORMAT] layer when a hypothalamus
-        # Reflect is registered: the translator owns the dispatch
-        # path, and teaching Self structured tags would conflict with
-        # its job. See docs/design/reflects-and-self-model.md
-        # Reflect #1 design.
-        in_mind_state = self.reflects.in_mind_state()
-        # Standing instruction layer for in_mind. Imported lazily so
-        # the IN_MIND_INSTRUCTIONS_LAYER constant only enters memory
-        # when an in_mind Reflect is registered — keeps the lazy-load
-        # discipline of the plugin folder.
-        in_mind_instructions: str | None = None
-        if in_mind_state is not None:
-            from src.plugins.builtin.default_in_mind.prompt import (
-                IN_MIND_INSTRUCTIONS_LAYER,
-            )
-            in_mind_instructions = IN_MIND_INSTRUCTIONS_LAYER
-        prompt = self.builder.build(
-            self_model=self.self_model,
-            capabilities=self._capabilities(),
-            status=self._status(counts.node_count, counts.edge_count,
-                                  counts.fatigue_pct, counts.fatigue_hint),
-            recall={"nodes": recall_result.nodes,
-                    "edges": recall_result.edges},
-            window=self.window.get_rounds(),
-            stimuli=stimuli,
-            current_time=datetime.now(),
-            suppress_action_format=self.reflects.has_hypothalamus(),
-            in_mind=in_mind_state,
-            in_mind_instructions=in_mind_instructions,
-        )
-        if self.bootstrap.should_inject_intro_prompt():
-            prompt = (BOOTSTRAP_PROMPT.format(genesis_text=self._get_genesis_text())
-                      + "\n\n" + prompt)
-        return prompt
-
-    async def _enforce_input_budget(self, stimuli, recall_result,
-                                       counts: "_GMCounts"):
-        """Overall prompt-budget enforcement (DevSpec \u00a710.2).
-
-        After recall is finalized and we have a candidate prompt, if
-        the full prompt exceeds the Self role's ``max_input_tokens``,
-        prune the oldest history round into GM (normal compact path)
-        and re-run recall (GM changed \u2192 new nodes may be more
-        relevant). Repeat until the prompt fits or the window is empty.
-
-        This is the second line of defense: ``_phase_compact`` already
-        caps history at ``max_input_tokens * history_token_fraction``,
-        but the rest of the prompt (DNA + self-model + capabilities +
-        stimulus + recall + status) can push the total over budget
-        even when history is within its own share. When that happens
-        we borrow from history (oldest rounds are least valuable) and
-        promote them to GM so nothing is lost.
-
-        Returns the final (prompt, recall_result) pair. Hard cap on
-        iterations so a pathological configuration can't spin forever.
-        """
-        from src.runtime.compact import compact_round
-        from src.utils.tokens import estimate_tokens
-
-        self_params = self.config.llm.core_params("self_thinking") or LLMParams()
-        budget = int(self_params.max_input_tokens or 128_000)
-
-        async def _recall_fn(text: str):
-            return await self.gm.fts_search(text, top_k=10)
-
-        prompt = self._build_self_prompt(stimuli, recall_result, counts)
-        max_iters = 10  # safety bound — should never need more than 2-3
-        for _ in range(max_iters):
-            total = estimate_tokens(prompt)
-            if total <= budget:
-                return prompt, recall_result
-            if not self.window.rounds:
-                # Nothing left to borrow from. Log loud and send
-                # anyway \u2014 provider will return its own error, which
-                # surfaces through the existing Self-LLM-error path.
-                self.log.hb_warn(
-                    f"prompt {total} > max_input_tokens {budget} and "
-                    "window is empty; sending anyway"
-                )
-                return prompt, recall_result
-            oldest = self.window.pop_oldest()
-            assert oldest is not None
-            self.log.hb(
-                f"input budget: prompt {total} > {budget}; pruning oldest "
-                f"round (heartbeat #{oldest.heartbeat_id}) into GM"
-            )
-            try:
-                await compact_round(oldest, self.gm, self.compact_llm,
-                                      _recall_fn)
-            except Exception as e:  # noqa: BLE001 \u2014 never crash the beat
-                self.log.hb_warn(
-                    f"budget-driven compact failed: {e} \u2014 round "
-                    f"#{oldest.heartbeat_id} dropped without GM write"
-                )
-            # Re-run recall against the (possibly) enriched GM.
-            fresh = self._new_recall()
-            await fresh.add_stimuli(stimuli)
-            recall_result = await fresh.finalize()
-            self._recall = fresh
-            prompt = self._build_self_prompt(stimuli, recall_result, counts)
-        # Hit the iteration ceiling without converging. Ship what we
-        # have plus a loud warning; a follow-up beat will try again.
-        self.log.hb_warn(
-            f"input budget not satisfied after {max_iters} prune "
-            f"iterations; sending oversized prompt "
-            f"({estimate_tokens(prompt)} > {budget})"
-        )
-        return prompt, recall_result
-
-    async def _phase_run_self(self, stimuli, recall_result,
-                                counts: "_GMCounts"):
-        """Build prompt + call Self LLM + parse. Returns None on LLM error
-        (sleeps min_interval and short-circuits the heartbeat)."""
-        prompt, recall_result = await self._enforce_input_budget(
+    def _build_self_prompt(self, stimuli, recall_result, counts):
+        return self._orchestrator.build_self_prompt(
             stimuli, recall_result, counts,
         )
-        self._record_prompt(self.heartbeat_count, prompt)
-        self.events.publish(PromptBuiltEvent(
-            heartbeat_id=self.heartbeat_count,
-            layers={"full_prompt": prompt},
-        ))
-        try:
-            raw = await self.self_llm.chat(
-                [{"role": "user", "content": prompt}]
-            )
-        except Exception as e:  # noqa: BLE001
-            self.log.hb(f"Self LLM error: {e}")
-            await asyncio.sleep(self._min)
-            return None
-        return parse_self_output(raw)
 
-    def _phase_save_round(self, parsed, stimuli) -> None:
-        self.window.append(SlidingWindowRound(
-            heartbeat_id=self.heartbeat_count,
-            stimulus_summary=_summarize_stimuli(stimuli),
-            decision_text=parsed.decision,
-            note_text=parsed.note,
-        ))
-
-    def _phase_apply_bootstrap_signals(self, parsed) -> None:
-        """During Bootstrap, hand Self's NOTE to the coordinator for
-        self-model patch + completion-marker detection. Refresh the
-        cached snapshot + log whatever fired."""
-        result = self.bootstrap.apply_note_signals(parsed.note)
-        if result.update or result.completed:
-            self.self_model = self._self_model_store.load()
-        if result.update:
-            self.log.hb(f"bootstrap: self-model updated "
-                          f"({list(result.update.keys())})")
-        if result.completed:
-            self.log.hb("bootstrap: complete — entering normal operation")
-
-    def _phase_log_self_output(self, parsed) -> None:
-        decision_text = parsed.decision.strip() or "(none)"
-        self.log.hb_thought("decision", decision_text)
-        self.events.publish(DecisionEvent(
-            heartbeat_id=self.heartbeat_count, text=decision_text,
-        ))
-        if parsed.thinking:
-            self.log.hb_thought("thinking", parsed.thinking)
-            self.events.publish(ThinkingEvent(
-                heartbeat_id=self.heartbeat_count,
-                text=parsed.thinking.strip(),
-            ))
-        if parsed.note:
-            self.log.hb_thought("note", parsed.note)
-            self.events.publish(NoteEvent(
-                heartbeat_id=self.heartbeat_count, text=parsed.note.strip(),
-            ))
-
-    async def _phase_auto_ingest_feedback(self, stimuli) -> None:
-        for s in stimuli:
-            if s.type != "tentacle_feedback":
-                continue
-            try:
-                await self.gm.auto_ingest(
-                    s.content, source_heartbeat=self.heartbeat_count,
-                )
-            except Exception as e:  # noqa: BLE001
-                self.log.runtime_error(f"auto_ingest error: {e}")
-
-    async def _phase_apply_hypothalamus(self, parsed, recall_result) -> bool:
-        """Convert Self's response into tentacle calls + dispatch.
-
-        Routes through ``self.reflects.dispatch_decision`` which picks
-        the path:
-          * Hypothalamus Reflect registered → LLM translation of
-            ``parsed.decision`` (existing behavior).
-          * No Hypothalamus Reflect → script-only action executor
-            scans ``parsed.raw`` for ``[ACTION]...[/ACTION]`` JSONL.
-
-        Returns True iff Self requested sleep (caller short-circuits
-        and runs _perform_sleep).
-        """
-        decision = parsed.decision.strip().lower()
-        if not decision or decision in ("no action", "无行动"):
-            # Even "no action" decisions can't have ACTION blocks, so
-            # short-circuit. (Action executor would also produce empty
-            # but skip the work.)
-            return False
-        try:
-            result = await self.reflects.dispatch_decision(
-                parsed.raw, parsed.decision,
-                self.tentacles.list_descriptions(),
-            )
-        except Exception as e:  # noqa: BLE001
-            # Include exception class — some exceptions (empty str, None
-            # deref, bare raise) format to an empty message and mask the
-            # real cause.
-            err = f"{type(e).__name__}: {e!r}"
-            self.log.hb(f"Hypothalamus error: {err}")
-            # Self also needs to learn the translation failed — otherwise
-            # the decision looks silently dispatched and she can't correct.
-            # Push a system_event stimulus with adrenalin so it surfaces on
-            # the next heartbeat.
-            await self.buffer.push(Stimulus(
-                type="system_event", source="system:hypothalamus",
-                content=(
-                    "Your last [DECISION] could not be translated by the "
-                    f"Hypothalamus ({err}). Nothing was dispatched. "
-                    "Try re-stating the intent more explicitly next beat."
-                ),
-                timestamp=datetime.now(),
-                adrenalin=True,
-            ))
-            return False
-        self._dispatcher.log_summary(self.heartbeat_count, result)
-        await self._dispatcher.dispatch_tentacle_calls(
-            self.heartbeat_count, result.tentacle_calls,
-        )
-        await self._dispatcher.apply_memory_writes(
-            result.memory_writes, recall_result.nodes,
-            self.heartbeat_count,
-        )
-        await self._dispatcher.apply_memory_updates(result.memory_updates)
-        return bool(result.sleep)
-
-    def _phase_schedule_classify(self) -> None:
-        """Background classify+link doesn't block the heartbeat."""
-        self._classify_tasks.append(
-            asyncio.create_task(self.gm.classify_and_link_pending()),
+    async def _enforce_input_budget(self, stimuli, recall_result, counts):
+        return await self._orchestrator.enforce_input_budget(
+            stimuli, recall_result, counts,
         )
 
-    async def _phase_hibernate(self, parsed, recall_result) -> None:
-        if recall_result.uncovered_stimuli:
-            base = self.config.hibernate.min_interval
-        else:
-            base = (parsed.hibernate_seconds
-                    or self.config.hibernate.default_interval)
-        # Bootstrap-mode cadence (DevSpec §12.2) — coordinator returns
-        # the bootstrap-fixed value when active, else passes ``base``
-        # through unchanged.
-        interval = self.bootstrap.hibernate_interval(default=base)
-        self.log.hb(f"hibernate {interval}s")
-        self.events.publish(HibernateEvent(
-            heartbeat_id=self.heartbeat_count, interval_seconds=interval,
-        ))
-        self._recall = self._new_recall()
-        await hibernate_with_recall(
-            interval, self.buffer, self._recall,
-            min_interval=self._min, max_interval=self._max,
-        )
-
-    # ---------- sleep ----------
-
-    async def _perform_sleep(self, reason: str, *, wake_msg: str) -> None:
-        """Run 7-phase Sleep, persist self-model bookkeeping, push wake-up
-        stimulus, reset incremental recall (GM state changed)."""
-        self.log.hb(f"sleep started — {reason}")
-        self.events.publish(SleepStartEvent(reason=reason))
-        try:
-            sl = self.config.sleep
-            stats = await enter_sleep_mode(
-                self.gm, self.kb_registry, self.sensories,
-                llm=self.compact_llm, embedder=self.embedder,
-                log_dir=self.sleep_log_dir,
-                min_community_size=sl.min_community_size,
-                kb_consolidation_threshold=sl.kb_consolidation_threshold,
-                kb_index_max=sl.kb_index_max,
-                kb_archive_pct=sl.kb_archive_pct,
-                kb_revive_threshold=sl.kb_revive_threshold,
-            )
-        except Exception as e:  # noqa: BLE001
-            self.log.hb(f"sleep failed: {e}")
-            return
-        self.events.publish(SleepDoneEvent(stats=stats))
-        self.log.hb(
-            f"sleep done: facts_migrated={stats['facts_migrated']}, "
-            f"focus_cleared={stats['focus_cleared']}, "
-            f"kbs={stats['kbs_created']}, index_nodes={stats['index_nodes']}"
-        )
-
-        # Sleep bookkeeping is a per-process runtime concern, not
-        # something Self needs to remember across restarts. Bumping
-        # the in-memory counter is enough for /status output + the
-        # dashboard's last_sleep stamp (set client-side on the
-        # `sleep_done` event).
-        self._sleep_cycles += 1
-
-        # Wake-up stimulus
-        await self.buffer.push(Stimulus(
-            type="system_event", source="system:sleep",
-            content=wake_msg, timestamp=datetime.now(),
-            adrenalin=False,
-        ))
-
-        # GM changed underneath us — start a fresh recall
-        self._recall = self._new_recall()
-
-    def _status(self, node_count: int, edge_count: int,
-                  pct: int, hint: str) -> dict[str, Any]:
-        """Runtime status numbers — changes every beat (heartbeat counter,
-        fatigue), so this section is deliberately placed near the end of
-        the prompt to preserve the cacheable prefix above it."""
-        return {
-            "gm_node_count": node_count,
-            "gm_edge_count": edge_count,
-            "fatigue_pct": pct,
-            "fatigue_hint": hint,
-            "last_sleep_time": "never",
-            "heartbeats_since_sleep": self.heartbeat_count,
-        }
-
-    def _capabilities(self) -> list[dict[str, Any]]:
-        """Tentacle list for the [CAPABILITIES] layer. Only changes on
-        plugin reload, so this gets rendered high in the prompt above the
-        cache-breaking volatile layers."""
-        return self.tentacles.list_descriptions()
+    def _get_genesis_text(self) -> str:
+        return self._orchestrator.get_genesis_text()
 
 
 def _delta_str(delta: int) -> str:
