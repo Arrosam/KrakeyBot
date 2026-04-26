@@ -1,21 +1,39 @@
-"""Recall scoring helpers + IncrementalRecall driver (DevSpec §9).
+"""Incremental recall driver (DevSpec §9.2).
 
-Phase 1.3a+b: scripted weighted sort, category weights, time decay.
-Later sub-phases add reranker integration, FTS5 fallback, neighbor
-expansion, and the IncrementalRecall class.
+Per-stimulus vector search → reranker / scripted_score → token-bounded
+selection of the best subset → covered/uncovered classification.
+
+State (across one heartbeat):
+  * ``processed_stimuli`` — stimuli we've already searched for. Used
+    by Runtime's ``_phase_drain_and_seed_recall`` to avoid re-feeding
+    the same Stimulus across heartbeats.
+  * ``merged``             — id → ``{node, weight}``. Adrenalin
+    stimuli contribute 10× weight; same node hit by multiple stimuli
+    accumulates.
+  * ``_per_stimulus_ids``  — per-call hit set, for finalize() to mark
+    each stimulus covered iff at least one of its hits made the cut.
+
+Pure scoring functions live in ``recall.scoring``; this module
+focuses on the orchestration + GM access + budget enforcement.
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Protocol, TYPE_CHECKING
 
+from src.memory.recall.scoring import (
+    Reranker, ScoringWeights, rank_candidates,
+)
 from src.utils.tokens import estimate_tokens
 
 if TYPE_CHECKING:
     from src.memory.graph_memory import GraphMemory
     from src.models.stimulus import Stimulus
+
+
+class AsyncEmbedder(Protocol):
+    async def __call__(self, text: str) -> list[float]: ...
 
 
 def _estimate_node_render_tokens(node: dict[str, Any],
@@ -25,112 +43,17 @@ def _estimate_node_render_tokens(node: dict[str, Any],
     stays honest.
 
     Format (see src/prompt/builder.py):
-        - [name] (category) \u2014 description
-          \u90bb\u76f8: kw1, kw2, ...
+        - [name] (category) — description
+          相邻: kw1, kw2, ...
     """
     name = node.get("name", "") or ""
     cat = node.get("category", "") or ""
     desc = node.get("description", "") or ""
-    header = f"- [{name}] ({cat}) \u2014 {desc}"
+    header = f"- [{name}] ({cat}) — {desc}"
     total = estimate_tokens(header)
     if neighbor_keywords:
-        total += estimate_tokens("  \u76f8\u90bb: " + ", ".join(neighbor_keywords))
+        total += estimate_tokens("  相邻: " + ", ".join(neighbor_keywords))
     return total
-
-
-class Reranker(Protocol):
-    async def rerank(self, query: str, docs: list[str]) -> list[float]: ...
-
-
-class AsyncEmbedder(Protocol):
-    async def __call__(self, text: str) -> list[float]: ...
-
-
-CATEGORY_WEIGHTS: dict[str, float] = {
-    "TARGET": 1.5,
-    "FOCUS": 1.5,
-    "KNOWLEDGE": 1.2,
-    "RELATION": 1.0,
-    "FACT": 0.8,
-}
-
-
-def category_weight(category: str) -> float:
-    return CATEGORY_WEIGHTS.get(category, 1.0)
-
-
-def time_decay(created_at: datetime | str, now: datetime, *,
-                half_life_seconds: float = 86400.0) -> float:
-    """Exponential half-life decay. 1.0 at t=now, 0.5 after one half-life."""
-    created = _as_dt(created_at)
-    age = max(0.0, (now - created).total_seconds())
-    return 0.5 ** (age / half_life_seconds)
-
-
-@dataclass
-class ScoringWeights:
-    vec: float = 1.0         # w1
-    time: float = 0.3        # w2
-    access: float = 0.2      # w3
-    importance: float = 0.5  # w4
-    type: float = 0.5        # w5
-    half_life_seconds: float = 86400.0
-
-
-def scripted_score(node: dict[str, Any], *, vec_sim: float, now: datetime,
-                    weights: ScoringWeights) -> float:
-    """DevSpec §9.1 fallback formula."""
-    decay = time_decay(node["created_at"], now,
-                        half_life_seconds=weights.half_life_seconds)
-    access_term = math.log((node.get("access_count") or 0) + 1)
-    importance = float(node.get("importance") or 1.0)
-    cat_w = category_weight(node.get("category", ""))
-    return (
-        vec_sim * weights.vec
-        + decay * weights.time
-        + access_term * weights.access
-        + importance * weights.importance
-        + cat_w * weights.type
-    )
-
-
-async def rank_candidates(candidates: list[tuple[dict[str, Any], float]],
-                            *, query: str, reranker: Reranker | None,
-                            weights: ScoringWeights,
-                            now: datetime
-                            ) -> list[tuple[dict[str, Any], float]]:
-    """Layer 2/3 of DevSpec §9.1:
-      - If a reranker is provided and succeeds, use its scores.
-      - On any failure (missing, network error, score count mismatch),
-        fall back to scripted_score().
-    Returns (node, final_score) sorted descending.
-    """
-    if not candidates:
-        return []
-
-    if reranker is not None:
-        try:
-            docs = [_doc_for_rerank(n) for (n, _sim) in candidates]
-            scores = await reranker.rerank(query, docs)
-            if len(scores) == len(candidates):
-                paired = list(zip((c[0] for c in candidates), scores))
-                paired.sort(key=lambda x: x[1], reverse=True)
-                return paired
-        except Exception:  # noqa: BLE001
-            pass  # fall through to scripted
-
-    scored = [
-        (n, scripted_score(n, vec_sim=sim, now=now, weights=weights))
-        for (n, sim) in candidates
-    ]
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return scored
-
-
-def _doc_for_rerank(node: dict[str, Any]) -> str:
-    name = node.get("name") or ""
-    desc = node.get("description") or ""
-    return f"{name}: {desc}" if desc else name
 
 
 @dataclass
@@ -302,10 +225,3 @@ class IncrementalRecall:
         return RecallResult(nodes=nodes, edges=edges,
                               covered_stimuli=covered,
                               uncovered_stimuli=uncovered)
-
-
-def _as_dt(value: datetime | str) -> datetime:
-    if isinstance(value, datetime):
-        return value
-    # SQLite default format "YYYY-MM-DD HH:MM:SS"
-    return datetime.fromisoformat(value.replace("T", " ")[:19])
