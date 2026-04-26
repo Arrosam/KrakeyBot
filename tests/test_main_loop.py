@@ -432,6 +432,11 @@ async def test_memory_recall_renders_via_internal_not_chat(tmp_path):
         embedder=MapEmbed(),
     )
     runtime.log = spy
+    # The HypothalamusDispatcher caches a logger reference at
+    # construction; swapping runtime.log alone wouldn't propagate
+    # to the dispatcher (it's the side that calls log.internal /
+    # log.chat we're spying on here).
+    runtime._dispatcher._log = spy
     await runtime.gm.initialize()
     await runtime.gm.insert_node(
         name="apple", category="FACT", description="red fruit",

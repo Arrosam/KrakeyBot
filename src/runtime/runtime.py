@@ -28,10 +28,6 @@ from src.dashboard.app_factory import create_app as create_dashboard_app
 from src.dashboard.events import EventBroadcaster
 from src.dashboard.server import DashboardServer
 from src.dashboard.web_chat import WebChatHistory
-# TentacleCall is the contract dataclass returned by the hypothalamus
-# Reflect's translate(); Runtime dispatches it. Lives in the Reflect
-# protocol module so the runtime never imports any plugin module.
-from src.interfaces.reflect import TentacleCall
 from src.models.self_model import SelfModelStore
 from src.interfaces.sensory import SensoryRegistry
 from src.interfaces.tentacle import TentacleRegistry
@@ -45,9 +41,9 @@ from src.models.stimulus import Stimulus
 from src.prompt.builder import PromptBuilder, SlidingWindowRound
 from src.runtime.batch_tracker import BatchTrackerSensory
 from src.runtime.event_bus import (
-    DecisionEvent, DispatchEvent, EventBus, GMStatsEvent, HeartbeatStartEvent,
-    HibernateEvent, HypothalamusEvent, NoteEvent, PromptBuiltEvent,
-    SleepDoneEvent, SleepStartEvent, StimuliQueuedEvent, TentacleResultEvent,
+    DecisionEvent, EventBus, GMStatsEvent, HeartbeatStartEvent,
+    HibernateEvent, NoteEvent, PromptBuiltEvent,
+    SleepDoneEvent, SleepStartEvent, StimuliQueuedEvent,
     ThinkingEvent,
 )
 from src.runtime.heartbeat_logger import HeartbeatLogger
@@ -337,6 +333,20 @@ class Runtime:
         self._dashboard: DashboardServer | None = None
         self._config_path = deps.config_path  # for dashboard settings page
         self._backup_dir = deps.backup_dir or "workspace/backups"
+
+        # Hypothalamus side-effects executor — pure composition over
+        # the same five collaborators (tentacles, batch_tracker, buffer,
+        # gm, log+events). Built once; the heartbeat passes its current
+        # heartbeat_id on each call.
+        from src.runtime.dispatcher import HypothalamusDispatcher
+        self._dispatcher = HypothalamusDispatcher(
+            tentacles=self.tentacles,
+            batch_tracker=self.batch_tracker,
+            buffer=self.buffer,
+            gm=self.gm,
+            log=self.log,
+            events=self.events,
+        )
 
         # Per-run ring buffer of assembled heartbeat prompts for the
         # dashboard Prompts tab. Size from config; not persisted.
@@ -1040,10 +1050,15 @@ class Runtime:
                 adrenalin=True,
             ))
             return False
-        self._log_hypo_summary(result)
-        await self._dispatch_tentacle_calls(result.tentacle_calls)
-        await self._apply_memory_writes(result.memory_writes, recall_result)
-        await self._apply_memory_updates(result.memory_updates)
+        self._dispatcher.log_summary(self.heartbeat_count, result)
+        await self._dispatcher.dispatch_tentacle_calls(
+            self.heartbeat_count, result.tentacle_calls,
+        )
+        await self._dispatcher.apply_memory_writes(
+            result.memory_writes, recall_result.nodes,
+            self.heartbeat_count,
+        )
+        await self._dispatcher.apply_memory_updates(result.memory_updates)
         return bool(result.sleep)
 
     def _phase_schedule_classify(self) -> None:
@@ -1117,109 +1132,6 @@ class Runtime:
 
         # GM changed underneath us — start a fresh recall
         self._recall = self._new_recall()
-
-    # ---------- hypothalamus side-effects ----------
-
-    def _log_hypo_summary(self, result) -> None:
-        self.log.hypo(
-            f"tentacle_calls={len(result.tentacle_calls)} "
-            f"memory_writes={len(result.memory_writes)} "
-            f"memory_updates={len(result.memory_updates)} "
-            f"sleep={result.sleep}"
-        )
-        self.events.publish(HypothalamusEvent(
-            heartbeat_id=self.heartbeat_count,
-            tentacle_calls_count=len(result.tentacle_calls),
-            memory_writes_count=len(result.memory_writes),
-            memory_updates_count=len(result.memory_updates),
-            sleep_requested=result.sleep,
-        ))
-
-    async def _dispatch_tentacle_calls(self, calls) -> None:
-        call_ids: list[str] = []
-        for idx, call in enumerate(calls):
-            cid = f"hb{self.heartbeat_count}_c{idx}"
-            call_ids.append(cid)
-            asyncio.create_task(self._dispatch(call, cid))
-        if call_ids:
-            self.batch_tracker.register_batch(call_ids)
-
-    async def _apply_memory_writes(self, writes, recall_result) -> None:
-        for w in writes:
-            self.log.hypo(f"memory_write: {w.get('content', '')[:80]}")
-            try:
-                await self.gm.explicit_write(
-                    w["content"],
-                    importance=w.get("importance", "normal"),
-                    recall_context=recall_result.nodes,
-                    source_heartbeat=self.heartbeat_count,
-                )
-            except Exception as e:  # noqa: BLE001
-                self.log.runtime_error(f"explicit_write error: {e}")
-
-    async def _apply_memory_updates(self, updates) -> None:
-        for u in updates:
-            self.log.hypo(f"memory_update: {u.get('node_name')} → "
-                           f"{u.get('new_category')}")
-            try:
-                await self.gm.update_node_category(
-                    u["node_name"], u["new_category"],
-                )
-            except Exception as e:  # noqa: BLE001
-                self.log.runtime_error(f"update_category error: {e}")
-
-    async def _dispatch(self, call: TentacleCall, call_id: str) -> None:
-        try:
-            tentacle = self.tentacles.get(call.tentacle)
-        except KeyError:
-            await self.buffer.push(Stimulus(
-                type="system_event", source="runtime",
-                content=f"Unknown tentacle: {call.tentacle}",
-                timestamp=datetime.now(), adrenalin=False,
-            ))
-            self.log.dispatch(f"unknown tentacle: {call.tentacle}")
-            await self.batch_tracker.mark_completed(call_id)
-            return
-
-        self.log.dispatch(
-            f"{call.tentacle} ← {call.intent!r}"
-            f"{' (adrenalin)' if call.adrenalin else ''}"
-        )
-        self.events.publish(DispatchEvent(
-            heartbeat_id=self.heartbeat_count, tentacle=call.tentacle,
-            intent=call.intent, adrenalin=call.adrenalin,
-        ))
-        try:
-            stim = await tentacle.execute(call.intent, call.params)
-        except Exception as e:  # noqa: BLE001
-            # Catastrophic tentacle crash — worth waking Self regardless of
-            # whether the original call was urgent.
-            self.log.dispatch(f"{call.tentacle} error: {e}")
-            await self.buffer.push(Stimulus(
-                type="system_event", source=f"tentacle:{call.tentacle}",
-                content=f"error: {e}", timestamp=datetime.now(),
-                adrenalin=True,
-            ))
-            await self.batch_tracker.mark_completed(call_id)
-            return
-
-        # Tentacle-feedback stimuli are low-priority receipts by design.
-        # The tentacle itself decides whether its outcome is worth
-        # interrupting Self's hibernate (failures typically set
-        # adrenalin=True in their own return). Do NOT inherit adrenalin
-        # from the dispatch: by the time feedback arrives Self has
-        # already acted on the urgent upstream signal, and re-waking for
-        # the echo just produces avoidable heartbeats.
-        if tentacle.is_internal:
-            self.log.internal(call.tentacle, stim.content)
-        else:
-            self.log.chat(call.tentacle, stim.content)
-        self.events.publish(TentacleResultEvent(
-            tentacle=call.tentacle, content=stim.content,
-            is_internal=tentacle.is_internal,
-        ))
-        await self.buffer.push(stim)
-        await self.batch_tracker.mark_completed(call_id)
 
     def _status(self, node_count: int, edge_count: int,
                   pct: int, hint: str) -> dict[str, Any]:
