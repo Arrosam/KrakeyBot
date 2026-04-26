@@ -29,8 +29,13 @@ from typing import Any
 
 import yaml
 
+from typing import TYPE_CHECKING
+
 from src.models.stimulus import Stimulus
 from src.prompt.dna import DNA
+
+if TYPE_CHECKING:
+    from src.memory.recall import RecallResult
 
 
 def _format_stim(s: Stimulus) -> list[str]:
@@ -54,6 +59,35 @@ class SlidingWindowRound:
     stimulus_summary: str
     decision_text: str
     note_text: str
+
+
+@dataclass
+class StatusSnapshot:
+    """Per-beat runtime numbers rendered in the [STATUS] layer.
+
+    Replaces the previous ``status: dict[str, Any]`` contract. Used to
+    be a free dict where producer / consumer / test fixture all kept
+    their own copy of the schema; typoing a key (e.g. ``fatigue_pct``
+    → ``fatigue_percent``) silently rendered the default value with no
+    error. Now: producer constructs a ``StatusSnapshot``; field typo
+    is a TypeError at construction.
+    """
+    gm_node_count: int
+    gm_edge_count: int
+    fatigue_pct: int
+    fatigue_hint: str
+    last_sleep_time: str
+    heartbeats_since_sleep: int
+
+
+@dataclass
+class CapabilityView:
+    """One row in the [CAPABILITIES] layer — name + one-line blurb.
+
+    Replaces ``list[dict[str, Any]]`` with name/description keys.
+    """
+    name: str
+    description: str
 
 
 ACTION_FORMAT_LAYER = """# [ACTION FORMAT]
@@ -81,9 +115,9 @@ class PromptBuilder:
         self,
         *,
         self_model: dict[str, Any],
-        capabilities: list[dict[str, Any]],
-        status: dict[str, Any],
-        recall: dict[str, Any],
+        capabilities: list[CapabilityView],
+        status: StatusSnapshot,
+        recall: "RecallResult",
         window: list[SlidingWindowRound],
         stimuli: list[Stimulus],
         current_time: datetime | None = None,
@@ -132,10 +166,10 @@ class PromptBuilder:
         )
         return f"# [SELF-MODEL]\n{body}"
 
-    def _layer_capabilities(self, tentacles: list[dict[str, Any]]) -> str:
+    def _layer_capabilities(self, tentacles: list[CapabilityView]) -> str:
         if tentacles:
             lines = "\n".join(
-                f"- {t['name']}: {t['description']}" for t in tentacles
+                f"- {t.name}: {t.description}" for t in tentacles
             )
         else:
             lines = "(none)"
@@ -145,33 +179,38 @@ class PromptBuilder:
             f"{lines}"
         )
 
-    def _layer_status(self, s: dict[str, Any]) -> str:
+    def _layer_status(self, s: StatusSnapshot) -> str:
         return (
             "# [STATUS]\n"
-            f"Graph Memory: {s.get('gm_node_count', 0)} nodes, "
-            f"{s.get('gm_edge_count', 0)} edges\n"
-            f"疲惫度: {s.get('fatigue_pct', 0)}% {s.get('fatigue_hint', '')}\n"
-            f"上次 Sleep: {s.get('last_sleep_time', 'never')}\n"
-            f"心跳数 (自上次 Sleep): {s.get('heartbeats_since_sleep', 0)}"
+            f"Graph Memory: {s.gm_node_count} nodes, "
+            f"{s.gm_edge_count} edges\n"
+            f"疲惫度: {s.fatigue_pct}% {s.fatigue_hint}\n"
+            f"上次 Sleep: {s.last_sleep_time}\n"
+            f"心跳数 (自上次 Sleep): {s.heartbeats_since_sleep}"
         )
 
-    def _layer_recall(self, recall: dict[str, Any]) -> str:
-        nodes = recall.get("nodes", [])
-        edges = recall.get("edges", [])
-        if not nodes and not edges:
+    def _layer_recall(self, recall: "RecallResult") -> str:
+        if not recall.nodes and not recall.edges:
             return "# [GRAPH MEMORY]\n(no recall)"
         lines = ["# [GRAPH MEMORY]"]
-        for n in nodes:
+        # Nodes/edges are dicts (originate from GraphMemory rows). All
+        # field reads use .get() with sensible defaults so a slimmer GM
+        # row schema doesn't crash the prompt builder; the previous mix
+        # of [] + .get() on the same dict was inconsistent and could
+        # KeyError for missing 'name' or 'category'.
+        for n in recall.nodes:
             kw = ", ".join(n.get("neighbor_keywords", []))
             lines.append(
-                f"- [{n['name']}] ({n['category']}) — "
+                f"- [{n.get('name', '?')}] ({n.get('category', '?')}) — "
                 f"{n.get('description', '')}"
             )
             if kw:
                 lines.append(f"  相邻: {kw}")
-        for e in edges:
+        for e in recall.edges:
             lines.append(
-                f"- [{e['source']}] --{e['predicate']}--> [{e['target']}]"
+                f"- [{e.get('source', '?')}] "
+                f"--{e.get('predicate', '?')}--> "
+                f"[{e.get('target', '?')}]"
             )
         return "\n".join(lines)
 

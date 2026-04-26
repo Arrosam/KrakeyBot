@@ -48,6 +48,7 @@ from src.self_agent import parse_self_output
 
 if TYPE_CHECKING:
     from src.memory.recall import IncrementalRecall
+    from src.prompt.builder import CapabilityView, StatusSnapshot
     from src.runtime.runtime import Runtime
 
 
@@ -426,8 +427,7 @@ class HeartbeatOrchestrator:
             capabilities=self._capabilities(),
             status=self._status(counts.node_count, counts.edge_count,
                                   counts.fatigue_pct, counts.fatigue_hint),
-            recall={"nodes": recall_result.nodes,
-                    "edges": recall_result.edges},
+            recall=recall_result,
             window=rt.window.get_rounds(),
             stimuli=stimuli,
             current_time=datetime.now(),
@@ -541,25 +541,30 @@ class HeartbeatOrchestrator:
         # Runtime needing to know.
         return self._rt.reflects.make_recall(self._rt)
 
-    def _capabilities(self) -> list[dict[str, Any]]:
+    def _capabilities(self) -> list["CapabilityView"]:
         """Tentacle list for the [CAPABILITIES] layer. Only changes on
         plugin reload, so this gets rendered high in the prompt above
         the cache-breaking volatile layers."""
-        return self._rt.tentacles.list_descriptions()
+        from src.prompt.builder import CapabilityView
+        return [
+            CapabilityView(name=t["name"], description=t["description"])
+            for t in self._rt.tentacles.list_descriptions()
+        ]
 
     def _status(self, node_count: int, edge_count: int,
-                  pct: int, hint: str) -> dict[str, Any]:
+                  pct: int, hint: str) -> "StatusSnapshot":
         """Runtime status numbers — changes every beat (heartbeat
         counter, fatigue), so this section is deliberately placed near
         the end of the prompt to preserve the cacheable prefix above it."""
-        return {
-            "gm_node_count": node_count,
-            "gm_edge_count": edge_count,
-            "fatigue_pct": pct,
-            "fatigue_hint": hint,
-            "last_sleep_time": "never",
-            "heartbeats_since_sleep": self._rt.heartbeat_count,
-        }
+        from src.prompt.builder import StatusSnapshot
+        return StatusSnapshot(
+            gm_node_count=node_count,
+            gm_edge_count=edge_count,
+            fatigue_pct=pct,
+            fatigue_hint=hint,
+            last_sleep_time="never",
+            heartbeats_since_sleep=self._rt.heartbeat_count,
+        )
 
     # ---- sleep ---------------------------------------------------------
 
