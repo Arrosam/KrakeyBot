@@ -34,7 +34,7 @@ import logging
 import re
 from typing import Any
 
-from src.hypothalamus import TentacleCall
+from src.reflects.protocol import TentacleCall
 
 _log = logging.getLogger(__name__)
 

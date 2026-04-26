@@ -13,11 +13,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from src.reflects.protocol import (
-    HypothalamusReflect, RecallAnchorReflect, Reflect,
+    HypothalamusReflect, HypothalamusResult, RecallAnchorReflect, Reflect,
 )
 
 if TYPE_CHECKING:
-    from src.hypothalamus import HypothalamusResult
     from src.memory.recall import IncrementalRecall
 
 
@@ -120,7 +119,7 @@ class ReflectRegistry:
     async def dispatch_decision(
         self, self_text: str, decision: str,
         tentacles: list[dict[str, Any]],
-    ) -> "HypothalamusResult":
+    ) -> HypothalamusResult:
         """Convert Self's response into structured tentacle calls.
 
         Picks the path based on registration:
@@ -145,15 +144,13 @@ class ReflectRegistry:
             )
         return await chain[0].translate(decision, tentacles)  # type: ignore[attr-defined]
 
-    def _dispatch_via_executor(self, self_text: str) -> "HypothalamusResult":
+    def _dispatch_via_executor(self, self_text: str) -> HypothalamusResult:
         """Parse [ACTION] JSONL, wrap as a HypothalamusResult so the
         downstream call site doesn't care which path produced it.
 
-        Local import — keeps the package's import graph free of a
-        runtime → reflects → runtime cycle (action_executor lives
-        under runtime/).
+        action_executor is imported lazily to avoid a
+        ``runtime → reflects → runtime`` import cycle.
         """
-        from src.hypothalamus import HypothalamusResult
         from src.runtime.action_executor import parse_action_block
 
         calls = parse_action_block(self_text)
@@ -169,7 +166,7 @@ class ReflectRegistry:
     # still mean what they meant.
     async def translate(
         self, decision: str, tentacles: list[dict[str, Any]],
-    ) -> "HypothalamusResult":
+    ) -> HypothalamusResult:
         chain = self._by_kind.get("hypothalamus") or []
         if not chain:
             raise RuntimeError(

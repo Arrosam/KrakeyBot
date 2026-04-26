@@ -17,7 +17,7 @@ from datetime import datetime
 
 import pytest
 
-from src.hypothalamus import HypothalamusResult
+from src.reflects.protocol import HypothalamusResult
 from src.memory.recall import IncrementalRecall
 from src.reflects import (
     HypothalamusReflect, RecallAnchorReflect, Reflect, ReflectRegistry,

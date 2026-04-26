@@ -2,7 +2,10 @@ import json
 
 import pytest
 
-from src.hypothalamus import Hypothalamus, HypothalamusResult
+from src.plugins.builtin.default_hypothalamus.reflect import (
+    DefaultHypothalamusReflect as Hypothalamus,
+)
+from src.reflects.protocol import HypothalamusResult
 
 
 class MockLLM:

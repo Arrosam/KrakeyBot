@@ -18,12 +18,36 @@ free of Reflect-specific imports and avoids a layered dependency.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from src.hypothalamus import HypothalamusResult
     from src.memory.recall import IncrementalRecall
+
+
+@dataclass
+class TentacleCall:
+    """Structured tentacle invocation produced by a hypothalamus
+    Reflect's ``translate()``. Consumed by ``Runtime._dispatch`` and
+    by the script-only action executor (when no hypothalamus is
+    registered). This is a contract type — the type that crosses the
+    Reflect ↔ runtime boundary — so it lives with the protocol
+    rather than inside any one plugin."""
+    tentacle: str
+    intent: str
+    params: dict[str, Any] = field(default_factory=dict)
+    adrenalin: bool = False
+
+
+@dataclass
+class HypothalamusResult:
+    """Aggregate result of one hypothalamus translation pass: the
+    tentacle calls to dispatch, plus any memory side-effects and the
+    sleep flag. Same contract-type rationale as ``TentacleCall``."""
+    tentacle_calls: list[TentacleCall] = field(default_factory=list)
+    memory_writes: list[dict[str, Any]] = field(default_factory=list)
+    memory_updates: list[dict[str, Any]] = field(default_factory=list)
+    sleep: bool = False
 
 
 @dataclass
@@ -64,7 +88,7 @@ class HypothalamusReflect(Protocol):
 
     async def translate(
         self, decision: str, tentacles: list[dict[str, Any]],
-    ) -> "HypothalamusResult": ...
+    ) -> HypothalamusResult: ...
 
 
 @runtime_checkable

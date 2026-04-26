@@ -22,11 +22,10 @@ from src.dashboard.app_factory import create_app as create_dashboard_app
 from src.dashboard.events import EventBroadcaster
 from src.dashboard.server import DashboardServer
 from src.dashboard.web_chat import WebChatHistory
-# Hypothalamus class itself is no longer instantiated by Runtime —
-# wrapped by DefaultHypothalamusReflect inside the Reflect registry
-# since 2026-04-25. Only TentacleCall (the dataclass we receive from
-# the translate() result) is still used directly here.
-from src.hypothalamus import TentacleCall
+# TentacleCall is the contract dataclass returned by the hypothalamus
+# Reflect's translate(); Runtime dispatches it. Lives in the Reflect
+# protocol module so the runtime never imports any plugin module.
+from src.reflects.protocol import TentacleCall
 from src.models.self_model import SelfModelStore
 from src.interfaces.sensory import SensoryRegistry
 from src.interfaces.tentacle import TentacleRegistry
