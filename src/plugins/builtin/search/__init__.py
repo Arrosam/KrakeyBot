@@ -116,8 +116,10 @@ def _format(results: list[dict[str, str]], query: str) -> str:
     return "\n".join(lines)
 
 
-def create_tentacle(config: dict, deps: dict) -> Tentacle:
+def build_tentacle(ctx) -> Tentacle:
+    """Unified-format factory (Phase 2). Pulls config from
+    ctx.config; no shared services needed."""
     return SearchTentacle(
         backend=DDGSBackend(),
-        max_results=int(config.get("max_results", 5)),
+        max_results=int(ctx.config.get("max_results", 5)),
     )

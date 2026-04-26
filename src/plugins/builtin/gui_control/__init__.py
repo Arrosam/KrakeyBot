@@ -180,9 +180,11 @@ class GuiControlTentacle(Tentacle):
         )
 
 
-def create_tentacle(config: dict, deps: dict) -> Tentacle:
+def build_tentacle(ctx) -> Tentacle:
+    """Unified-format factory (Phase 2)."""
     return GuiControlTentacle(
         backend=PyAutoGUIBackend(),
-        screenshot_dir=str(config.get("screenshot_dir",
-                                           "workspace/screenshots")),
+        screenshot_dir=str(ctx.config.get(
+            "screenshot_dir", "workspace/screenshots",
+        )),
     )

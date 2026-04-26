@@ -48,14 +48,26 @@ MANIFEST = {
 }
 
 
-def create_plugins(config: dict, deps: dict) -> dict:
-    history = deps.get("web_chat_history")
+def _shared_history(ctx):
+    history = ctx.services.get("web_chat_history")
     if history is None:
         raise RuntimeError(
-            "web_chat needs deps['web_chat_history']; Runtime must "
-            "build WebChatHistory before plugin discovery."
+            "web_chat needs services['web_chat_history']; Runtime "
+            "must build WebChatHistory before plugin discovery."
         )
-    return {
-        "sensories": [WebChatSensory()],
-        "tentacles": [WebChatTentacle(history=history)],
-    }
+    return history
+
+
+def build_sensory(ctx):
+    """Unified-format factory (Phase 2). User → Krakey via WS."""
+    _shared_history(ctx)  # validates the dep exists; sensory uses
+                          # the broadcaster wire-up that Runtime sets
+                          # up around WebChatHistory, not the history
+                          # object itself.
+    return WebChatSensory()
+
+
+def build_tentacle(ctx):
+    """Unified-format factory (Phase 2). Krakey → user via WS."""
+    history = _shared_history(ctx)
+    return WebChatTentacle(history=history)

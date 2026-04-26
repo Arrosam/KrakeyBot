@@ -123,10 +123,20 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         # `Config.plugins` (the unified field, post Samuel
         # 2026-04-26). Tests on the zero-plugin path pass
         # ``reflects=[]`` to opt out explicitly.
+        # All plugins go through `Config.plugins` post Phase 2.
+        # Default helper turns on the historical convenience set:
+        # both default Reflects + the web_chat (sensory + tentacle)
+        # and memory_recall (tentacle) plugins. Tests on the
+        # zero-plugin path pass `reflects=[]` to opt out.
         plugins=(
             list(reflects)
             if reflects is not None
-            else ["default_hypothalamus", "default_recall_anchor"]
+            else [
+                "default_hypothalamus",
+                "default_recall_anchor",
+                "web_chat",
+                "memory_recall",
+            ]
         ),
         graph_memory=GraphMemorySection(
             db_path=gm_path, auto_ingest_similarity_threshold=0.9,
@@ -171,6 +181,14 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     )
     Path(reflect_configs_dir, "default_hypothalamus", "config.yaml").write_text(
         "llm_purposes:\n  translator: _test_default\n", encoding="utf-8",
+    )
+    # web_chat plugin's per-plugin config (history path → tmpdir so
+    # tests don't write to workspace/data/web_chat.jsonl).
+    Path(reflect_configs_dir, "web_chat").mkdir(
+        parents=True, exist_ok=True,
+    )
+    Path(reflect_configs_dir, "web_chat", "config.yaml").write_text(
+        f"history_path: {chat_dir}/chat.jsonl\n", encoding="utf-8",
     )
 
     deps = RuntimeDeps(

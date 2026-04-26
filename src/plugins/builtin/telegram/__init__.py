@@ -58,19 +58,32 @@ def _parse_allowed(raw) -> set[int] | None:
     return {int(x.strip()) for x in s.split(",") if x.strip()}
 
 
-def create_plugins(config: dict, deps: dict) -> dict:
-    token = str(config.get("bot_token") or "").strip()
-    if not token:
-        raise RuntimeError(
-            "telegram plugin requires bot_token (use env var via "
-            "${TELEGRAM_BOT_TOKEN} in config.yaml)."
-        )
-    client = HttpTelegramClient(token=token)
-    allowed = _parse_allowed(config.get("allowed_chat_ids"))
-    default_chat_raw = str(config.get("default_chat_id") or "").strip()
-    default_chat = int(default_chat_raw) if default_chat_raw else None
+def _shared_client(ctx) -> HttpTelegramClient:
+    """Build (or fetch from plugin_cache) the shared HTTP client.
+    Both build_sensory and build_tentacle call this; first call
+    constructs, subsequent calls hit the cache so the sensory and
+    the tentacle both talk through the same connection."""
+    if "client" not in ctx.plugin_cache:
+        token = str(ctx.config.get("bot_token") or "").strip()
+        if not token:
+            raise RuntimeError(
+                "telegram plugin requires bot_token (use env var via "
+                "${TELEGRAM_BOT_TOKEN} in config.yaml)."
+            )
+        ctx.plugin_cache["client"] = HttpTelegramClient(token=token)
+    return ctx.plugin_cache["client"]
 
-    sensory = TelegramSensory(client=client, allowed_chat_ids=allowed)
-    tentacle = TelegramReplyTentacle(client=client,
-                                        default_chat_id=default_chat)
-    return {"tentacles": [tentacle], "sensories": [sensory]}
+
+def build_sensory(ctx):
+    """Unified-format factory (Phase 2). Inbound polling channel."""
+    client = _shared_client(ctx)
+    allowed = _parse_allowed(ctx.config.get("allowed_chat_ids"))
+    return TelegramSensory(client=client, allowed_chat_ids=allowed)
+
+
+def build_tentacle(ctx):
+    """Unified-format factory (Phase 2). Outbound reply channel."""
+    client = _shared_client(ctx)
+    default_chat_raw = str(ctx.config.get("default_chat_id") or "").strip()
+    default_chat = int(default_chat_raw) if default_chat_raw else None
+    return TelegramReplyTentacle(client=client, default_chat_id=default_chat)
