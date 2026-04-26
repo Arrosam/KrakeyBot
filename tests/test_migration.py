@@ -3,8 +3,8 @@ import pytest
 
 from src.memory.graph_memory import GraphMemory
 from src.memory.knowledge_base import KBRegistry
-from src.sleep.clustering import run_leiden_clustering
-from src.sleep.migration import migrate_gm_to_kb
+from src.memory.sleep.clustering import run_leiden_clustering
+from src.memory.sleep.migration import migrate_gm_to_kb
 
 
 class FixedEmbed:

@@ -8,7 +8,7 @@ from src.interfaces.sensory import Sensory, SensoryRegistry
 from src.memory.graph_memory import GraphMemory
 from src.memory.knowledge_base import KBRegistry
 from src.runtime.stimulus_buffer import StimulusBuffer
-from src.sleep.sleep_manager import enter_sleep_mode
+from src.memory.sleep.sleep_manager import enter_sleep_mode
 
 
 class FixedEmbed:

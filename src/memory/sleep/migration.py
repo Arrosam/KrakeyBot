@@ -23,7 +23,7 @@ from typing import Any
 from src.memory._db import decode_embedding
 from src.memory.graph_memory import GraphMemory
 from src.memory.knowledge_base import KBRegistry, KnowledgeBase
-from src.sleep.kb_lifecycle import find_revive_target, revive_kb
+from src.memory.sleep.kb_lifecycle import find_revive_target, revive_kb
 
 
 _MIGRATABLE = ("FACT", "RELATION", "KNOWLEDGE")

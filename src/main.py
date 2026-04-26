@@ -48,7 +48,7 @@ from src.runtime.heartbeat_logger import HeartbeatLogger
 from src.runtime.override_commands import (
     OverrideAction, handle_override, parse_override,
 )
-from src.sleep.sleep_manager import enter_sleep_mode
+from src.memory.sleep.sleep_manager import enter_sleep_mode
 from src.runtime.compact import compact_if_needed
 from src.runtime.fatigue import calculate_fatigue
 from src.runtime.hibernate import hibernate_with_recall

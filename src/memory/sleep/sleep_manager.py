@@ -15,10 +15,10 @@ from typing import Any, Protocol
 from src.interfaces.sensory import SensoryRegistry
 from src.memory.graph_memory import GraphMemory
 from src.memory.knowledge_base import KBRegistry
-from src.sleep.clustering import run_leiden_clustering
-from src.sleep.index_rebuild import rebuild_index_graph
-from src.sleep.kb_lifecycle import archive_excess_kbs, consolidate_kbs
-from src.sleep.migration import migrate_gm_to_kb
+from src.memory.sleep.clustering import run_leiden_clustering
+from src.memory.sleep.index_rebuild import rebuild_index_graph
+from src.memory.sleep.kb_lifecycle import archive_excess_kbs, consolidate_kbs
+from src.memory.sleep.migration import migrate_gm_to_kb
 
 
 class AsyncChatLLM(Protocol):

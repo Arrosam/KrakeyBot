@@ -5,7 +5,7 @@ import pytest
 
 from src.memory.graph_memory import GraphMemory
 from src.memory.knowledge_base import KBRegistry
-from src.sleep.kb_lifecycle import (
+from src.memory.sleep.kb_lifecycle import (
     archive_excess_kbs, compute_kb_importance, compute_kb_index_embedding,
     consolidate_kbs, find_revive_target, revive_kb,
 )
