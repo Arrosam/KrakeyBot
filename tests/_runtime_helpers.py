@@ -6,6 +6,7 @@ Import from tests as: `from tests._runtime_helpers import build_runtime_with_fak
 from __future__ import annotations
 
 import tempfile
+from pathlib import Path
 from typing import Protocol
 
 from src.main import Runtime, RuntimeDeps
@@ -44,11 +45,22 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
                               hibernate_max: float = 5.0,
                               gm_path: str = ":memory:",
                               kb_dir: str | None = None,
-                              skip_bootstrap: bool = True) -> Runtime:
+                              skip_bootstrap: bool = True,
+                              reflects: list[str] | None = None) -> Runtime:
     """In-memory Runtime with injectable doubles. CLI sensory disabled.
 
     `kb_dir` defaults to a fresh `tempfile.mkdtemp()` so KB files written
     during sleep migration never touch the production workspace.
+
+    `reflects` is the ordered list of Reflect names to register at
+    startup. ``None`` (the default) opts the test helper into the two
+    in-tree Reflects that almost every existing test expects to be
+    available — preserves the historical "Hypothalamus translates,
+    recall populates [GRAPH MEMORY]" assumption without forcing every
+    test to opt in. Tests exercising the zero-plugin path pass
+    ``reflects=[]`` explicitly. This default is a TEST convenience
+    only; production config defaults to registering nothing per the
+    "all plugins default off" architectural rule.
     """
     if kb_dir is None:
         kb_dir = tempfile.mkdtemp(prefix="krakey_test_kb_")
@@ -56,31 +68,76 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     # main.py falls back to "workspace/data/web_chat.jsonl" — the production
     # path — and pytest writes test fixture messages into the real chat log.
     chat_dir = tempfile.mkdtemp(prefix="krakey_test_chat_")
+    # Per-plugin config YAMLs under workspace/plugin-configs/ shadow
+    # the legacy dict below when a file exists. Point the store at a
+    # fresh empty tmpdir so the helper's plugin overrides actually
+    # take effect (otherwise prod's web_chat.yaml wins → test
+    # messages like "Hi there!" leak into the real user chat log).
+    plugin_configs_dir = tempfile.mkdtemp(prefix="krakey_test_plugcfg_")
+    # Ditto for self_model: it's a mutable file, and bootstrap tests
+    # rewrite it. Without an override, concurrent test writes trample
+    # the production workspace/self_model.yaml.
+    self_model_path = f"{tempfile.mkdtemp(prefix='krakey_test_sm_')}/self_model.yaml"
+    # And the in_mind Reflect's state file. Tests that enable
+    # default_in_mind would otherwise dispatch update_in_mind into
+    # the production workspace/data/in_mind.json — same class of
+    # leak as the web_chat history bug.
+    in_mind_state_path = (
+        f"{tempfile.mkdtemp(prefix='krakey_test_im_')}/in_mind.json"
+    )
+    # Per-Reflect config files. Tag bindings go here under
+    # `<reflect_name>/config.yaml` (separate from per-tentacle/sensory
+    # config in plugin_configs_dir).
+    reflect_configs_dir = tempfile.mkdtemp(prefix="krakey_test_refcfg_")
     from src.models.config import (
         Config, DashboardSection, FatigueSection, GraphMemorySection,
-        HibernateSection, KnowledgeBaseSection, LLMSection, SafetySection,
-        SleepSection, SlidingWindowSection,
+        HibernateSection, KnowledgeBaseSection, LLMParams, LLMSection,
+        Provider, SafetySection, SleepSection, TagBinding,
     )
 
+    # The Runtime reads `core_params("self_thinking")` for window /
+    # recall / overall-prompt budgets; without it the budget math
+    # falls back to LLMParams defaults. Tests stamp an explicit
+    # max_input_tokens=16000 tag so budget enforcement triggers
+    # predictably.
+    default_self_params = LLMParams(max_input_tokens=16_000)
     cfg = Config(
-        llm=LLMSection(providers={}, roles={}),
+        llm=LLMSection(
+            providers={"_test_fake": Provider(
+                type="openai_compatible", base_url="http://test",
+                api_key="test",
+            )},
+            tags={"_test_default": TagBinding(
+                provider="_test_fake/_test_model",
+                params=default_self_params,
+            )},
+            core_purposes={"self_thinking": "_test_default"},
+        ),
         hibernate=HibernateSection(min_interval=1, max_interval=60,
                                     default_interval=1),
         fatigue=FatigueSection(gm_node_soft_limit=200,
                                 force_sleep_threshold=120,
                                 thresholds={}),
-        sliding_window=SlidingWindowSection(max_tokens=4096),
+        # Test convenience: opt into both built-in Reflect plugins
+        # when the caller didn't say otherwise. Stored under
+        # `Config.plugins` (the unified field, post Samuel
+        # 2026-04-26). Tests on the zero-plugin path pass
+        # ``reflects=[]`` to opt out explicitly.
+        plugins=(
+            list(reflects)
+            if reflects is not None
+            else ["default_hypothalamus", "default_recall_anchor"]
+        ),
         graph_memory=GraphMemorySection(
             db_path=gm_path, auto_ingest_similarity_threshold=0.9,
-            recall_per_stimulus_k=5, max_recall_nodes=20,
-            neighbor_expand_depth=1,
+            recall_per_stimulus_k=5, neighbor_expand_depth=1,
         ),
         knowledge_base=KnowledgeBaseSection(dir=kb_dir),
-        plugins={
-            # `enabled` is loader-owned and defaults to False — must be
-            # set explicitly for tests that expect the plugin to load.
-            # Mirror the "default-on" set the manifests used to declare
-            # so existing tests keep their assumptions.
+        legacy_plugin_configs={
+            # Legacy MANIFEST plugin per-project config (deprecated;
+            # replaced by workspace/plugin-configs/<name>.yaml). Tests
+            # still use this to pre-enable web_chat / memory_recall
+            # under the old loader.
             "web_chat": {
                 "enabled": True,
                 # Keep web chat history inside the test tmpdir so it
@@ -97,14 +154,44 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
                                max_consecutive_no_action=50),
         dashboard=DashboardSection(enabled=False),
     )
+    # Pre-cache the LLMClient slots that plugins will resolve through
+    # ctx.get_llm. We point the helper's "_test_default" tag at the
+    # caller's hypo_llm (ScriptedLLM in most tests) so the
+    # default_hypothalamus Reflect's `translator` purpose lands on the
+    # scripted fake instead of trying to make a real HTTP call.
+    llm_clients_by_tag: dict = {"_test_default": hypo_llm}
+
+    # Plant a per-plugin config for default_hypothalamus that binds
+    # its `translator` purpose to "_test_default" — without this,
+    # ctx.get_llm("translator") returns None and the factory skips
+    # registration (correct behavior, but would break tests that
+    # expect the Reflect to be registered).
+    Path(reflect_configs_dir, "default_hypothalamus").mkdir(
+        parents=True, exist_ok=True,
+    )
+    Path(reflect_configs_dir, "default_hypothalamus", "config.yaml").write_text(
+        "llm_purposes:\n  translator: _test_default\n", encoding="utf-8",
+    )
+
     deps = RuntimeDeps(
         config=cfg, self_llm=self_llm, hypo_llm=hypo_llm,
         compact_llm=compact_llm or ScriptedLLM(),
         classify_llm=classify_llm or ScriptedLLM(),
         embedder=embedder or NullEmbedder(),
         reranker=reranker,
+        plugin_configs_root=plugin_configs_dir,
+        self_model_path=self_model_path,
+        in_mind_state_path=in_mind_state_path,
+        reflect_configs_root=reflect_configs_dir,
+        llm_clients_by_tag=llm_clients_by_tag,
     )
-    return Runtime(
+    runtime = Runtime(
         deps, hibernate_min=hibernate_min, hibernate_max=hibernate_max,
         is_bootstrap_override=False if skip_bootstrap else None,
     )
+    # Stash a copy of the resolved test paths + LLM cache so test
+    # helpers (e.g. _minimal_deps_for_runtime) can reconstruct an
+    # equivalent deps when re-invoking _register_reflects_from_config.
+    runtime._test_reflect_configs_root = reflect_configs_dir
+    runtime._test_llm_clients_by_tag = llm_clients_by_tag
+    return runtime

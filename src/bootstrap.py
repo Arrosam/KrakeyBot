@@ -12,6 +12,7 @@ Phase-2 first-boot flow:
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 from pathlib import Path
@@ -35,15 +36,18 @@ BOOTSTRAP_PROMPT = """# [BOOTSTRAP — 你刚被创建]
 
 ## 如何更新 self_model
 
-在 [NOTE] 中用 <self-model> 标签包围 JSON, 例如:
+self_model 现在只保留两块**真正不变的核心**: identity (你叫什么、你是什么)
+和 state.bootstrap_complete (Bootstrap 是否结束的开关)。
+
+当下专注的事 / 目标 / 关系 / 情绪状态等**不进 self_model** —— 它们的真相
+在 Graph Memory 里 (FOCUS / TARGET 节点 + 边)。Bootstrap 期间你只需要用
+<self-model> 标签写好你的 identity, 例如:
 
     <self-model>
-    {{"identity": {{"name": "Krakey", "persona": "curious digital being"}},
-     "state": {{"focus_topic": "self-discovery"}},
-     "goals": {{"active": ["understand my own DNA"]}}}}
+    {{"identity": {{"name": "Krakey", "persona": "curious digital being"}}}}
     </self-model>
 
-runtime 会自动深度合并这些字段。你可以在多个心跳中分多次更新。
+runtime 会自动深度合并。Bootstrap 之外, identity 通常一辈子不再变。
 
 ## 如何结束 Bootstrap
 
@@ -100,25 +104,73 @@ def load_genesis(path: str | Path) -> str:
 def load_self_model_or_default(path: str | Path) -> tuple[dict[str, Any], bool]:
     """Load self_model.yaml; create default if missing. Returns
     (self_model_dict, is_bootstrap).
+
+    On load, any keys present in the YAML but **not** in the current
+    ``default_self_model()`` schema are silently dropped — this is the
+    one-shot migration for the 2026-04-25 self-model slim refactor.
+    Legacy fields like ``statistics.*``, ``relationships.users``,
+    ``state.mood_baseline``, ``state.is_sleeping``, ``state.focus_topic``,
+    ``state.energy_level``, ``goals.active``, and ``goals.completed``
+    were never read in steady state; keeping them around just bloated
+    every Self prompt for no behavioral benefit. If anything was
+    dropped, we save the cleaned version back to disk so next boot
+    is fast and the YAML reflects what's actually in use.
     """
+    import logging
+
     store = SelfModelStore(path)
     p = Path(path)
     if not p.exists():
         data = default_self_model()
         return data, True
     data = store.load()
-    # Fill gaps with default keys so downstream code sees a full structure.
     merged = _merge_defaults(default_self_model(), data)
     bootstrap = not bool(merged.get("state", {}).get("bootstrap_complete"))
+    if merged != data:
+        # Persist the migration so the file is self-consistent next run.
+        # Logging at INFO so the breadcrumb is visible without becoming
+        # noise on every subsequent boot (after migration the dicts are
+        # equal and we skip the write).
+        dropped = _diff_keys(data, merged)
+        logging.getLogger(__name__).info(
+            "self_model migration: dropped legacy keys %s; rewriting %s",
+            dropped, path,
+        )
+        store.save(merged)
     return merged, bootstrap
 
 
 def _merge_defaults(defaults: dict, loaded: dict) -> dict:
-    """Deep-merge: start from defaults, overlay loaded."""
-    out = dict(defaults)
-    for k, v in loaded.items():
-        if isinstance(v, dict) and isinstance(out.get(k), dict):
-            out[k] = _merge_defaults(out[k], v)
+    """Left-bounded deep-merge.
+
+    Only keys present in ``defaults`` survive. Loaded values overlay
+    defaults where the key matches; loaded keys not in defaults are
+    silently dropped. This is what makes ``load_self_model_or_default``
+    auto-migrate: the slim ``default_self_model()`` schema acts as
+    the authoritative key set and old YAMLs get pruned on first read.
+    """
+    out: dict[str, Any] = {}
+    for k, default_v in defaults.items():
+        if k not in loaded:
+            out[k] = copy.deepcopy(default_v)
+            continue
+        loaded_v = loaded[k]
+        if isinstance(default_v, dict) and isinstance(loaded_v, dict):
+            out[k] = _merge_defaults(default_v, loaded_v)
         else:
-            out[k] = v
+            out[k] = loaded_v
+    return out
+
+
+def _diff_keys(loaded: dict, merged: dict, prefix: str = "") -> list[str]:
+    """Return dotted-paths for every key that appears in ``loaded`` but
+    not in ``merged``. Used only for the one-time migration log line.
+    """
+    out: list[str] = []
+    for k, v in loaded.items():
+        path = f"{prefix}{k}" if not prefix else f"{prefix}.{k}"
+        if k not in merged:
+            out.append(path)
+        elif isinstance(v, dict) and isinstance(merged.get(k), dict):
+            out.extend(_diff_keys(v, merged[k], prefix=path))
     return out

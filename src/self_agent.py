@@ -16,6 +16,11 @@ class ParsedSelfOutput:
     decision: str = ""
     note: str = ""
     hibernate_seconds: int | None = None
+    # Full unparsed response. Kept so the action executor (Reflect #1
+    # default-off path) can locate ``[ACTION]...[/ACTION]`` blocks
+    # wherever Self placed them in the response, not just inside one
+    # of the four known tag sections.
+    raw: str = ""
 
 
 _TAGS = ("THINKING", "DECISION", "NOTE", "HIBERNATE")
@@ -29,13 +34,14 @@ def parse_self_output(raw: str) -> ParsedSelfOutput:
     if not sections:
         # Fallback: no markers → treat whole body as thinking+decision
         body = raw.strip()
-        return ParsedSelfOutput(thinking=body, decision=body)
+        return ParsedSelfOutput(thinking=body, decision=body, raw=raw)
 
     return ParsedSelfOutput(
         thinking=sections.get("THINKING", "").strip(),
         decision=sections.get("DECISION", "").strip(),
         note=sections.get("NOTE", "").strip(),
         hibernate_seconds=_parse_int(sections.get("HIBERNATE", "")),
+        raw=raw,
     )
 
 

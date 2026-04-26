@@ -15,9 +15,20 @@
           <h3>Hypothalamus (派发)</h3>
           <div class="scroll small" id="hypo-stream"></div>
         </div>
-        <div class="panel">
-          <h3>Pending Stimuli</h3>
-          <ul id="stim-list" class="scroll small"></ul>
+        <!-- Bottom-right cell is split: Pending Stimuli on the left,
+             live Status on the right. Status renders GM counts,
+             fatigue, heartbeat id, sleep bookkeeping — what the top
+             status-bar already tracks but in a persistent readable
+             block inside the Inner Thoughts view. -->
+        <div class="thoughts-bottom-right">
+          <div class="panel">
+            <h3>Pending Stimuli</h3>
+            <ul id="stim-list" class="scroll small"></ul>
+          </div>
+          <div class="panel magenta">
+            <h3>Status (运行时状态)</h3>
+            <dl id="status-panel" class="scroll small status-dl"></dl>
+          </div>
         </div>
       </div>
     </section>

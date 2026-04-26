@@ -44,8 +44,13 @@ def test_pop_oldest_on_empty_returns_none():
 
 
 def test_needs_compact_clears_after_popping():
+    # Use content long enough to blow past the 50-token cap under the
+    # real (tiktoken cl100k_base) estimator. Previously-relied-upon
+    # char/4 heuristic undercounted dramatically, so the small round
+    # needed bigger payloads than expected.
     w = SlidingWindow(max_tokens=50)
-    w.append(_round(1, stim="a" * 100, decision="b" * 100))
+    w.append(_round(1, stim="hello world " * 60,
+                      decision="goodbye world " * 60))
     w.append(_round(2, stim="c"))
     assert w.needs_compact() is True
     w.pop_oldest()

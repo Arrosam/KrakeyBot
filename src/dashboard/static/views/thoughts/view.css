@@ -1,4 +1,4 @@
-/* Inner Thoughts view: thinking + decision + hypothalamus + pending stimuli. */
+/* Inner Thoughts view: thinking + decision + hypothalamus + pending stimuli + status. */
 
 .thoughts-grid {
   display: grid;
@@ -22,3 +22,38 @@
 }
 #stim-list li.adrenalin { border-left: 2px solid var(--red); }
 #stim-list li .src { color: var(--muted); margin-right: 6px; }
+
+/* Bottom-right cell: Pending Stimuli + Status share the slot.
+   60/40 split favors Pending Stimuli since it carries more text
+   per item; Status is mostly compact key/value pairs. */
+.thoughts-bottom-right {
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: 12px;
+  min-height: 0;
+}
+
+/* Status panel — dl/dt/dd semantics for key/value pairs. */
+#status-panel { padding: 8px 10px; margin: 0; }
+#status-panel.status-dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 10px;
+  row-gap: 4px;
+  font-size: 11px;
+  align-content: start;
+}
+#status-panel dt {
+  color: var(--muted);
+  font-weight: normal;
+  white-space: nowrap;
+}
+#status-panel dd {
+  margin: 0;
+  color: var(--fg);
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+}
+/* Fatigue bar: lightly emphasize when fatigue crosses thresholds. */
+#status-panel dd.fatigue-mid { color: var(--yellow); }
+#status-panel dd.fatigue-high { color: var(--red); }
+#status-panel dd.stale { color: var(--muted); font-style: italic; }

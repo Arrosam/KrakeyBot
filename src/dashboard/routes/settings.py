@@ -17,12 +17,13 @@ from __future__ import annotations
 
 from fastapi import Body, FastAPI, HTTPException
 
+from pathlib import Path
+
+import yaml
+
 from src.dashboard.services.config import ConfigService
-from src.models.config import (
-    _ROLE_DEFAULTS,
-    llm_params_schema,
-    role_default_params,
-)
+from src.models.config import llm_params_schema
+from src.plugins.unified_discovery import discover_plugins as _discover_unified
 
 
 def register(app: FastAPI, *, config: ConfigService) -> None:
@@ -42,22 +43,14 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
         """Field descriptors for dynamic UI rendering.
 
         Current sections:
-          * ``llm_params``   \u2014 per-role LLM parameters (max_tokens,
+          * ``llm_params`` \u2014 LLMParams field descriptors (max_tokens,
             temperature, reasoning_mode, ...). Returned as
-            ``[{field, type, default, help, choices?}, ...]`` with
-            shape matching the plugin ``config_schema`` contract the
-            dashboard already knows how to render.
-          * ``llm_role_defaults`` \u2014 role-specific overrides the UI
-            can pre-fill when a role is created (so the Self role
-            shows max_tokens=8192 out of the box).
+            ``[{field, type, default, help, choices?}, ...]``. The
+            dashboard renders this under each tag's params editor;
+            the same shape is reused by plugin ``config_schema``
+            entries.
         """
-        return {
-            "llm_params": llm_params_schema(),
-            "llm_role_defaults": {
-                name: role_default_params(name)
-                for name in _ROLE_DEFAULTS
-            },
-        }
+        return {"llm_params": llm_params_schema()}
 
     @app.post("/api/settings")
     async def post_settings(payload: dict = Body(...)):  # noqa: ANN201
@@ -87,3 +80,81 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
             raise HTTPException(status_code=500,
                                   detail=f"restart failed: {e}")
         return {"status": "restarting"}
+
+    @app.get("/api/reflects/available")
+    async def get_available_reflects():  # noqa: ANN201
+        """List unified-format plugins discoverable on disk.
+
+        Pure-text scan — never imports any plugin module
+        (architectural invariant). Each plugin's ``components`` array
+        carries reflect / tentacle / sensory entries with their own
+        ``llm_purposes`` declarations.
+        """
+        out = []
+        for name, meta in _discover_unified().items():
+            # Aggregate llm_purposes across components for the UI's
+            # tag-binding form (the dashboard treats them at the
+            # plugin level even though they're declared per-component).
+            all_purposes: list = []
+            for c in meta.components:
+                all_purposes.extend(c.llm_purposes)
+            out.append({
+                "name": meta.name,
+                "description": meta.description,
+                "config_schema": meta.config_schema,
+                "components": [
+                    {"kind": c.kind, "sub_kind": c.sub_kind}
+                    for c in meta.components
+                ],
+                "llm_purposes": all_purposes,
+            })
+        out.sort(key=lambda r: r["name"])
+        return {"reflects": out}
+
+    @app.get("/api/reflects/{name}/config")
+    async def get_reflect_config(name: str):  # noqa: ANN201
+        """Read the per-plugin config file
+        (``workspace/plugins/<name>/config.yaml``).
+
+        Returns ``{}`` if the file doesn't exist yet — valid initial
+        state. (Endpoint name kept for back-compat with the dashboard
+        JS; the underlying path moved from ``workspace/reflects/`` to
+        ``workspace/plugins/`` in the unification refactor.)
+        """
+        path = Path("workspace") / "plugins" / name / "config.yaml"
+        if not path.exists():
+            return {"path": str(path), "config": {}}
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"plugin config parse failed: {e}",
+            )
+        if not isinstance(raw, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="plugin config top-level must be a mapping",
+            )
+        return {"path": str(path), "config": raw}
+
+    @app.post("/api/reflects/{name}/config")
+    async def post_reflect_config(name: str, payload: dict = Body(...)):  # noqa: ANN201
+        """Write the per-plugin config file. Creates directory if
+        needed; replaces existing content."""
+        new_cfg = payload.get("config")
+        if not isinstance(new_cfg, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="payload must include 'config' (mapping)",
+            )
+        path = Path("workspace") / "plugins" / name / "config.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            yaml.safe_dump(new_cfg, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        return {
+            "status": "saved", "path": str(path),
+            "restart_required": True,
+        }

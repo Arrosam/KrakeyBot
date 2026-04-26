@@ -35,6 +35,71 @@ function setStatus() {
   parts.push(eventsWS && eventsWS.readyState === 1 ? "events✓" : "events✗");
   parts.push(chatWS && chatWS.readyState === 1 ? "chat✓" : "chat✗");
   statusBar.textContent = parts.join("  |  ");
+  renderStatusPanel();
+}
+
+// Format helpers for the big Status panel in the Inner Thoughts view.
+// Renders the same data as the top-bar but as a persistent readable
+// block so Samuel can watch GM growth + fatigue over time without
+// squinting at the narrow header.
+function _fmtSince(iso) {
+  if (!iso) return "—";
+  try {
+    const then = new Date(iso).getTime();
+    const ms = Date.now() - then;
+    if (ms < 0 || isNaN(ms)) return iso;
+    const sec = Math.floor(ms / 1000);
+    if (sec < 60) return `${sec}s ago`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m ago`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr}h ${min % 60}m ago`;
+    const d = Math.floor(hr / 24);
+    return `${d}d ${hr % 24}h ago`;
+  } catch { return iso; }
+}
+
+function _setPair(key, value, extraCls) {
+  // Upsert a dt/dd pair. Keeping insertion order stable so the panel
+  // doesn't flicker as new keys arrive — we stamp a `data-key`
+  // attribute on the dt and bind the dd right after it.
+  let dt = statusPanel.querySelector(`dt[data-key="${key}"]`);
+  let dd;
+  if (!dt) {
+    dt = document.createElement("dt");
+    dt.dataset.key = key;
+    dt.textContent = key;
+    dd = document.createElement("dd");
+    dd.dataset.key = key;
+    statusPanel.appendChild(dt);
+    statusPanel.appendChild(dd);
+  } else {
+    dd = statusPanel.querySelector(`dd[data-key="${key}"]`);
+  }
+  dd.textContent = value;
+  dd.className = extraCls || "";
+}
+
+function renderStatusPanel() {
+  if (!statusPanel) return;
+  _setPair("heartbeat", lastStats.heartbeat_id != null
+    ? `#${lastStats.heartbeat_id}` : "—");
+  _setPair("gm nodes", lastStats.node_count != null
+    ? String(lastStats.node_count) : "—");
+  _setPair("gm edges", lastStats.edge_count != null
+    ? String(lastStats.edge_count) : "—");
+  const fp = lastStats.fatigue_pct;
+  let fCls = "";
+  if (fp != null) {
+    if (fp >= 75) fCls = "fatigue-high";
+    else if (fp >= 50) fCls = "fatigue-mid";
+  }
+  _setPair("fatigue", fp != null ? `${fp}%` : "—", fCls);
+  _setPair("last sleep", lastStats.last_sleep
+    ? _fmtSince(lastStats.last_sleep) : "never",
+    lastStats.last_sleep ? "" : "stale");
+  _setPair("mode", lastStats.mode || "normal");
+  _setPair("events ws", eventsWS && eventsWS.readyState === 1 ? "connected" : "disconnected");
 }
 
 // ============== INNER THOUGHTS — /ws/events ==============
@@ -44,6 +109,7 @@ const thinkingEl = $("#thinking-stream");
 const decisionEl = $("#decision-stream");
 const hypoEl = $("#hypo-stream");
 const stimList = $("#stim-list");
+const statusPanel = $("#status-panel");
 // Section titles that change every heartbeat — open by default.
 // Anything else (DNA, SELF-MODEL, HEARTBEAT question, BOOTSTRAP) is
 // collapsed since it's noise during normal inspection.
@@ -144,9 +210,14 @@ function handleEvent(e) {
       break;
     case "sleep_start":
       appendEntry(hypoEl, "—", "💤 sleep started: " + e.reason);
+      lastStats.mode = "sleeping";
+      setStatus();
       break;
     case "sleep_done":
       appendEntry(hypoEl, "—", "🌅 sleep done: " + JSON.stringify(e.stats));
+      lastStats.mode = "normal";
+      lastStats.last_sleep = new Date().toISOString();
+      setStatus();
       break;
     case "hibernate":
       // could render but it's noisy; skip in UI
@@ -523,11 +594,15 @@ let cfgState = null;
 const SECTION_DEFAULTS = {
   hibernate: { min_interval: 2, max_interval: 300, default_interval: 10 },
   fatigue: { gm_node_soft_limit: 1000, force_sleep_threshold: 1200, thresholds: {} },
-  sliding_window: { max_tokens: 4096 },
+  // `sliding_window` section removed — history budget is now derived
+  // from Self role's max_input_tokens × history_token_fraction (see
+  // role params UI under LLM).
   graph_memory: {
     db_path: "workspace/data/graph_memory.sqlite",
     auto_ingest_similarity_threshold: 0.92,
-    recall_per_stimulus_k: 5, max_recall_nodes: 20, neighbor_expand_depth: 1,
+    recall_per_stimulus_k: 5, neighbor_expand_depth: 1,
+    // `max_recall_nodes` removed — recall is now capped by Self role's
+    // recall_token_budget (absolute token cap, not a node count).
   },
   knowledge_base: { dir: "workspace/data/knowledge_bases" },
   sleep: { max_duration_seconds: 7200 },
@@ -547,11 +622,9 @@ const HELP = {
   "hibernate.default_interval": "Self 没指定时的默认 hibernate 间隔（秒）。",
   "fatigue.gm_node_soft_limit": "GM 节点软上限。fatigue% = nodes / soft_limit * 100。Self 看到 fatigue% 决定是否主动睡眠。",
   "fatigue.force_sleep_threshold": "强制睡眠阈值（fatigue%）。超过这个值, runtime 不等 Self 同意直接进 sleep。",
-  "sliding_window.max_tokens": "滑动上下文窗口最大 token 数。超过则压缩旧 round 为 summary。",
   "graph_memory.db_path": "GM SQLite 文件路径。",
   "graph_memory.auto_ingest_similarity_threshold": "stimulus auto_ingest 的相似度阈值 (0-1)。低于则当作新节点入 GM。",
-  "graph_memory.recall_per_stimulus_k": "每条 stimulus 召回的 top-K 节点数。",
-  "graph_memory.max_recall_nodes": "单次 prompt 中召回节点的总数上限。",
+  "graph_memory.recall_per_stimulus_k": "每条 stimulus 向量搜索返回的 top-K 候选节点数 (搜索阈, 不是 prompt 阈)。prompt 阈由 Self role 的 recall_token_budget 控制。",
   "graph_memory.neighbor_expand_depth": "召回时邻居展开深度（沿 edges 走几跳）。",
   "knowledge_base.dir": "KB SQLite 文件目录, sleep migration 会写到这里。",
   "sleep.max_duration_seconds": "单次 sleep 最长允许时长（秒）, 防 sleep 卡死。",
@@ -601,14 +674,10 @@ const SCHEMAS = {
     ["gm_node_soft_limit", "number"],
     ["force_sleep_threshold", "number"],
   ],
-  sliding_window: [
-    ["max_tokens", "number"],
-  ],
   graph_memory: [
     ["db_path", "text"],
     ["auto_ingest_similarity_threshold", "number_float"],
     ["recall_per_stimulus_k", "number"],
-    ["max_recall_nodes", "number"],
     ["neighbor_expand_depth", "number"],
   ],
   knowledge_base: [
@@ -658,8 +727,9 @@ let pluginEdits = {};
 // GET /api/config/schema. The LLM role params UI reads this instead of
 // hardcoding field lists — adding a field to LLMParams on the Python
 // side automatically surfaces it here without JS edits.
-//   shape: { llm_params: [{field, type, default, help, choices?}], llm_role_defaults: {role: {...}} }
-let configSchema = { llm_params: [], llm_role_defaults: {} };
+//   shape: { llm_params: [{field, type, default, help, choices?}] }
+//   (llm_role_defaults removed in the tag-based LLM refactor 2026-04-26)
+let configSchema = { llm_params: [] };
 
 async function loadSettings() {
   settingsToast.textContent = "";
@@ -685,8 +755,9 @@ async function loadSettings() {
     if (schemaRes && schemaRes.ok) {
       configSchema = await schemaRes.json();
     } else {
-      configSchema = { llm_params: [], llm_role_defaults: {} };
+      configSchema = { llm_params: [] };
     }
+    await loadAvailableReflects();
     renderSettingsForm();
   } catch (e) {
     settingsForm.innerHTML = "error loading: " + escapeHtml(String(e));
@@ -695,11 +766,16 @@ async function loadSettings() {
 
 function renderSettingsForm() {
   settingsForm.innerHTML = "";
-  // LLM
-  const llm = ensure(cfgState, "llm", () => ({ providers: {}, roles: {} }));
+  // LLM (tag-based shape, post 2026-04-26 refactor)
+  const llm = ensure(cfgState, "llm",
+    () => ({ providers: {}, tags: {}, core_purposes: {} }));
   ensure(llm, "providers", () => ({}));
-  ensure(llm, "roles", () => ({}));
+  ensure(llm, "tags", () => ({}));
+  ensure(llm, "core_purposes", () => ({}));
   settingsForm.appendChild(renderLLMSection(llm));
+
+  // Reflects — list available + enable/order/configure
+  settingsForm.appendChild(renderReflectsSection());
 
   // Generic sections (each seeded from SECTION_DEFAULTS so missing fields
   // pre-populate to runtime defaults instead of looking "off"/empty)
@@ -713,9 +789,6 @@ function renderSettingsForm() {
   fatSec.querySelector(".body").appendChild(renderFatigueThresholds(cfgState.fatigue));
   settingsForm.appendChild(fatSec);
 
-  ensureSection("sliding_window");
-  settingsForm.appendChild(renderGenericSection("sliding_window", "Sliding Window",
-    cfgState.sliding_window, SCHEMAS.sliding_window));
   ensureSection("graph_memory");
   settingsForm.appendChild(renderGenericSection("graph_memory", "Graph Memory",
     cfgState.graph_memory, SCHEMAS.graph_memory));
@@ -976,7 +1049,22 @@ function mkBtn(text, onClick, cls = "") {
 
 // ---------------- LLM section ----------------
 
+// Shape (post tag-based refactor 2026-04-26):
+//   llm.providers     : dict of provider connections (with API keys)
+//   llm.tags          : dict of named (provider/model + params)
+//   llm.core_purposes : dict purpose_name → tag_name
+//   llm.embedding     : tag_name (string) — required for vec_search
+//   llm.reranker      : tag_name (string, optional)
 function renderLLMSection(llm) {
+  // Migration nudge: old `llm.roles:` shape would still be present
+  // in cfgState if a user opens the page on a deprecated config —
+  // the loader will reject it on next restart, but until then we
+  // hide the field to avoid editing a dead structure.
+  if (llm && "roles" in llm && !("tags" in llm)) {
+    llm.tags = llm.tags || {};
+    llm.core_purposes = llm.core_purposes || {};
+  }
+
   const sec = makeSection("LLM");
   const body = sec.querySelector(".body");
 
@@ -1003,27 +1091,47 @@ function renderLLMSection(llm) {
     body.appendChild(renderProviderBlock(pname, prov, llm));
   }
 
-  // Roles
-  const rolesHead = document.createElement("h4");
-  rolesHead.style.cssText = "color:var(--magenta);font-size:11px;margin:12px 0 6px";
-  rolesHead.appendChild(document.createTextNode("Roles"));
-  const addRole = mkBtn("+ add role", () => {
-    const name = prompt("Role name (e.g. self / hypothalamus):");
+  // Tags
+  llm.tags = llm.tags || {};
+  const tagsHead = document.createElement("h4");
+  tagsHead.style.cssText = "color:var(--magenta);font-size:11px;margin:12px 0 6px";
+  tagsHead.appendChild(document.createTextNode("Tags"));
+  const addTag = mkBtn("+ add tag", () => {
+    const name = prompt("Tag name (e.g. fast_generation):");
     if (!name) return;
-    if (llm.roles[name]) { alert("exists"); return; }
-    const provNames = Object.keys(llm.providers);
+    if (llm.tags[name]) { alert("exists"); return; }
+    const provNames = Object.keys(llm.providers || {});
     if (!provNames.length) { alert("add a provider first"); return; }
-    llm.roles[name] = { provider: provNames[0], model: "" };
+    // First model of first provider as a starting point
+    const firstProv = llm.providers[provNames[0]];
+    const firstModel = (firstProv.models && firstProv.models[0]
+                          && firstProv.models[0].name) || "";
+    llm.tags[name] = {
+      provider: `${provNames[0]}/${firstModel}`,
+      params: {},
+    };
     renderSettingsForm();
   });
-  const rolesHeadWrap = document.createElement("div");
-  rolesHeadWrap.style.cssText = "display:flex;align-items:center;gap:8px;margin:12px 0 6px";
-  rolesHeadWrap.appendChild(rolesHead); rolesHeadWrap.appendChild(addRole);
-  body.appendChild(rolesHeadWrap);
+  const tagsHeadWrap = document.createElement("div");
+  tagsHeadWrap.style.cssText = "display:flex;align-items:center;gap:8px;margin:12px 0 6px";
+  tagsHeadWrap.appendChild(tagsHead); tagsHeadWrap.appendChild(addTag);
+  body.appendChild(tagsHeadWrap);
 
-  for (const rname of Object.keys(llm.roles || {})) {
-    body.appendChild(renderRoleRow(rname, llm.roles, llm.providers));
+  for (const tname of Object.keys(llm.tags)) {
+    body.appendChild(renderTagRow(tname, llm.tags, llm.providers));
   }
+
+  // Core purposes (chat use cases — Self / compact / classifier)
+  body.appendChild(renderCorePurposesBlock(llm));
+  // Embedding + reranker (model-type slots, not purposes)
+  body.appendChild(renderModelSlotBlock(
+    llm, "embedding",
+    "GM auto-recall + vec_search use this. Required.",
+  ));
+  body.appendChild(renderModelSlotBlock(
+    llm, "reranker",
+    "Optional — leave empty to skip reranking in recall.",
+  ));
 
   return sec;
 }
@@ -1175,19 +1283,30 @@ function mkDropdown(triggerLabel, items, onPick) {
   return dd;
 }
 
-function renderRoleRow(rname, roles, providers) {
-  // Wrapper so the params <details> sits directly below the role row
+function renderTagRow(tname, tags, providers) {
+  // Wrapper so the params <details> sits directly below the tag row
   // (sharing a container keeps delete/rename behavior correct).
   const container = document.createElement("div");
 
   const row = document.createElement("div");
   row.className = "cfg-row";
   const lab = document.createElement("label");
-  lab.textContent = rname;
+  lab.textContent = tname;
   row.appendChild(lab);
 
   const wrap = document.createElement("div");
   wrap.style.cssText = "display:grid;grid-template-columns:1fr 1fr auto;gap:6px";
+
+  // Tag's `provider:` field is "<provider>/<model>". Render two
+  // dropdowns; serialize on change.
+  const tag = tags[tname];
+  function splitProviderField() {
+    const v = tag.provider || "";
+    const idx = v.indexOf("/");
+    if (idx < 0) return ["", ""];
+    return [v.slice(0, idx), v.slice(idx + 1)];
+  }
+  let [provName, modelName] = splitProviderField();
 
   const provSel = document.createElement("select");
   for (const pname of Object.keys(providers || {})) {
@@ -1195,7 +1314,7 @@ function renderRoleRow(rname, roles, providers) {
     opt.value = pname; opt.textContent = pname;
     provSel.appendChild(opt);
   }
-  provSel.value = roles[rname].provider || "";
+  if (provName) provSel.value = provName;
 
   const modSel = document.createElement("select");
   function refreshModels() {
@@ -1212,20 +1331,37 @@ function renderRoleRow(rname, roles, providers) {
         modSel.appendChild(opt);
       }
     }
-    if (roles[rname].model && [...modSel.options].some(o => o.value === roles[rname].model)) {
-      modSel.value = roles[rname].model;
+    // Preserve existing model name if it's still valid for this provider
+    if (modelName && [...modSel.options].some(o => o.value === modelName)) {
+      modSel.value = modelName;
     } else {
-      roles[rname].model = modSel.value;
+      modelName = modSel.value;
     }
+    tag.provider = `${provSel.value}/${modelName}`;
   }
   provSel.addEventListener("change", () => {
-    roles[rname].provider = provSel.value;
+    provName = provSel.value;
     refreshModels();
   });
-  modSel.addEventListener("change", () => { roles[rname].model = modSel.value; });
+  modSel.addEventListener("change", () => {
+    modelName = modSel.value;
+    tag.provider = `${provSel.value}/${modelName}`;
+  });
   refreshModels();
 
-  const del = mkBtn("×", () => { delete roles[rname]; renderSettingsForm(); }, "danger");
+  const del = mkBtn("×", () => {
+    if (!confirm(`delete tag "${tname}"?`)) return;
+    delete tags[tname];
+    // Also clear any core_purpose mapping that referenced this tag —
+    // leaving a stale tag name behind would silently break runtime.
+    const llm = cfgState.llm || {};
+    for (const [purp, t] of Object.entries(llm.core_purposes || {})) {
+      if (t === tname) delete llm.core_purposes[purp];
+    }
+    if (llm.embedding === tname) llm.embedding = "";
+    if (llm.reranker === tname) llm.reranker = "";
+    renderSettingsForm();
+  }, "danger");
 
   wrap.appendChild(provSel); wrap.appendChild(modSel); wrap.appendChild(del);
   row.appendChild(wrap);
@@ -1233,41 +1369,34 @@ function renderRoleRow(rname, roles, providers) {
 
   // Params sub-block (driven by /api/config/schema). Collapsed by
   // default so the LLM section stays scannable; user opens only the
-  // role they're tuning.
-  container.appendChild(renderRoleParamsBlock(rname, roles));
+  // tag they're tuning.
+  container.appendChild(renderTagParamsBlock(tname, tags));
   return container;
 }
 
-// Build a collapsible <details> containing every LLMParams field, with
-// types + defaults pulled from configSchema.llm_params. Unknown fields
-// in the stored YAML still render as text inputs so nothing is lost
-// on round-trip.
-function renderRoleParamsBlock(rname, roles) {
+
+// Tag → params editor (collapsed <details>). Each LLMParams field
+// is rendered using the schema descriptors served by /api/config/schema.
+function renderTagParamsBlock(tname, tags) {
   const details = document.createElement("details");
-  details.className = "role-params";
+  details.className = "tag-params";
   details.style.cssText = "margin:4px 0 12px 0;padding:6px 10px;" +
     "border:1px solid var(--border,#e2e8f0);border-radius:4px;" +
     "background:rgba(0,0,0,0.015)";
   const summary = document.createElement("summary");
   summary.style.cssText = "cursor:pointer;font-size:11px;color:var(--muted);" +
     "user-select:none";
-  summary.textContent = `params (${rname})`;
+  summary.textContent = `params (${tname})`;
   details.appendChild(summary);
 
-  // Ensure the edit target exists. Pre-populate with role-specific
-  // defaults on first open so e.g. self shows max_tokens=8192 rather
-  // than the universal 4096 baseline.
-  if (roles[rname].params == null) {
-    const roleDefaults = (configSchema.llm_role_defaults || {})[rname] || {};
-    roles[rname].params = { ...roleDefaults };
-  }
-  const target = roles[rname].params;
+  if (tags[tname].params == null) tags[tname].params = {};
+  const target = tags[tname].params;
 
   const body = document.createElement("div");
   body.style.cssText = "padding:4px 0";
   const schema = configSchema.llm_params || [];
   for (const fdef of schema) {
-    const helpPath = `llm.role.${rname}.params.${fdef.field}`;
+    const helpPath = `llm.tag.${tname}.params.${fdef.field}`;
     if (fdef.help) HELP[helpPath] = fdef.help;
     let r;
     if (fdef.type === "enum" && fdef.choices) {
@@ -1278,19 +1407,370 @@ function renderRoleParamsBlock(rname, roles) {
     }
     body.appendChild(r);
   }
-  // Reset-to-defaults action — clears all overrides so the load-time
-  // role defaults take effect again.
-  const actions = document.createElement("div");
-  actions.style.cssText = "margin-top:6px";
-  const resetBtn = mkBtn("reset to role defaults", () => {
-    const roleDefaults = (configSchema.llm_role_defaults || {})[rname] || {};
-    roles[rname].params = { ...roleDefaults };
-    renderSettingsForm();
-  });
-  actions.appendChild(resetBtn);
-  body.appendChild(actions);
   details.appendChild(body);
   return details;
+}
+
+
+// Render the core_purposes mapping as `purpose: tag` rows. Users
+// can add custom purposes (e.g. for future Reflects), but the
+// well-known core purposes (self_thinking required; compact /
+// classifier optional) are always shown so people know they exist.
+const KNOWN_CORE_PURPOSES = [
+  ["self_thinking", "required — Self's per-beat heartbeat LLM"],
+  ["compact", "sliding-window history → GM compaction LLM"],
+  ["classifier", "node category classifier (often same as compact)"],
+];
+
+function renderCorePurposesBlock(llm) {
+  llm.core_purposes = llm.core_purposes || {};
+  const sub = document.createElement("div");
+  sub.className = "subblock";
+  const head = document.createElement("h4");
+  head.appendChild(document.createTextNode("Core Purposes"));
+  sub.appendChild(head);
+
+  const tagNames = Object.keys(llm.tags || {});
+
+  // Always show the known purposes (with help) — even if not yet bound.
+  const seen = new Set();
+  for (const [purp, helpText] of KNOWN_CORE_PURPOSES) {
+    seen.add(purp);
+    sub.appendChild(_purposeRow(llm, purp, tagNames, helpText));
+  }
+  // Then any user-added purposes that aren't in the well-known set
+  for (const purp of Object.keys(llm.core_purposes)) {
+    if (seen.has(purp)) continue;
+    sub.appendChild(_purposeRow(llm, purp, tagNames, ""));
+  }
+
+  const addBtn = mkBtn("+ add purpose", () => {
+    const name = prompt("Custom core purpose name:");
+    if (!name || llm.core_purposes[name]) return;
+    llm.core_purposes[name] = "";
+    renderSettingsForm();
+  });
+  sub.appendChild(addBtn);
+  return sub;
+}
+
+function _purposeRow(llm, purp, tagNames, helpText) {
+  const row = document.createElement("div");
+  row.className = "cfg-row";
+  const lab = document.createElement("label");
+  lab.textContent = purp;
+  if (helpText) lab.title = helpText;
+  row.appendChild(lab);
+
+  const wrap = document.createElement("div");
+  wrap.style.cssText = "display:grid;grid-template-columns:1fr auto;gap:6px";
+
+  const sel = document.createElement("select");
+  const blank = document.createElement("option");
+  blank.value = ""; blank.textContent = "(unbound)";
+  sel.appendChild(blank);
+  for (const t of tagNames) {
+    const opt = document.createElement("option");
+    opt.value = t; opt.textContent = t;
+    sel.appendChild(opt);
+  }
+  sel.value = llm.core_purposes[purp] || "";
+  sel.addEventListener("change", () => {
+    if (sel.value) llm.core_purposes[purp] = sel.value;
+    else delete llm.core_purposes[purp];
+  });
+  wrap.appendChild(sel);
+
+  // Custom (non-known) purposes get a delete button; well-known ones
+  // are persistent.
+  const isKnown = KNOWN_CORE_PURPOSES.some(([p]) => p === purp);
+  if (!isKnown) {
+    const del = mkBtn("×", () => {
+      delete llm.core_purposes[purp]; renderSettingsForm();
+    }, "danger");
+    wrap.appendChild(del);
+  } else {
+    wrap.appendChild(document.createElement("span"));
+  }
+
+  row.appendChild(wrap);
+  return row;
+}
+
+
+// embedding / reranker are model-type slots — single tag name.
+function renderModelSlotBlock(llm, fieldName, helpText) {
+  const sub = document.createElement("div");
+  sub.className = "subblock";
+  const head = document.createElement("h4");
+  head.appendChild(document.createTextNode(fieldName));
+  sub.appendChild(head);
+
+  const row = document.createElement("div");
+  row.className = "cfg-row";
+  const lab = document.createElement("label");
+  lab.textContent = "tag";
+  if (helpText) lab.title = helpText;
+  row.appendChild(lab);
+
+  const sel = document.createElement("select");
+  const blank = document.createElement("option");
+  blank.value = ""; blank.textContent = "(unbound)";
+  sel.appendChild(blank);
+  for (const t of Object.keys(llm.tags || {})) {
+    const opt = document.createElement("option");
+    opt.value = t; opt.textContent = t;
+    sel.appendChild(opt);
+  }
+  sel.value = llm[fieldName] || "";
+  sel.addEventListener("change", () => {
+    llm[fieldName] = sel.value || null;
+  });
+  row.appendChild(sel);
+  sub.appendChild(row);
+
+  if (helpText) {
+    const desc = document.createElement("div");
+    desc.style.cssText = "font-size:11px;color:var(--muted);margin-top:4px";
+    desc.textContent = helpText;
+    sub.appendChild(desc);
+  }
+  return sub;
+}
+
+// (renderRoleParamsBlock removed in 2026-04-26 tag refactor — its
+// replacement, renderTagParamsBlock, lives near renderTagRow above.
+// Reset-to-defaults dropped because tags have no per-purpose defaults
+// any more; LLMParams field defaults are the only baseline.)
+
+// ---------------- Reflects section ----------------
+
+// Cache of {name → metadata} from /api/reflects/available. Populated
+// alongside configSchema during loadSettings(). Drives the
+// "Available Reflects" UI.
+let availableReflects = [];
+
+// Cache of per-Reflect config (workspace/reflects/<name>/config.yaml).
+// Keyed by Reflect name. Loaded lazily when the user expands a
+// Reflect's row, persisted via POST /api/reflects/<name>/config.
+let reflectConfigEdits = {};
+
+async function loadAvailableReflects() {
+  try {
+    const r = await fetch("/api/reflects/available");
+    if (r.ok) {
+      const body = await r.json();
+      availableReflects = body.reflects || [];
+    } else {
+      availableReflects = [];
+    }
+  } catch (e) {
+    availableReflects = [];
+  }
+}
+
+function renderReflectsSection() {
+  const sec = makeSection("Reflects");
+  const body = sec.querySelector(".body");
+
+  // Top: explainer
+  const intro = document.createElement("div");
+  intro.style.cssText = "font-size:11px;color:var(--muted);margin-bottom:8px";
+  intro.textContent =
+    "Reflects are deeper-than-tentacle plugins that hook into the " +
+    "heartbeat. The list below is what's installed on disk; check the " +
+    "ones you want loaded. Order in the list = chain execution order.";
+  body.appendChild(intro);
+
+  cfgState.reflects = cfgState.reflects || [];
+  // Only treat as "user explicitly disabled" when the field is an
+  // empty array; null/undefined means "unconfigured" — render with
+  // the available list so the user can opt in.
+  const enabledList = Array.isArray(cfgState.reflects)
+    ? cfgState.reflects.slice() : [];
+
+  // Reflects available on disk that the user hasn't enabled yet.
+  const enabledSet = new Set(enabledList);
+  const knownNames = new Set(availableReflects.map(m => m.name));
+
+  // Render the user's enabled list first, in the user-declared order.
+  // Each enabled Reflect can be expanded for purpose mapping.
+  for (let i = 0; i < enabledList.length; i++) {
+    const name = enabledList[i];
+    const meta = availableReflects.find(m => m.name === name);
+    body.appendChild(renderReflectCard(name, meta, true, i, enabledList));
+  }
+
+  // Then disabled (available but not in user list)
+  const disabled = availableReflects.filter(m => !enabledSet.has(m.name));
+  if (disabled.length) {
+    const head = document.createElement("h4");
+    head.style.cssText = "color:var(--muted);font-size:11px;margin:12px 0 6px";
+    head.textContent = "Available (disabled)";
+    body.appendChild(head);
+    for (const meta of disabled) {
+      body.appendChild(renderReflectCard(meta.name, meta, false, -1,
+                                          enabledList));
+    }
+  }
+
+  // Detect orphan names — in user's reflects list but not on disk.
+  const orphans = enabledList.filter(n => !knownNames.has(n));
+  if (orphans.length) {
+    const warn = document.createElement("div");
+    warn.style.cssText = "color:var(--red);font-size:11px;margin-top:8px";
+    warn.textContent =
+      `Unknown reflect names in config: ${orphans.join(", ")} — these will ` +
+      "be skipped at startup with a warning.";
+    body.appendChild(warn);
+  }
+  return sec;
+}
+
+function renderReflectCard(name, meta, enabled, index, enabledList) {
+  const card = document.createElement("div");
+  card.className = "subblock";
+  card.style.cssText = "margin:6px 0";
+
+  const head = document.createElement("div");
+  head.style.cssText = "display:flex;align-items:center;gap:8px";
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = enabled;
+  checkbox.addEventListener("change", () => {
+    cfgState.reflects = cfgState.reflects || [];
+    if (checkbox.checked) {
+      if (!cfgState.reflects.includes(name)) cfgState.reflects.push(name);
+    } else {
+      cfgState.reflects = cfgState.reflects.filter(n => n !== name);
+    }
+    renderSettingsForm();
+  });
+  head.appendChild(checkbox);
+
+  const title = document.createElement("strong");
+  title.textContent = name;
+  head.appendChild(title);
+
+  if (meta) {
+    const kindBadge = document.createElement("span");
+    kindBadge.style.cssText =
+      "font-size:10px;color:var(--muted);background:var(--panel-2);" +
+      "padding:1px 6px;border-radius:3px";
+    kindBadge.textContent = meta.kind;
+    head.appendChild(kindBadge);
+  }
+
+  // Reorder buttons (only show when enabled and there's something to swap with)
+  if (enabled && enabledList.length > 1) {
+    const upBtn = mkBtn("↑", () => _reorderEnabled(index, -1));
+    const dnBtn = mkBtn("↓", () => _reorderEnabled(index, +1));
+    upBtn.disabled = (index === 0);
+    dnBtn.disabled = (index === enabledList.length - 1);
+    head.appendChild(upBtn);
+    head.appendChild(dnBtn);
+  }
+
+  card.appendChild(head);
+
+  if (meta && meta.description) {
+    const desc = document.createElement("div");
+    desc.style.cssText = "font-size:11px;color:var(--muted);margin:4px 0";
+    desc.textContent = meta.description;
+    card.appendChild(desc);
+  }
+
+  // LLM purposes editor — only if the plugin declares any
+  if (meta && enabled && meta.llm_purposes && meta.llm_purposes.length) {
+    card.appendChild(renderReflectLLMPurposes(name, meta));
+  }
+  return card;
+}
+
+function _reorderEnabled(index, delta) {
+  const list = cfgState.reflects;
+  if (!Array.isArray(list)) return;
+  const target = index + delta;
+  if (target < 0 || target >= list.length) return;
+  const tmp = list[index];
+  list[index] = list[target];
+  list[target] = tmp;
+  renderSettingsForm();
+}
+
+function renderReflectLLMPurposes(name, meta) {
+  // Lazy-load this plugin's per-folder config.yaml the first time
+  // we need it; subsequent renders use the cached/edited copy.
+  if (!reflectConfigEdits[name]) {
+    reflectConfigEdits[name] = { llm_purposes: {} };
+    fetch(`/api/reflects/${encodeURIComponent(name)}/config`)
+      .then(r => r.ok ? r.json() : { config: {} })
+      .then(body => {
+        reflectConfigEdits[name] = body.config || {};
+        if (!reflectConfigEdits[name].llm_purposes)
+          reflectConfigEdits[name].llm_purposes = {};
+        renderSettingsForm();
+      })
+      .catch(() => {});
+  }
+  const cfg = reflectConfigEdits[name];
+
+  const block = document.createElement("div");
+  block.style.cssText = "margin:8px 0 4px;padding:6px;background:rgba(0,0,0,0.02)";
+  const head = document.createElement("div");
+  head.style.cssText = "font-size:11px;color:var(--muted);margin-bottom:4px";
+  head.textContent = "LLM purpose bindings (tag picker)";
+  block.appendChild(head);
+
+  const tagNames = Object.keys((cfgState.llm || {}).tags || {});
+  for (const purpose of meta.llm_purposes) {
+    const row = document.createElement("div");
+    row.className = "cfg-row";
+    const lab = document.createElement("label");
+    lab.textContent = purpose.name;
+    if (purpose.description) lab.title = purpose.description;
+    row.appendChild(lab);
+
+    const sel = document.createElement("select");
+    const blank = document.createElement("option");
+    blank.value = ""; blank.textContent = "(unbound)";
+    sel.appendChild(blank);
+    for (const t of tagNames) {
+      const opt = document.createElement("option");
+      opt.value = t; opt.textContent = t;
+      sel.appendChild(opt);
+    }
+    sel.value = (cfg.llm_purposes || {})[purpose.name] || "";
+    sel.addEventListener("change", () => {
+      cfg.llm_purposes = cfg.llm_purposes || {};
+      if (sel.value) cfg.llm_purposes[purpose.name] = sel.value;
+      else delete cfg.llm_purposes[purpose.name];
+    });
+    row.appendChild(sel);
+    block.appendChild(row);
+  }
+
+  // Save button — writes this plugin's config to its folder
+  const saveBtn = mkBtn("save plugin config", async () => {
+    try {
+      const r = await fetch(`/api/reflects/${encodeURIComponent(name)}/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config: cfg }),
+      });
+      if (!r.ok) {
+        const err = await r.text();
+        alert(`save failed: ${err}`);
+        return;
+      }
+      alert(`${name} config saved (restart required to apply)`);
+    } catch (e) {
+      alert(`save failed: ${e}`);
+    }
+  });
+  block.appendChild(saveBtn);
+  return block;
 }
 
 // ---------------- Generic dict section (sensory / tentacle) ----------------

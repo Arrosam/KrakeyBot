@@ -206,8 +206,9 @@ async def test_voluntary_sleep_via_hypothalamus_runs_full_sleep(tmp_path):
     # Wake-up stimulus pushed
     drained = runtime.buffer.drain()
     assert any(s.source == "system:sleep" for s in drained)
-    # self-model bookkeeping
-    assert runtime.self_model["statistics"]["total_sleep_cycles"] == 1
+    # Sleep counter is now in-memory (was self_model.statistics until
+    # the 2026-04-25 slim refactor).
+    assert runtime._sleep_cycles == 1
     await runtime.close()
 
 
@@ -346,7 +347,8 @@ async def test_override_sleep_triggers_full_sleep(tmp_path):
     await runtime.run(iterations=1)
     # Inspect before close (close shuts down the GM connection).
     assert await runtime.gm.list_nodes(category="FACT") == []
-    assert runtime.self_model["statistics"]["total_sleep_cycles"] == 1
+    # In-memory counter (2026-04-25 self-model slim).
+    assert runtime._sleep_cycles == 1
     await runtime.close()
 
 

@@ -63,21 +63,35 @@ class LLMParams:
         to Anthropic ``max_tokens``, OpenAI classic ``max_tokens``,
         OpenAI reasoning ``max_completion_tokens``, Gemini
         ``maxOutputTokens``.
-      * ``max_input_tokens`` \u2014 declared context-window size for the
-        target model (e.g. 200_000 for Claude Sonnet 4.5, 128_000 for
-        GPT-4o, 64_000 for DeepSeek). Currently **informational /
-        guardrail** \u2014 not automatically enforced. Used by the
-        dashboard, by future prompt-budget warnings, and by any code
-        that wants to size the sliding window against the target
-        model. Leave None to skip the declaration.
+      * ``max_input_tokens`` \u2014 input-context-window budget for the
+        backing model. If left None at load time, the config loader
+        resolves it via ``src.utils.model_context.resolve_max_input_tokens``
+        (known-prefix lookup, default 128_000). This is **active**:
+        used by the runtime for sliding-window history budget, recall
+        budget, and overall-prompt enforcement.
+
+    Prompt-budget allocation (only meaningful for Self's role, since
+    Self is the only consumer of the sliding window + GM recall):
+      * ``history_token_fraction`` \u2014 fraction of ``max_input_tokens``
+        reserved for [HISTORY]. Default 0.4. When the window's token
+        total exceeds this fraction the compactor pops oldest rounds
+        into GM.
+      * ``recall_token_budget`` \u2014 ABSOLUTE token cap for the
+        [GRAPH MEMORY] section (not a fraction). Too many recall nodes
+        pollute context with marginal relevance, so this scales poorly
+        with bigger context \u2014 a model with 2M tokens doesn't want 500
+        recall items. Default 3000.
 
     None means "do not send this field" (use provider's own default).
     """
     # Generation bounds
     max_output_tokens: int | None = 4096
-    # Declared input-context window for the backing model (see class
-    # docstring). Informational for now.
+    # Input-context budget. None at construction time; the loader
+    # resolves it via model_context lookup before the runtime starts.
     max_input_tokens: int | None = None
+    # Prompt-budget allocation (Self role only in practice)
+    history_token_fraction: float = 0.4
+    recall_token_budget: int = 3000
     temperature: float | None = 0.7
     top_p: float | None = None
     stop_sequences: list[str] = field(default_factory=list)
@@ -97,56 +111,13 @@ class LLMParams:
     )
 
 
-# Role → default param overrides applied before YAML overlay. Any field
-# not mentioned here falls back to LLMParams' universal defaults.
-#
-# Note on `response_format`: deliberately *not* defaulted to "json_object"
-# for Hypothalamus / compact / classifier. Many OpenAI-compatible
-# providers (xunfei / zhipu / moonshot / baichuan / …) either ignore the
-# field or crash their backends with "EngineInternalError:Unexpected EOF"
-# style 500s when they see it. Hypothalamus already has a robust JSON
-# extractor (markdown fence, regex, smart-quote/trailing-comma fixups)
-# that works without JSON mode, so turning it on is a cost/benefit loss
-# in the general case. Users whose provider supports it (Anthropic does
-# not, OpenAI + Gemini do) can opt in via YAML per-role.
-_ROLE_DEFAULTS: dict[str, dict[str, Any]] = {
-    "self": {
-        "max_output_tokens": 8192,
-        "temperature": 0.7,
-        "reasoning_mode": "medium",
-        "reasoning_budget_tokens": 4096,
-        "timeout_seconds": 180.0,
-    },
-    "hypothalamus": {
-        # 2048 not 512 — multi-action decisions with Chinese tentacle
-        # intents blow past 512 easily and get truncated mid-JSON,
-        # which some providers surface as an "Unexpected EOF" 500.
-        "max_output_tokens": 2048,
-        "temperature": 0.0,
-        "reasoning_mode": "off",
-        "timeout_seconds": 20.0,
-    },
-    "compact": {
-        "max_output_tokens": 2048,
-        "temperature": 0.2,
-        "reasoning_mode": "off",
-        "timeout_seconds": 60.0,
-    },
-    "classifier": {
-        "max_output_tokens": 1024,
-        "temperature": 0.0,
-        "reasoning_mode": "off",
-        "timeout_seconds": 30.0,
-    },
-    "embedding": {
-        # Embedding endpoints don't use generation params; keep a short
-        # timeout since embedding calls should be fast.
-        "timeout_seconds": 20.0,
-    },
-    "reranker": {
-        "timeout_seconds": 20.0,
-    },
-}
+# NOTE: per-role default param overrides were removed in the
+# tag-based LLM refactor (Samuel 2026-04-26). Tags now stand alone:
+# each tag's params are exactly what the user wrote, with anything
+# unset falling through to the LLMParams dataclass field defaults.
+# If you need different defaults for different use cases, define
+# multiple tags (e.g. `fast_generation` vs `high_performance`) and
+# bind purposes to them in `core_purposes` / per-plugin config.
 
 
 # Human-readable descriptions used both for docstrings and for the
@@ -154,7 +125,9 @@ _ROLE_DEFAULTS: dict[str, dict[str, Any]] = {
 # in sync with LLMParams fields above.
 _LLM_PARAM_HELP: dict[str, str] = {
     "max_output_tokens": "生成 (输出) token 上限。按 provider 自动翻译: Anthropic max_tokens, OpenAI 经典 max_tokens, OpenAI reasoning max_completion_tokens, Gemini maxOutputTokens。Anthropic 必填。",
-    "max_input_tokens": "模型的输入上下文窗口大小 (e.g. Claude Sonnet 4.5 = 200000, GPT-4o = 128000, DeepSeek = 64000)。当前为声明性字段 — 仅用于 UI 展示 + 未来 prompt 预算警告, 不会自动截断 prompt。留空 = 不声明。",
+    "max_input_tokens": "输入 (prompt) 上下文 token 预算。留空则启动时按 model 名字自动查表 (未知模型默认 128000)。驱动 sliding window 压缩阈值、GM recall 预算、整体 prompt 超限自动裁剪 history。",
+    "history_token_fraction": "Self role 独有。[HISTORY] 层占用 max_input_tokens 的比例。默认 0.4 = 40%。超过这个比例就触发 compact 把最老 round 收入 GM。",
+    "recall_token_budget": "Self role 独有。[GRAPH MEMORY] 召回节点的总 token 预算 (绝对值, 不是比例)。默认 3000。太多 recall 会污染 context, 所以不跟 context 规模线性增长。",
     "temperature": "采样温度。0 = 确定性，越大越发散。部分 reasoning 模型 (OpenAI o-series, DeepSeek Reasoner) 不支持，会被自动忽略。",
     "top_p": "nucleus sampling 阈值 (0-1)。通常和 temperature 二选一。留空 = 不发送此字段。",
     "stop_sequences": "停止序列列表。遇到任一即停止生成。",
@@ -169,20 +142,77 @@ _LLM_PARAM_HELP: dict[str, str] = {
 
 
 @dataclass
-class RoleBinding:
-    provider: str = ""
-    model: str = ""
+class TagBinding:
+    """A named tag mapping a logical purpose to a concrete model.
+
+    ``provider`` is a combined ``"<provider_name>/<model_name>"`` string
+    so YAML stays compact. Splits on the FIRST ``/`` — provider names
+    must not contain ``/``, but model names may (e.g. ``BAAI/bge-m3``).
+    """
+    provider: str = ""   # e.g. "One API/qwen3.6-9b"
     params: LLMParams = field(default_factory=LLMParams)
+
+    def split_provider(self) -> tuple[str, str]:
+        """Return ``(provider_name, model_name)``. Raises ``ValueError``
+        when the value lacks a ``/`` separator."""
+        provider, sep, model = self.provider.partition("/")
+        if not sep:
+            raise ValueError(
+                f"tag provider must be '<provider>/<model>'; got "
+                f"{self.provider!r}"
+            )
+        return provider, model
 
 
 @dataclass
 class LLMSection:
-    # Both empty by default — the first-run file will be a usable
-    # scaffold and the user fills in providers + role bindings. The
-    # runtime bootstrap validates presence of required roles (`self`,
-    # `hypothalamus`, `embedding`) and fails loud with guidance.
+    """Tag-based LLM config (Samuel 2026-04-26).
+
+    Three layers of indirection:
+
+    1. ``providers`` — physical API connections (URL + key). Sensitive;
+       only the runtime ever sees these. Plugins **never** receive
+       provider config.
+    2. ``tags`` — user-named pools each binding a single
+       ``(provider, model, params)`` triple. Tags are how users
+       give human-readable names to model choices and reuse one
+       choice across many purposes.
+    3. ``core_purposes`` — runtime-internal use cases (Self's
+       thinking, history compaction, ...) that need an LLM, mapped
+       to a tag name. Plugins have their own purposes that are
+       declared in their per-folder ``meta.yaml`` and bound in
+       ``workspace/reflects/<name>/config.yaml`` — those are
+       OUTSIDE this section so plugin code can't reach into the
+       central config and read API keys.
+
+    Embedding + reranker are NOT purposes (they're capabilities
+    intrinsic to specific models), so they get their own dedicated
+    fields holding a tag name directly.
+    """
     providers: dict[str, Provider] = field(default_factory=dict)
-    roles: dict[str, RoleBinding] = field(default_factory=dict)
+    tags: dict[str, TagBinding] = field(default_factory=dict)
+    # Core (runtime-owned, non-plugin) chat purpose → tag name
+    core_purposes: dict[str, str] = field(default_factory=dict)
+    # Special model-type slots
+    embedding: str | None = None  # name of an embedding-capable tag
+    reranker: str | None = None   # name of a rerank-capable tag (optional)
+
+    # ---- helpers ---------------------------------------------------
+
+    def tag(self, name: str) -> TagBinding | None:
+        return self.tags.get(name)
+
+    def core_tag(self, purpose: str) -> TagBinding | None:
+        tag_name = self.core_purposes.get(purpose)
+        if tag_name is None:
+            return None
+        return self.tags.get(tag_name)
+
+    def core_params(self, purpose: str) -> LLMParams | None:
+        """Convenience for callers that only care about the params
+        of a core purpose (e.g. Self's max_input_tokens)."""
+        tag = self.core_tag(purpose)
+        return tag.params if tag is not None else None
 
 
 @dataclass
@@ -204,16 +234,14 @@ class FatigueSection:
 
 
 @dataclass
-class SlidingWindowSection:
-    max_tokens: int = 4096
-
-
-@dataclass
 class GraphMemorySection:
     db_path: str = "workspace/data/graph_memory.sqlite"
     auto_ingest_similarity_threshold: float = 0.92
+    # Top-K candidate nodes per stimulus during vec_search. A SEARCH
+    # cap, not a prompt cap — the prompt cap is the per-role
+    # `recall_token_budget` in LLMParams. Keeping this separate avoids
+    # blowing compute on vec_search results we'd only truncate anyway.
     recall_per_stimulus_k: int = 5
-    max_recall_nodes: int = 20
     neighbor_expand_depth: int = 1
 
 
@@ -306,26 +334,38 @@ class Config:
     llm: LLMSection = field(default_factory=LLMSection)
     hibernate: HibernateSection = field(default_factory=HibernateSection)
     fatigue: FatigueSection = field(default_factory=FatigueSection)
-    sliding_window: SlidingWindowSection = field(
-        default_factory=SlidingWindowSection
-    )
+    # `sliding_window` removed in the prompt-budget refactor — the
+    # window's size is now derived from the Self role's LLMParams
+    # (`max_input_tokens * history_token_fraction`). See
+    # `_warn_about_removed_sections` in the loader for the deprecation
+    # message on old configs.
     graph_memory: GraphMemorySection = field(
         default_factory=GraphMemorySection
     )
     knowledge_base: KnowledgeBaseSection = field(
         default_factory=KnowledgeBaseSection
     )
-    # Per-project plugin config. Key = project folder name (matches
-    # src/plugins/builtin/<name>/ or workspace/plugins/<name>/). A
-    # project can carry one tentacle, one sensory, or a bundle of both
-    # that share state (e.g. Telegram: sensory + reply tentacle
-    # sharing one HttpTelegramClient).
+    # Ordered list of unified-format plugin names to enable at
+    # startup. A plugin can declare any mix of reflect / tentacle /
+    # sensory components in its meta.yaml (Samuel 2026-04-26
+    # unification). Order = chain execution order for same-kind
+    # reflect components.
     #
-    # DEPRECATED: kept for backwards compatibility only. Phase 2 of the
-    # config overhaul moves plugin settings to per-plugin files under
-    # workspace/plugin-configs/<project>.yaml; this central dict stays
-    # so existing configs still load until the migration lands.
-    plugins: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # ``None`` (field absent) and ``[]`` are both honored as "zero
+    # plugins" — the runtime never enables anything implicitly
+    # (strictly additive). ``None`` triggers a one-line stderr
+    # nudge so users notice; ``[]`` is silent.
+    plugins: list[str] | None = None
+    # Legacy per-project plugin config (deprecated). Was a dict keyed
+    # by project name → settings; replaced by the per-plugin
+    # ``workspace/plugin-configs/<project>.yaml`` files for tentacles
+    # and sensories, and ``workspace/plugins/<name>/config.yaml`` for
+    # the unified plugin format. Kept here only as a holding pen so
+    # the legacy MANIFEST loader's dict-store fallback still works
+    # during the Phase 1 transition window.
+    legacy_plugin_configs: dict[str, dict[str, Any]] = field(
+        default_factory=dict
+    )
     sleep: SleepSection = field(default_factory=SleepSection)
     safety: SafetySection = field(default_factory=SafetySection)
     dashboard: DashboardSection = field(default_factory=DashboardSection)
@@ -358,45 +398,6 @@ def _substitute_env(value: Any) -> Any:
 # explicit empty value (e.g. `thresholds: {}`) is honored as empty.
 
 
-def _build_llm_params(
-    role_name: str, raw_params: dict[str, Any] | None,
-) -> LLMParams:
-    """Build LLMParams for `role_name`.
-
-    Precedence (highest to lowest):
-      1. User-supplied fields in config YAML (`raw_params`)
-      2. Role-specific defaults from `_ROLE_DEFAULTS[role_name]`
-      3. Universal defaults on the LLMParams dataclass itself
-
-    Unknown keys in raw_params are ignored (forward compatibility — a
-    future LLMParams field can appear in configs without errors).
-    """
-    # Normalize the legacy alias on the user's raw input first, BEFORE
-    # merging with role defaults. Older configs may say `max_tokens`;
-    # the current dataclass field is `max_output_tokens` (direction
-    # made explicit). If both appear in the user's block, the explicit
-    # new name wins and the alias is discarded.
-    user: dict[str, Any] = dict(raw_params or {})
-    if "max_tokens" in user:
-        if "max_output_tokens" not in user:
-            user["max_output_tokens"] = user["max_tokens"]
-        user.pop("max_tokens")
-
-    merged: dict[str, Any] = {}
-    merged.update(_ROLE_DEFAULTS.get(role_name, {}))
-    for k, v in user.items():
-        merged[k] = v
-    # Filter to known fields so unknown keys don't crash dataclass init.
-    known = {f.name for f in fields(LLMParams)}
-    safe = {k: v for k, v in merged.items() if k in known}
-    # Light coercion: YAML lists for list fields, numeric strings for numbers.
-    if "stop_sequences" in safe and safe["stop_sequences"] is not None:
-        safe["stop_sequences"] = list(safe["stop_sequences"])
-    if "retry_on_status" in safe and safe["retry_on_status"] is not None:
-        safe["retry_on_status"] = [int(x) for x in safe["retry_on_status"]]
-    return LLMParams(**safe)
-
-
 def _build_llm(raw: dict[str, Any]) -> LLMSection:
     providers: dict[str, Provider] = {}
     for pname, pdata in (raw.get("providers") or {}).items():
@@ -413,14 +414,97 @@ def _build_llm(raw: dict[str, Any]) -> LLMSection:
             api_key=pdata.get("api_key"),
             models=models,
         )
-    roles: dict[str, RoleBinding] = {}
-    for rname, rdata in (raw.get("roles") or {}).items():
-        roles[rname] = RoleBinding(
-            provider=rdata.get("provider", ""),
-            model=rdata.get("model", ""),
-            params=_build_llm_params(rname, rdata.get("params")),
+    # Detect old `roles:` shape — Samuel's tag-based refactor 2026-04-26
+    # removed it. Legacy configs must migrate; we exit loud rather than
+    # silently doing the wrong thing.
+    if "roles" in raw:
+        _raise_old_roles_migration_error()
+
+    tags: dict[str, TagBinding] = {}
+    for tag_name, tdata in (raw.get("tags") or {}).items():
+        tdata = tdata or {}
+        params = _build_llm_params_for_tag(tdata.get("params"))
+        # Resolve max_input_tokens NOW from model name (split out of
+        # the combined "provider/model" field) so the runtime sees a
+        # concrete int everywhere.
+        if params.max_input_tokens is None:
+            from src.utils.model_context import resolve_max_input_tokens
+            provider_field = str(tdata.get("provider", ""))
+            _, _, model_name = provider_field.partition("/")
+            params.max_input_tokens = resolve_max_input_tokens(model_name)
+        tags[tag_name] = TagBinding(
+            provider=str(tdata.get("provider", "")),
+            params=params,
         )
-    return LLMSection(providers=providers, roles=roles)
+    core_purposes: dict[str, str] = {}
+    for purpose, tag_name in (raw.get("core_purposes") or {}).items():
+        if not isinstance(tag_name, str):
+            continue
+        core_purposes[purpose] = tag_name
+    embedding = raw.get("embedding")
+    if embedding is not None and not isinstance(embedding, str):
+        embedding = None
+    reranker = raw.get("reranker")
+    if reranker is not None and not isinstance(reranker, str):
+        reranker = None
+    return LLMSection(
+        providers=providers, tags=tags,
+        core_purposes=core_purposes,
+        embedding=embedding, reranker=reranker,
+    )
+
+
+def _raise_old_roles_migration_error() -> None:
+    """Loud failure for users on the pre-2026-04-26 ``llm.roles:``
+    shape. We exit rather than silently mis-parsing.
+    """
+    msg = (
+        "config.yaml uses the deprecated `llm.roles:` shape that was\n"
+        "removed in the tag-based LLM refactor (2026-04-26). Migrate by:\n\n"
+        "  OLD:\n"
+        "    llm:\n"
+        "      roles:\n"
+        "        self:\n"
+        "          provider: \"One API\"\n"
+        "          model: \"astron\"\n"
+        "          params: {...}\n\n"
+        "  NEW:\n"
+        "    llm:\n"
+        "      tags:\n"
+        "        my_self_tag:\n"
+        "          provider: \"One API/astron\"   # combined provider/model\n"
+        "          params: {...}\n"
+        "      core_purposes:\n"
+        "        self_thinking: my_self_tag\n"
+        "        compact: my_compact_tag\n"
+        "        classifier: my_compact_tag\n"
+        "      embedding: my_embed_tag\n"
+        "      reranker: my_rerank_tag    # optional\n\n"
+        "  Per-plugin (workspace/reflects/<name>/config.yaml):\n"
+        "    llm_purposes:\n"
+        "      <purpose_name>: <tag_name>\n\n"
+        "See docs/design/reflects-and-self-model.md for the full spec.\n"
+        "Krakey will not start until this migrates."
+    )
+    print(msg, file=sys.stderr)
+    raise _ConfigBootstrapExit(2)
+
+
+def _build_llm_params_for_tag(
+    raw_params: dict[str, Any] | None,
+) -> LLMParams:
+    """Build an LLMParams with no per-purpose default injection —
+    every tag stands on its own; users specify the params they want."""
+    user: dict[str, Any] = dict(raw_params or {})
+    # Legacy alias: older configs may say `max_tokens`. Translate
+    # silently — same behavior as the previous _build_llm_params.
+    if "max_tokens" in user:
+        if "max_output_tokens" not in user:
+            user["max_output_tokens"] = user["max_tokens"]
+        user.pop("max_tokens")
+    known = {f.name for f in fields(LLMParams)}
+    safe = {k: v for k, v in user.items() if k in known}
+    return LLMParams(**safe)
 
 
 # ---------------- schema introspection (for dashboard UI) ----------------
@@ -476,17 +560,6 @@ def llm_params_schema() -> list[dict[str, Any]]:
     return out
 
 
-def role_default_params(role_name: str) -> dict[str, Any]:
-    """Expose the role-specific default overrides for the dashboard.
-
-    The UI can use this to pre-fill the params form when the user first
-    opens a role (so the Self role shows max_tokens=8192 etc. rather
-    than the universal 4096). Returning a fresh dict each time so
-    callers can safely mutate.
-    """
-    return dict(_ROLE_DEFAULTS.get(role_name, {}))
-
-
 def _build_hibernate(raw: dict[str, Any]) -> HibernateSection:
     d = HibernateSection()
     return HibernateSection(
@@ -514,13 +587,6 @@ def _build_fatigue(raw: dict[str, Any]) -> FatigueSection:
     )
 
 
-def _build_sliding_window(raw: dict[str, Any]) -> SlidingWindowSection:
-    d = SlidingWindowSection()
-    return SlidingWindowSection(
-        max_tokens=int(raw.get("max_tokens", d.max_tokens)),
-    )
-
-
 def _build_graph_memory(raw: dict[str, Any]) -> GraphMemorySection:
     d = GraphMemorySection()
     return GraphMemorySection(
@@ -531,8 +597,6 @@ def _build_graph_memory(raw: dict[str, Any]) -> GraphMemorySection:
         ),
         recall_per_stimulus_k=int(raw.get("recall_per_stimulus_k",
                                               d.recall_per_stimulus_k)),
-        max_recall_nodes=int(raw.get("max_recall_nodes",
-                                         d.max_recall_nodes)),
         neighbor_expand_depth=int(raw.get("neighbor_expand_depth",
                                               d.neighbor_expand_depth)),
     )
@@ -661,24 +725,38 @@ class _ConfigBootstrapExit(SystemExit):
 
 
 def load_config(path: str | Path = "config.yaml") -> Config:
+    """Load + parse ``config.yaml``.
+
+    First-run path (file missing): writes a defaults-populated file
+    at ``path`` and returns the parsed Config. Does NOT exit — the
+    runtime caller (``build_runtime_from_config``) detects an
+    incomplete config (no providers / no self_thinking binding) and
+    drops into setup mode (dashboard-only, no heartbeat) so the user
+    can fill in providers + tags from the Web UI before the next
+    restart kicks off the real heartbeat loop.
+    """
     p = Path(path)
     if not p.exists():
         ensure_config(p)
         print(
             f"✨ Generated default config at {p}\n"
-            f"   Next steps:\n"
-            f"     1. Add at least one provider under llm.providers with a\n"
-            f"        valid api_key.\n"
-            f"     2. Bind the required roles under llm.roles: self,\n"
-            f"        hypothalamus, embedding (compact/reranker optional).\n"
-            f"     3. Re-run Krakey.",
+            "   Krakey will start in SETUP MODE (dashboard only, no\n"
+            "   heartbeat) so you can configure it via the Web UI:\n"
+            "     1. http://127.0.0.1:8765 (default dashboard port)\n"
+            "     2. LLM section: add a provider, define a tag, bind\n"
+            "        core_purposes.self_thinking + embedding.\n"
+            "     3. Reflects section: enable the ones you want.\n"
+            "     4. Save → Restart. Krakey then runs heartbeat.",
             file=sys.stderr,
         )
-        raise _ConfigBootstrapExit(1)
+        # Fall through to load the freshly-written defaults; caller
+        # decides what to do (setup mode vs full Runtime).
 
     raw_text = p.read_text(encoding="utf-8")
     raw: dict[str, Any] = yaml.safe_load(raw_text) or {}
     raw = _substitute_env(raw)
+
+    _warn_about_removed_sections(raw)
 
     fatigue = _build_fatigue(raw.get("fatigue") or {})
     _validate_fatigue_thresholds(fatigue)
@@ -687,15 +765,101 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         llm=_build_llm(raw.get("llm") or {}),
         hibernate=_build_hibernate(raw.get("hibernate") or {}),
         fatigue=fatigue,
-        sliding_window=_build_sliding_window(raw.get("sliding_window") or {}),
         graph_memory=_build_graph_memory(raw.get("graph_memory") or {}),
         knowledge_base=_build_kb(raw.get("knowledge_base") or {}),
-        plugins=raw.get("plugins") or {},
+        plugins=_build_plugins(raw),
+        legacy_plugin_configs=raw.get("legacy_plugin_configs") or {},
         sleep=_build_sleep(raw.get("sleep") or {}),
         safety=_build_safety(raw.get("safety") or {}),
         dashboard=_build_dashboard(raw.get("dashboard")),
         sandbox=_build_sandbox(raw.get("sandbox")),
     )
+
+
+def _build_plugins(raw: dict[str, Any]) -> list[str] | None:
+    """Parse the ``plugins:`` field.
+
+    Three states:
+      * key absent       → return None (one-line stderr nudge at
+                           runtime so users notice they have no
+                           plugins enabled)
+      * key empty list   → return [] (explicit "zero plugins")
+      * key string list  → return that list, in order
+
+    Migration: the OLD ``reflects:`` field is silently translated to
+    ``plugins:`` for one release window so users mid-migration still
+    boot. Non-string entries are dropped with a warning.
+    """
+    # Old `reflects:` field migration alias
+    if "plugins" not in raw and "reflects" in raw:
+        print(
+            "config: `reflects:` is deprecated — renamed to `plugins:` "
+            "in the unified plugin refactor (2026-04-26). Treating your "
+            "`reflects:` list as the plugin list this run; please rename "
+            "the key to silence this warning.",
+            file=sys.stderr,
+        )
+        raw = {**raw, "plugins": raw["reflects"]}
+
+    if "plugins" not in raw:
+        return None
+    val = raw.get("plugins")
+    if val is None:
+        return []
+    if not isinstance(val, list):
+        print(
+            f"warning: `plugins:` should be a list, got "
+            f"{type(val).__name__}; treating as empty.",
+            file=sys.stderr,
+        )
+        return []
+    cleaned: list[str] = []
+    for item in val:
+        if not isinstance(item, str) or not item.strip():
+            print(
+                f"warning: `plugins:` entry {item!r} is not a non-empty "
+                "string; skipping.",
+                file=sys.stderr,
+            )
+            continue
+        cleaned.append(item.strip())
+    return cleaned
+
+
+def _warn_about_removed_sections(raw: dict[str, Any]) -> None:
+    """Loud deprecation warnings for the prompt-budget refactor.
+
+    Two fields were removed in favor of per-role LLMParams budgets:
+      * ``sliding_window.max_tokens``     → derived from
+        ``llm.roles.self.params.max_input_tokens *
+        history_token_fraction``.
+      * ``graph_memory.max_recall_nodes`` → replaced by
+        ``llm.roles.self.params.recall_token_budget`` (absolute
+        token cap, not a node count).
+
+    We don't silently map them — the semantics changed (nodes → tokens;
+    global → per-role) so silent mapping would produce surprising
+    behavior. Users get one explicit stderr line per stale field.
+    """
+    sw = raw.get("sliding_window") or {}
+    if isinstance(sw, dict) and "max_tokens" in sw:
+        print(
+            "deprecated: `sliding_window.max_tokens` is no longer used.\n"
+            "  History budget is now derived from "
+            "`llm.roles.self.params.max_input_tokens * "
+            "history_token_fraction`. Remove the sliding_window section "
+            "from your config. Your previous value is being ignored.",
+            file=sys.stderr,
+        )
+    gm = raw.get("graph_memory") or {}
+    if isinstance(gm, dict) and "max_recall_nodes" in gm:
+        print(
+            "deprecated: `graph_memory.max_recall_nodes` is no longer "
+            "used.\n  Recall size is now capped by tokens via "
+            "`llm.roles.self.params.recall_token_budget`. Remove the "
+            "key from your config. Your previous value is being ignored.",
+            file=sys.stderr,
+        )
 
 
 def _validate_fatigue_thresholds(f: FatigueSection) -> None:

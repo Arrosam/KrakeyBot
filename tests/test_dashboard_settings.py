@@ -154,9 +154,9 @@ async def test_post_settings_requires_parsed_or_raw(tmp_path):
 
 
 async def test_config_schema_lists_llm_params(tmp_path):
-    """The dashboard renders LLM role params from this endpoint. It
-    must expose every field on LLMParams so a future field addition
-    doesn't silently drop off the UI."""
+    """The dashboard renders tag params from this endpoint. It must
+    expose every field on LLMParams so a future field addition doesn't
+    silently drop off the UI."""
     p = tmp_path / "config.yaml"
     p.write_text("a: 1\n", encoding="utf-8")
     async with _client(config_path=p) as c:
@@ -164,7 +164,6 @@ async def test_config_schema_lists_llm_params(tmp_path):
     assert r.status_code == 200
     body = r.json()
     assert "llm_params" in body
-    assert "llm_role_defaults" in body
     names = {e["field"] for e in body["llm_params"]}
     assert {"max_output_tokens", "max_input_tokens", "temperature",
             "reasoning_mode", "reasoning_budget_tokens",
@@ -172,21 +171,9 @@ async def test_config_schema_lists_llm_params(tmp_path):
     # Old ambiguous name must not resurface in the schema; it lives
     # only as a YAML read-alias.
     assert "max_tokens" not in names
-
-
-async def test_config_schema_role_defaults_include_known_roles(tmp_path):
-    """Each built-in role name must appear in llm_role_defaults so the
-    UI can pre-fill sensible values when a role is first created."""
-    p = tmp_path / "config.yaml"
-    p.write_text("a: 1\n", encoding="utf-8")
-    async with _client(config_path=p) as c:
-        r = await c.get("/api/config/schema")
-    defaults = r.json()["llm_role_defaults"]
-    for role in ("self", "hypothalamus", "compact", "classifier",
-                 "embedding", "reranker"):
-        assert role in defaults, f"role {role} missing from defaults"
-    # Spot-check a value
-    assert defaults["self"]["max_output_tokens"] == 8192
+    # `llm_role_defaults` was removed in the tag-based refactor —
+    # roles don't exist any more, defaults come from LLMParams itself.
+    assert "llm_role_defaults" not in body
 
 
 async def test_config_schema_reasoning_mode_has_choices(tmp_path):
@@ -222,3 +209,67 @@ async def test_upload_endpoint_saves_files_and_serves_them(tmp_path, monkeypatch
         r2 = await c.get(f["url"])
         assert r2.status_code == 200
         assert r2.content == b"hi there"
+
+
+# ---- Reflects discovery + per-plugin config endpoints ----------------
+
+
+async def test_reflects_available_lists_metadata(tmp_path):
+    """The /api/reflects/available endpoint exposes every Reflect's
+    static metadata so the dashboard can render the available-plugin
+    list without importing plugin code."""
+    p = tmp_path / "config.yaml"
+    p.write_text("a: 1\n", encoding="utf-8")
+    async with _client(config_path=p) as c:
+        r = await c.get("/api/reflects/available")
+    assert r.status_code == 200
+    names = {entry["name"] for entry in r.json()["reflects"]}
+    # All three in-tree built-ins must be discovered
+    assert {"default_hypothalamus", "default_recall_anchor",
+            "default_in_mind"} <= names
+
+    # Hypothalamus declares its `translator` purpose
+    by_name = {e["name"]: e for e in r.json()["reflects"]}
+    purposes = by_name["default_hypothalamus"]["llm_purposes"]
+    assert any(p.get("name") == "translator" for p in purposes)
+
+
+async def test_reflect_config_get_missing_returns_empty(tmp_path):
+    p = tmp_path / "config.yaml"
+    p.write_text("a: 1\n", encoding="utf-8")
+    async with _client(config_path=p) as c:
+        r = await c.get("/api/reflects/some_reflect/config")
+    assert r.status_code == 200
+    assert r.json()["config"] == {}
+
+
+async def test_reflect_config_save_and_read_back(tmp_path, monkeypatch):
+    """POST /api/reflects/<name>/config writes the workspace file;
+    a follow-up GET reads it back. Path is rooted under
+    `workspace/plugins/`; isolate to tmp_path so the test doesn't
+    write into the real workspace."""
+    monkeypatch.chdir(tmp_path)
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text("a: 1\n", encoding="utf-8")
+
+    async with _client(config_path=cfg_path) as c:
+        save = await c.post(
+            "/api/reflects/default_hypothalamus/config",
+            json={"config": {
+                "llm_purposes": {"translator": "fast_generation"},
+            }},
+        )
+        assert save.status_code == 200
+        assert save.json()["restart_required"] is True
+
+        read = await c.get("/api/reflects/default_hypothalamus/config")
+        assert read.status_code == 200
+        body = read.json()["config"]
+        assert body["llm_purposes"] == {"translator": "fast_generation"}
+
+    # File actually landed under workspace/plugins/
+    written = (tmp_path / "workspace" / "plugins"
+               / "default_hypothalamus" / "config.yaml")
+    assert written.exists()
+    parsed = yaml.safe_load(written.read_text(encoding="utf-8"))
+    assert parsed["llm_purposes"]["translator"] == "fast_generation"

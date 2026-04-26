@@ -1,4 +1,23 @@
-"""Self-Model YAML store (DevSpec §13)."""
+"""Self-Model YAML store (DevSpec §13).
+
+Schema is deliberately minimal — only what truly persists across runs
+and is read by Self every beat:
+
+  * ``identity.name`` / ``identity.persona`` — the unchanging core
+    of who Self thinks it is.
+  * ``state.bootstrap_complete`` — runtime gate for the Bootstrap
+    prompt + the `<self-model>` write path.
+
+Anything Self-authored about its current mental state (focus, mood,
+goals) lives in Graph Memory as ``FOCUS`` / ``TARGET`` nodes (already
+the canonical home for those concepts). Run-time bookkeeping (sleep
+cycles, heartbeat counts, last-X timestamps) lives on the Runtime
+object in memory; nothing in Self-model is "statistics".
+
+This is the result of the 2026-04-25 self-model slim refactor —
+see docs/design/reflects-and-self-model.md (Part 1) for the full
+rationale.
+"""
 from __future__ import annotations
 
 import copy
@@ -11,23 +30,7 @@ import yaml
 def default_self_model() -> dict[str, Any]:
     return {
         "identity": {"name": "", "persona": ""},
-        "state": {
-            "mood_baseline": "neutral",
-            "energy_level": 1.0,
-            "focus_topic": "",
-            "is_sleeping": False,
-            "bootstrap_complete": False,
-        },
-        "goals": {"active": [], "completed": []},
-        "relationships": {"users": []},
-        "statistics": {
-            "total_heartbeats": 0,
-            "total_sleep_cycles": 0,
-            "uptime_hours": 0.0,
-            "first_boot": "",
-            "last_heartbeat": "",
-            "last_sleep": "",
-        },
+        "state": {"bootstrap_complete": False},
     }
 
 

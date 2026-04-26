@@ -174,3 +174,11 @@ async def compact_if_needed(
         await _split_and_compact_single_round(
             window, gm, llm, recall_fn, split_chunk_tokens,
         )
+
+
+# Public alias for callers that need to compact a single
+# already-popped round. The overall-input-budget enforcer in
+# main.Runtime uses this when it prunes oldest history to make
+# room for the current prompt (separate trigger from
+# `compact_if_needed`, same per-round mechanics).
+compact_round = _compact_round

@@ -7,8 +7,9 @@ KnowledgeBase, and full Sleep.
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -21,7 +22,11 @@ from src.dashboard.app_factory import create_app as create_dashboard_app
 from src.dashboard.events import EventBroadcaster
 from src.dashboard.server import DashboardServer
 from src.dashboard.web_chat import WebChatHistory
-from src.hypothalamus import Hypothalamus, TentacleCall
+# Hypothalamus class itself is no longer instantiated by Runtime —
+# wrapped by DefaultHypothalamusReflect inside the Reflect registry
+# since 2026-04-25. Only TentacleCall (the dataclass we receive from
+# the translate() result) is still used directly here.
+from src.hypothalamus import TentacleCall
 from src.models.self_model import SelfModelStore
 from src.interfaces.sensory import SensoryRegistry
 from src.interfaces.tentacle import TentacleRegistry
@@ -29,7 +34,7 @@ from src.llm.client import LLMClient
 from src.memory.graph_memory import GraphMemory
 from src.memory.knowledge_base import KBRegistry
 from src.memory.recall import IncrementalRecall, Reranker
-from src.models.config import Config, load_config
+from src.models.config import Config, LLMParams, load_config
 from src.models.config_backup import backup_config
 from src.models.stimulus import Stimulus
 from src.prompt.builder import PromptBuilder, SlidingWindowRound
@@ -79,6 +84,29 @@ class RuntimeDeps:
     genesis_path: str | None = None         # default: workspace/GENESIS.md
     config_path: str | None = None          # default: config.yaml — for dashboard
     backup_dir: str | None = None           # default: workspace/backups
+    # Per-plugin YAML root. Must be overridable so tests can point at
+    # a tmpdir — otherwise the test helper's `config.plugins["web_chat"]`
+    # (e.g. a tmpdir history_path) gets shadowed by the production
+    # ``workspace/plugin-configs/web_chat.yaml`` that FilePluginConfigStore
+    # reads first, and test messages leak into the real user chat log.
+    plugin_configs_root: str | None = None  # default: workspace/plugin-configs
+    # in_mind Reflect's state file. None → workspace/data/in_mind.json
+    # (the locked-in production path, see design doc Reflect #3).
+    # Tests pass a tmpdir so update_in_mind dispatches don't bleed
+    # into the production state.
+    in_mind_state_path: str | None = None
+    # Root directory for per-Reflect config files. Each enabled Reflect
+    # reads ``<root>/<name>/config.yaml`` (a pure-text settings file
+    # the plugin can safely access). None → ``workspace/reflects``.
+    # Tests pass a tmpdir so plugin config edits don't bleed into the
+    # production workspace.
+    reflect_configs_root: str | None = None
+    # Shared LLMClient cache keyed by tag name. Populated by
+    # build_runtime_from_config for core purposes; Runtime adds plugin
+    # purpose entries on top. Sharing the cache means two purposes that
+    # map to the same tag share one client (saves connections + keeps
+    # rate-limit accounting consistent).
+    llm_clients_by_tag: dict[str, Any] = field(default_factory=dict)
 
 
 MAX_RECALL_RETRIES = 1
@@ -107,11 +135,26 @@ class Runtime:
         self.compact_llm = deps.compact_llm
         self.embedder = deps.embedder
         self.reranker = deps.reranker
-        self.hypothalamus = Hypothalamus(deps.hypo_llm)
+        # Reflect registry — kind-grouped, ordered storage of pluggable
+        # mechanisms. Plugin loader runs LATER (after tentacles +
+        # sensories registries exist) since a single plugin can
+        # contribute components of all three kinds; loading them
+        # before all three registries are built would crash.
+        from src.reflects import ReflectRegistry
+        self.reflects = ReflectRegistry()
         self.buffer = StimulusBuffer()
-        self.window = SlidingWindow(
-            max_tokens=self.config.sliding_window.max_tokens,
+        # History token budget is derived from the Self role's input
+        # context window × history_token_fraction. The Self role's
+        # params.max_input_tokens is already resolved by the config
+        # loader (YAML > model lookup > 128k default) so `int()` is
+        # safe. Only Self consumes this window, so we key it off
+        # Self's role config.
+        self_params = self.config.llm.core_params("self_thinking") or LLMParams()
+        _history_budget = int(
+            (self_params.max_input_tokens or 128_000)
+            * self_params.history_token_fraction
         )
+        self.window = SlidingWindow(history_token_budget=_history_budget)
         self.builder = PromptBuilder()
 
         gm_path = self.config.graph_memory.db_path or ":memory:"
@@ -145,9 +188,14 @@ class Runtime:
         # may not exist yet (loader hasn't run) — peek falls back to
         # legacy without materializing anything.
         from src.plugins.plugin_config import FilePluginConfigStore
+        # Root is overridable (see RuntimeDeps.plugin_configs_root) so
+        # tests can isolate at a tmpdir and their legacy-dict overrides
+        # actually take effect.
+        plugin_root = Path(deps.plugin_configs_root
+                            or "workspace/plugin-configs")
         self._plugin_config_store = FilePluginConfigStore(
-            root=Path("workspace/plugin-configs"),
-            legacy_plugins=self.config.plugins,
+            root=plugin_root,
+            legacy_plugins=self.config.legacy_plugin_configs,
         )
         wc_cfg = self._plugin_config_store.peek_config("web_chat")
         chat_path = wc_cfg.get("history_path",
@@ -161,15 +209,31 @@ class Runtime:
         self.batch_tracker = BatchTrackerSensory()
         self.sensories.register(self.batch_tracker)
 
-        # Plugin loading is deferred until after self.log is set (below)
-        # because discover_plugins logs each plugin's success or failure.
+        # Unified-format plugins (meta.yaml + components list). Each
+        # plugin can contribute reflect / tentacle / sensory components
+        # in any combination — see src/plugins/unified_discovery.py +
+        # docs/design/reflects-and-self-model.md (Samuel 2026-04-26).
+        # Has to run AFTER the three registries exist (above) because
+        # one plugin may register into any of them.
+        self._register_plugins_from_config(deps)
+
+        # Legacy MANIFEST-format plugin loading (tentacles + sensories
+        # in the old src/plugins/builtin/<name>/__init__.py shape) is
+        # deferred until after self.log is set because discover_plugins
+        # logs each plugin's success or failure.
         self._plugin_infos: list = []
 
         # Self-model + Bootstrap state (Phase 2.1)
         sm_path = deps.self_model_path or "workspace/self_model.yaml"
-        gen_path = deps.genesis_path or "workspace/GENESIS.md"
+        # GENESIS is read lazily (see `_get_genesis_text`) — in steady
+        # state (bootstrap complete, GM populated) the file is never
+        # touched, and `self._genesis_text` stays None to avoid both
+        # the I/O on every start AND the correctness trap of having
+        # stale genesis text sitting in memory when it's not supposed
+        # to influence the prompt.
+        self._genesis_path = deps.genesis_path or "workspace/GENESIS.md"
+        self._genesis_text: str | None = None
         self._self_model_store = SelfModelStore(sm_path)
-        self._genesis_text = load_genesis(gen_path)
         self.self_model, detected_bootstrap = load_self_model_or_default(sm_path)
         # Provisional value used by tests that bypass run() / data probe.
         # Re-derived from GM+KB emptiness once gm.initialize() runs (see
@@ -181,6 +245,13 @@ class Runtime:
                               else detected_bootstrap)
 
         self.heartbeat_count = 0
+        # Sleep cycle counter — runtime-only. Used to be persisted in
+        # self_model.statistics.total_sleep_cycles, but stats was the
+        # bulk of self_model's noise (most fields never written) so the
+        # 2026-04-25 slim refactor pulled them all out. Per-process
+        # counter is enough for /status and dashboard display; cross-run
+        # totals weren't actually used by any product feature.
+        self._sleep_cycles = 0
         self._stop = False
         self._min = hibernate_min if hibernate_min is not None else self.config.hibernate.min_interval
         self._max = hibernate_max if hibernate_max is not None else self.config.hibernate.max_interval
@@ -231,15 +302,171 @@ class Runtime:
             except Exception as e:  # noqa: BLE001
                 self.log.runtime_error(f"config backup failed: {e}")
 
-    def _new_recall(self) -> IncrementalRecall:
-        return IncrementalRecall(
-            self.gm,
-            embedder=self.embedder,
-            per_stimulus_k=self.config.graph_memory.recall_per_stimulus_k,
-            max_recall_nodes=self.config.graph_memory.max_recall_nodes,
-            reranker=self.reranker,
-            neighbor_depth=self.config.graph_memory.neighbor_expand_depth,
+        # Reflect attach() lifecycle hook — fires after every other
+        # subsystem (TentacleRegistry, plugin loader, etc.) is up so
+        # Reflects that need to register their own tentacles
+        # (in_mind's update_in_mind, and future hooks) can do so
+        # without ordering surprises. attach_all is exception-tolerant
+        # by contract; one bad Reflect won't block the others.
+        self.reflects.attach_all(self)
+
+    def _register_plugins_from_config(
+        self, deps: "RuntimeDeps",
+    ) -> None:
+        """Walk ``config.plugins`` and lazily load each plugin's
+        components.
+
+        For each enabled plugin name:
+          1. Look up its metadata (no plugin code imported yet).
+          2. Read its per-plugin config from
+             ``<reflect_configs_root>/<name>/config.yaml`` —
+             pure-text settings the plugin is allowed to see (no
+             API keys / providers).
+          3. For each declared component:
+             a. Resolve its declared ``llm_purposes`` entries to
+                ``LLMClient`` instances via the shared tag cache,
+                using the user's ``llm_purposes`` mapping in the
+                per-plugin config.
+             b. Build a ``PluginContext`` for that component.
+             c. Lazy-import the factory module + invoke factory.
+             d. Route the returned object to the right registry by
+                component kind (reflect → self.reflects, tentacle →
+                self.tentacles, sensory → self.sensories).
+
+        Failure modes are isolated per-plugin AND per-component:
+        broken metadata, missing plugin config, factory exceptions,
+        and unbound purposes all log + skip without blocking
+        startup of the rest. Plugin model is strictly additive
+        (CLAUDE.md invariant).
+
+        Phase 1 (Samuel 2026-04-26): only the new meta.yaml-format
+        plugins go through here. Tentacle/sensory plugins on the
+        legacy ``MANIFEST = {}`` shape are still loaded by
+        ``src.plugins.loader.discover_plugins`` (called later in
+        Runtime construction); Phase 2 will fold them in too.
+        """
+        from src.plugins.unified_discovery import (
+            discover_plugins as _discover_unified, load_component,
         )
+        from src.reflects.context import PluginContext, load_plugin_config
+
+        names = self.config.plugins
+        if names is None:
+            print(
+                "config: no `plugins:` section in config.yaml — "
+                "starting with zero unified plugins. Add an explicit "
+                "list (e.g. `plugins: [default_recall_anchor]`) to "
+                "enable any. Available built-ins: "
+                f"{sorted(_discover_unified().keys())}",
+                file=sys.stderr,
+            )
+            return
+        if not names:
+            return  # explicit empty list: respect, no nag
+
+        all_meta = _discover_unified()
+        cfg_root = Path(deps.reflect_configs_root or "workspace/plugins")
+
+        for plugin_name in names:
+            meta = all_meta.get(plugin_name)
+            if meta is None:
+                print(
+                    f"config: unknown plugin {plugin_name!r} — skipping. "
+                    f"Available: {sorted(all_meta.keys())}",
+                    file=sys.stderr,
+                )
+                continue
+
+            plugin_cfg = load_plugin_config(plugin_name, cfg_root)
+            user_purposes = plugin_cfg.get("llm_purposes") or {}
+            if not isinstance(user_purposes, dict):
+                print(
+                    f"config: {plugin_name}/config.yaml `llm_purposes:` "
+                    "must be a mapping; ignoring all purpose bindings",
+                    file=sys.stderr,
+                )
+                user_purposes = {}
+
+            for component in meta.components:
+                ctx_llms: dict[str, Any] = {}
+                for purpose_decl in component.llm_purposes:
+                    purpose_name = str(purpose_decl.get("name", "")).strip()
+                    if not purpose_name:
+                        continue
+                    tag_name = user_purposes.get(purpose_name)
+                    if not isinstance(tag_name, str) or not tag_name:
+                        continue
+                    client = resolve_llm_for_tag(
+                        self.config, tag_name, deps.llm_clients_by_tag,
+                    )
+                    if client is None:
+                        continue
+                    ctx_llms[purpose_name] = client
+
+                ctx = PluginContext(
+                    deps=deps, plugin_name=plugin_name,
+                    config=plugin_cfg, llms=ctx_llms,
+                )
+
+                try:
+                    instance = load_component(component, ctx)
+                except Exception as e:  # noqa: BLE001
+                    print(
+                        f"config: plugin {plugin_name!r} component "
+                        f"{component.kind!r} failed to load: "
+                        f"{type(e).__name__}: {e}; skipping.",
+                        file=sys.stderr,
+                    )
+                    continue
+                if instance is None:
+                    continue  # factory opted out (e.g. unbound LLM)
+
+                self._register_component(plugin_name, component, instance)
+
+    def _register_component(
+        self, plugin_name: str, component: "Any", instance: Any,
+    ) -> None:
+        """Route a built component to the right registry by kind."""
+        kind = component.kind
+        try:
+            if kind == "reflect":
+                self.reflects.register(instance)
+            elif kind == "tentacle":
+                self.tentacles.register(instance)
+            elif kind == "sensory":
+                self.sensories.register(instance)
+            else:
+                print(
+                    f"config: plugin {plugin_name!r} produced unknown "
+                    f"component kind {kind!r}; skipping",
+                    file=sys.stderr,
+                )
+        except Exception as e:  # noqa: BLE001
+            print(
+                f"config: plugin {plugin_name!r} {kind} registration "
+                f"failed: {type(e).__name__}: {e}",
+                file=sys.stderr,
+            )
+
+    def _new_recall(self) -> IncrementalRecall:
+        # Routed through the Reflect registry (kind="recall_anchor")
+        # since 2026-04-25. The default built-in mirrors the previous
+        # in-line factory; future Reflects (#2 LLM-anchor) will replace
+        # it from config without Runtime needing to know the difference.
+        return self.reflects.make_recall(self)
+
+    @property
+    def is_setup_mode(self) -> bool:
+        """True when no Self LLM is bound (config incomplete).
+
+        In this state Krakey still starts the dashboard so the user
+        can finish configuration via Web UI, but the heartbeat loop
+        is skipped. After the user fills in providers + tags + the
+        ``self_thinking`` core purpose binding and clicks "Restart"
+        in the dashboard, the next process boot will see a complete
+        config and run the real heartbeat.
+        """
+        return self.self_llm is None
 
     async def run(self, iterations: int | None = None) -> None:
         await self.gm.initialize()
@@ -247,6 +474,12 @@ class Runtime:
         await self._refine_bootstrap_from_data()
         await self.sensories.start_all(self.buffer)
         await self._maybe_start_dashboard()
+
+        if self.is_setup_mode:
+            await self._run_setup_mode()
+            await self.sensories.stop_all()
+            return
+
         self._recall = self._new_recall()
         try:
             count = 0
@@ -261,6 +494,33 @@ class Runtime:
             pending = [t for t in self._classify_tasks if not t.done()]
             for t in pending:
                 t.cancel()
+
+    async def _run_setup_mode(self) -> None:
+        """Setup-mode loop: dashboard is up, heartbeat is skipped.
+
+        Idle here until the user signals stop (Ctrl-C / kill / a
+        dashboard /api/restart). This gives the Web UI a process to
+        live in while the user fills in the missing providers + tags
+        + ``core_purposes.self_thinking`` binding.
+        """
+        host = self.config.dashboard.host
+        port = self.config.dashboard.port
+        msg = (
+            "\n=========================================================\n"
+            "  Krakey is in SETUP MODE.\n\n"
+            "  No `core_purposes.self_thinking` tag binding found in\n"
+            "  config.yaml — the heartbeat is paused. Open the Web UI\n"
+            "  to finish setup:\n\n"
+            f"      http://{host}:{port}\n\n"
+            "  Then in the LLM section: add a provider, define a tag,\n"
+            "  bind core_purposes.self_thinking + embedding. Save +\n"
+            "  Restart. The next boot will run the real heartbeat.\n"
+            "=========================================================\n"
+        )
+        self.log.runtime_error(msg)
+        # Idle until externally stopped.
+        while not self._stop:
+            await asyncio.sleep(1.0)
 
     def _load_plugins(self):
         """Discover plugin projects from both roots and return one
@@ -732,10 +992,41 @@ class Runtime:
             await self.buffer.push(s)
         return recall_result
 
-    async def _phase_run_self(self, stimuli, recall_result,
-                                counts: "_GMCounts"):
-        """Build prompt + call Self LLM + parse. Returns None on LLM error
-        (sleeps min_interval and short-circuits the heartbeat)."""
+    def _get_genesis_text(self) -> str:
+        """Lazy-load GENESIS.md on first use.
+
+        Bootstrap is the ONLY consumer of this text — after
+        bootstrap_complete flips to True, the agent should never see
+        GENESIS again. Reading the file unconditionally at startup
+        was both wasteful I/O (80% of runs are steady-state) and a
+        correctness trap: once stale genesis bytes live on ``self``
+        it's too easy to accidentally surface them later.
+
+        Cached on first call so repeat heartbeats during a long
+        Bootstrap don't re-read the file 50 times.
+        """
+        if self._genesis_text is None:
+            self._genesis_text = load_genesis(self._genesis_path)
+        return self._genesis_text
+
+    def _build_self_prompt(self, stimuli, recall_result,
+                              counts: "_GMCounts") -> str:
+        # Suppress the [ACTION FORMAT] layer when a hypothalamus
+        # Reflect is registered: the translator owns the dispatch
+        # path, and teaching Self structured tags would conflict with
+        # its job. See docs/design/reflects-and-self-model.md
+        # Reflect #1 design.
+        in_mind_state = self.reflects.in_mind_state()
+        # Standing instruction layer for in_mind. Imported lazily so
+        # the IN_MIND_INSTRUCTIONS_LAYER constant only enters memory
+        # when an in_mind Reflect is registered — keeps the lazy-load
+        # discipline of the plugin folder.
+        in_mind_instructions: str | None = None
+        if in_mind_state is not None:
+            from src.plugins.builtin.default_in_mind.prompt import (
+                IN_MIND_INSTRUCTIONS_LAYER,
+            )
+            in_mind_instructions = IN_MIND_INSTRUCTIONS_LAYER
         prompt = self.builder.build(
             self_model=self.self_model,
             capabilities=self._capabilities(),
@@ -746,10 +1037,96 @@ class Runtime:
             window=self.window.get_rounds(),
             stimuli=stimuli,
             current_time=datetime.now(),
+            suppress_action_format=self.reflects.has_hypothalamus(),
+            in_mind=in_mind_state,
+            in_mind_instructions=in_mind_instructions,
         )
         if self.is_bootstrap:
-            prompt = (BOOTSTRAP_PROMPT.format(genesis_text=self._genesis_text)
+            prompt = (BOOTSTRAP_PROMPT.format(genesis_text=self._get_genesis_text())
                       + "\n\n" + prompt)
+        return prompt
+
+    async def _enforce_input_budget(self, stimuli, recall_result,
+                                       counts: "_GMCounts"):
+        """Overall prompt-budget enforcement (DevSpec \u00a710.2).
+
+        After recall is finalized and we have a candidate prompt, if
+        the full prompt exceeds the Self role's ``max_input_tokens``,
+        prune the oldest history round into GM (normal compact path)
+        and re-run recall (GM changed \u2192 new nodes may be more
+        relevant). Repeat until the prompt fits or the window is empty.
+
+        This is the second line of defense: ``_phase_compact`` already
+        caps history at ``max_input_tokens * history_token_fraction``,
+        but the rest of the prompt (DNA + self-model + capabilities +
+        stimulus + recall + status) can push the total over budget
+        even when history is within its own share. When that happens
+        we borrow from history (oldest rounds are least valuable) and
+        promote them to GM so nothing is lost.
+
+        Returns the final (prompt, recall_result) pair. Hard cap on
+        iterations so a pathological configuration can't spin forever.
+        """
+        from src.runtime.compact import compact_round
+        from src.utils.tokens import estimate_tokens
+
+        self_params = self.config.llm.core_params("self_thinking") or LLMParams()
+        budget = int(self_params.max_input_tokens or 128_000)
+
+        async def _recall_fn(text: str):
+            return await self.gm.fts_search(text, top_k=10)
+
+        prompt = self._build_self_prompt(stimuli, recall_result, counts)
+        max_iters = 10  # safety bound — should never need more than 2-3
+        for _ in range(max_iters):
+            total = estimate_tokens(prompt)
+            if total <= budget:
+                return prompt, recall_result
+            if not self.window.rounds:
+                # Nothing left to borrow from. Log loud and send
+                # anyway \u2014 provider will return its own error, which
+                # surfaces through the existing Self-LLM-error path.
+                self.log.hb_warn(
+                    f"prompt {total} > max_input_tokens {budget} and "
+                    "window is empty; sending anyway"
+                )
+                return prompt, recall_result
+            oldest = self.window.pop_oldest()
+            assert oldest is not None
+            self.log.hb(
+                f"input budget: prompt {total} > {budget}; pruning oldest "
+                f"round (heartbeat #{oldest.heartbeat_id}) into GM"
+            )
+            try:
+                await compact_round(oldest, self.gm, self.compact_llm,
+                                      _recall_fn)
+            except Exception as e:  # noqa: BLE001 \u2014 never crash the beat
+                self.log.hb_warn(
+                    f"budget-driven compact failed: {e} \u2014 round "
+                    f"#{oldest.heartbeat_id} dropped without GM write"
+                )
+            # Re-run recall against the (possibly) enriched GM.
+            fresh = self._new_recall()
+            await fresh.add_stimuli(stimuli)
+            recall_result = await fresh.finalize()
+            self._recall = fresh
+            prompt = self._build_self_prompt(stimuli, recall_result, counts)
+        # Hit the iteration ceiling without converging. Ship what we
+        # have plus a loud warning; a follow-up beat will try again.
+        self.log.hb_warn(
+            f"input budget not satisfied after {max_iters} prune "
+            f"iterations; sending oversized prompt "
+            f"({estimate_tokens(prompt)} > {budget})"
+        )
+        return prompt, recall_result
+
+    async def _phase_run_self(self, stimuli, recall_result,
+                                counts: "_GMCounts"):
+        """Build prompt + call Self LLM + parse. Returns None on LLM error
+        (sleeps min_interval and short-circuits the heartbeat)."""
+        prompt, recall_result = await self._enforce_input_budget(
+            stimuli, recall_result, counts,
+        )
         self._record_prompt(self.heartbeat_count, prompt)
         self.events.publish(PromptBuiltEvent(
             heartbeat_id=self.heartbeat_count,
@@ -819,14 +1196,28 @@ class Runtime:
                 self.log.runtime_error(f"auto_ingest error: {e}")
 
     async def _phase_apply_hypothalamus(self, parsed, recall_result) -> bool:
-        """Returns True iff Self requested sleep (caller should short-circuit
-        and run _perform_sleep)."""
+        """Convert Self's response into tentacle calls + dispatch.
+
+        Routes through ``self.reflects.dispatch_decision`` which picks
+        the path:
+          * Hypothalamus Reflect registered → LLM translation of
+            ``parsed.decision`` (existing behavior).
+          * No Hypothalamus Reflect → script-only action executor
+            scans ``parsed.raw`` for ``[ACTION]...[/ACTION]`` JSONL.
+
+        Returns True iff Self requested sleep (caller short-circuits
+        and runs _perform_sleep).
+        """
         decision = parsed.decision.strip().lower()
         if not decision or decision in ("no action", "无行动"):
+            # Even "no action" decisions can't have ACTION blocks, so
+            # short-circuit. (Action executor would also produce empty
+            # but skip the work.)
             return False
         try:
-            result = await self.hypothalamus.translate(
-                parsed.decision, self.tentacles.list_descriptions(),
+            result = await self.reflects.dispatch_decision(
+                parsed.raw, parsed.decision,
+                self.tentacles.list_descriptions(),
             )
         except Exception as e:  # noqa: BLE001
             # Include exception class — some exceptions (empty str, None
@@ -909,16 +1300,12 @@ class Runtime:
             f"kbs={stats['kbs_created']}, index_nodes={stats['index_nodes']}"
         )
 
-        # Self-model bookkeeping
-        cycles = (self.self_model.get("statistics", {})
-                   .get("total_sleep_cycles", 0)) + 1
-        self.self_model = self._self_model_store.update({
-            "state": {"is_sleeping": False},
-            "statistics": {
-                "total_sleep_cycles": cycles,
-                "last_sleep": datetime.now().isoformat(),
-            },
-        })
+        # Sleep bookkeeping is a per-process runtime concern, not
+        # something Self needs to remember across restarts. Bumping
+        # the in-memory counter is enough for /status output + the
+        # dashboard's last_sleep stamp (set client-side on the
+        # `sleep_done` event).
+        self._sleep_cycles += 1
 
         # Wake-up stimulus
         await self.buffer.push(Stimulus(
@@ -1063,55 +1450,141 @@ def _delta_str(delta: int) -> str:
 
 
 def _summarize_stimuli(stimuli: list[Stimulus]) -> str:
+    """Render the stimulus list for persistence in a ``SlidingWindowRound``.
+
+    This text is what Self sees in the ``[HISTORY]`` layer every
+    subsequent beat — truncation here is destructive: downstream
+    mechanisms (recall-anchor extraction, compact summarization,
+    bootstrap-signal detection, user-message echo checks) all rely on
+    the full content. The window's token budget handles overflow via
+    compact_if_needed, so we don't need a blunt character cap here.
+    """
     if not stimuli:
         return "(none)"
-    return " | ".join(f"{s.source}: {s.content[:60]}" for s in stimuli)
+    return " | ".join(f"{s.source}: {s.content}" for s in stimuli)
 
 
 # ---------------- production builder ----------------
 
 
-def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
-    cfg = load_config(config_path)
-    self_role = cfg.llm.roles["self"]
-    hypo_role = cfg.llm.roles["hypothalamus"]
-    compact_role = cfg.llm.roles.get("compact", self_role)
-    embedding_role = cfg.llm.roles["embedding"]
+def resolve_llm_for_tag(
+    cfg: Config, tag_name: str | None,
+    cache: dict[str, "LLMClient"],
+) -> "LLMClient | None":
+    """Build (or fetch from cache) the LLMClient for a tag name.
 
-    self_llm = LLMClient(cfg.llm.providers[self_role.provider],
-                           self_role.model, params=self_role.params)
-    hypo_llm = LLMClient(cfg.llm.providers[hypo_role.provider],
-                           hypo_role.model, params=hypo_role.params)
-    compact_llm = LLMClient(cfg.llm.providers[compact_role.provider],
-                              compact_role.model,
-                              params=compact_role.params)
-    classify_llm = compact_llm  # reuse
-    embed_client = LLMClient(cfg.llm.providers[embedding_role.provider],
-                               embedding_role.model,
-                               params=embedding_role.params)
+    Shared between the core-purpose loader (build_runtime_from_config)
+    and the per-plugin loader (Runtime._register_reflects_from_config)
+    so that two purposes pointing at the same tag share one client
+    instance — keeps connection state + future rate-limit accounting
+    consistent.
+
+    Returns None for: empty tag_name, missing tag in cfg.llm.tags,
+    malformed provider field, or provider name not in cfg.llm.providers.
+    Each failure mode logs a single stderr warning so the user can
+    see what to fix; the runtime continues without that LLM (strictly
+    additive plugin model — bad config doesn't crash startup).
+    """
+    if not tag_name:
+        return None
+    cached = cache.get(tag_name)
+    if cached is not None:
+        return cached
+    tag = cfg.llm.tags.get(tag_name)
+    if tag is None:
+        print(f"warning: tag {tag_name!r} not defined in llm.tags",
+              file=sys.stderr)
+        return None
+    try:
+        provider_name, model_name = tag.split_provider()
+    except ValueError as e:
+        print(f"warning: tag {tag_name!r} has bad provider field: {e}",
+              file=sys.stderr)
+        return None
+    provider = cfg.llm.providers.get(provider_name)
+    if provider is None:
+        print(
+            f"warning: tag {tag_name!r} references unknown provider "
+            f"{provider_name!r}", file=sys.stderr,
+        )
+        return None
+    client = LLMClient(provider, model_name, params=tag.params)
+    cache[tag_name] = client
+    return client
+
+
+def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
+    """Construct a production Runtime from ``config.yaml``.
+
+    Tag-based resolution path (Samuel 2026-04-26 refactor):
+      1. ``cfg.llm.tags`` → name → (provider, model, params)
+      2. ``cfg.llm.core_purposes`` → core purpose name → tag name
+      3. ``cfg.llm.embedding`` / ``cfg.llm.reranker`` → tag name
+         (model-type slots, not "purposes")
+
+    Each LLMClient is built once per tag name and reused across all
+    purposes that share it.
+    """
+    cfg = load_config(config_path)
+
+    # Build LLMClient cache keyed by tag name. Multiple purposes that
+    # point at the same tag share a single client. The cache is also
+    # passed through to plugin loaders via RuntimeDeps so plugin
+    # purposes resolve from the same cache.
+    client_cache: dict[str, LLMClient] = {}
+
+    def _client_for_tag(tag_name: str | None) -> LLMClient | None:
+        return resolve_llm_for_tag(cfg, tag_name, client_cache)
+
+    # Core purposes (Self / compact / classifier ...). Self is required
+    # for the heartbeat to fire; if missing, we DON'T raise — the
+    # Runtime drops into "setup mode" (dashboard runs, heartbeat
+    # skipped) so the user can complete the config via Web UI without
+    # having to hand-edit YAML before they ever see Krakey's UI.
+    self_llm = _client_for_tag(cfg.llm.core_purposes.get("self_thinking"))
+    compact_llm = _client_for_tag(cfg.llm.core_purposes.get("compact"))
+    classify_llm = (
+        _client_for_tag(cfg.llm.core_purposes.get("classifier"))
+        or compact_llm  # historical reuse
+    )
+    if compact_llm is None:
+        compact_llm = self_llm  # last-resort fallback so sleep doesn't crash
+        # (in setup mode self_llm is also None — that's fine, sleep
+        # never runs without a heartbeat)
+
+    # Embedding + reranker (model-type slots, not purposes)
+    embed_client = _client_for_tag(cfg.llm.embedding)
 
     async def embedder(text: str) -> list[float]:
+        if embed_client is None:
+            raise RuntimeError(
+                "no embedding tag bound — set llm.embedding to a tag name "
+                "in config.yaml (or use the dashboard's LLM section)"
+            )
         return await embed_client.embed(text)
 
     reranker = None
-    rerank_role = cfg.llm.roles.get("reranker")
-    if rerank_role is not None:
-        reranker_client = LLMClient(
-            cfg.llm.providers[rerank_role.provider], rerank_role.model,
-            params=rerank_role.params,
-        )
-
+    reranker_client = _client_for_tag(cfg.llm.reranker)
+    if reranker_client is not None:
         class _RerankerAdapter:
             async def rerank(self, query, docs):
                 return await reranker_client.rerank(query, docs)
-
         reranker = _RerankerAdapter()
+
+    # hypo_llm is no longer eagerly required at the core level — it's
+    # bound through the per-plugin config of `default_hypothalamus`.
+    # We still keep the field on RuntimeDeps for back-compat with
+    # existing plugin factories that pull `deps.hypo_llm`. Resolve
+    # from the dedicated `hypothalamus` core purpose if the user
+    # mapped one (compat shim), else None.
+    hypo_llm = _client_for_tag(cfg.llm.core_purposes.get("hypothalamus"))
 
     deps = RuntimeDeps(
         config=cfg, self_llm=self_llm, hypo_llm=hypo_llm,
         compact_llm=compact_llm,
         classify_llm=classify_llm, embedder=embedder, reranker=reranker,
         config_path=str(config_path),
+        llm_clients_by_tag=client_cache,  # shared with plugin loader
     )
     return Runtime(deps)
 
