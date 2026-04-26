@@ -1,0 +1,317 @@
+"""Plugin registration + dashboard introspection — extracted from Runtime.
+
+Owns three responsibilities that used to live as ``Runtime`` methods
+on a 1300-line god class:
+
+  1. **register_from_config(deps)** — walk ``config.plugins`` and
+     lazily load each enabled plugin's meta.yaml components into
+     the right registry (reflect / tentacle / sensory).
+  2. **derive_plugin_infos()** — build a ``PluginInfo`` list from the
+     populated registries so the dashboard's plugins endpoint can
+     describe what's loaded.
+  3. **plugin_report() / update_plugin_config(...)** — the
+     dashboard read + write surface, kept here so all "plugin"
+     concerns share one home.
+
+Runtime composes the registrar in its ``__init__`` and exposes
+``plugin_report`` + ``update_plugin_config`` as one-line facades.
+The two registry mutators (``_register_plugins_from_config`` and
+``_register_component``) survive on Runtime as facades only because
+two existing tests call them directly; new code should reach for
+``runtime._plugin_registrar.register_from_config(deps)`` instead.
+
+Failure modes are isolated per-plugin AND per-component (broken
+metadata, missing config, factory exceptions, unbound LLM
+purposes) — they log to stderr and skip without blocking startup
+of the rest. Strictly additive plugin model, per CLAUDE.md.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.interfaces.reflect import ReflectRegistry
+    from src.interfaces.sensory import SensoryRegistry
+    from src.interfaces.tentacle import TentacleRegistry
+    from src.models.config import Config
+    from src.plugins.plugin_config import FilePluginConfigStore
+    from src.runtime.runtime import RuntimeDeps
+
+
+class PluginRegistrar:
+    """Loads meta.yaml plugins into the runtime's three registries +
+    serves the dashboard's read/write surface for plugin config."""
+
+    def __init__(
+        self,
+        *,
+        config: "Config",
+        reflects: "ReflectRegistry",
+        tentacles: "TentacleRegistry",
+        sensories: "SensoryRegistry",
+        plugin_config_store: "FilePluginConfigStore",
+        services: dict[str, Any],
+    ):
+        self._config = config
+        self._reflects = reflects
+        self._tentacles = tentacles
+        self._sensories = sensories
+        self._store = plugin_config_store
+        self._services = services
+        self._infos: list = []
+
+    # ---- registration ---------------------------------------------------
+
+    def register_from_config(self, deps: "RuntimeDeps") -> None:
+        """Walk ``config.plugins`` and lazily load each plugin's components.
+
+        For each enabled plugin name:
+          1. Look up its metadata (no plugin code imported yet).
+          2. Read its per-plugin config from
+             ``<reflect_configs_root>/<name>/config.yaml`` —
+             pure-text settings the plugin is allowed to see (no
+             API keys / providers).
+          3. For each declared component:
+             a. Resolve its declared ``llm_purposes`` entries to
+                ``LLMClient`` instances via the shared tag cache,
+                using the user's ``llm_purposes`` mapping in the
+                per-plugin config.
+             b. Build a ``PluginContext`` for that component.
+             c. Lazy-import the factory module + invoke factory.
+             d. Route the returned object to the right registry by
+                component kind.
+        """
+        from src.interfaces.plugin_context import (
+            PluginContext, load_plugin_config,
+        )
+        from src.plugins.unified_discovery import (
+            discover_plugins as _discover, load_component,
+        )
+        from src.runtime.runtime import resolve_llm_for_tag
+
+        names = self._config.plugins
+        if names is None:
+            print(
+                "config: no `plugins:` section in config.yaml — "
+                "starting with zero unified plugins. Add an explicit "
+                "list (e.g. `plugins: [default_recall_anchor]`) to "
+                "enable any. Available built-ins: "
+                f"{sorted(_discover().keys())}",
+                file=sys.stderr,
+            )
+            return
+        if not names:
+            return  # explicit empty list: respect, no nag
+
+        all_meta = _discover()
+        cfg_root = Path(deps.reflect_configs_root or "workspace/plugins")
+
+        for plugin_name in names:
+            meta = all_meta.get(plugin_name)
+            if meta is None:
+                print(
+                    f"config: unknown plugin {plugin_name!r} — skipping. "
+                    f"Available: {sorted(all_meta.keys())}",
+                    file=sys.stderr,
+                )
+                continue
+
+            plugin_cfg = load_plugin_config(plugin_name, cfg_root)
+            user_purposes = plugin_cfg.get("llm_purposes") or {}
+            if not isinstance(user_purposes, dict):
+                print(
+                    f"config: {plugin_name}/config.yaml `llm_purposes:` "
+                    "must be a mapping; ignoring all purpose bindings",
+                    file=sys.stderr,
+                )
+                user_purposes = {}
+
+            # Single ``plugin_cache`` dict shared across this plugin's
+            # components — multi-component plugins (telegram /
+            # web_chat / default_in_mind) use it to share state
+            # between their factories.
+            plugin_cache: dict[str, Any] = {}
+
+            for component in meta.components:
+                ctx_llms: dict[str, Any] = {}
+                for purpose_decl in component.llm_purposes:
+                    purpose_name = str(purpose_decl.get("name", "")).strip()
+                    if not purpose_name:
+                        continue
+                    tag_name = user_purposes.get(purpose_name)
+                    if not isinstance(tag_name, str) or not tag_name:
+                        continue
+                    client = resolve_llm_for_tag(
+                        self._config, tag_name, deps.llm_clients_by_tag,
+                    )
+                    if client is None:
+                        continue
+                    ctx_llms[purpose_name] = client
+
+                ctx = PluginContext(
+                    deps=deps, plugin_name=plugin_name,
+                    config=plugin_cfg, llms=ctx_llms,
+                    services=self._services, plugin_cache=plugin_cache,
+                )
+
+                try:
+                    instance = load_component(component, ctx)
+                except Exception as e:  # noqa: BLE001
+                    print(
+                        f"config: plugin {plugin_name!r} component "
+                        f"{component.kind!r} failed to load: "
+                        f"{type(e).__name__}: {e}; skipping.",
+                        file=sys.stderr,
+                    )
+                    continue
+                if instance is None:
+                    continue  # factory opted out (e.g. unbound LLM)
+
+                self._register_component(plugin_name, component, instance)
+
+    def _register_component(
+        self, plugin_name: str, component: Any, instance: Any,
+    ) -> None:
+        """Route a built component to the right registry by kind."""
+        kind = component.kind
+        try:
+            if kind == "reflect":
+                self._reflects.register(instance)
+            elif kind == "tentacle":
+                self._tentacles.register(instance)
+            elif kind == "sensory":
+                self._sensories.register(instance)
+            else:
+                print(
+                    f"config: plugin {plugin_name!r} produced unknown "
+                    f"component kind {kind!r}; skipping",
+                    file=sys.stderr,
+                )
+        except Exception as e:  # noqa: BLE001
+            print(
+                f"config: plugin {plugin_name!r} {kind} registration "
+                f"failed: {type(e).__name__}: {e}",
+                file=sys.stderr,
+            )
+
+    # ---- post-registration introspection -------------------------------
+
+    def derive_plugin_infos(self) -> list:
+        """Walk the populated registries and produce the ``PluginInfo``
+        list the dashboard's ``/api/plugins`` endpoint expects.
+
+        Used to be ``Runtime._load_plugins``; the legacy MANIFEST loader
+        was removed in Phase 2 of the plugin unification, so this is
+        now pure introspection. Stored on ``self._infos`` and returned
+        for the caller's convenience.
+        """
+        from src.plugins.loader import PluginInfo
+
+        infos: list = []
+        for r in (self._reflects.by_kind("hypothalamus")
+                  + self._reflects.by_kind("recall_anchor")
+                  + self._reflects.by_kind("in_mind")):
+            infos.append(PluginInfo(
+                name=r.name, kind="reflect", source="builtin",
+                path="", project=r.name, instance=r,
+            ))
+        for name in sorted(self._tentacles._tentacles.keys()):  # noqa: SLF001
+            infos.append(PluginInfo(
+                name=name, kind="tentacle", source="builtin",
+                path="", project=name,
+                instance=self._tentacles._tentacles[name],  # noqa: SLF001
+            ))
+        for s in self._sensories._sensories.values():  # noqa: SLF001
+            sname = getattr(s, "name", type(s).__name__)
+            infos.append(PluginInfo(
+                name=sname, kind="sensory", source="builtin",
+                path="", project=sname, instance=s,
+            ))
+        self._infos = infos
+        return infos
+
+    # ---- dashboard read/write -------------------------------------------
+
+    def plugin_report(self) -> dict[str, Any]:
+        """Serializable snapshot for the dashboard /api/plugins endpoint.
+
+        Each component carries a ``values`` dict (the current on-disk
+        config for its project, minus the loader-owned ``enabled``
+        flag, which is surfaced separately). The dashboard renders
+        forms directly from ``config_schema`` + ``values``.
+        """
+        def _values_for(project: str) -> dict[str, Any]:
+            if not project:
+                return {}
+            cfg = self._store.peek_config(project)
+            return {k: v for k, v in cfg.items() if k != "enabled"}
+
+        def _flatten(infos, loaded_names):
+            return [{
+                "name": i.name,
+                "kind": i.kind,
+                "source": i.source,
+                "path": i.path,
+                "project": i.project,
+                "description": i.description,
+                "is_internal": i.is_internal,
+                "config_schema": i.config_schema,
+                "enabled": i.enabled,
+                "values": _values_for(i.project),
+                "loaded": i.name in loaded_names and i.error is None,
+                "error": i.error,
+            } for i in infos]
+
+        plugin_t_names = {i.name for i in self._infos
+                          if i.kind == "tentacle"}
+        plugin_s_names = {i.name for i in self._infos
+                          if i.kind == "sensory"}
+        loaded_t = {n for n in self._tentacles._tentacles}  # noqa: SLF001
+        loaded_s = {n for n in self._sensories._sensories}  # noqa: SLF001
+
+        core_tentacles = [
+            {"name": t.name, "kind": "tentacle", "source": "core",
+             "path": "", "project": "", "description": t.description,
+             "is_internal": t.is_internal, "config_schema": [],
+             "enabled": True, "values": {},
+             "loaded": True, "error": None}
+            for t in self._tentacles._tentacles.values()  # noqa: SLF001
+            if t.name not in plugin_t_names
+        ]
+        core_sensories = [
+            {"name": s.name, "kind": "sensory", "source": "core",
+             "path": "", "project": "", "description": "",
+             "is_internal": False, "config_schema": [],
+             "enabled": True, "values": {},
+             "loaded": True, "error": None}
+            for s in self._sensories._sensories.values()  # noqa: SLF001
+            if s.name not in plugin_s_names
+        ]
+        t_infos = [i for i in self._infos if i.kind == "tentacle"]
+        s_infos = [i for i in self._infos if i.kind == "sensory"]
+        return {
+            "tentacles": core_tentacles + _flatten(t_infos, loaded_t),
+            "sensories": core_sensories + _flatten(s_infos, loaded_s),
+        }
+
+    def update_plugin_config(
+        self, project: str, body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist an edit from the dashboard into the per-plugin file.
+
+        ``body`` has shape ``{"enabled": bool, "values": {...}}``. The
+        final on-disk file merges them: ``{"enabled": ..., **values}``.
+        Changes take effect on next restart (plugins aren't hot-reloaded).
+        """
+        if not project or not isinstance(project, str):
+            raise ValueError("project name required")
+        enabled = bool(body.get("enabled", False))
+        values = dict(body.get("values") or {})
+        # Guard: `enabled` is loader-owned; refuse to let a client
+        # stuff it inside `values` and double-write.
+        values.pop("enabled", None)
+        config = {"enabled": enabled, **values}
+        path = self._store.write(project, config)
+        return {"project": project, "path": str(path), "config": config}
