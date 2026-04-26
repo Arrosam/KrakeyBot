@@ -17,9 +17,12 @@ class PluginsService(Protocol):
     def update_config(
         self, project: str, body: dict[str, Any],
     ) -> dict[str, Any]:
-        """Persist a dashboard edit to a plugin project's config.
+        """Persist a dashboard edit to a plugin's
+        ``workspace/plugins/<project>/config.yaml`` file.
 
-        Body shape: ``{"enabled": bool, "values": {...}}``. Implementations
-        should validate and write atomically. Returns a summary dict
-        (project name, file path, resulting config).
+        Body shape: ``{"values": {...}}``. ``enabled`` is no longer
+        per-plugin — enable/disable is driven by the central
+        ``config.yaml``'s ``plugins:`` list — and is silently dropped
+        if present in the body. Returns a summary dict (project name,
+        file path, resulting config).
         """

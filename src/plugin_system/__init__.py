@@ -17,14 +17,11 @@ Two responsibilities, two modules:
                      be merged with the in-folder ``config.yaml`` in a
                      follow-up; currently they coexist.
 """
-from src.plugin_system.config import (  # noqa: F401
-    DictPluginConfigStore,
-    FilePluginConfigStore,
-    PluginConfigStore,
-)
+from src.plugin_system.config import FilePluginConfigStore  # noqa: F401
 from src.plugin_system.discovery import (  # noqa: F401
     ComponentMetadata,
     PluginMetadata,
     discover_plugins,
     load_component,
+    load_plugin_meta,
 )

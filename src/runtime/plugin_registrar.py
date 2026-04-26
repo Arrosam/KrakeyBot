@@ -61,9 +61,11 @@ class PluginInfo:
     project: str = ""                   # containing plugin folder name
     description: str = ""
     config_schema: list[dict[str, Any]] = field(default_factory=list)
-    # Loader-owned. True iff the plugin is in config.yaml's plugins:
-    # list. Default False — plugins never self-enable.
-    enabled: bool = False
+    # Always True for entries returned by ``derive_plugin_infos`` — a
+    # PluginInfo only gets created if the plugin successfully loaded,
+    # which only happens for names listed in ``config.yaml`` ``plugins:``.
+    # The dashboard frontend keeps the field for display continuity.
+    enabled: bool = True
     error: str | None = None
     # Set by the loader on success. Never JSON-serialised.
     instance: Any = None
@@ -119,33 +121,37 @@ class PluginRegistrar:
             PluginContext, load_plugin_config,
         )
         from src.plugin_system.discovery import (
-            discover_plugins as _discover, load_component,
+            load_component, load_plugin_meta,
         )
         from src.runtime.runtime import resolve_llm_for_tag
 
         names = self._config.plugins
         if names is None:
+            # No `plugins:` section at all — keep startup quiet (the
+            # full available-plugin list is the dashboard's job, not
+            # the heartbeat's).
             print(
                 "config: no `plugins:` section in config.yaml — "
-                "starting with zero unified plugins. Add an explicit "
-                "list (e.g. `plugins: [default_recall_anchor]`) to "
-                "enable any. Available built-ins: "
-                f"{sorted(_discover().keys())}",
+                "starting with zero plugins. Use the dashboard or "
+                "edit config.yaml to enable any.",
                 file=sys.stderr,
             )
             return
         if not names:
             return  # explicit empty list: respect, no nag
 
-        all_meta = _discover()
-        cfg_root = Path(deps.reflect_configs_root or "workspace/plugins")
+        cfg_root = Path(deps.plugin_configs_root or "workspace/plugins")
 
         for plugin_name in names:
-            meta = all_meta.get(plugin_name)
+            # Load-by-name: open this plugin's meta.yaml directly. No
+            # full filesystem scan — Runtime never enumerates plugins
+            # the user didn't enable.
+            meta = load_plugin_meta(plugin_name)
             if meta is None:
                 print(
-                    f"config: unknown plugin {plugin_name!r} — skipping. "
-                    f"Available: {sorted(all_meta.keys())}",
+                    f"config: unknown plugin {plugin_name!r} (no "
+                    f"meta.yaml found in src/plugins/ or "
+                    f"workspace/plugins/) — skipping.",
                     file=sys.stderr,
                 )
                 continue
@@ -275,8 +281,7 @@ class PluginRegistrar:
         def _values_for(project: str) -> dict[str, Any]:
             if not project:
                 return {}
-            cfg = self._store.peek_config(project)
-            return {k: v for k, v in cfg.items() if k != "enabled"}
+            return self._store.read(project)
 
         def _flatten(infos, loaded_names):
             return [{
@@ -328,19 +333,18 @@ class PluginRegistrar:
     def update_plugin_config(
         self, project: str, body: dict[str, Any],
     ) -> dict[str, Any]:
-        """Persist an edit from the dashboard into the per-plugin file.
+        """Persist an edit from the dashboard into the per-plugin
+        ``workspace/plugins/<name>/config.yaml`` file.
 
-        ``body`` has shape ``{"enabled": bool, "values": {...}}``. The
-        final on-disk file merges them: ``{"enabled": ..., **values}``.
+        ``body`` carries ``{"values": {...}}``. Enable/disable is NOT
+        stored here — that's driven by the central ``config.yaml``'s
+        ``plugins:`` list. Any ``enabled`` key the dashboard sends is
+        silently dropped to keep the in-folder file purely settings.
         Changes take effect on next restart (plugins aren't hot-reloaded).
         """
         if not project or not isinstance(project, str):
             raise ValueError("project name required")
-        enabled = bool(body.get("enabled", False))
         values = dict(body.get("values") or {})
-        # Guard: `enabled` is loader-owned; refuse to let a client
-        # stuff it inside `values` and double-write.
-        values.pop("enabled", None)
-        config = {"enabled": enabled, **values}
-        path = self._store.write(project, config)
-        return {"project": project, "path": str(path), "config": config}
+        values.pop("enabled", None)  # loader-owned, not per-plugin
+        path = self._store.write(project, values)
+        return {"project": project, "path": str(path), "config": values}

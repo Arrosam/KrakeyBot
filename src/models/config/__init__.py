@@ -101,16 +101,6 @@ class Config:
     # (strictly additive). ``None`` triggers a one-line stderr
     # nudge so users notice; ``[]`` is silent.
     plugins: list[str] | None = None
-    # Legacy per-project plugin config (deprecated). Was a dict keyed
-    # by project name → settings; replaced by the per-plugin
-    # ``workspace/plugin-configs/<project>.yaml`` files for tentacles
-    # and sensories, and ``workspace/plugins/<name>/config.yaml`` for
-    # the unified plugin format. Kept here only as a holding pen for
-    # the legacy MANIFEST loader's dict-store fallback during the
-    # Phase 1 transition window.
-    legacy_plugin_configs: dict[str, dict[str, Any]] = field(
-        default_factory=dict
-    )
     sleep: SleepSection = field(default_factory=SleepSection)
     safety: SafetySection = field(default_factory=SafetySection)
     dashboard: DashboardSection = field(default_factory=DashboardSection)
@@ -223,7 +213,6 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         graph_memory=_build_graph_memory(raw.get("graph_memory") or {}),
         knowledge_base=_build_kb(raw.get("knowledge_base") or {}),
         plugins=_build_plugins(raw),
-        legacy_plugin_configs=raw.get("legacy_plugin_configs") or {},
         sleep=_build_sleep(raw.get("sleep") or {}),
         safety=_build_safety(raw.get("safety") or {}),
         dashboard=_build_dashboard(raw.get("dashboard")),

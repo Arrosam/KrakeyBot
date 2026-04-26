@@ -39,7 +39,7 @@ def _minimal_deps_for_runtime(runtime):
     """
     from types import SimpleNamespace
     return SimpleNamespace(
-        reflect_configs_root=runtime._test_reflect_configs_root,
+        plugin_configs_root=runtime._test_reflect_configs_root,
         llm_clients_by_tag=runtime._test_llm_clients_by_tag,
         hypo_llm=ScriptedLLM([]),
         in_mind_state_path=None,

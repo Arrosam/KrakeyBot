@@ -97,17 +97,17 @@ async def test_runner_reports_timeout(live_agent):
 
 
 async def test_runtime_refuses_start_when_sandbox_required_but_missing(tmp_path):
-    """If coding.enabled=true and coding.sandbox=true (default) but the
-    sandbox block is empty, Runtime._build_code_runner must raise."""
+    """If coding has sandbox=true (default) but the sandbox config block
+    is empty, Runtime._build_code_runner must raise."""
     from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
 
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
     )
-    # Enable coding with sandbox default (true), leave runtime.config.sandbox blank
-    runtime.config.legacy_plugin_configs["coding"] = {"enabled": True, "sandbox": True}
+    # leave runtime.config.sandbox blank — guest_os / agent.url / token
+    # all empty strings; _build_code_runner must refuse.
     with pytest.raises(RuntimeError) as ei:
-        runtime._build_code_runner(runtime.config.legacy_plugin_configs["coding"])
+        runtime._build_code_runner({"sandbox": True})
     msg = str(ei.value)
     assert "sandbox" in msg.lower()
     assert "guest_os" in msg or "agent" in msg
@@ -122,8 +122,7 @@ async def test_runtime_allows_subprocess_when_sandbox_false(tmp_path):
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
     )
-    runtime.config.legacy_plugin_configs["coding"] = {"enabled": True, "sandbox": False}
-    runner = runtime._build_code_runner(runtime.config.legacy_plugin_configs["coding"])
+    runner = runtime._build_code_runner({"sandbox": False})
     assert isinstance(runner, SubprocessRunner)
 
 
@@ -134,11 +133,10 @@ async def test_runtime_builds_sandbox_runner_with_complete_config(tmp_path):
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
     )
-    runtime.config.legacy_plugin_configs["coding"] = {"enabled": True, "sandbox": True}
     runtime.config.sandbox.guest_os = "linux"
     runtime.config.sandbox.agent.url = "http://10.0.2.10:8765"
     runtime.config.sandbox.agent.token = "tok"
-    runner = runtime._build_code_runner(runtime.config.legacy_plugin_configs["coding"])
+    runner = runtime._build_code_runner({"sandbox": True})
     assert isinstance(runner, SandboxRunner)
 
 

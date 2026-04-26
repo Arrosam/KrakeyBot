@@ -108,6 +108,11 @@ class PluginMetadata:
 def discover_plugins() -> dict[str, PluginMetadata]:
     """Scan all known plugin roots for ``meta.yaml`` files.
 
+    **Web UI use only.** Returns the full catalogue of installed
+    plugins for the dashboard's "available plugins" view. Runtime does
+    NOT use this — it loads only the names listed in ``config.plugins``
+    via ``load_plugin_meta(name)``, never scans the rest.
+
     Pure-text — no plugin module is imported. Returns
     ``name → PluginMetadata``. Workspace plugins override built-ins
     with the same name (later iteration wins).
@@ -129,6 +134,30 @@ def discover_plugins() -> dict[str, PluginMetadata]:
                 continue
             out[meta.name] = meta
     return out
+
+
+def load_plugin_meta(name: str) -> PluginMetadata | None:
+    """Read one plugin's ``meta.yaml`` by name. Workspace overrides
+    built-in. ``None`` if the plugin folder doesn't exist or its
+    meta.yaml fails to parse.
+
+    Used by Runtime in place of a full ``discover_plugins()`` scan:
+    when ``config.plugins: [a, b, c]``, Runtime only opens those three
+    meta.yaml files. Catalogue scanning is the dashboard's job.
+    """
+    for root in (_WORKSPACE_ROOT, _BUILTIN_ROOT):
+        meta_path = root / name / "meta.yaml"
+        if not meta_path.exists():
+            continue
+        try:
+            return _parse_meta(meta_path)
+        except Exception as e:  # noqa: BLE001
+            print(
+                f"warning: failed to parse {meta_path}: {e}; skipping",
+                file=sys.stderr,
+            )
+            return None
+    return None
 
 
 def load_component(component: ComponentMetadata, ctx: "PluginContext") -> Any:

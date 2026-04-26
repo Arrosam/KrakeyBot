@@ -65,23 +65,17 @@ class RuntimeDeps:
     genesis_path: str | None = None         # default: workspace/GENESIS.md
     config_path: str | None = None          # default: config.yaml — for dashboard
     backup_dir: str | None = None           # default: workspace/backups
-    # Per-plugin YAML root. Must be overridable so tests can point at
-    # a tmpdir — otherwise the test helper's `config.plugins["web_chat"]`
-    # (e.g. a tmpdir history_path) gets shadowed by the production
-    # ``workspace/plugin-configs/web_chat.yaml`` that FilePluginConfigStore
-    # reads first, and test messages leak into the real user chat log.
-    plugin_configs_root: str | None = None  # default: workspace/plugin-configs
+    # Root directory holding per-plugin folders. Each plugin's user
+    # config lives at ``<root>/<name>/config.yaml`` co-located with
+    # whatever else the plugin needs. Default ``workspace/plugins``.
+    # Tests pass a tmpdir so per-plugin config writes (history_path,
+    # llm_purposes, …) don't bleed into the production workspace.
+    plugin_configs_root: str | None = None  # default: workspace/plugins
     # in_mind Reflect's state file. None → workspace/data/in_mind.json
     # (the locked-in production path, see design doc Reflect #3).
     # Tests pass a tmpdir so update_in_mind dispatches don't bleed
     # into the production state.
     in_mind_state_path: str | None = None
-    # Root directory for per-Reflect config files. Each enabled Reflect
-    # reads ``<root>/<name>/config.yaml`` (a pure-text settings file
-    # the plugin can safely access). None → ``workspace/reflects``.
-    # Tests pass a tmpdir so plugin config edits don't bleed into the
-    # production workspace.
-    reflect_configs_root: str | None = None
     # Shared LLMClient cache keyed by tag name. Populated by
     # build_runtime_from_config for core purposes; Runtime adds plugin
     # purpose entries on top. Sharing the cache means two purposes that
@@ -192,24 +186,20 @@ class Runtime:
         # `web_chat.enabled` so the dashboard can still display the
         # existing transcript in monitor-only mode.
         #
-        # Per-plugin config store: one YAML file per plugin project
-        # under workspace/plugin-configs/. On first run the store
-        # migrates values from the deprecated config.yaml `plugins:`
-        # pile, so users upgrading from the old layout keep their
-        # settings. peek_config() is used here because web_chat's file
-        # may not exist yet (loader hasn't run) — peek falls back to
-        # legacy without materializing anything.
+        # Per-plugin config store: each plugin's config lives at
+        # <plugin_configs_root>/<name>/config.yaml. Same root as the
+        # plugin folders themselves (workspace/plugins/) so user config
+        # is co-located with plugin code, exactly like third-party
+        # workspace plugins.
         from src.plugin_system.config import FilePluginConfigStore
-        # Root is overridable (see RuntimeDeps.plugin_configs_root) so
-        # tests can isolate at a tmpdir and their legacy-dict overrides
-        # actually take effect.
         plugin_root = Path(deps.plugin_configs_root
-                            or "workspace/plugin-configs")
-        self._plugin_config_store = FilePluginConfigStore(
-            root=plugin_root,
-            legacy_plugins=self.config.legacy_plugin_configs,
-        )
-        wc_cfg = self._plugin_config_store.peek_config("web_chat")
+                            or "workspace/plugins")
+        self._plugin_config_store = FilePluginConfigStore(root=plugin_root)
+        # Web chat history path comes from the plugin's own config
+        # file. Read directly here (not via the store) because the
+        # WebChatHistory must exist BEFORE plugin discovery so the
+        # dashboard's WebSocket can subscribe to it.
+        wc_cfg = self._plugin_config_store.read("web_chat")
         chat_path = wc_cfg.get("history_path",
                                    "workspace/data/web_chat.jsonl")
         self.web_chat_history = WebChatHistory(chat_path)
@@ -515,26 +505,28 @@ class Runtime:
         """Ping the guest agent if any enabled plugin self-declared
         ``requires_sandbox: true`` in its meta.yaml AND has its own
         ``sandbox`` config field on. Refuses to start the runtime
-        when the agent is unreachable."""
-        from src.plugin_system.discovery import discover_plugins
+        when the agent is unreachable.
+
+        Iterates ``config.plugins`` (the explicit enabled list) and
+        loads each one's meta.yaml by name — no full filesystem scan.
+        """
+        from src.interfaces.plugin_context import load_plugin_config
+        from src.plugin_system.discovery import load_plugin_meta
         from src.sandbox.backend import (
             SandboxConfig, SandboxUnavailableError, preflight,
         )
-        enabled = set(self.config.plugins or [])
-        sandbox_plugins = [
-            meta for meta in discover_plugins().values()
-            if meta.requires_sandbox and meta.name in enabled
-        ]
-        # Plugin's own `sandbox: false` opts out (e.g. coding on a
-        # trusted host). peek is safe — by the time preflight runs the
-        # loader has materialized each plugin's config file.
-        def _sandbox_on(name: str) -> bool:
-            return bool(
-                self._plugin_config_store.peek_config(name).get(
-                    "sandbox", True,
-                )
-            )
-        any_sandboxed = any(_sandbox_on(m.name) for m in sandbox_plugins)
+        cfg_root = Path("workspace/plugins")
+        any_sandboxed = False
+        for name in self.config.plugins or []:
+            meta = load_plugin_meta(name)
+            if meta is None or not meta.requires_sandbox:
+                continue
+            # Plugin's own `sandbox: false` opts out (e.g. coding on a
+            # trusted host).
+            plugin_cfg = load_plugin_config(name, cfg_root)
+            if bool(plugin_cfg.get("sandbox", True)):
+                any_sandboxed = True
+                break
         if not any_sandboxed:
             return
         sb = self.config.sandbox
