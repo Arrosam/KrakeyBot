@@ -5,7 +5,7 @@ import pytest
 from src.plugins.builtin.default_hypothalamus.reflect import (
     DefaultHypothalamusReflect as Hypothalamus,
 )
-from src.reflects.protocol import HypothalamusResult
+from src.interfaces.reflect import HypothalamusResult
 
 
 class MockLLM:

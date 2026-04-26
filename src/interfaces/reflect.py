@@ -1,23 +1,173 @@
-"""ReflectRegistry — ordered storage + kind-specific dispatch.
+"""Reflect plugin interface — protocols + registry.
 
-The registry is a thin layer over a kind→list dict. Built-in defaults
-register themselves at Runtime construction; future user Reflects
-register from ``config.yaml`` declarations (not yet implemented).
+Sibling to ``sensory.py`` and ``tentacle.py``: defines the contract
+runtime depends on and the registry it stores instances in. Concrete
+Reflects live under ``src/plugins/builtin/default_*/``.
 
-Dispatch helpers (``translate``, ``make_recall``) encapsulate the
-chain logic per kind so call sites in Runtime don't have to know how
-multiple same-kind Reflects compose.
+A Reflect listens at heartbeat boundaries (``on_heartbeat_start`` /
+``on_heartbeat_end``) and can implement one or more ``kind``-specific
+hooks that replace or augment a runtime mechanism:
+
+  * ``kind="hypothalamus"`` — translates Self's natural-language
+    ``[DECISION]`` into structured tentacle calls.
+  * ``kind="recall_anchor"`` — produces the per-beat recall instance
+    used to populate ``[GRAPH MEMORY]``.
+  * ``kind="in_mind"`` — owns the persistent thoughts/mood/focus
+    state Self can update each beat.
+
+Multiple Reflects of the same ``kind`` are allowed; they execute in
+registration order (``config.yaml`` ordering wins). Chain semantics
+are kind-specific — see each kind's dispatch helper below.
+
+Protocols (vs ABCs) so concrete classes don't have to inherit
+anything; structural typing keeps plugin code free of interface
+imports it doesn't need.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-from src.reflects.protocol import (
-    HypothalamusReflect, HypothalamusResult, RecallAnchorReflect, Reflect,
-)
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from src.memory.recall import IncrementalRecall
+
+
+# --------------------------------------------------------------------
+# Contract dataclasses — cross the Reflect ↔ runtime boundary
+# --------------------------------------------------------------------
+
+
+@dataclass
+class TentacleCall:
+    """Structured tentacle invocation produced by a hypothalamus
+    Reflect's ``translate()``. Consumed by ``Runtime._dispatch`` and
+    by the script-only action executor (when no hypothalamus is
+    registered)."""
+    tentacle: str
+    intent: str
+    params: dict[str, Any] = field(default_factory=dict)
+    adrenalin: bool = False
+
+
+@dataclass
+class HypothalamusResult:
+    """Aggregate result of one hypothalamus translation pass: the
+    tentacle calls to dispatch, plus any memory side-effects and the
+    sleep flag."""
+    tentacle_calls: list[TentacleCall] = field(default_factory=list)
+    memory_writes: list[dict[str, Any]] = field(default_factory=list)
+    memory_updates: list[dict[str, Any]] = field(default_factory=list)
+    sleep: bool = False
+
+
+@dataclass
+class HeartbeatContext:
+    """Bundle passed to ``on_heartbeat_start`` / ``on_heartbeat_end``.
+
+    Carries enough runtime references that a Reflect can read state
+    or schedule side effects without needing the whole Runtime as
+    an opaque parameter. Kept intentionally small — Reflects that
+    need more should accept a dedicated ``runtime`` reference at
+    construction time, not via this context.
+    """
+    heartbeat_id: int
+    phase: str  # "start" | "end"
+
+
+# --------------------------------------------------------------------
+# Protocols — Reflect shapes the runtime depends on
+# --------------------------------------------------------------------
+
+
+@runtime_checkable
+class Reflect(Protocol):
+    """Base shape — every Reflect has a name + kind."""
+    name: str
+    kind: str  # "hypothalamus" | "recall_anchor" | "in_mind" | ...
+
+
+@runtime_checkable
+class HypothalamusReflect(Protocol):
+    """A Reflect that translates Self's [DECISION] text into structured
+    tentacle calls. Kind = "hypothalamus".
+
+    Multi-Reflect chain semantics (when more than one is registered):
+    each subsequent Reflect can post-process the prior result; the
+    chain dispatch in ``ReflectRegistry.translate`` defines the
+    composition. The skeleton supports length-1 chains only; chain
+    composition is finalized when Reflect #1 (toggle-able
+    Hypothalamus + executor engine) lands.
+    """
+    name: str
+    kind: str  # always "hypothalamus"
+
+    async def translate(
+        self, decision: str, tentacles: list[dict[str, Any]],
+    ) -> HypothalamusResult: ...
+
+
+@runtime_checkable
+class RecallAnchorReflect(Protocol):
+    """A Reflect that builds the per-beat recall instance. Kind =
+    "recall_anchor".
+
+    The default in-tree Reflect wraps the existing scripted
+    ``IncrementalRecall`` factory. A future LLM-anchor Reflect
+    (Reflect #2) will produce a Recall driver that pre-extracts
+    anchors from stimuli/history before running vec_search.
+
+    The factory shape (``make_recall(runtime)``) preserves the
+    existing per-run lifecycle: Runtime instantiates one Recall at
+    ``run()`` start and re-instantiates whenever budget enforcement
+    requires a fresh re-recall.
+    """
+    name: str
+    kind: str  # always "recall_anchor"
+
+    def make_recall(self, runtime: Any) -> "IncrementalRecall": ...
+
+
+@runtime_checkable
+class InMindReflect(Protocol):
+    """A Reflect that owns Self's persistent "in-mind" state — the
+    three short fields (``thoughts`` / ``mood`` / ``focus``) that
+    capture what Self currently has at the front of its mental
+    workspace. Kind = "in_mind".
+
+    Architecture (see docs/design/reflects-and-self-model.md
+    Reflect #3):
+
+      * ``read()`` returns the current state dict; consumed by the
+        prompt builder which prepends a "Heartbeat #now (in mind)"
+        virtual round at the head of ``[HISTORY]``.
+      * ``update(thoughts=, mood=, focus=)`` patches state and
+        persists. ``None`` for a field = leave alone; empty string =
+        clear; non-empty string = set.
+      * ``attach(runtime)`` is the one-time lifecycle hook called by
+        ``ReflectRegistry.attach_all`` after registration. The
+        in_mind Reflect uses it to register its own ``update_in_mind``
+        tentacle into ``runtime.tentacles``. Other Reflect kinds may
+        also implement ``attach`` (the protocol allows it
+        optionally), but in_mind is the first that needs it.
+    """
+    name: str
+    kind: str  # always "in_mind"
+
+    def read(self) -> dict[str, str]: ...
+
+    def update(
+        self,
+        thoughts: str | None = None,
+        mood: str | None = None,
+        focus: str | None = None,
+    ) -> dict[str, str]: ...
+
+    def attach(self, runtime: Any) -> None: ...
+
+
+# --------------------------------------------------------------------
+# Registry — ordered storage + kind-specific dispatch
+# --------------------------------------------------------------------
 
 
 class ReflectRegistry:
@@ -149,7 +299,7 @@ class ReflectRegistry:
         downstream call site doesn't care which path produced it.
 
         action_executor is imported lazily to avoid a
-        ``runtime → reflects → runtime`` import cycle.
+        ``runtime → interfaces → runtime`` import cycle.
         """
         from src.runtime.action_executor import parse_action_block
 

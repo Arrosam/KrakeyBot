@@ -167,20 +167,20 @@ summary:hover { background: #f1f5f9; }
 <p class="subtitle">Per-file breakdown of every module under <code>src/</code>.
 Every directory, file, class, and method below is a collapsible section.</p>
 <div class="stats">
-  131 files · 869.4 KB · 15,689 lines ·
+  129 files · 868.5 KB · 15,663 lines ·
   137 classes · 589 defs
 </div>
 <div class="maintenance">
   <strong>Maintenance:</strong> regenerate with
   <code>python scripts/build_docs.py</code> after edits under
-  <code>src/</code>. Last generated: 2026-04-26 15:01.
+  <code>src/</code>. Last generated: 2026-04-26 15:15.
 </div>
 <div class="controls">
   <button id="expand-dirs">Directories only</button>
   <button id="expand-all">Expand all</button>
   <button id="collapse-all">Collapse all</button>
 </div>
-<details class="dir" open><summary><code>src/</code> <span class="meta">131 file(s) · 869.4 KB · 137 class · 589 def</span></summary><div class="body"><details class="dir"><summary><code>dashboard/</code> <span class="meta">43 file(s) · 456.7 KB · 14 class · 70 def</span></summary><div class="body"><details class="dir"><summary><code>events/</code> <span class="meta">4 file(s) · 4.5 KB · 1 class · 8 def</span></summary><div class="body"><details class="file" id="f-src-dashboard-events-__init__.py"><summary><code>__init__.py</code> <span class="meta">524 B · 15 lines</span> <span class="meta">— events package — bus → /ws/events bridge.</span></summary><div class="body"><p class="doc">events package — bus → /ws/events bridge.
+<details class="dir" open><summary><code>src/</code> <span class="meta">129 file(s) · 868.5 KB · 137 class · 589 def</span></summary><div class="body"><details class="dir"><summary><code>dashboard/</code> <span class="meta">43 file(s) · 456.7 KB · 14 class · 70 def</span></summary><div class="body"><details class="dir"><summary><code>events/</code> <span class="meta">4 file(s) · 4.5 KB · 1 class · 8 def</span></summary><div class="body"><details class="file" id="f-src-dashboard-events-__init__.py"><summary><code>__init__.py</code> <span class="meta">524 B · 15 lines</span> <span class="meta">— events package — bus → /ws/events bridge.</span></summary><div class="body"><p class="doc">events package — bus → /ws/events bridge.
 
 Split into:
   - serializer.py : dataclass event → JSON dict (`kind` discriminator).
@@ -377,7 +377,165 @@ Routes served:
   GET /style.css  -&gt; composed stylesheet</p><p class="meta">0 class(es) · 5 top-level function(s)</p><details class="func"><summary><span class="tag tag-func">func</span><code>_fallback_index</code> <span class="meta">L48</span></summary><div class="body"><div class="signature">def _fallback_index() -&gt; str</div><p class="no-doc">(no docstring)</p></div></details><details class="func"><summary><span class="tag tag-func">func</span><code>compose_html</code> <span class="meta">L60</span></summary><div class="body"><div class="signature">def compose_html() -&gt; str</div><p class="doc">Inline each view fragment into the shell and return the full HTML.</p></div></details><details class="func"><summary><span class="tag tag-func">func</span><code>compose_css</code> <span class="meta">L84</span></summary><div class="body"><div class="signature">def compose_css() -&gt; str</div><p class="doc">Concatenate shared stylesheets + every view.css in order.</p></div></details><details class="func"><summary><span class="tag tag-func">func</span><code>invalidate_cache</code> <span class="meta">L105</span></summary><div class="body"><div class="signature">def invalidate_cache() -&gt; None</div><p class="doc">Drop the in-memory cache so the next request re-reads fragments.
 
 Useful for tests that mutate the static tree and for a future
-`--dev` flag that disables caching entirely.</p></div></details><details class="func"><summary><span class="tag tag-func">func</span><code>register</code> <span class="meta">L116</span></summary><div class="body"><div class="signature">def register(app: FastAPI) -&gt; None</div><p class="no-doc">(no docstring)</p></div></details></div></details></div></details><details class="dir"><summary><code>interfaces/</code> <span class="meta">3 file(s) · 3.8 KB · 4 class · 22 def</span></summary><div class="body"><details class="file" id="f-src-interfaces-__init__.py"><summary><code>__init__.py</code> <span class="meta">0 B · 1 lines</span></summary><div class="body"><p class="no-doc">(no docstring)</p><p class="meta">0 class(es) · 0 top-level function(s)</p><p class="no-doc">(module body only — no classes or top-level functions)</p></div></details><details class="file" id="f-src-interfaces-sensory.py"><summary><code>sensory.py</code> <span class="meta">2.0 KB · 68 lines</span> <span class="meta">— Sensory ABC + Registry (DevSpec §5.4).</span></summary><div class="body"><p class="doc">Sensory ABC + Registry (DevSpec §5.4).
+`--dev` flag that disables caching entirely.</p></div></details><details class="func"><summary><span class="tag tag-func">func</span><code>register</code> <span class="meta">L116</span></summary><div class="body"><div class="signature">def register(app: FastAPI) -&gt; None</div><p class="no-doc">(no docstring)</p></div></details></div></details></div></details><details class="dir"><summary><code>interfaces/</code> <span class="meta">5 file(s) · 21.9 KB · 13 class · 40 def</span></summary><div class="body"><details class="file" id="f-src-interfaces-__init__.py"><summary><code>__init__.py</code> <span class="meta">0 B · 1 lines</span></summary><div class="body"><p class="no-doc">(no docstring)</p><p class="meta">0 class(es) · 0 top-level function(s)</p><p class="no-doc">(module body only — no classes or top-level functions)</p></div></details><details class="file" id="f-src-interfaces-plugin_context.py"><summary><code>plugin_context.py</code> <span class="meta">4.1 KB · 101 lines</span> <span class="meta">— ``PluginContext`` — what every plugin's factory sees.</span></summary><div class="body"><p class="doc">``PluginContext`` — what every plugin's factory sees.
+
+Passed to ``build_&lt;component&gt;(ctx)`` for every plugin kind
+(reflect / tentacle / sensory). Wraps the runtime deps with
+**plugin-scoped helpers**:
+
+  * ``ctx.get_llm(purpose_name)`` — resolves the user's
+    ``workspace/plugins/&lt;plugin&gt;/config.yaml`` ``llm_purposes:``
+    entry for the named purpose to a concrete ``LLMClient``, or
+    returns ``None`` if the user hasn't bound that purpose to a tag.
+    The plugin decides what to do with ``None`` (skip itself /
+    degrade gracefully / log loud).
+  * ``ctx.config`` — the parsed contents of the plugin's own
+    ``config.yaml`` (per-plugin folder under ``workspace/plugins/``).
+    Plugin code reads its own settings from here and **never** sees
+    the central config.yaml — keeps plugin code one step removed
+    from API keys + provider configs.
+  * ``ctx.services`` — Runtime-built resources whitelisted for
+    plugin use (gm, kb_registry, embedder, web_chat_history, ...).
+  * ``ctx.plugin_cache`` — per-plugin scratch dict for sharing
+    instances across multi-component plugins (e.g. telegram's
+    sensory + tentacle share an HttpTelegramClient via this).
+  * ``ctx.deps`` — escape hatch to ``RuntimeDeps`` for plugins that
+    truly need it. Reading ``deps.config.llm.providers`` from a
+    plugin is allowed but discouraged — by convention, plugins
+    shouldn't poke at provider bindings.
+
+Built by ``Runtime._register_plugins_from_config`` per plugin.</p><p class="meta">1 class(es) · 1 top-level function(s)</p><details class="class"><summary><span class="tag tag-class">class</span><code>PluginContext</code> <span class="meta">L47</span></summary><div class="body"><p class="doc">Per-plugin context handed to ``build_&lt;component&gt;(ctx)``.</p><p class="meta">1 method(s)</p><details class="method"><summary><span class="tag tag-method">method</span><code>get_llm</code> <span class="meta">L72</span></summary><div class="body"><div class="signature">def get_llm(self, purpose: str) -&gt; 'LLMClient | None'</div><p class="no-doc">(no docstring)</p></div></details></div></details><details class="func"><summary><span class="tag tag-func">func</span><code>load_plugin_config</code> <span class="meta">L76</span></summary><div class="body"><div class="signature">def load_plugin_config(plugin_name: str, root: Path | str) -&gt; dict[str, Any]</div><p class="doc">Read ``&lt;root&gt;/&lt;plugin_name&gt;/config.yaml`` if present.
+
+Missing file → empty dict (the plugin operates with whatever
+defaults its code defines). Malformed YAML → empty dict + log
+warning, so a typo doesn't crash startup.</p></div></details></div></details><details class="file" id="f-src-interfaces-reflect.py"><summary><code>reflect.py</code> <span class="meta">14.0 KB · 357 lines</span> <span class="meta">— Reflect plugin interface — protocols + registry.</span></summary><div class="body"><p class="doc">Reflect plugin interface — protocols + registry.
+
+Sibling to ``sensory.py`` and ``tentacle.py``: defines the contract
+runtime depends on and the registry it stores instances in. Concrete
+Reflects live under ``src/plugins/builtin/default_*/``.
+
+A Reflect listens at heartbeat boundaries (``on_heartbeat_start`` /
+``on_heartbeat_end``) and can implement one or more ``kind``-specific
+hooks that replace or augment a runtime mechanism:
+
+  * ``kind="hypothalamus"`` — translates Self's natural-language
+    ``[DECISION]`` into structured tentacle calls.
+  * ``kind="recall_anchor"`` — produces the per-beat recall instance
+    used to populate ``[GRAPH MEMORY]``.
+  * ``kind="in_mind"`` — owns the persistent thoughts/mood/focus
+    state Self can update each beat.
+
+Multiple Reflects of the same ``kind`` are allowed; they execute in
+registration order (``config.yaml`` ordering wins). Chain semantics
+are kind-specific — see each kind's dispatch helper below.
+
+Protocols (vs ABCs) so concrete classes don't have to inherit
+anything; structural typing keeps plugin code free of interface
+imports it doesn't need.</p><p class="meta">8 class(es) · 0 top-level function(s)</p><details class="class"><summary><span class="tag tag-class">class</span><code>TentacleCall</code> <span class="meta">L41</span></summary><div class="body"><p class="doc">Structured tentacle invocation produced by a hypothalamus
+Reflect's ``translate()``. Consumed by ``Runtime._dispatch`` and
+by the script-only action executor (when no hypothalamus is
+registered).</p><p class="no-doc">(no methods)</p></div></details><details class="class"><summary><span class="tag tag-class">class</span><code>HypothalamusResult</code> <span class="meta">L53</span></summary><div class="body"><p class="doc">Aggregate result of one hypothalamus translation pass: the
+tentacle calls to dispatch, plus any memory side-effects and the
+sleep flag.</p><p class="no-doc">(no methods)</p></div></details><details class="class"><summary><span class="tag tag-class">class</span><code>HeartbeatContext</code> <span class="meta">L64</span></summary><div class="body"><p class="doc">Bundle passed to ``on_heartbeat_start`` / ``on_heartbeat_end``.
+
+Carries enough runtime references that a Reflect can read state
+or schedule side effects without needing the whole Runtime as
+an opaque parameter. Kept intentionally small — Reflects that
+need more should accept a dedicated ``runtime`` reference at
+construction time, not via this context.</p><p class="no-doc">(no methods)</p></div></details><details class="class"><summary><span class="tag tag-class">class</span><code>Reflect</code> <span class="meta">(Protocol)</span> <span class="meta">L83</span></summary><div class="body"><p class="doc">Base shape — every Reflect has a name + kind.</p><p class="no-doc">(no methods)</p></div></details><details class="class"><summary><span class="tag tag-class">class</span><code>HypothalamusReflect</code> <span class="meta">(Protocol)</span> <span class="meta">L90</span></summary><div class="body"><p class="doc">A Reflect that translates Self's [DECISION] text into structured
+tentacle calls. Kind = "hypothalamus".
+
+Multi-Reflect chain semantics (when more than one is registered):
+each subsequent Reflect can post-process the prior result; the
+chain dispatch in ``ReflectRegistry.translate`` defines the
+composition. The skeleton supports length-1 chains only; chain
+composition is finalized when Reflect #1 (toggle-able
+Hypothalamus + executor engine) lands.</p><p class="meta">1 method(s)</p><details class="method"><summary><span class="tag tag-method">method</span><code>translate</code> <span class="tag tag-async">async</span> <span class="meta">L104</span></summary><div class="body"><div class="signature">async def translate(self, decision: str, tentacles: list[dict[str, Any]]) -&gt; HypothalamusResult</div><p class="no-doc">(no docstring)</p></div></details></div></details><details class="class"><summary><span class="tag tag-class">class</span><code>RecallAnchorReflect</code> <span class="meta">(Protocol)</span> <span class="meta">L110</span></summary><div class="body"><p class="doc">A Reflect that builds the per-beat recall instance. Kind =
+"recall_anchor".
+
+The default in-tree Reflect wraps the existing scripted
+``IncrementalRecall`` factory. A future LLM-anchor Reflect
+(Reflect #2) will produce a Recall driver that pre-extracts
+anchors from stimuli/history before running vec_search.
+
+The factory shape (``make_recall(runtime)``) preserves the
+existing per-run lifecycle: Runtime instantiates one Recall at
+``run()`` start and re-instantiates whenever budget enforcement
+requires a fresh re-recall.</p><p class="meta">1 method(s)</p><details class="method"><summary><span class="tag tag-method">method</span><code>make_recall</code> <span class="meta">L127</span></summary><div class="body"><div class="signature">def make_recall(self, runtime: Any) -&gt; 'IncrementalRecall'</div><p class="no-doc">(no docstring)</p></div></details></div></details><details class="class"><summary><span class="tag tag-class">class</span><code>InMindReflect</code> <span class="meta">(Protocol)</span> <span class="meta">L131</span></summary><div class="body"><p class="doc">A Reflect that owns Self's persistent "in-mind" state — the
+three short fields (``thoughts`` / ``mood`` / ``focus``) that
+capture what Self currently has at the front of its mental
+workspace. Kind = "in_mind".
+
+Architecture (see docs/design/reflects-and-self-model.md
+Reflect #3):
+
+  * ``read()`` returns the current state dict; consumed by the
+    prompt builder which prepends a "Heartbeat #now (in mind)"
+    virtual round at the head of ``[HISTORY]``.
+  * ``update(thoughts=, mood=, focus=)`` patches state and
+    persists. ``None`` for a field = leave alone; empty string =
+    clear; non-empty string = set.
+  * ``attach(runtime)`` is the one-time lifecycle hook called by
+    ``ReflectRegistry.attach_all`` after registration. The
+    in_mind Reflect uses it to register its own ``update_in_mind``
+    tentacle into ``runtime.tentacles``. Other Reflect kinds may
+    also implement ``attach`` (the protocol allows it
+    optionally), but in_mind is the first that needs it.</p><p class="meta">3 method(s)</p><details class="method"><summary><span class="tag tag-method">method</span><code>read</code> <span class="meta">L156</span></summary><div class="body"><div class="signature">def read(self) -&gt; dict[str, str]</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>update</code> <span class="meta">L158</span></summary><div class="body"><div class="signature">def update(self, thoughts: str | None=None, mood: str | None=None, focus: str | None=None) -&gt; dict[str, str]</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>attach</code> <span class="meta">L165</span></summary><div class="body"><div class="signature">def attach(self, runtime: Any) -&gt; None</div><p class="no-doc">(no docstring)</p></div></details></div></details><details class="class"><summary><span class="tag tag-class">class</span><code>ReflectRegistry</code> <span class="meta">L173</span></summary><div class="body"><p class="doc">Ordered, kind-grouped registry for Reflects.
+
+Order within a kind = registration order. ``register`` appends
+to the kind's list; chain dispatch iterates the list head-to-tail.</p><p class="meta">11 method(s)</p><details class="method"><summary><span class="tag tag-method">method</span><code>__init__</code> <span class="meta">L180</span></summary><div class="body"><div class="signature">def __init__(self)</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>register</code> <span class="meta">L185</span></summary><div class="body"><div class="signature">def register(self, reflect: Reflect) -&gt; None</div><p class="doc">Append a Reflect to its kind's chain.</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>by_kind</code> <span class="meta">L197</span></summary><div class="body"><div class="signature">def by_kind(self, kind: str) -&gt; list[Reflect]</div><p class="doc">All Reflects of a given kind, in registration order.</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>names</code> <span class="meta">L201</span></summary><div class="body"><div class="signature">def names(self, kind: str | None=None) -&gt; list[str]</div><p class="doc">Names of all registered Reflects (optionally filtered by kind).
+Used by /status and dashboard display.</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>has_hypothalamus</code> <span class="meta">L211</span></summary><div class="body"><div class="signature">def has_hypothalamus(self) -&gt; bool</div><p class="doc">Whether any kind="hypothalamus" Reflect is registered.
+
+Drives the prompt-layer suppression for ``[ACTION FORMAT]``:
+when a hypothalamus Reflect is active it owns the translation
+path, so teaching Self the structured-tag syntax would create
+an interpretive conflict (Self would emit tags, Hypothalamus
+would also try to translate them). Suppress the teaching
+layer when Hypothalamus is on duty.</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>in_mind_state</code> <span class="meta">L223</span></summary><div class="body"><div class="signature">def in_mind_state(self) -&gt; dict[str, str] | None</div><p class="doc">Snapshot of the in_mind state, or ``None`` if no in_mind
+Reflect is registered (zero-plugin invariant — runtime keeps
+working, prompt builder just won't insert the virtual
+round / instruction layer).
+
+Skeleton supports length-1 in_mind chain; multi-Reflect
+in_mind composition isn't a real use case yet — if more than
+one in_mind Reflect is registered, the FIRST one's state is
+returned and a warning is logged on the chain rather than
+raising (better to keep running with the first state than
+crash).</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>attach_all</code> <span class="meta">L241</span></summary><div class="body"><div class="signature">def attach_all(self, runtime: Any) -&gt; None</div><p class="doc">One-time post-registration lifecycle hook.
+
+Each registered Reflect that defines an ``attach`` method
+gets called with the runtime so it can wire up its own
+runtime-coupled assets — e.g. the in_mind Reflect uses this
+to register its ``update_in_mind`` tentacle into
+``runtime.tentacles``.
+
+Errors in one Reflect's attach must not block the others —
+plugins are strictly additive (CLAUDE.md invariant).</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>dispatch_decision</code> <span class="tag tag-async">async</span> <span class="meta">L269</span></summary><div class="body"><div class="signature">async def dispatch_decision(self, self_text: str, decision: str, tentacles: list[dict[str, Any]]) -&gt; HypothalamusResult</div><p class="doc">Convert Self's response into structured tentacle calls.
+
+Picks the path based on registration:
+  * hypothalamus Reflect registered → run translate (existing
+    LLM-based path; Self's decision is natural language).
+  * no hypothalamus Reflect → action executor parses
+    ``[ACTION]...[/ACTION]`` JSONL out of ``self_text``.
+
+``self_text`` is the raw Self LLM response; ``decision`` is
+the parsed [DECISION] section. Hypothalamus uses ``decision``
+(clean natural language); the action executor uses
+``self_text`` (the structured tags can appear anywhere).</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>_dispatch_via_executor</code> <span class="meta">L297</span></summary><div class="body"><div class="signature">def _dispatch_via_executor(self, self_text: str) -&gt; HypothalamusResult</div><p class="doc">Parse [ACTION] JSONL, wrap as a HypothalamusResult so the
+downstream call site doesn't care which path produced it.
+
+action_executor is imported lazily to avoid a
+``runtime → interfaces → runtime`` import cycle.</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>translate</code> <span class="tag tag-async">async</span> <span class="meta">L317</span></summary><div class="body"><div class="signature">async def translate(self, decision: str, tentacles: list[dict[str, Any]]) -&gt; HypothalamusResult</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>make_recall</code> <span class="meta">L332</span></summary><div class="body"><div class="signature">def make_recall(self, runtime: Any) -&gt; 'IncrementalRecall'</div><p class="doc">Build a fresh per-beat recall instance via the
+``recall_anchor`` chain.
+
+**No registered Reflect → returns a ``NoopRecall``** (not an
+exception). This is load-bearing per Samuel's 2026-04-25
+principle: disabling any plugin must not break the runtime's
+core loop. Without recall, Self heartbeats with an empty
+``[GRAPH MEMORY]`` layer — graceful degradation.
+
+Skeleton supports length-1 chains only; multi-Reflect
+composition lands when Reflect #2 forces semantics.</p></div></details></div></details></div></details><details class="file" id="f-src-interfaces-sensory.py"><summary><code>sensory.py</code> <span class="meta">2.0 KB · 68 lines</span> <span class="meta">— Sensory ABC + Registry (DevSpec §5.4).</span></summary><div class="body"><p class="doc">Sensory ABC + Registry (DevSpec §5.4).
 
 Sensory = passive input channel. Registry tracks running state so
 Sleep phase-1 can pause_non_urgent() and later resume_all().</p><p class="meta">2 class(es) · 0 top-level function(s)</p><details class="class"><summary><span class="tag tag-class">class</span><code>Sensory</code> <span class="meta">(ABC)</span> <span class="meta">L13</span></summary><div class="body"><p class="no-doc">(no docstring)</p><p class="meta">4 method(s)</p><details class="method"><summary><span class="tag tag-method">method</span><code>name</code> <span class="meta">L16</span></summary><div class="body"><div class="signature">def name(self) -&gt; str</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>default_adrenalin</code> <span class="meta">L19</span></summary><div class="body"><div class="signature">def default_adrenalin(self) -&gt; bool</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>start</code> <span class="tag tag-async">async</span> <span class="meta">L23</span></summary><div class="body"><div class="signature">async def start(self, buffer: StimulusBuffer) -&gt; None</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>stop</code> <span class="tag tag-async">async</span> <span class="meta">L26</span></summary><div class="body"><div class="signature">async def stop(self) -&gt; None</div><p class="no-doc">(no docstring)</p></div></details></div></details><details class="class"><summary><span class="tag tag-class">class</span><code>SensoryRegistry</code> <span class="meta">L29</span></summary><div class="body"><p class="no-doc">(no docstring)</p><p class="meta">7 method(s)</p><details class="method"><summary><span class="tag tag-method">method</span><code>__init__</code> <span class="meta">L30</span></summary><div class="body"><div class="signature">def __init__(self)</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>register</code> <span class="meta">L35</span></summary><div class="body"><div class="signature">def register(self, sensory: Sensory) -&gt; None</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>get</code> <span class="meta">L40</span></summary><div class="body"><div class="signature">def get(self, name: str) -&gt; Sensory</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>start_all</code> <span class="tag tag-async">async</span> <span class="meta">L43</span></summary><div class="body"><div class="signature">async def start_all(self, buffer: StimulusBuffer) -&gt; None</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>pause_non_urgent</code> <span class="tag tag-async">async</span> <span class="meta">L49</span></summary><div class="body"><div class="signature">async def pause_non_urgent(self) -&gt; None</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>resume_all</code> <span class="tag tag-async">async</span> <span class="meta">L56</span></summary><div class="body"><div class="signature">async def resume_all(self, buffer: StimulusBuffer) -&gt; None</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>stop_all</code> <span class="tag tag-async">async</span> <span class="meta">L63</span></summary><div class="body"><div class="signature">async def stop_all(self) -&gt; None</div><p class="no-doc">(no docstring)</p></div></details></div></details></div></details><details class="file" id="f-src-interfaces-tentacle.py"><summary><code>tentacle.py</code> <span class="meta">1.8 KB · 65 lines</span> <span class="meta">— Tentacle ABC + Registry (DevSpec §5.1).</span></summary><div class="body"><p class="doc">Tentacle ABC + Registry (DevSpec §5.1).</p><p class="meta">2 class(es) · 0 top-level function(s)</p><details class="class"><summary><span class="tag tag-class">class</span><code>Tentacle</code> <span class="meta">(ABC)</span> <span class="meta">L10</span></summary><div class="body"><p class="no-doc">(no docstring)</p><p class="meta">6 method(s)</p><details class="method"><summary><span class="tag tag-method">method</span><code>name</code> <span class="meta">L13</span></summary><div class="body"><div class="signature">def name(self) -&gt; str</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>description</code> <span class="meta">L17</span></summary><div class="body"><div class="signature">def description(self) -&gt; str</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>parameters_schema</code> <span class="meta">L21</span></summary><div class="body"><div class="signature">def parameters_schema(self) -&gt; dict[str, Any]</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>sandboxed</code> <span class="meta">L24</span></summary><div class="body"><div class="signature">def sandboxed(self) -&gt; bool</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>is_internal</code> <span class="meta">L28</span></summary><div class="body"><div class="signature">def is_internal(self) -&gt; bool</div><p class="doc">When True, the tentacle's output is for Self's inner consumption
@@ -726,7 +884,7 @@ object in memory; nothing in Self-model is "statistics".
 
 This is the result of the 2026-04-25 self-model slim refactor —
 see docs/design/reflects-and-self-model.md (Part 1) for the full
-rationale.</p><p class="meta">1 class(es) · 2 top-level function(s)</p><details class="class"><summary><span class="tag tag-class">class</span><code>SelfModelStore</code> <span class="meta">L37</span></summary><div class="body"><p class="no-doc">(no docstring)</p><p class="meta">4 method(s)</p><details class="method"><summary><span class="tag tag-method">method</span><code>__init__</code> <span class="meta">L38</span></summary><div class="body"><div class="signature">def __init__(self, path: str | Path)</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>load</code> <span class="meta">L41</span></summary><div class="body"><div class="signature">def load(self) -&gt; dict[str, Any]</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>save</code> <span class="meta">L47</span></summary><div class="body"><div class="signature">def save(self, data: dict[str, Any]) -&gt; None</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>update</code> <span class="meta">L54</span></summary><div class="body"><div class="signature">def update(self, delta: dict[str, Any]) -&gt; dict[str, Any]</div><p class="no-doc">(no docstring)</p></div></details></div></details><details class="func"><summary><span class="tag tag-func">func</span><code>default_self_model</code> <span class="meta">L30</span></summary><div class="body"><div class="signature">def default_self_model() -&gt; dict[str, Any]</div><p class="no-doc">(no docstring)</p></div></details><details class="func"><summary><span class="tag tag-func">func</span><code>_deep_merge</code> <span class="meta">L61</span></summary><div class="body"><div class="signature">def _deep_merge(base: dict[str, Any], delta: dict[str, Any]) -&gt; dict[str, Any]</div><p class="no-doc">(no docstring)</p></div></details></div></details><details class="file" id="f-src-models-stimulus.py"><summary><code>stimulus.py</code> <span class="meta">518 B · 17 lines</span> <span class="meta">— Stimulus dataclass (DevSpec §6.1).</span></summary><div class="body"><p class="doc">Stimulus dataclass (DevSpec §6.1).</p><p class="meta">1 class(es) · 0 top-level function(s)</p><details class="class"><summary><span class="tag tag-class">class</span><code>Stimulus</code> <span class="meta">L10</span></summary><div class="body"><p class="no-doc">(no docstring)</p><p class="no-doc">(no methods)</p></div></details></div></details></div></details><details class="dir"><summary><code>plugins/</code> <span class="meta">34 file(s) · 102.2 KB · 28 class · 161 def</span></summary><div class="body"><details class="dir"><summary><code>builtin/</code> <span class="meta">30 file(s) · 72.9 KB · 22 class · 128 def</span></summary><div class="body"><details class="dir"><summary><code>coding/</code> <span class="meta">2 file(s) · 7.1 KB · 1 class · 10 def</span></summary><div class="body"><details class="file" id="f-src-plugins-builtin-coding-__init__.py"><summary><code>__init__.py</code> <span class="meta">6.1 KB · 173 lines</span> <span class="meta">— Built-in `coding` plugin — run Python / shell via subprocess or sandbox.</span></summary><div class="body"><p class="doc">Built-in `coding` plugin — run Python / shell via subprocess or sandbox.
+rationale.</p><p class="meta">1 class(es) · 2 top-level function(s)</p><details class="class"><summary><span class="tag tag-class">class</span><code>SelfModelStore</code> <span class="meta">L37</span></summary><div class="body"><p class="no-doc">(no docstring)</p><p class="meta">4 method(s)</p><details class="method"><summary><span class="tag tag-method">method</span><code>__init__</code> <span class="meta">L38</span></summary><div class="body"><div class="signature">def __init__(self, path: str | Path)</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>load</code> <span class="meta">L41</span></summary><div class="body"><div class="signature">def load(self) -&gt; dict[str, Any]</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>save</code> <span class="meta">L47</span></summary><div class="body"><div class="signature">def save(self, data: dict[str, Any]) -&gt; None</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>update</code> <span class="meta">L54</span></summary><div class="body"><div class="signature">def update(self, delta: dict[str, Any]) -&gt; dict[str, Any]</div><p class="no-doc">(no docstring)</p></div></details></div></details><details class="func"><summary><span class="tag tag-func">func</span><code>default_self_model</code> <span class="meta">L30</span></summary><div class="body"><div class="signature">def default_self_model() -&gt; dict[str, Any]</div><p class="no-doc">(no docstring)</p></div></details><details class="func"><summary><span class="tag tag-func">func</span><code>_deep_merge</code> <span class="meta">L61</span></summary><div class="body"><div class="signature">def _deep_merge(base: dict[str, Any], delta: dict[str, Any]) -&gt; dict[str, Any]</div><p class="no-doc">(no docstring)</p></div></details></div></details><details class="file" id="f-src-models-stimulus.py"><summary><code>stimulus.py</code> <span class="meta">518 B · 17 lines</span> <span class="meta">— Stimulus dataclass (DevSpec §6.1).</span></summary><div class="body"><p class="doc">Stimulus dataclass (DevSpec §6.1).</p><p class="meta">1 class(es) · 0 top-level function(s)</p><details class="class"><summary><span class="tag tag-class">class</span><code>Stimulus</code> <span class="meta">L10</span></summary><div class="body"><p class="no-doc">(no docstring)</p><p class="no-doc">(no methods)</p></div></details></div></details></div></details><details class="dir"><summary><code>plugins/</code> <span class="meta">34 file(s) · 102.3 KB · 28 class · 161 def</span></summary><div class="body"><details class="dir"><summary><code>builtin/</code> <span class="meta">30 file(s) · 72.9 KB · 22 class · 128 def</span></summary><div class="body"><details class="dir"><summary><code>coding/</code> <span class="meta">2 file(s) · 7.1 KB · 1 class · 10 def</span></summary><div class="body"><details class="file" id="f-src-plugins-builtin-coding-__init__.py"><summary><code>__init__.py</code> <span class="meta">6.1 KB · 173 lines</span> <span class="meta">— Built-in `coding` plugin — run Python / shell via subprocess or sandbox.</span></summary><div class="body"><p class="doc">Built-in `coding` plugin — run Python / shell via subprocess or sandbox.
 
 Runner selection (local Subprocess vs sandbox-agent SandboxRunner) is
 Runtime policy: the factory calls `deps["build_code_runner"](config)`
@@ -752,7 +910,7 @@ objects, memory writes/updates, and the sleep flag.
 Only loaded by ``src.plugins.unified_discovery.load_component`` when
 ``default_hypothalamus`` is listed in ``config.yaml``'s ``plugins:``.
 The contract types (``TentacleCall``, ``HypothalamusResult``) live
-in ``src.reflects.protocol`` so the runtime can consume them without
+in ``src.interfaces.reflect`` so the runtime can consume them without
 importing this plugin.</p><p class="meta">2 class(es) · 6 top-level function(s)</p><details class="class"><summary><span class="tag tag-class">class</span><code>ChatLike</code> <span class="meta">(Protocol)</span> <span class="meta">L67</span></summary><div class="body"><p class="no-doc">(no docstring)</p><p class="meta">1 method(s)</p><details class="method"><summary><span class="tag tag-method">method</span><code>chat</code> <span class="tag tag-async">async</span> <span class="meta">L68</span></summary><div class="body"><div class="signature">async def chat(self, messages, **kwargs) -&gt; str</div><p class="no-doc">(no docstring)</p></div></details></div></details><details class="class"><summary><span class="tag tag-class">class</span><code>DefaultHypothalamusReflect</code> <span class="meta">L74</span></summary><div class="body"><p class="doc">LLM-driven decision → tentacle-call translator.
 
 Was previously a thin wrapper around an inner ``Hypothalamus``
@@ -860,7 +1018,7 @@ Semantics:
   * field present, non-empty string → set</p><p class="meta">1 class(es) · 0 top-level function(s)</p><details class="class"><summary><span class="tag tag-class">class</span><code>UpdateInMindTentacle</code> <span class="meta">(Tentacle)</span> <span class="meta">L37</span></summary><div class="body"><p class="doc">Self-facing tentacle that calls back into the in_mind Reflect.
 
 Held by reference, not registry lookup, so the link is direct
-and immune to reflect re-registration weirdness.</p><p class="meta">7 method(s)</p><details class="method"><summary><span class="tag tag-method">method</span><code>__init__</code> <span class="meta">L44</span></summary><div class="body"><div class="signature">def __init__(self, reflect: 'InMindReflectImpl')</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>name</code> <span class="meta">L48</span></summary><div class="body"><div class="signature">def name(self) -&gt; str</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>description</code> <span class="meta">L52</span></summary><div class="body"><div class="signature">def description(self) -&gt; str</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>parameters_schema</code> <span class="meta">L60</span></summary><div class="body"><div class="signature">def parameters_schema(self) -&gt; dict[str, Any]</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>sandboxed</code> <span class="meta">L84</span></summary><div class="body"><div class="signature">def sandboxed(self) -&gt; bool</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>is_internal</code> <span class="meta">L89</span></summary><div class="body"><div class="signature">def is_internal(self) -&gt; bool</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>execute</code> <span class="tag tag-async">async</span> <span class="meta">L92</span></summary><div class="body"><div class="signature">async def execute(self, intent: str, params: dict[str, Any]) -&gt; Stimulus</div><p class="no-doc">(no docstring)</p></div></details></div></details></div></details></div></details><details class="dir"><summary><code>default_recall_anchor/</code> <span class="meta">3 file(s) · 2.6 KB · 1 class · 2 def</span></summary><div class="body"><details class="file" id="f-src-plugins-builtin-default_recall_anchor-__init__.py"><summary><code>__init__.py</code> <span class="meta">57 B · 2 lines</span></summary><div class="body"><p class="no-doc">(no docstring)</p><p class="meta">0 class(es) · 0 top-level function(s)</p><p class="no-doc">(module body only — no classes or top-level functions)</p></div></details><details class="file" id="f-src-plugins-builtin-default_recall_anchor-meta.yaml"><summary><code>meta.yaml</code> <span class="meta">638 B · 18 lines</span></summary><div class="body"><p class="meta">yaml · 18 line(s)</p><p class="no-doc">(no docstring)</p></div></details><details class="file" id="f-src-plugins-builtin-default_recall_anchor-reflect.py"><summary><code>reflect.py</code> <span class="meta">1.9 KB · 54 lines</span> <span class="meta">— Default recall-anchor Reflect — wraps the scripted</span></summary><div class="body"><p class="doc">Default recall-anchor Reflect — wraps the scripted
+and immune to reflect re-registration weirdness.</p><p class="meta">7 method(s)</p><details class="method"><summary><span class="tag tag-method">method</span><code>__init__</code> <span class="meta">L44</span></summary><div class="body"><div class="signature">def __init__(self, reflect: 'InMindReflectImpl')</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>name</code> <span class="meta">L48</span></summary><div class="body"><div class="signature">def name(self) -&gt; str</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>description</code> <span class="meta">L52</span></summary><div class="body"><div class="signature">def description(self) -&gt; str</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>parameters_schema</code> <span class="meta">L60</span></summary><div class="body"><div class="signature">def parameters_schema(self) -&gt; dict[str, Any]</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>sandboxed</code> <span class="meta">L84</span></summary><div class="body"><div class="signature">def sandboxed(self) -&gt; bool</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>is_internal</code> <span class="meta">L89</span></summary><div class="body"><div class="signature">def is_internal(self) -&gt; bool</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>execute</code> <span class="tag tag-async">async</span> <span class="meta">L92</span></summary><div class="body"><div class="signature">async def execute(self, intent: str, params: dict[str, Any]) -&gt; Stimulus</div><p class="no-doc">(no docstring)</p></div></details></div></details></div></details></div></details><details class="dir"><summary><code>default_recall_anchor/</code> <span class="meta">3 file(s) · 2.6 KB · 1 class · 2 def</span></summary><div class="body"><details class="file" id="f-src-plugins-builtin-default_recall_anchor-__init__.py"><summary><code>__init__.py</code> <span class="meta">57 B · 2 lines</span></summary><div class="body"><p class="no-doc">(no docstring)</p><p class="meta">0 class(es) · 0 top-level function(s)</p><p class="no-doc">(module body only — no classes or top-level functions)</p></div></details><details class="file" id="f-src-plugins-builtin-default_recall_anchor-meta.yaml"><summary><code>meta.yaml</code> <span class="meta">638 B · 18 lines</span></summary><div class="body"><p class="meta">yaml · 18 line(s)</p><p class="no-doc">(no docstring)</p></div></details><details class="file" id="f-src-plugins-builtin-default_recall_anchor-reflect.py"><summary><code>reflect.py</code> <span class="meta">2.0 KB · 54 lines</span> <span class="meta">— Default recall-anchor Reflect — wraps the scripted</span></summary><div class="body"><p class="doc">Default recall-anchor Reflect — wraps the scripted
 ``IncrementalRecall`` factory.
 
 Imported lazily by ``src.plugins.unified_discovery.load_component`` only when
@@ -1206,185 +1364,7 @@ Fixed system prompt. Not user-configurable at runtime.
 
 DNA = mechanics only. Input/output format, perception, action, memory,
 sleep, inner voice. No identity. No behavioral norms. Identity lives
-in GENESIS (Bootstrap once) and persists via self_model.</p><p class="meta">0 class(es) · 0 top-level function(s)</p><p class="no-doc">(module body only — no classes or top-level functions)</p></div></details></div></details><details class="dir"><summary><code>reflects/</code> <span class="meta">4 file(s) · 19.0 KB · 9 class · 18 def</span></summary><div class="body"><details class="file" id="f-src-reflects-__init__.py"><summary><code>__init__.py</code> <span class="meta">1.3 KB · 29 lines</span> <span class="meta">— Reflect plugin system — deeper-than-tentacle/sensory extension points.</span></summary><div class="body"><p class="doc">Reflect plugin system — deeper-than-tentacle/sensory extension points.
-
-A Reflect listens at heartbeat boundaries (``on_heartbeat_start`` /
-``on_heartbeat_end``) and can also implement one or more ``kind``-specific
-hooks that replace or augment a runtime mechanism. Examples:
-
-  * ``kind="hypothalamus"`` — translates Self's natural-language
-    ``[DECISION]`` into structured tentacle calls.
-  * ``kind="recall_anchor"`` — produces the per-beat recall instance
-    used to populate ``[GRAPH MEMORY]``.
-  * ``kind="in_mind"`` — owns the persistent thoughts / mood / focus
-    state Self can update each beat (planned).
-
-Multiple Reflects of the same ``kind`` are allowed; they execute in
-the order they were registered (``config.yaml`` ordering wins). The
-chain semantics are kind-specific — see each kind's dispatch in
-``ReflectRegistry``.
-
-The 2026-04-25 skeleton refactor wraps the existing in-tree
-``Hypothalamus`` and ``IncrementalRecall`` factory as the two default
-built-in Reflects, with no behavior change. See
-``docs/design/reflects-and-self-model.md`` for the full design.</p><p class="meta">0 class(es) · 0 top-level function(s)</p><p class="no-doc">(module body only — no classes or top-level functions)</p></div></details><details class="file" id="f-src-reflects-context.py"><summary><code>context.py</code> <span class="meta">3.8 KB · 97 lines</span> <span class="meta">— ``PluginContext`` — what a Reflect's factory sees.</span></summary><div class="body"><p class="doc">``PluginContext`` — what a Reflect's factory sees.
-
-Replaces the old ``build_reflect(deps: RuntimeDeps)`` signature. The
-context wraps the runtime deps with **plugin-scoped helpers**:
-
-  * ``ctx.get_llm(purpose_name)`` — resolves the user's
-    ``workspace/reflects/&lt;plugin&gt;/config.yaml`` ``llm_purposes:``
-    entry for the named purpose to a concrete ``LLMClient``, or
-    returns ``None`` if the user hasn't bound that purpose to a tag.
-    The plugin decides what to do with ``None`` (skip itself /
-    degrade gracefully / log loud).
-  * ``ctx.config`` — the parsed contents of the plugin's own
-    ``config.yaml`` (per-plugin folder under ``workspace/reflects/``).
-    Plugin code reads its own settings from here and **never** sees
-    the central config.yaml — keeps plugin code one step removed
-    from API keys + provider configs.
-  * ``ctx.deps`` — the original ``RuntimeDeps`` for plugins that
-    need shared resources (the embedder for vec_search, runtime
-    references via ``deps.config`` if absolutely necessary). Reading
-    ``deps.config.llm.providers`` from a plugin is allowed but
-    discouraged — by convention, plugins shouldn't poke at provider
-    bindings.
-
-Built by ``Runtime._register_reflects_from_config`` per Reflect.</p><p class="meta">1 class(es) · 1 top-level function(s)</p><details class="class"><summary><span class="tag tag-class">class</span><code>PluginContext</code> <span class="meta">L43</span></summary><div class="body"><p class="doc">Per-plugin context handed to ``build_&lt;component&gt;(ctx)``.</p><p class="meta">1 method(s)</p><details class="method"><summary><span class="tag tag-method">method</span><code>get_llm</code> <span class="meta">L68</span></summary><div class="body"><div class="signature">def get_llm(self, purpose: str) -&gt; 'LLMClient | None'</div><p class="no-doc">(no docstring)</p></div></details></div></details><details class="func"><summary><span class="tag tag-func">func</span><code>load_plugin_config</code> <span class="meta">L72</span></summary><div class="body"><div class="signature">def load_plugin_config(plugin_name: str, root: Path | str) -&gt; dict[str, Any]</div><p class="doc">Read ``&lt;root&gt;/&lt;plugin_name&gt;/config.yaml`` if present.
-
-Missing file → empty dict (the plugin operates with whatever
-defaults its code defines). Malformed YAML → empty dict + log
-warning, so a typo doesn't crash startup.</p></div></details></div></details><details class="file" id="f-src-reflects-protocol.py"><summary><code>protocol.py</code> <span class="meta">5.4 KB · 151 lines</span> <span class="meta">— Reflect protocol shapes.</span></summary><div class="body"><p class="doc">Reflect protocol shapes.
-
-Two layers:
-
-  1. ``Reflect`` — the minimum every Reflect satisfies: a name + kind +
-     optional heartbeat lifecycle hooks. The registry only depends on
-     this shape.
-
-  2. ``HypothalamusReflect`` / ``RecallAnchorReflect`` — kind-specific
-     Protocols that runtime call sites depend on. A concrete Reflect
-     implements one (or more) of these depending on what mechanisms
-     it overrides.
-
-We use ``typing.Protocol`` rather than ABCs so built-in classes (like
-the existing ``Hypothalamus``) can satisfy the interface by structure
-without inheriting from anything. This keeps the existing classes
-free of Reflect-specific imports and avoids a layered dependency.</p><p class="meta">7 class(es) · 0 top-level function(s)</p><details class="class"><summary><span class="tag tag-class">class</span><code>TentacleCall</code> <span class="meta">L29</span></summary><div class="body"><p class="doc">Structured tentacle invocation produced by a hypothalamus
-Reflect's ``translate()``. Consumed by ``Runtime._dispatch`` and
-by the script-only action executor (when no hypothalamus is
-registered). This is a contract type — the type that crosses the
-Reflect ↔ runtime boundary — so it lives with the protocol
-rather than inside any one plugin.</p><p class="no-doc">(no methods)</p></div></details><details class="class"><summary><span class="tag tag-class">class</span><code>HypothalamusResult</code> <span class="meta">L43</span></summary><div class="body"><p class="doc">Aggregate result of one hypothalamus translation pass: the
-tentacle calls to dispatch, plus any memory side-effects and the
-sleep flag. Same contract-type rationale as ``TentacleCall``.</p><p class="no-doc">(no methods)</p></div></details><details class="class"><summary><span class="tag tag-class">class</span><code>HeartbeatContext</code> <span class="meta">L54</span></summary><div class="body"><p class="doc">Bundle passed to ``on_heartbeat_start`` / ``on_heartbeat_end``.
-
-Carries enough runtime references that a Reflect can read state
-or schedule side effects without needing the whole Runtime as
-an opaque parameter. Kept intentionally small — Reflects that
-need more should accept a dedicated ``runtime`` reference at
-construction time, not via this context.</p><p class="no-doc">(no methods)</p></div></details><details class="class"><summary><span class="tag tag-class">class</span><code>Reflect</code> <span class="meta">(Protocol)</span> <span class="meta">L68</span></summary><div class="body"><p class="doc">Base shape — every Reflect has a name + kind.</p><p class="no-doc">(no methods)</p></div></details><details class="class"><summary><span class="tag tag-class">class</span><code>HypothalamusReflect</code> <span class="meta">(Protocol)</span> <span class="meta">L75</span></summary><div class="body"><p class="doc">A Reflect that translates Self's [DECISION] text into structured
-tentacle calls. Kind = "hypothalamus".
-
-Multi-Reflect chain semantics (when more than one is registered):
-each subsequent Reflect can post-process the prior result; the
-chain dispatch in ``ReflectRegistry.translate`` defines the
-composition. The skeleton supports length-1 chains only; chain
-composition is finalized when Reflect #1 (toggle-able
-Hypothalamus + executor engine) lands.</p><p class="meta">1 method(s)</p><details class="method"><summary><span class="tag tag-method">method</span><code>translate</code> <span class="tag tag-async">async</span> <span class="meta">L89</span></summary><div class="body"><div class="signature">async def translate(self, decision: str, tentacles: list[dict[str, Any]]) -&gt; HypothalamusResult</div><p class="no-doc">(no docstring)</p></div></details></div></details><details class="class"><summary><span class="tag tag-class">class</span><code>RecallAnchorReflect</code> <span class="meta">(Protocol)</span> <span class="meta">L95</span></summary><div class="body"><p class="doc">A Reflect that builds the per-beat recall instance. Kind =
-"recall_anchor".
-
-The default in-tree Reflect wraps the existing scripted
-``IncrementalRecall`` factory. A future LLM-anchor Reflect
-(Reflect #2) will produce a Recall driver that pre-extracts
-anchors from stimuli/history before running vec_search.
-
-The factory shape (``make_recall(runtime)``) preserves the
-existing per-run lifecycle: Runtime instantiates one Recall at
-``run()`` start and re-instantiates whenever budget enforcement
-requires a fresh re-recall.</p><p class="meta">1 method(s)</p><details class="method"><summary><span class="tag tag-method">method</span><code>make_recall</code> <span class="meta">L112</span></summary><div class="body"><div class="signature">def make_recall(self, runtime: Any) -&gt; 'IncrementalRecall'</div><p class="no-doc">(no docstring)</p></div></details></div></details><details class="class"><summary><span class="tag tag-class">class</span><code>InMindReflect</code> <span class="meta">(Protocol)</span> <span class="meta">L116</span></summary><div class="body"><p class="doc">A Reflect that owns Self's persistent "in-mind" state — the
-three short fields (``thoughts`` / ``mood`` / ``focus``) that
-capture what Self currently has at the front of its mental
-workspace. Kind = "in_mind".
-
-Architecture (see docs/design/reflects-and-self-model.md
-Reflect #3):
-
-  * ``read()`` returns the current state dict; consumed by the
-    prompt builder which prepends a "Heartbeat #now (in mind)"
-    virtual round at the head of ``[HISTORY]``.
-  * ``update(thoughts=, mood=, focus=)`` patches state and
-    persists. ``None`` for a field = leave alone; empty string =
-    clear; non-empty string = set.
-  * ``attach(runtime)`` is the one-time lifecycle hook called by
-    ``ReflectRegistry.attach_all`` after registration. The
-    in_mind Reflect uses it to register its own ``update_in_mind``
-    tentacle into ``runtime.tentacles``. Other Reflect kinds may
-    also implement ``attach`` (the protocol allows it
-    optionally), but in_mind is the first that needs it.</p><p class="meta">3 method(s)</p><details class="method"><summary><span class="tag tag-method">method</span><code>read</code> <span class="meta">L141</span></summary><div class="body"><div class="signature">def read(self) -&gt; dict[str, str]</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>update</code> <span class="meta">L143</span></summary><div class="body"><div class="signature">def update(self, thoughts: str | None=None, mood: str | None=None, focus: str | None=None) -&gt; dict[str, str]</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>attach</code> <span class="meta">L150</span></summary><div class="body"><div class="signature">def attach(self, runtime: Any) -&gt; None</div><p class="no-doc">(no docstring)</p></div></details></div></details></div></details><details class="file" id="f-src-reflects-registry.py"><summary><code>registry.py</code> <span class="meta">8.5 KB · 207 lines</span> <span class="meta">— ReflectRegistry — ordered storage + kind-specific dispatch.</span></summary><div class="body"><p class="doc">ReflectRegistry — ordered storage + kind-specific dispatch.
-
-The registry is a thin layer over a kind→list dict. Built-in defaults
-register themselves at Runtime construction; future user Reflects
-register from ``config.yaml`` declarations (not yet implemented).
-
-Dispatch helpers (``translate``, ``make_recall``) encapsulate the
-chain logic per kind so call sites in Runtime don't have to know how
-multiple same-kind Reflects compose.</p><p class="meta">1 class(es) · 0 top-level function(s)</p><details class="class"><summary><span class="tag tag-class">class</span><code>ReflectRegistry</code> <span class="meta">L23</span></summary><div class="body"><p class="doc">Ordered, kind-grouped registry for Reflects.
-
-Order within a kind = registration order. ``register`` appends
-to the kind's list; chain dispatch iterates the list head-to-tail.</p><p class="meta">11 method(s)</p><details class="method"><summary><span class="tag tag-method">method</span><code>__init__</code> <span class="meta">L30</span></summary><div class="body"><div class="signature">def __init__(self)</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>register</code> <span class="meta">L35</span></summary><div class="body"><div class="signature">def register(self, reflect: Reflect) -&gt; None</div><p class="doc">Append a Reflect to its kind's chain.</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>by_kind</code> <span class="meta">L47</span></summary><div class="body"><div class="signature">def by_kind(self, kind: str) -&gt; list[Reflect]</div><p class="doc">All Reflects of a given kind, in registration order.</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>names</code> <span class="meta">L51</span></summary><div class="body"><div class="signature">def names(self, kind: str | None=None) -&gt; list[str]</div><p class="doc">Names of all registered Reflects (optionally filtered by kind).
-Used by /status and dashboard display.</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>has_hypothalamus</code> <span class="meta">L61</span></summary><div class="body"><div class="signature">def has_hypothalamus(self) -&gt; bool</div><p class="doc">Whether any kind="hypothalamus" Reflect is registered.
-
-Drives the prompt-layer suppression for ``[ACTION FORMAT]``:
-when a hypothalamus Reflect is active it owns the translation
-path, so teaching Self the structured-tag syntax would create
-an interpretive conflict (Self would emit tags, Hypothalamus
-would also try to translate them). Suppress the teaching
-layer when Hypothalamus is on duty.</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>in_mind_state</code> <span class="meta">L73</span></summary><div class="body"><div class="signature">def in_mind_state(self) -&gt; dict[str, str] | None</div><p class="doc">Snapshot of the in_mind state, or ``None`` if no in_mind
-Reflect is registered (zero-plugin invariant — runtime keeps
-working, prompt builder just won't insert the virtual
-round / instruction layer).
-
-Skeleton supports length-1 in_mind chain; multi-Reflect
-in_mind composition isn't a real use case yet — if more than
-one in_mind Reflect is registered, the FIRST one's state is
-returned and a warning is logged on the chain rather than
-raising (better to keep running with the first state than
-crash).</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>attach_all</code> <span class="meta">L91</span></summary><div class="body"><div class="signature">def attach_all(self, runtime: Any) -&gt; None</div><p class="doc">One-time post-registration lifecycle hook.
-
-Each registered Reflect that defines an ``attach`` method
-gets called with the runtime so it can wire up its own
-runtime-coupled assets — e.g. the in_mind Reflect uses this
-to register its ``update_in_mind`` tentacle into
-``runtime.tentacles``.
-
-Errors in one Reflect's attach must not block the others —
-plugins are strictly additive (CLAUDE.md invariant).</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>dispatch_decision</code> <span class="tag tag-async">async</span> <span class="meta">L119</span></summary><div class="body"><div class="signature">async def dispatch_decision(self, self_text: str, decision: str, tentacles: list[dict[str, Any]]) -&gt; HypothalamusResult</div><p class="doc">Convert Self's response into structured tentacle calls.
-
-Picks the path based on registration:
-  * hypothalamus Reflect registered → run translate (existing
-    LLM-based path; Self's decision is natural language).
-  * no hypothalamus Reflect → action executor parses
-    ``[ACTION]...[/ACTION]`` JSONL out of ``self_text``.
-
-``self_text`` is the raw Self LLM response; ``decision`` is
-the parsed [DECISION] section. Hypothalamus uses ``decision``
-(clean natural language); the action executor uses
-``self_text`` (the structured tags can appear anywhere).</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>_dispatch_via_executor</code> <span class="meta">L147</span></summary><div class="body"><div class="signature">def _dispatch_via_executor(self, self_text: str) -&gt; HypothalamusResult</div><p class="doc">Parse [ACTION] JSONL, wrap as a HypothalamusResult so the
-downstream call site doesn't care which path produced it.
-
-action_executor is imported lazily to avoid a
-``runtime → reflects → runtime`` import cycle.</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>translate</code> <span class="tag tag-async">async</span> <span class="meta">L167</span></summary><div class="body"><div class="signature">async def translate(self, decision: str, tentacles: list[dict[str, Any]]) -&gt; HypothalamusResult</div><p class="no-doc">(no docstring)</p></div></details><details class="method"><summary><span class="tag tag-method">method</span><code>make_recall</code> <span class="meta">L182</span></summary><div class="body"><div class="signature">def make_recall(self, runtime: Any) -&gt; 'IncrementalRecall'</div><p class="doc">Build a fresh per-beat recall instance via the
-``recall_anchor`` chain.
-
-**No registered Reflect → returns a ``NoopRecall``** (not an
-exception). This is load-bearing per Samuel's 2026-04-25
-principle: disabling any plugin must not break the runtime's
-core loop. Without recall, Self heartbeats with an empty
-``[GRAPH MEMORY]`` layer — graceful degradation.
-
-Skeleton supports length-1 chains only; multi-Reflect
-composition lands when Reflect #2 forces semantics.</p></div></details></div></details></div></details></div></details><details class="dir"><summary><code>runtime/</code> <span class="meta">12 file(s) · 30.9 KB · 25 class · 66 def</span></summary><div class="body"><details class="file" id="f-src-runtime-__init__.py"><summary><code>__init__.py</code> <span class="meta">0 B · 1 lines</span></summary><div class="body"><p class="no-doc">(no docstring)</p><p class="meta">0 class(es) · 0 top-level function(s)</p><p class="no-doc">(module body only — no classes or top-level functions)</p></div></details><details class="file" id="f-src-runtime-action_executor.py"><summary><code>action_executor.py</code> <span class="meta">4.1 KB · 119 lines</span> <span class="meta">— Action executor — parses Self's ``[ACTION]...[/ACTION]`` block into</span></summary><div class="body"><p class="doc">Action executor — parses Self's ``[ACTION]...[/ACTION]`` block into
+in GENESIS (Bootstrap once) and persists via self_model.</p><p class="meta">0 class(es) · 0 top-level function(s)</p><p class="no-doc">(module body only — no classes or top-level functions)</p></div></details></div></details><details class="dir"><summary><code>runtime/</code> <span class="meta">12 file(s) · 30.9 KB · 25 class · 66 def</span></summary><div class="body"><details class="file" id="f-src-runtime-__init__.py"><summary><code>__init__.py</code> <span class="meta">0 B · 1 lines</span></summary><div class="body"><p class="no-doc">(no docstring)</p><p class="meta">0 class(es) · 0 top-level function(s)</p><p class="no-doc">(module body only — no classes or top-level functions)</p></div></details><details class="file" id="f-src-runtime-action_executor.py"><summary><code>action_executor.py</code> <span class="meta">4.1 KB · 119 lines</span> <span class="meta">— Action executor — parses Self's ``[ACTION]...[/ACTION]`` block into</span></summary><div class="body"><p class="doc">Action executor — parses Self's ``[ACTION]...[/ACTION]`` block into
 ``TentacleCall`` objects.
 
 This is the default tentacle-dispatch path for strong models that can

@@ -21,7 +21,7 @@ Specific paths exercised:
 import pytest
 
 from src.memory.recall import NoopRecall, RecallResult
-from src.reflects import ReflectRegistry
+from src.interfaces.reflect import ReflectRegistry
 from tests._runtime_helpers import (
     NullEmbedder, ScriptedLLM, build_runtime_with_fakes,
 )

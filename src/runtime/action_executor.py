@@ -34,7 +34,7 @@ import logging
 import re
 from typing import Any
 
-from src.reflects.protocol import TentacleCall
+from src.interfaces.reflect import TentacleCall
 
 _log = logging.getLogger(__name__)
 

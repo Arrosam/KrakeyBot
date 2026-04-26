@@ -25,7 +25,7 @@ from src.dashboard.web_chat import WebChatHistory
 # TentacleCall is the contract dataclass returned by the hypothalamus
 # Reflect's translate(); Runtime dispatches it. Lives in the Reflect
 # protocol module so the runtime never imports any plugin module.
-from src.reflects.protocol import TentacleCall
+from src.interfaces.reflect import TentacleCall
 from src.models.self_model import SelfModelStore
 from src.interfaces.sensory import SensoryRegistry
 from src.interfaces.tentacle import TentacleRegistry
@@ -139,7 +139,7 @@ class Runtime:
         # sensories registries exist) since a single plugin can
         # contribute components of all three kinds; loading them
         # before all three registries are built would crash.
-        from src.reflects import ReflectRegistry
+        from src.interfaces.reflect import ReflectRegistry
         self.reflects = ReflectRegistry()
         self.buffer = StimulusBuffer()
         # History token budget is derived from the Self role's input
@@ -333,7 +333,7 @@ class Runtime:
         from src.plugins.unified_discovery import (
             discover_plugins as _discover_unified, load_component,
         )
-        from src.reflects.context import PluginContext, load_plugin_config
+        from src.interfaces.plugin_context import PluginContext, load_plugin_config
 
         names = self.config.plugins
         if names is None:

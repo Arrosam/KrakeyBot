@@ -18,7 +18,7 @@ from src.plugins.builtin.default_in_mind.tentacle import (
 
 if TYPE_CHECKING:
     from src.main import Runtime
-    from src.reflects.context import PluginContext
+    from src.interfaces.plugin_context import PluginContext
 
 _log = logging.getLogger(__name__)
 

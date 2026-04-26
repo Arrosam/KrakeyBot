@@ -1,27 +1,31 @@
-"""``PluginContext`` — what a Reflect's factory sees.
+"""``PluginContext`` — what every plugin's factory sees.
 
-Replaces the old ``build_reflect(deps: RuntimeDeps)`` signature. The
-context wraps the runtime deps with **plugin-scoped helpers**:
+Passed to ``build_<component>(ctx)`` for every plugin kind
+(reflect / tentacle / sensory). Wraps the runtime deps with
+**plugin-scoped helpers**:
 
   * ``ctx.get_llm(purpose_name)`` — resolves the user's
-    ``workspace/reflects/<plugin>/config.yaml`` ``llm_purposes:``
+    ``workspace/plugins/<plugin>/config.yaml`` ``llm_purposes:``
     entry for the named purpose to a concrete ``LLMClient``, or
     returns ``None`` if the user hasn't bound that purpose to a tag.
     The plugin decides what to do with ``None`` (skip itself /
     degrade gracefully / log loud).
   * ``ctx.config`` — the parsed contents of the plugin's own
-    ``config.yaml`` (per-plugin folder under ``workspace/reflects/``).
+    ``config.yaml`` (per-plugin folder under ``workspace/plugins/``).
     Plugin code reads its own settings from here and **never** sees
     the central config.yaml — keeps plugin code one step removed
     from API keys + provider configs.
-  * ``ctx.deps`` — the original ``RuntimeDeps`` for plugins that
-    need shared resources (the embedder for vec_search, runtime
-    references via ``deps.config`` if absolutely necessary). Reading
-    ``deps.config.llm.providers`` from a plugin is allowed but
-    discouraged — by convention, plugins shouldn't poke at provider
-    bindings.
+  * ``ctx.services`` — Runtime-built resources whitelisted for
+    plugin use (gm, kb_registry, embedder, web_chat_history, ...).
+  * ``ctx.plugin_cache`` — per-plugin scratch dict for sharing
+    instances across multi-component plugins (e.g. telegram's
+    sensory + tentacle share an HttpTelegramClient via this).
+  * ``ctx.deps`` — escape hatch to ``RuntimeDeps`` for plugins that
+    truly need it. Reading ``deps.config.llm.providers`` from a
+    plugin is allowed but discouraged — by convention, plugins
+    shouldn't poke at provider bindings.
 
-Built by ``Runtime._register_reflects_from_config`` per Reflect.
+Built by ``Runtime._register_plugins_from_config`` per plugin.
 """
 from __future__ import annotations
 

@@ -2,9 +2,9 @@
 
 Architecture invariant being pinned (Samuel 2026-04-25): a Reflect's
 Python code must NOT be imported until the user explicitly enables
-it. Discovery (``src.reflects.discovery``) walks pure-text
-``meta.yaml`` files; ``load_reflect(name)`` is the only path that
-imports the module.
+it. Discovery (``src.plugins.unified_discovery``) walks pure-text
+``meta.yaml`` files; ``load_component(component, ctx)`` is the only
+path that imports the plugin module.
 
 Three input states for ``config.reflects`` (see Config docstring):
   * None         — field absent: register nothing + stderr nudge.
@@ -140,7 +140,7 @@ def test_load_component_imports_and_calls_factory():
     """load_component is the only path that imports plugin modules.
     Builds a fake PluginContext binding the `translator` purpose to
     a stand-in LLMClient → factory returns a Reflect."""
-    from src.reflects.context import PluginContext
+    from src.interfaces.plugin_context import PluginContext
     metas = discover_plugins()
     refl_comp = next(c for c in metas["default_hypothalamus"].components
                      if c.kind == "reflect")

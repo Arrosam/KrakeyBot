@@ -8,7 +8,7 @@ objects, memory writes/updates, and the sleep flag.
 Only loaded by ``src.plugins.unified_discovery.load_component`` when
 ``default_hypothalamus`` is listed in ``config.yaml``'s ``plugins:``.
 The contract types (``TentacleCall``, ``HypothalamusResult``) live
-in ``src.reflects.protocol`` so the runtime can consume them without
+in ``src.interfaces.reflect`` so the runtime can consume them without
 importing this plugin.
 """
 from __future__ import annotations
@@ -17,10 +17,10 @@ import json
 import re
 from typing import TYPE_CHECKING, Any, Protocol
 
-from src.reflects.protocol import HypothalamusResult, TentacleCall
+from src.interfaces.reflect import HypothalamusResult, TentacleCall
 
 if TYPE_CHECKING:
-    from src.reflects.context import PluginContext
+    from src.interfaces.plugin_context import PluginContext
 
 
 SYSTEM_PROMPT = """# Hypothalamus — 行动翻译器

@@ -13,7 +13,7 @@ from src.memory.recall import IncrementalRecall
 
 if TYPE_CHECKING:
     from src.main import Runtime
-    from src.reflects.context import PluginContext
+    from src.interfaces.plugin_context import PluginContext
 
 
 class DefaultRecallAnchorReflect:

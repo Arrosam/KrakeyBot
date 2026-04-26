@@ -165,7 +165,7 @@ def test_update_persists_across_reflect_instances(tmp_path):
 def test_build_reflect_factory_signature():
     """build_reflect takes a PluginContext; reads the deps' state
     path override (None for the default behavior)."""
-    from src.reflects.context import PluginContext
+    from src.interfaces.plugin_context import PluginContext
     fake_deps = SimpleNamespace(in_mind_state_path=None)
     ctx = PluginContext(deps=fake_deps, plugin_name="default_in_mind",
                           config={}, llms={})

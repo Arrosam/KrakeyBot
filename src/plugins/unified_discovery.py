@@ -63,7 +63,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 if TYPE_CHECKING:
-    from src.reflects.context import PluginContext
+    from src.interfaces.plugin_context import PluginContext
 
 
 # Roots scanned for plugin manifests. Built-in ships with Krakey;

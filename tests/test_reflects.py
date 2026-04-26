@@ -17,16 +17,16 @@ from datetime import datetime
 
 import pytest
 
-from src.reflects.protocol import HypothalamusResult
-from src.memory.recall import IncrementalRecall
-from src.reflects import (
-    HypothalamusReflect, RecallAnchorReflect, Reflect, ReflectRegistry,
+from src.interfaces.reflect import (
+    HypothalamusReflect, HypothalamusResult, RecallAnchorReflect,
+    Reflect, ReflectRegistry,
 )
+from src.memory.recall import IncrementalRecall
 # Tests legitimately need to instantiate the Reflect classes; importing
 # them via their full module path is fine — we're not violating the
 # "no code load before user enables" rule because tests are not the
 # Web UI / config-form scan path. Production discovery still goes
-# through src.reflects.discovery.load_reflect.
+# through src.plugins.unified_discovery.load_component.
 from src.plugins.builtin.default_hypothalamus.reflect import (
     DefaultHypothalamusReflect,
 )
