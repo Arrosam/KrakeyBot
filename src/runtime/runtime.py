@@ -22,9 +22,6 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from src.bootstrap import load_self_model_or_default
-from src.dashboard.app_factory import create_app as create_dashboard_app
-from src.dashboard.events import EventBroadcaster
-from src.dashboard.server import DashboardServer
 from src.dashboard.web_chat import WebChatHistory
 from src.models.self_model import SelfModelStore
 from src.interfaces.sensory import SensoryRegistry
@@ -35,7 +32,6 @@ from src.memory.knowledge_base import KBRegistry
 from src.memory.recall import IncrementalRecall, Reranker
 from src.models.config import Config, LLMParams
 from src.models.config_backup import backup_config
-from src.models.stimulus import Stimulus
 from src.prompt.builder import PromptBuilder
 from src.runtime.batch_tracker import BatchTrackerSensory
 from src.runtime.event_bus import EventBus
@@ -95,11 +91,6 @@ class RuntimeDeps:
     llm_clients_by_tag: dict[str, Any] = field(default_factory=dict)
 
 
-MAX_RECALL_RETRIES = 1
-"""Cap on uncovered stimulus re-tries to prevent infinite pushback loops
-when GM has no related nodes yet (e.g. first-ever user message)."""
-
-
 def resolve_llm_for_tag(
     cfg: Config, tag_name: str | None,
     cache: dict[str, "LLMClient"],
@@ -144,16 +135,6 @@ def resolve_llm_for_tag(
     client = LLMClient(provider, model_name, params=tag.params)
     cache[tag_name] = client
     return client
-
-
-@dataclass
-class _GMCounts:
-    """Snapshot from one heartbeat's fatigue phase, threaded into later phases
-    so they don't re-query GM redundantly."""
-    node_count: int
-    edge_count: int
-    fatigue_pct: int
-    fatigue_hint: str
 
 
 class Runtime:
@@ -315,9 +296,14 @@ class Runtime:
         self.log = logger or HeartbeatLogger()
         self.sleep_log_dir = "workspace/logs"
         self.events = event_bus or EventBus()
-        self._dashboard: DashboardServer | None = None
         self._config_path = deps.config_path  # for dashboard settings page
         self._backup_dir = deps.backup_dir or "workspace/backups"
+
+        # Dashboard server composition — owns start/stop lifecycle +
+        # the on_user_message + on_restart callback wiring. server is
+        # ``None`` until start_if_enabled() runs and binds successfully.
+        from src.runtime.dashboard_lifecycle import DashboardLifecycle
+        self._dashboard = DashboardLifecycle(self)
 
         # Hypothalamus side-effects executor — pure composition over
         # the same five collaborators (tentacles, batch_tracker, buffer,
@@ -574,69 +560,13 @@ class Runtime:
 
     async def close(self) -> None:
         """Shut down persistent resources (Dashboard + GM + open KBs)."""
-        if self._dashboard is not None:
-            try:
-                await self._dashboard.stop()
-            except Exception as e:  # noqa: BLE001
-                self.log.runtime_error(f"dashboard stop error: {e}")
-            self._dashboard = None
+        await self._dashboard.stop()
         await self.kb_registry.close_all()
         await self.gm.close()
 
     async def _maybe_start_dashboard(self) -> None:
-        cfg = getattr(self.config, "dashboard", None)
-        if cfg is None or not cfg.enabled:
-            return
-
-        # Route inbound user messages through the web_chat sensory
-        # (plugin-registered). If the plugin is disabled, no sensory
-        # exists — install a noop callback that logs the drop so the
-        # dashboard can still show history in monitor-only mode.
-        web_chat_sensory = self.sensories._sensories.get("web_chat")  # noqa: SLF001
-        if web_chat_sensory is not None:
-            _on_user_message = web_chat_sensory.push_user_message
-        else:
-            async def _on_user_message(text: str,
-                                           attachments: list[dict] | None = None
-                                           ) -> None:
-                self.log.hb_warn(
-                    "web_chat plugin disabled — dropping inbound message "
-                    f"({len(text or '')} chars)"
-                )
-
-        def _on_restart() -> None:
-            """Re-exec process so a new instance picks up edited config."""
-            import os as _os
-            import sys as _sys
-            self.log.hb("restart requested via dashboard — re-execing")
-            _os.execv(_sys.executable, [_sys.executable, *_sys.argv])
-
-        try:
-            broadcaster = EventBroadcaster(self.events)
-            self._dashboard = DashboardServer(
-                create_dashboard_app(
-                    runtime=self,
-                    web_chat_history=self.web_chat_history,
-                    on_user_message=_on_user_message,
-                    event_broadcaster=broadcaster,
-                    config_path=Path(self._config_path) if self._config_path else None,
-                    on_restart=_on_restart,
-                ),
-                host=cfg.host, port=cfg.port,
-            )
-            await self._dashboard.start()
-            self.log.hb(
-                f"dashboard listening on http://{cfg.host}:{self._dashboard.port}"
-            )
-        except OSError as e:
-            self.log.runtime_error(
-                f"dashboard failed to start (port {cfg.port} in use? {e}); "
-                "runtime continues without dashboard"
-            )
-            self._dashboard = None
-        except Exception as e:  # noqa: BLE001
-            self.log.runtime_error(f"dashboard startup error: {e}")
-            self._dashboard = None
+        # Facade — lifecycle lives in DashboardLifecycle.
+        await self._dashboard.start_if_enabled()
 
     # ---------- heartbeat algorithm ----------
 
@@ -663,26 +593,5 @@ class Runtime:
         return self._orchestrator.get_genesis_text()
 
 
-def _delta_str(delta: int) -> str:
-    if delta > 0:
-        return f" (+{delta})"
-    if delta < 0:
-        return f" ({delta})"
-    return ""
-
-
-def _summarize_stimuli(stimuli: list[Stimulus]) -> str:
-    """Render the stimulus list for persistence in a ``SlidingWindowRound``.
-
-    This text is what Self sees in the ``[HISTORY]`` layer every
-    subsequent beat — truncation here is destructive: downstream
-    mechanisms (recall-anchor extraction, compact summarization,
-    bootstrap-signal detection, user-message echo checks) all rely on
-    the full content. The window's token budget handles overflow via
-    compact_if_needed, so we don't need a blunt character cap here.
-    """
-    if not stimuli:
-        return "(none)"
-    return " | ".join(f"{s.source}: {s.content}" for s in stimuli)
 
 

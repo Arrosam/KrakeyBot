@@ -24,6 +24,7 @@ Runtime so the existing test surface keeps reading them directly.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -47,7 +48,45 @@ from src.self_agent import parse_self_output
 
 if TYPE_CHECKING:
     from src.memory.recall import IncrementalRecall
-    from src.runtime.runtime import Runtime, _GMCounts
+    from src.runtime.runtime import Runtime
+
+
+MAX_RECALL_RETRIES = 1
+"""Cap on uncovered stimulus re-tries to prevent infinite pushback loops
+when GM has no related nodes yet (e.g. first-ever user message)."""
+
+
+@dataclass
+class _GMCounts:
+    """Snapshot from one heartbeat's fatigue phase, threaded into later
+    phases so they don't re-query GM redundantly."""
+    node_count: int
+    edge_count: int
+    fatigue_pct: int
+    fatigue_hint: str
+
+
+def _delta_str(delta: int) -> str:
+    if delta > 0:
+        return f" (+{delta})"
+    if delta < 0:
+        return f" ({delta})"
+    return ""
+
+
+def _summarize_stimuli(stimuli: list[Stimulus]) -> str:
+    """Render the stimulus list for persistence in a ``SlidingWindowRound``.
+
+    This text is what Self sees in the ``[HISTORY]`` layer every
+    subsequent beat — truncation here is destructive: downstream
+    mechanisms (recall-anchor extraction, compact summarization,
+    bootstrap-signal detection, user-message echo checks) all rely on
+    the full content. The window's token budget handles overflow via
+    compact_if_needed, so we don't need a blunt character cap here.
+    """
+    if not stimuli:
+        return "(none)"
+    return " | ".join(f"{s.source}: {s.content}" for s in stimuli)
 
 
 class HeartbeatOrchestrator:
@@ -168,8 +207,7 @@ class HeartbeatOrchestrator:
             await rt._recall.add_stimuli(new_for_recall)
         return stimuli
 
-    async def _phase_compute_fatigue(self) -> "_GMCounts":
-        from src.runtime.runtime import _GMCounts, _delta_str
+    async def _phase_compute_fatigue(self) -> _GMCounts:
         rt = self._rt
         node_count = await rt.gm.count_nodes()
         edge_count = await rt.gm.count_edges()
@@ -205,7 +243,6 @@ class HeartbeatOrchestrator:
 
     async def _phase_finalize_recall_and_pushback(self):
         """Finalize recall + cap-1 retry of uncovered stimuli."""
-        from src.runtime.runtime import MAX_RECALL_RETRIES
         rt = self._rt
         assert rt._recall is not None
         recall_result = await rt._recall.finalize()
@@ -241,7 +278,6 @@ class HeartbeatOrchestrator:
         return parse_self_output(raw)
 
     def _phase_save_round(self, parsed, stimuli) -> None:
-        from src.runtime.runtime import _summarize_stimuli
         rt = self._rt
         rt.window.append(SlidingWindowRound(
             heartbeat_id=rt.heartbeat_count,

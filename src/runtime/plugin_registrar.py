@@ -28,6 +28,7 @@ of the rest. Strictly additive plugin model, per CLAUDE.md.
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -38,6 +39,35 @@ if TYPE_CHECKING:
     from src.models.config import Config
     from src.plugins.plugin_config import FilePluginConfigStore
     from src.runtime.runtime import RuntimeDeps
+
+
+@dataclass
+class PluginInfo:
+    """Descriptor for one registered plugin component (reflect /
+    tentacle / sensory). Consumed by the dashboard's /api/plugins
+    endpoint via ``plugin_report()``.
+
+    Originally lived in ``src.plugins.loader`` (the legacy MANIFEST
+    loader) which has since been removed; the dataclass moved here
+    when it became the only used export. Field shape preserved for
+    dashboard JS compatibility — ``path`` / ``source`` / ``error``
+    are stubs in the meta.yaml flow but kept so the frontend renderer
+    doesn't have to special-case missing keys.
+    """
+    name: str                           # component name
+    kind: str                           # "reflect" | "tentacle" | "sensory"
+    source: str                         # "builtin" | "plugin"
+    path: str                           # module path on disk, "" for core
+    project: str = ""                   # containing plugin folder name
+    description: str = ""
+    is_internal: bool = False
+    config_schema: list[dict[str, Any]] = field(default_factory=list)
+    # Loader-owned. True iff the plugin is in config.yaml's plugins:
+    # list. Default False — plugins never self-enable.
+    enabled: bool = False
+    error: str | None = None
+    # Set by the loader on success. Never JSON-serialised.
+    instance: Any = None
 
 
 class PluginRegistrar:
@@ -207,8 +237,6 @@ class PluginRegistrar:
         now pure introspection. Stored on ``self._infos`` and returned
         for the caller's convenience.
         """
-        from src.plugins.loader import PluginInfo
-
         infos: list = []
         for r in (self._reflects.by_kind("hypothalamus")
                   + self._reflects.by_kind("recall_anchor")

@@ -14,16 +14,10 @@ from pathlib import Path
 
 import yaml
 
-from src.plugins.loader import discover_plugins
 from src.plugins.plugin_config import (
     DictPluginConfigStore,
     FilePluginConfigStore,
 )
-
-
-def _write_single(dir_path: Path, name: str, body: str) -> None:
-    dir_path.mkdir(parents=True, exist_ok=True)
-    (dir_path / f"{name}.py").write_text(body, encoding="utf-8")
 
 
 # ---------------- FilePluginConfigStore semantics ----------------
@@ -136,126 +130,6 @@ def test_peek_config_returns_empty_when_unknown(tmp_path):
 
 
 # ---------------- Loader integration via store ----------------
-
-
-def test_loader_generates_per_plugin_file_on_first_run(tmp_path):
-    body = """
-from src.interfaces.tentacle import Tentacle
-from src.models.stimulus import Stimulus
-from datetime import datetime
-
-MANIFEST = {
-    "config_schema": [
-        {"field": "greeting", "type": "text", "default": "hi"},
-    ],
-}
-
-class T(Tentacle):
-    def __init__(self, greeting): self.greeting = greeting
-    @property
-    def name(self): return "gen"
-    @property
-    def description(self): return ""
-    @property
-    def parameters_schema(self): return {}
-    async def execute(self, intent, params):
-        return Stimulus(type="tentacle_feedback", source="t:gen",
-                        content=self.greeting, timestamp=datetime.now())
-
-def create_tentacle(config, deps):
-    return T(greeting=config["greeting"])
-"""
-    plug_dir = tmp_path / "plugins"
-    _write_single(plug_dir, "gen", body)
-    cfg_root = tmp_path / "cfgs"
-
-    store = FilePluginConfigStore(root=cfg_root)
-    out = discover_plugins(plug_dir, deps={}, config_store=store)
-    assert len(out) == 1
-    info = out[0]
-    # enabled defaults to False → factory should NOT have run,
-    # but the config file must have been generated anyway.
-    assert info.enabled is False
-    assert info.instance is None
-    gen_file = cfg_root / "gen.yaml"
-    assert gen_file.exists()
-    on_disk = yaml.safe_load(gen_file.read_text(encoding="utf-8"))
-    assert on_disk == {"enabled": False, "greeting": "hi"}
-
-
-def test_loader_respects_edits_to_per_plugin_file(tmp_path):
-    body = """
-from src.interfaces.tentacle import Tentacle
-from src.models.stimulus import Stimulus
-from datetime import datetime
-
-MANIFEST = {"config_schema": [
-    {"field": "greeting", "type": "text", "default": "hi"},
-]}
-
-class T(Tentacle):
-    def __init__(self, greeting): self.greeting = greeting
-    @property
-    def name(self): return "gen"
-    @property
-    def description(self): return ""
-    @property
-    def parameters_schema(self): return {}
-    async def execute(self, intent, params):
-        return Stimulus(type="tentacle_feedback", source="t:gen",
-                        content=self.greeting, timestamp=datetime.now())
-
-def create_tentacle(config, deps): return T(greeting=config["greeting"])
-"""
-    plug_dir = tmp_path / "plugins"
-    _write_single(plug_dir, "gen", body)
-    cfg_root = tmp_path / "cfgs"
-    cfg_root.mkdir()
-    (cfg_root / "gen.yaml").write_text(
-        "enabled: true\ngreeting: howdy\n", encoding="utf-8",
-    )
-
-    store = FilePluginConfigStore(root=cfg_root)
-    out = discover_plugins(plug_dir, deps={}, config_store=store)
-    info = out[0]
-    assert info.enabled is True
-    assert info.instance is not None
-    assert info.instance.greeting == "howdy"
-
-
-def test_loader_uses_dict_store_shim_when_no_store_kwarg(tmp_path):
-    """Legacy call path: `configs={...}` still works without a store."""
-    body = """
-from src.interfaces.tentacle import Tentacle
-from src.models.stimulus import Stimulus
-from datetime import datetime
-
-MANIFEST = {"config_schema": [
-    {"field": "greeting", "default": "hi"},
-]}
-
-class T(Tentacle):
-    def __init__(self, greeting): self.greeting = greeting
-    @property
-    def name(self): return "legacy"
-    @property
-    def description(self): return ""
-    @property
-    def parameters_schema(self): return {}
-    async def execute(self, intent, params):
-        return Stimulus(type="tentacle_feedback", source="t:legacy",
-                        content="", timestamp=datetime.now())
-
-def create_tentacle(config, deps): return T(greeting=config["greeting"])
-"""
-    plug_dir = tmp_path / "plugins"
-    _write_single(plug_dir, "legacy", body)
-    out = discover_plugins(
-        plug_dir,
-        deps={},
-        configs={"legacy": {"enabled": True, "greeting": "dict"}},
-    )
-    assert out[0].instance.greeting == "dict"
 
 
 def test_dict_store_standalone():
