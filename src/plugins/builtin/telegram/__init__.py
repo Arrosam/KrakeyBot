@@ -29,7 +29,6 @@ MANIFEST = {
          "description": "Polls Telegram getUpdates; pushes user_message "
                         "stimuli into the buffer."},
         {"kind": "tentacle", "name": "telegram_reply",
-         "is_internal": False,
          "description": "Sends a Telegram message. Outward — the text "
                         "reaches the real human."},
     ],

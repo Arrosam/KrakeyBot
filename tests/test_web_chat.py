@@ -157,7 +157,6 @@ async def test_sensory_push_after_stop_silently_drops():
 def test_tentacle_metadata():
     t = WebChatTentacle(history=None)  # noqa
     assert t.name == "web_chat_reply"
-    assert t.is_internal is False  # outbound chat to a human
 
 
 async def test_tentacle_send_appends_to_history(tmp_path):

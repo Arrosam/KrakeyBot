@@ -130,7 +130,6 @@ def test_sensory_metadata():
 def test_tentacle_metadata():
     t = TelegramReplyTentacle(client=FakeClient())
     assert t.name == "telegram_reply"
-    assert t.is_internal is False  # this IS outward chat
 
 
 async def test_tentacle_sends_via_client_with_explicit_chat_id():

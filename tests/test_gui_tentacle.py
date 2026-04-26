@@ -48,7 +48,6 @@ def test_metadata():
     t = GuiControlTentacle(backend=FakeBackend(), screenshot_dir="x")
     assert t.name == "gui_control"
     assert t.description
-    assert t.is_internal is True
 
 
 async def test_click_invokes_backend(tmp_path):

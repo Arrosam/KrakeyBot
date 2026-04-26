@@ -34,7 +34,6 @@ MANIFEST = {
                         "Pushes user_message stimuli with "
                         "adrenalin=True and channel=web_chat."},
         {"kind": "tentacle", "name": "web_chat_reply",
-         "is_internal": False,
          "description": "Krakey → user via dashboard. Outward — the "
                         "text reaches the real human."},
     ],

@@ -23,7 +23,6 @@ def test_tentacle_metadata():
     assert t.name == "search"
     assert t.description
     assert isinstance(t.parameters_schema, dict)
-    assert t.is_internal is True  # results feed Self, not user
 
 
 async def test_returns_formatted_results():

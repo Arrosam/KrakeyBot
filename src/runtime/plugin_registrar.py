@@ -60,7 +60,6 @@ class PluginInfo:
     path: str                           # module path on disk, "" for core
     project: str = ""                   # containing plugin folder name
     description: str = ""
-    is_internal: bool = False
     config_schema: list[dict[str, Any]] = field(default_factory=list)
     # Loader-owned. True iff the plugin is in config.yaml's plugins:
     # list. Default False — plugins never self-enable.
@@ -284,7 +283,6 @@ class PluginRegistrar:
                 "path": i.path,
                 "project": i.project,
                 "description": i.description,
-                "is_internal": i.is_internal,
                 "config_schema": i.config_schema,
                 "enabled": i.enabled,
                 "values": _values_for(i.project),
@@ -302,7 +300,7 @@ class PluginRegistrar:
         core_tentacles = [
             {"name": t.name, "kind": "tentacle", "source": "core",
              "path": "", "project": "", "description": t.description,
-             "is_internal": t.is_internal, "config_schema": [],
+             "config_schema": [],
              "enabled": True, "values": {},
              "loaded": True, "error": None}
             for t in self._tentacles._tentacles.values()  # noqa: SLF001
@@ -311,7 +309,7 @@ class PluginRegistrar:
         core_sensories = [
             {"name": s.name, "kind": "sensory", "source": "core",
              "path": "", "project": "", "description": "",
-             "is_internal": False, "config_schema": [],
+             "config_schema": [],
              "enabled": True, "values": {},
              "loaded": True, "error": None}
             for s in self._sensories._sensories.values()  # noqa: SLF001

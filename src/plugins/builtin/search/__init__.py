@@ -1,8 +1,8 @@
 """Built-in `search` plugin — DuckDuckGo web search via ddgs.
 
 Krakey's "look out the window" — fetches results and returns them as a
-tentacle_feedback stimulus. Results are internal (is_internal=True);
-Self decides whether/how to relay them to the user.
+tentacle_feedback stimulus. Self decides whether/how to relay them
+to the user.
 """
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ MANIFEST = {
     "name": "search",
     "description": "Web search via DuckDuckGo. Inward: results are for "
                    "Self's own reading; she decides whether to relay.",
-    "is_internal": True,
     "config_schema": [
         {"field": "max_results", "type": "number", "default": 5,
          "help": "Upper bound on results per query."},
@@ -70,10 +69,6 @@ class SearchTentacle(Tentacle):
             "max_results": "max number of results (default 5)",
         }
 
-    @property
-    def is_internal(self) -> bool:
-        # Results are for Self to read & decide; not direct user-facing chat.
-        return True
 
     async def execute(self, intent: str,
                         params: dict[str, Any]) -> Stimulus:

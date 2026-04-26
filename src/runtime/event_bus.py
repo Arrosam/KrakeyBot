@@ -114,7 +114,6 @@ class DispatchEvent(_BaseEvent):
 class TentacleResultEvent(_BaseEvent):
     tentacle: str
     content: str
-    is_internal: bool
 
 
 @dataclass

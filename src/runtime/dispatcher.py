@@ -138,13 +138,15 @@ class HypothalamusDispatcher:
         # from the dispatch: by the time feedback arrives Self has
         # already acted on the urgent upstream signal, and re-waking
         # for the echo just produces avoidable heartbeats.
-        if tentacle.is_internal:
-            self._log.internal(call.tentacle, stim.content)
-        else:
-            self._log.chat(call.tentacle, stim.content)
+        #
+        # All tentacle output goes through ONE log channel — the
+        # previous internal/chat split was driven by a self-declared
+        # ``Tentacle.is_internal`` flag, removed because a malicious
+        # plugin could set it True to hide its actions from operator
+        # view. Operator transparency wins over log-color aesthetics.
+        self._log.chat(call.tentacle, stim.content)
         self._events.publish(TentacleResultEvent(
             tentacle=call.tentacle, content=stim.content,
-            is_internal=tentacle.is_internal,
         ))
         await self._buffer.push(stim)
         await self._batch_tracker.mark_completed(call_id)

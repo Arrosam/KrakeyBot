@@ -4,9 +4,9 @@ in_mind state.
 Built by ``build_tentacle(ctx)`` as the second component of the
 ``default_in_mind`` plugin. Pulls the already-built reflect instance
 from ``ctx.plugin_cache`` (the reflect factory ran first because
-``components:`` lists it first). Internal (``is_internal=True``) —
-the result is just a feedback receipt for Self, not something to
-broadcast to the human.
+``components:`` lists it first). The execute() result is a feedback
+receipt for Self only — there's no separate human-facing channel
+to broadcast to (in_mind is pure inner state).
 
 Argument shape (matches what Self emits in the [ACTION] JSONL block):
 
@@ -108,9 +108,6 @@ class UpdateInMindTentacle(Tentacle):
         # Pure in-process state mutation, no external surface.
         return False
 
-    @property
-    def is_internal(self) -> bool:
-        return True
 
     async def execute(
         self, intent: str, params: dict[str, Any],

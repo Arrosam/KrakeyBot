@@ -36,9 +36,6 @@ class WebChatTentacle(Tentacle):
     def parameters_schema(self) -> dict[str, Any]:
         return {"text": "message body (defaults to intent)"}
 
-    @property
-    def is_internal(self) -> bool:
-        return False
 
     async def execute(self, intent: str,
                         params: dict[str, Any]) -> Stimulus:

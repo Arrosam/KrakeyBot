@@ -1,8 +1,8 @@
 """Telegram outbound reply tentacle.
 
-Takes the same `TelegramClient` instance the sensory polls with; its
-output is `is_internal=False` because what gets sent IS Krakey's
-real outward chat to a human.
+Takes the same `TelegramClient` instance the sensory polls with;
+sending the message IS Krakey's real outward chat to a human (the
+tentacle_feedback returned to Self is just a delivery receipt).
 """
 from __future__ import annotations
 
@@ -38,9 +38,6 @@ class TelegramReplyTentacle(Tentacle):
             "text": "message body (defaults to intent)",
         }
 
-    @property
-    def is_internal(self) -> bool:
-        return False  # outbound chat to a human
 
     async def execute(self, intent: str,
                         params: dict[str, Any]) -> Stimulus:

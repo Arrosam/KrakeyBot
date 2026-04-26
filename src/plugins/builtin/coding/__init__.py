@@ -37,7 +37,6 @@ MANIFEST = {
     "description": "Execute a Python or shell command and return exit "
                    "code + stdout / stderr. Routes through the sandbox "
                    "VM when `sandbox: true` (default).",
-    "is_internal": True,
     "config_schema": [
         {"field": "sandbox",          "type": "bool",   "default": True,
          "help": "When true, exec runs via the sandbox guest agent. "
@@ -80,11 +79,6 @@ class CodingTentacle(Tentacle):
             "language": "'python' (default) or 'shell'",
             "code": "source to execute (defaults to the natural-language intent)",
         }
-
-    @property
-    def is_internal(self) -> bool:
-        # Output goes to Self for inspection, not directly to the human.
-        return True
 
     async def execute(self, intent: str,
                         params: dict[str, Any]) -> Stimulus:

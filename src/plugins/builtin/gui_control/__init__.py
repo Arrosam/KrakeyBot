@@ -27,7 +27,6 @@ MANIFEST = {
     "description": "Drive a desktop (click / type / press / screenshot). "
                    "Disabled by default; enable only when you want "
                    "Krakey operating a visible display.",
-    "is_internal": True,
     "config_schema": [
         {"field": "sandbox",        "type": "bool", "default": True,
          "help": "Reserved for Phase S2; currently ignored (always runs "
@@ -102,9 +101,6 @@ class GuiControlTentacle(Tentacle):
             "button": "left|right|middle (click, default left)",
         }
 
-    @property
-    def is_internal(self) -> bool:
-        return True
 
     async def execute(self, intent: str,
                         params: dict[str, Any]) -> Stimulus:

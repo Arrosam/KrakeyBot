@@ -23,7 +23,6 @@ MANIFEST = {
     "description": "Active recall of GM nodes (and, via KB index nodes, "
                    "their KB entries). Self dispatches this when she "
                    "wants to reflect or dig into past learning.",
-    "is_internal": True,
     "config_schema": [
         {"field": "default_top_k", "type": "number", "default": 8,
          "help": "Default number of top-K nodes to return when Self "
@@ -69,10 +68,6 @@ class MemoryRecallTentacle(Tentacle):
     def sandboxed(self) -> bool:
         return True
 
-    @property
-    def is_internal(self) -> bool:
-        # Recall results feed Self's next heartbeat; never reach the user.
-        return True
 
     async def execute(self, intent: str,
                         params: dict[str, Any]) -> Stimulus:

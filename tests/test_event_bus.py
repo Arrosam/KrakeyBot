@@ -105,6 +105,6 @@ def test_event_kind_property_for_serialization():
     assert HeartbeatStartEvent(1, 0).kind == "heartbeat_start"
     assert PromptBuiltEvent(1, {}).kind == "prompt_built"
     assert StimuliQueuedEvent([]).kind == "stimuli_queued"
-    assert TentacleResultEvent("action", "x", False).kind == "tentacle_result"
+    assert TentacleResultEvent("action", "x").kind == "tentacle_result"
     # Acronym run preserved as one token
     assert GMStatsEvent(1, 0, 0, 0).kind == "gm_stats"

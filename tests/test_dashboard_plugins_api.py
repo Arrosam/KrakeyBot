@@ -58,7 +58,6 @@ async def test_report_returns_schema_and_values(tmp_path):
                 "name": "search", "kind": "tentacle", "source": "builtin",
                 "path": "", "project": "search",
                 "description": "web search",
-                "is_internal": False,
                 "config_schema": [
                     {"field": "max_results", "type": "number",
                      "default": 5, "help": ""},

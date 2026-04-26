@@ -28,7 +28,6 @@ def test_metadata():
     t = CodingTentacle(runner=FakeRunner(), sandbox_dir="x")
     assert t.name == "coding"
     assert t.description
-    assert t.is_internal is True
 
 
 async def test_python_code_runs_via_runner(tmp_path):
