@@ -93,6 +93,11 @@ class PluginMetadata:
     description: str
     components: list[ComponentMetadata] = field(default_factory=list)
     config_schema: list[dict[str, Any]] = field(default_factory=list)
+    # Plugin self-declares whether it depends on the sandbox VM. When
+    # True and the user has the plugin enabled, Runtime preflights the
+    # guest agent at startup. Lets us drop the hardcoded plugin-name
+    # list that used to live in main._preflight_sandbox.
+    requires_sandbox: bool = False
     source_path: Path | None = None
 
 
@@ -151,6 +156,7 @@ def _parse_meta(path: Path) -> PluginMetadata:
         description=str(raw.get("description", "")),
         components=components,
         config_schema=list(schema),
+        requires_sandbox=bool(raw.get("requires_sandbox", False)),
         source_path=path,
     )
 

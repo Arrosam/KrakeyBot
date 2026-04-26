@@ -707,25 +707,29 @@ class Runtime:
         return [dict(p) for p in items]
 
     async def _preflight_sandbox(self) -> None:
-        """Ping the guest agent if any sandboxed tentacle is enabled.
-        Refuses to start the runtime when the agent is unreachable."""
+        """Ping the guest agent if any enabled plugin self-declared
+        ``requires_sandbox: true`` in its meta.yaml AND has its own
+        ``sandbox`` config field on. Refuses to start the runtime
+        when the agent is unreachable."""
+        from src.plugins.unified_discovery import discover_plugins
         from src.sandbox.backend import (
             SandboxConfig, SandboxUnavailableError, preflight,
         )
-        # Per-plugin store replaces config.yaml's `plugins:` pile. peek
-        # is safe: by the time preflight runs the loader has already
-        # materialized each plugin's file, so every per-plugin dict
-        # reflects its on-disk state.
-        def _plugin_flag(name: str, key: str, fallback: bool) -> bool:
+        enabled = set(self.config.plugins or [])
+        sandbox_plugins = [
+            meta for meta in discover_plugins().values()
+            if meta.requires_sandbox and meta.name in enabled
+        ]
+        # Plugin's own `sandbox: false` opts out (e.g. coding on a
+        # trusted host). peek is safe — by the time preflight runs the
+        # loader has materialized each plugin's config file.
+        def _sandbox_on(name: str) -> bool:
             return bool(
-                self._plugin_config_store.peek_config(name).get(key, fallback)
+                self._plugin_config_store.peek_config(name).get(
+                    "sandbox", True,
+                )
             )
-        any_sandboxed = any(
-            _plugin_flag(name, "enabled", False)
-            and _plugin_flag(name, "sandbox", True)
-            for name in ("coding", "gui_control", "cli",
-                           "file_read", "file_write", "browser")
-        )
+        any_sandboxed = any(_sandbox_on(m.name) for m in sandbox_plugins)
         if not any_sandboxed:
             return
         sb = self.config.sandbox

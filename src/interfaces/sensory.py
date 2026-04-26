@@ -65,3 +65,17 @@ class SensoryRegistry:
             if s.name in self._running:
                 await s.stop()
                 self._running.discard(s.name)
+
+    def active_buffer(self) -> StimulusBuffer | None:
+        """Return the StimulusBuffer that any currently-registered sensory
+        was started with, or ``None`` if no sensory has a stashed buffer.
+
+        Sleep's ``resume_all`` needs a buffer to hand to paused sensories
+        when they restart; this avoids reaching into ``_sensories`` and
+        each sensory's private ``_buffer`` from the orchestrator.
+        """
+        for s in self._sensories.values():
+            buf = getattr(s, "_buffer", None)
+            if buf is not None:
+                return buf
+        return None

@@ -6,6 +6,11 @@ description: >
   subprocess inherits the parent's privileges. Real isolation
   requires the sandbox VM (configure the top-level `sandbox:`
   block).
+# When True AND the plugin's `sandbox` config field is also True, the
+# runtime preflights the sandbox VM at startup and refuses to boot if
+# the guest agent is unreachable. Set False for plugins that never
+# touch the sandbox.
+requires_sandbox: true
 config_schema:
   - field: sandbox
     type: bool

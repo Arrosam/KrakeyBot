@@ -4,6 +4,7 @@ description: >
   default; enable only when you want Krakey operating a visible
   display. PyAutoGUI's built-in fail-safe (slam mouse to top-left
   corner) is left on — abort any time.
+requires_sandbox: true
 config_schema:
   - field: sandbox
     type: bool

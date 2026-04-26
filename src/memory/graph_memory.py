@@ -269,6 +269,65 @@ class GraphMemory:
             row = await cur.fetchone()
             return int(row[0])
 
+    async def count_by_category(self, category: str) -> int:
+        db = self._require()
+        async with db.execute(
+            "SELECT COUNT(*) FROM gm_nodes WHERE category = ?", (category,),
+        ) as cur:
+            row = await cur.fetchone()
+            return int(row[0])
+
+    async def delete_by_category(self, category: str) -> int:
+        """Delete all nodes of a single category. Returns count removed.
+
+        Used by Sleep phase 5 (clear FOCUS) — kept inside GraphMemory so
+        callers don't need to touch ``_require()`` or know the table
+        layout.
+        """
+        n = await self.count_by_category(category)
+        db = self._require()
+        await db.execute(
+            "DELETE FROM gm_nodes WHERE category = ?", (category,),
+        )
+        await db.commit()
+        return n
+
+    async def counts_by_category(self) -> dict[str, int]:
+        """``{category: count}`` across all nodes — for stats dashboards."""
+        db = self._require()
+        async with db.execute(
+            "SELECT category, COUNT(*) FROM gm_nodes GROUP BY category"
+        ) as cur:
+            rows = await cur.fetchall()
+        return {r[0]: r[1] for r in rows}
+
+    async def counts_by_source(self) -> dict[str, int]:
+        """``{source_type: count}`` across all nodes — for stats dashboards."""
+        db = self._require()
+        async with db.execute(
+            "SELECT source_type, COUNT(*) FROM gm_nodes GROUP BY source_type"
+        ) as cur:
+            rows = await cur.fetchall()
+        return {r[0]: r[1] for r in rows}
+
+    async def list_edges_named(
+        self, *, limit: int,
+    ) -> list[dict[str, str]]:
+        """Edges resolved to ``{source, predicate, target}`` name triples
+        (vs ``list_edges`` / ``get_edges_among`` which return numeric IDs).
+        Used by the dashboard's GM-edges browser."""
+        db = self._require()
+        async with db.execute(
+            "SELECT na.name AS source, e.predicate AS predicate, "
+            "nb.name AS target FROM gm_edges e "
+            "JOIN gm_nodes na ON na.id=e.node_a "
+            "JOIN gm_nodes nb ON nb.id=e.node_b "
+            "ORDER BY e.id ASC LIMIT ?", (limit,),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [{"source": r["source"], "target": r["target"],
+                  "predicate": r["predicate"]} for r in rows]
+
     async def count_edges(self) -> int:
         db = self._require()
         async with db.execute("SELECT COUNT(*) FROM gm_edges") as cur:

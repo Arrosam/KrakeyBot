@@ -106,6 +106,30 @@ class KnowledgeBase:
             row = await cur.fetchone()
             return int(row[0])
 
+    async def list_active_entries(
+        self, *, limit: int,
+    ) -> list[dict[str, Any]]:
+        """Active (is_active=1) entries, newest first, with tags decoded
+        from JSON. Used by the dashboard's KB-entries browser — kept
+        inside KnowledgeBase so callers don't need to touch
+        ``_require()`` or know the table layout."""
+        import json as _json
+        db = self._require()
+        async with db.execute(
+            "SELECT id, content, source, tags, importance, created_at "
+            "FROM kb_entries WHERE is_active = 1 ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ) as cur:
+            rows = await cur.fetchall()
+        out = []
+        for r in rows:
+            tags = _json.loads(r["tags"]) if r["tags"] else []
+            out.append({"id": r["id"], "content": r["content"],
+                          "source": r["source"], "tags": tags,
+                          "importance": r["importance"],
+                          "created_at": r["created_at"]})
+        return out
+
     # ---------- edges ----------
 
     async def write_edge(self, entry_a: int, entry_b: int,

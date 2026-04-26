@@ -55,7 +55,7 @@ async def enter_sleep_mode(
 
         # Phase 3 (+ implicit Phase 4): migrate FACT/RELATION/KNOWLEDGE
         # (incl. completed-TARGETs-now-FACT) into KB.
-        before_targets = await _count(gm, "TARGET")
+        before_targets = await gm.count_by_category("TARGET")
         migrate_stats = await migrate_gm_to_kb(
             gm, reg,
             min_community_size=min_community_size,
@@ -76,10 +76,10 @@ async def enter_sleep_mode(
 
         # Phase 4: explicit no-op (completed targets already migrated; open
         # targets stay in GM untouched).
-        targets_preserved = await _count(gm, "TARGET")
+        targets_preserved = await gm.count_by_category("TARGET")
 
         # Phase 5: clear FOCUS
-        focus_cleared = await _delete_category(gm, "FOCUS")
+        focus_cleared = await gm.delete_by_category("FOCUS")
 
         # Phase 6: rebuild Index Graph (only active KBs get GM nodes)
         idx_stats = await rebuild_index_graph(
@@ -109,47 +109,17 @@ async def enter_sleep_mode(
         await _write_daily_log(log_dir, result)
         return result
     finally:
-        await sensories.resume_all(_buffer_for_resume(sensories))
+        # resume_all needs a buffer; reuse the one a still-registered
+        # sensory was started with, else a fresh one (resume_all is a
+        # no-op anyway when nothing was paused).
+        buffer = sensories.active_buffer()
+        if buffer is None:
+            from src.runtime.stimulus_buffer import StimulusBuffer
+            buffer = StimulusBuffer()
+        await sensories.resume_all(buffer)
 
 
 # ---------------- helpers ----------------
-
-
-async def _count(gm: GraphMemory, category: str) -> int:
-    db = gm._require()  # noqa: SLF001
-    async with db.execute(
-        "SELECT COUNT(*) FROM gm_nodes WHERE category = ?", (category,),
-    ) as cur:
-        row = await cur.fetchone()
-        return int(row[0])
-
-
-async def _delete_category(gm: GraphMemory, category: str) -> int:
-    db = gm._require()  # noqa: SLF001
-    async with db.execute(
-        "SELECT COUNT(*) FROM gm_nodes WHERE category = ?", (category,),
-    ) as cur:
-        row = await cur.fetchone()
-        n = int(row[0])
-    await db.execute("DELETE FROM gm_nodes WHERE category = ?", (category,))
-    await db.commit()
-    return n
-
-
-def _buffer_for_resume(sensories: SensoryRegistry):
-    """SensoryRegistry.resume_all needs a buffer arg. We pass through the
-    same buffer used at startup if any sensory is currently running, else
-    a fresh one (resume_all is a no-op when nothing was paused)."""
-    # Find any currently-running sensory's stored buffer; else None.
-    for s in sensories._sensories.values():  # noqa: SLF001
-        buf = getattr(s, "_buffer", None)
-        if buf is not None:
-            return buf
-    # Fallback: an empty buffer; resume_all loops only over previously
-    # paused, so this only matters when there were paused sensories
-    # but no active ones to borrow a buffer from.
-    from src.runtime.stimulus_buffer import StimulusBuffer
-    return StimulusBuffer()
 
 
 async def _write_daily_log(log_dir: str | Path, record: dict[str, Any]) -> None:

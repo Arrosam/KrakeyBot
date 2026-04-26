@@ -10,9 +10,8 @@ ValueError); the routes translate those into HTTPException.
 """
 from __future__ import annotations
 
-import json as _json
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, Callable, Protocol
 
 import yaml as _yaml
 
@@ -22,13 +21,21 @@ from src.models.config_backup import backup_config
 # ---------------- memory ----------------
 
 
+class _MemoryRuntime(Protocol):
+    """Narrow shape this module needs from Runtime \u2014 declared here so
+    the adapter doesn't depend on the full Runtime class. Lets tests
+    substitute a stand-in with just ``gm`` and ``kb_registry``."""
+    gm: Any
+    kb_registry: Any
+
+
 class RuntimeMemoryService:
     """Adapts Runtime.gm + Runtime.kb_registry to MemoryService."""
 
-    def __init__(self, runtime: Any):
+    def __init__(self, runtime: _MemoryRuntime | None):
         self._rt = runtime
 
-    def _require(self) -> Any:
+    def _require(self) -> _MemoryRuntime:
         if self._rt is None or not hasattr(self._rt, "gm"):
             raise RuntimeError("runtime not available")
         return self._rt
@@ -44,36 +51,17 @@ class RuntimeMemoryService:
         self, *, limit: int,
     ) -> list[dict[str, Any]]:
         rt = self._require()
-        db = rt.gm._require()  # noqa: SLF001
-        async with db.execute(
-            "SELECT na.name AS source, e.predicate AS predicate, "
-            "nb.name AS target FROM gm_edges e "
-            "JOIN gm_nodes na ON na.id=e.node_a "
-            "JOIN gm_nodes nb ON nb.id=e.node_b "
-            "ORDER BY e.id ASC LIMIT ?", (limit,),
-        ) as cur:
-            rows = await cur.fetchall()
-        return [{"source": r["source"], "target": r["target"],
-                  "predicate": r["predicate"]} for r in rows]
+        return await rt.gm.list_edges_named(limit=limit)
 
     async def gm_stats(self) -> dict[str, Any]:
         rt = self._require()
         total_nodes = await rt.gm.count_nodes()
         total_edges = await rt.gm.count_edges()
-        db = rt.gm._require()  # noqa: SLF001
-        async with db.execute(
-            "SELECT category, COUNT(*) FROM gm_nodes GROUP BY category"
-        ) as cur:
-            cat_rows = await cur.fetchall()
-        async with db.execute(
-            "SELECT source_type, COUNT(*) FROM gm_nodes GROUP BY source_type"
-        ) as cur:
-            src_rows = await cur.fetchall()
         return {
             "total_nodes": total_nodes,
             "total_edges": total_edges,
-            "by_category": {r[0]: r[1] for r in cat_rows},
-            "by_source": {r[0]: r[1] for r in src_rows},
+            "by_category": await rt.gm.counts_by_category(),
+            "by_source": await rt.gm.counts_by_source(),
         }
 
     async def list_kbs(self) -> list[dict[str, Any]]:
@@ -88,21 +76,7 @@ class RuntimeMemoryService:
             kb = await rt.kb_registry.open_kb(kb_id)
         except KeyError:
             raise LookupError(f"KB {kb_id!r} not found")
-        db = kb._require()  # noqa: SLF001
-        async with db.execute(
-            "SELECT id, content, source, tags, importance, created_at "
-            "FROM kb_entries WHERE is_active = 1 ORDER BY id DESC LIMIT ?",
-            (limit,),
-        ) as cur:
-            rows = await cur.fetchall()
-        entries = []
-        for r in rows:
-            tags = _json.loads(r["tags"]) if r["tags"] else []
-            entries.append({"id": r["id"], "content": r["content"],
-                              "source": r["source"], "tags": tags,
-                              "importance": r["importance"],
-                              "created_at": r["created_at"]})
-        return entries
+        return await kb.list_active_entries(limit=limit)
 
 
 def _serialize_node(n: dict[str, Any]) -> dict[str, Any]:
