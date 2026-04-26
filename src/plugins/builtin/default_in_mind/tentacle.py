@@ -1,10 +1,12 @@
 """``update_in_mind`` tentacle — Self's interface to mutate the
 in_mind state.
 
-Registered automatically by ``InMindReflect.attach(runtime)`` after
-the Reflect is loaded. Internal (``is_internal=True``) — the result
-is just a feedback receipt for Self, not something to broadcast to
-the human.
+Built by ``build_tentacle(ctx)`` as the second component of the
+``default_in_mind`` plugin. Pulls the already-built reflect instance
+from ``ctx.plugin_cache`` (the reflect factory ran first because
+``components:`` lists it first). Internal (``is_internal=True``) —
+the result is just a feedback receipt for Self, not something to
+broadcast to the human.
 
 Argument shape (matches what Self emits in the [ACTION] JSONL block):
 
@@ -29,9 +31,30 @@ from src.interfaces.tentacle import Tentacle
 from src.models.stimulus import Stimulus
 
 if TYPE_CHECKING:
+    from src.interfaces.plugin_context import PluginContext
     from src.plugins.builtin.default_in_mind.reflect import (
         InMindReflectImpl,
     )
+
+
+_CACHE_KEY = "in_mind_reflect"
+
+
+def build_tentacle(ctx: "PluginContext") -> "UpdateInMindTentacle | None":
+    """Factory for the second component. Grabs the reflect instance
+    that the reflect factory stashed in ``ctx.plugin_cache`` and wires
+    the tentacle to it. Returns ``None`` (opt-out) if the reflect
+    factory didn't run — the additive-plugin invariant: a missing
+    half degrades, doesn't crash."""
+    reflect = ctx.plugin_cache.get(_CACHE_KEY)
+    if reflect is None:
+        import logging
+        logging.getLogger(__name__).warning(
+            "default_in_mind tentacle skipped: reflect not in "
+            "plugin_cache. Components likely loaded out of order.",
+        )
+        return None
+    return UpdateInMindTentacle(reflect)
 
 
 class UpdateInMindTentacle(Tentacle):

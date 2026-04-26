@@ -265,12 +265,24 @@ async def test_bootstrap_self_model_update_and_completion(tmp_path):
     ])
     hypo_llm = ScriptedLLM([])
 
+    # Pre-seed the self-model file with defaults so the runtime + the
+    # BootstrapCoordinator both anchor to the SAME file from
+    # construction. (Post-construction swap of runtime._self_model_store
+    # used to work but broke when the coordinator started holding its
+    # own store reference — passing the path up-front is cleaner anyway.)
+    sm_path.write_text(
+        # Yaml-dump default content; SelfModelStore.load handles missing
+        # too but we want a non-empty starting state for the test.
+        "identity: {}\nstate: {bootstrap_complete: false}\n",
+        encoding="utf-8",
+    )
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=hypo_llm,
         skip_bootstrap=False,
     )
-    # Override the self-model path to the tmp file
+    # Re-anchor BOTH runtime + coordinator to the tmp self-model file.
     runtime._self_model_store = SelfModelStore(sm_path)
+    runtime.bootstrap._store = runtime._self_model_store
     runtime.self_model = default_self_model()
     runtime.is_bootstrap = True
     # Tighten hibernate so the test isn't slow (bootstrap forces 10s default,

@@ -1,23 +1,23 @@
 """``default_in_mind`` Reflect — owner of Self's in-mind state.
 
-Imported lazily by ``src.plugins.unified_discovery.load_component``. On
-``attach(runtime)`` it registers its ``update_in_mind`` tentacle so
-Self can mutate the state via the normal action-dispatch pipeline.
+Imported lazily by ``src.plugins.unified_discovery.load_component``.
+The plugin contributes TWO components: this reflect (owns the state)
+and ``tentacle.UpdateInMindTentacle`` (lets Self mutate the state via
+the normal action-dispatch pipeline). The factories share the
+reflect instance via ``ctx.plugin_cache`` — same pattern telegram +
+web_chat use to share a client / history across their components.
 """
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from src.plugins.builtin.default_in_mind import state as state_mod
-from src.plugins.builtin.default_in_mind.state import InMindState
-from src.plugins.builtin.default_in_mind.tentacle import (
-    UpdateInMindTentacle,
-)
+from src.plugins.builtin.default_in_mind.state import InMindState  # noqa: F401
+from src.plugins.builtin.default_in_mind.tentacle import _CACHE_KEY
 
 if TYPE_CHECKING:
-    from src.main import Runtime
     from src.interfaces.plugin_context import PluginContext
 
 _log = logging.getLogger(__name__)
@@ -92,26 +92,11 @@ class InMindReflectImpl:
             )
         return self.read()
 
-    def attach(self, runtime: "Runtime") -> None:
-        """One-time setup: register the ``update_in_mind`` tentacle
-        so Self can call it via the usual dispatch path. Called once
-        by ``ReflectRegistry.attach_all`` after registration.
-        """
-        tentacle = UpdateInMindTentacle(self)
-        try:
-            runtime.tentacles.register(tentacle)
-        except ValueError:
-            # Already registered (e.g. attach called twice, or a
-            # legacy plugin owned the name). Don't crash startup.
-            _log.warning(
-                "in_mind: 'update_in_mind' tentacle already "
-                "registered; skipping. Self will keep using the "
-                "existing one.",
-            )
-
 
 def build_reflect(ctx: "PluginContext") -> InMindReflectImpl:
-    """Factory invoked by ``load_reflect``.
+    """Factory invoked by ``load_component``. Stashes the instance in
+    ``ctx.plugin_cache`` so the sibling tentacle factory (loaded next,
+    same plugin) can wire to the same reflect.
 
     ``ctx.deps.in_mind_state_path`` is honored when provided so tests
     can isolate the state file. Production leaves it ``None`` and
@@ -122,4 +107,6 @@ def build_reflect(ctx: "PluginContext") -> InMindReflectImpl:
         getattr(ctx.deps, "in_mind_state_path", None)
         or DEFAULT_STATE_PATH
     )
-    return InMindReflectImpl(state_path=state_path)
+    reflect = InMindReflectImpl(state_path=state_path)
+    ctx.plugin_cache[_CACHE_KEY] = reflect
+    return reflect

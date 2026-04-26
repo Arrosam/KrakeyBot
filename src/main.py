@@ -15,8 +15,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from src.bootstrap import (
-    BOOTSTRAP_PROMPT, detect_bootstrap_complete, load_genesis,
-    load_self_model_or_default, parse_self_model_update,
+    BOOTSTRAP_PROMPT, load_genesis, load_self_model_or_default,
 )
 from src.dashboard.app_factory import create_app as create_dashboard_app
 from src.dashboard.events import EventBroadcaster
@@ -234,14 +233,23 @@ class Runtime:
         self._genesis_text: str | None = None
         self._self_model_store = SelfModelStore(sm_path)
         self.self_model, detected_bootstrap = load_self_model_or_default(sm_path)
-        # Provisional value used by tests that bypass run() / data probe.
-        # Re-derived from GM+KB emptiness once gm.initialize() runs (see
-        # _refine_bootstrap_from_data). The override flag pins the value
-        # so test-only Runtimes can still force a mode.
-        self._bootstrap_overridden = is_bootstrap_override is not None
-        self.is_bootstrap = (is_bootstrap_override
-                              if is_bootstrap_override is not None
-                              else detected_bootstrap)
+        # Bootstrap-mode state lives in a dedicated coordinator so the
+        # three behaviors it gates (intro-prompt injection, hibernate
+        # cadence, NOTE-signal parsing) don't have to be expressed as
+        # scattered ``if self.is_bootstrap`` checks. The provisional
+        # value here gets re-derived once gm.initialize() lets us
+        # probe actual data via ``bootstrap.refine_from_data``.
+        from src.runtime.bootstrap_coordinator import BootstrapCoordinator
+        # When no test override is supplied, the coordinator initializes
+        # from the self-model's bootstrap_complete marker (equivalent to
+        # the legacy `detected_bootstrap` heuristic) and lets
+        # refine_from_data re-derive from actual GM/KB data later. A
+        # supplied override pins the value and skips the data probe.
+        self.bootstrap = BootstrapCoordinator(
+            self_model=self.self_model,
+            self_model_store=self._self_model_store,
+            override=is_bootstrap_override,
+        )
 
         self.heartbeat_count = 0
         # Sleep cycle counter — runtime-only. Used to be persisted in
@@ -473,6 +481,19 @@ class Runtime:
         config and run the real heartbeat.
         """
         return self.self_llm is None
+
+    @property
+    def is_bootstrap(self) -> bool:
+        """Bootstrap mode flag — delegates to the coordinator. Kept as
+        a property so tests that read ``runtime.is_bootstrap`` keep
+        working without knowing about the coordinator."""
+        return self.bootstrap.is_active
+
+    @is_bootstrap.setter
+    def is_bootstrap(self, value: bool) -> None:
+        """Test compat: ``runtime.is_bootstrap = True`` forwards to the
+        coordinator's force_active escape hatch."""
+        self.bootstrap.force_active(bool(value))
 
     async def run(self, iterations: int | None = None) -> None:
         await self.gm.initialize()
@@ -751,27 +772,11 @@ class Runtime:
         )
 
     async def _refine_bootstrap_from_data(self) -> None:
-        """Bootstrap fires only when the workspace is genuinely empty —
-        zero GM nodes AND zero (active or archived) KBs. Otherwise the
-        agent already has lived experience and shouldn't re-read GENESIS,
-        regardless of what self_model.yaml says about bootstrap_complete.
-
-        Override path (`is_bootstrap_override` in __init__) wins for tests.
-        """
-        if hasattr(self, "_bootstrap_overridden") and self._bootstrap_overridden:
-            return
-        try:
-            n_nodes = await self.gm.count_nodes()
-        except Exception:  # noqa: BLE001
-            n_nodes = 0
-        try:
-            kbs = await self.kb_registry.list_kbs(include_archived=True)
-        except Exception:  # noqa: BLE001
-            kbs = []
-        empty = n_nodes == 0 and len(kbs) == 0
-        self.is_bootstrap = empty and not self.self_model.get(
-            "state", {}).get("bootstrap_complete", False)
-        if self.is_bootstrap:
+        """Thin wrapper around ``BootstrapCoordinator.refine_from_data``
+        — kept on Runtime so the call site in ``run()`` stays a single
+        line and the log message stays attached to the heartbeat log."""
+        await self.bootstrap.refine_from_data(self.gm, self.kb_registry)
+        if self.bootstrap.is_active:
             self.log.hb("bootstrap mode: empty GM + KBs → injecting GENESIS")
 
     async def close(self) -> None:
@@ -879,7 +884,7 @@ class Runtime:
             return  # Self LLM error already logged + slept
         self._phase_save_round(parsed, stimuli)
         self._phase_log_self_output(parsed)
-        if self.is_bootstrap:
+        if self.bootstrap.is_active:
             self._phase_apply_bootstrap_signals(parsed)
         await self._phase_auto_ingest_feedback(stimuli)
         sleep_requested = await self._phase_apply_hypothalamus(
@@ -1042,7 +1047,7 @@ class Runtime:
             in_mind=in_mind_state,
             in_mind_instructions=in_mind_instructions,
         )
-        if self.is_bootstrap:
+        if self.bootstrap.should_inject_intro_prompt():
             prompt = (BOOTSTRAP_PROMPT.format(genesis_text=self._get_genesis_text())
                       + "\n\n" + prompt)
         return prompt
@@ -1152,19 +1157,16 @@ class Runtime:
         ))
 
     def _phase_apply_bootstrap_signals(self, parsed) -> None:
-        """During Bootstrap, parse Self's NOTE for self-model JSON updates
-        and the 'bootstrap complete' marker."""
-        note = parsed.note or ""
-        update = parse_self_model_update(note)
-        if update:
-            self.self_model = self._self_model_store.update(update)
+        """During Bootstrap, hand Self's NOTE to the coordinator for
+        self-model patch + completion-marker detection. Refresh the
+        cached snapshot + log whatever fired."""
+        result = self.bootstrap.apply_note_signals(parsed.note)
+        if result.update or result.completed:
+            self.self_model = self._self_model_store.load()
+        if result.update:
             self.log.hb(f"bootstrap: self-model updated "
-                          f"({list(update.keys())})")
-        if detect_bootstrap_complete(note):
-            self.self_model = self._self_model_store.update(
-                {"state": {"bootstrap_complete": True}}
-            )
-            self.is_bootstrap = False
+                          f"({list(result.update.keys())})")
+        if result.completed:
             self.log.hb("bootstrap: complete — entering normal operation")
 
     def _phase_log_self_output(self, parsed) -> None:
@@ -1254,14 +1256,15 @@ class Runtime:
         )
 
     async def _phase_hibernate(self, parsed, recall_result) -> None:
-        if self.is_bootstrap:
-            # DevSpec §12.2 — bootstrap heartbeat is fixed 10s
-            interval = 10
-        elif recall_result.uncovered_stimuli:
-            interval = self.config.hibernate.min_interval
+        if recall_result.uncovered_stimuli:
+            base = self.config.hibernate.min_interval
         else:
-            interval = (parsed.hibernate_seconds
-                        or self.config.hibernate.default_interval)
+            base = (parsed.hibernate_seconds
+                    or self.config.hibernate.default_interval)
+        # Bootstrap-mode cadence (DevSpec §12.2) — coordinator returns
+        # the bootstrap-fixed value when active, else passes ``base``
+        # through unchanged.
+        interval = self.bootstrap.hibernate_interval(default=base)
         self.log.hb(f"hibernate {interval}s")
         self.events.publish(HibernateEvent(
             heartbeat_id=self.heartbeat_count, interval_seconds=interval,

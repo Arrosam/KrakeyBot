@@ -143,12 +143,11 @@ class InMindReflect(Protocol):
       * ``update(thoughts=, mood=, focus=)`` patches state and
         persists. ``None`` for a field = leave alone; empty string =
         clear; non-empty string = set.
-      * ``attach(runtime)`` is the one-time lifecycle hook called by
-        ``ReflectRegistry.attach_all`` after registration. The
-        in_mind Reflect uses it to register its own ``update_in_mind``
-        tentacle into ``runtime.tentacles``. Other Reflect kinds may
-        also implement ``attach`` (the protocol allows it
-        optionally), but in_mind is the first that needs it.
+
+    The companion ``update_in_mind`` tentacle is contributed as a
+    sibling component in ``meta.yaml``; the two share the reflect
+    instance via ``ctx.plugin_cache`` rather than the reflect
+    reaching into the runtime to register the tentacle itself.
     """
     name: str
     kind: str  # always "in_mind"
@@ -161,8 +160,6 @@ class InMindReflect(Protocol):
         mood: str | None = None,
         focus: str | None = None,
     ) -> dict[str, str]: ...
-
-    def attach(self, runtime: Any) -> None: ...
 
 
 # --------------------------------------------------------------------
