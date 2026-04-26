@@ -1,6 +1,6 @@
 """``default_in_mind`` Reflect — owner of Self's in-mind state.
 
-Imported lazily by ``src.plugin_system.discovery.load_component``.
+Imported lazily by ``src.plugin_system.load_component``.
 The plugin contributes TWO components: this reflect (owns the state)
 and ``tentacle.UpdateInMindTentacle`` (lets Self mutate the state via
 the normal action-dispatch pipeline). The factories share the

@@ -1,4 +1,10 @@
-"""Unified plugin discovery — pure-text meta.yaml + components list.
+"""Plugin loader — load-by-name + lazy component import (runtime side).
+
+Pure-text meta.yaml parsing + ``importlib`` on enable. **Runtime never
+scans plugin folders** — it only opens the meta.yaml files for the
+names listed in ``config.yaml`` ``plugins:``. Catalogue scanning
+("show me everything available") is a Web UI concern and lives in
+``src/dashboard/services/plugin_catalogue.py``.
 
 A "plugin" is the unit of distribution + enable. A plugin can declare
 any combination of components, each one of:
@@ -8,16 +14,11 @@ any combination of components, each one of:
   * ``tentacle`` — outbound action
   * ``sensory``  — inbound stimulus producer
 
-This unified loader replaces the old split between
-``src/reflects/builtin/<name>/`` (Reflect-only) and
-``src/plugins/builtin/<name>/__init__.py`` (Python ``MANIFEST = {}``
-loader for tentacles + sensories — Phase 2 will fold the latter in too).
-
 ## Architectural rules (Samuel 2026-04-26)
 
-1. **No code load before user enable.** Discovery walks ``meta.yaml``
+1. **No code load before user enable.** ``parse_meta`` walks meta.yaml
    files only. Plugin Python modules are imported lazily on enable
-   via ``load_plugin_components(name, ctx)``.
+   via ``load_component(component, ctx)``.
 2. **Plugin granularity for enable** — checking a plugin in config
    loads ALL its components together. No per-component toggle.
 3. **All plugins default OFF.** Empty ``config.plugins:`` list = zero
@@ -43,9 +44,6 @@ components:
   - kind: tentacle
     factory_module: src.plugins.my_plugin.tentacle
     factory_attr: build_tentacle
-    # tentacle-specific fields (capabilities, sandboxed, etc.) can
-    # live alongside; the loader passes them straight to the
-    # tentacle's __init__ if it accepts them.
 
   - kind: sensory
     factory_module: src.plugins.my_plugin.sensory
@@ -66,14 +64,16 @@ if TYPE_CHECKING:
     from src.interfaces.plugin_context import PluginContext
 
 
-# Roots scanned for plugin manifests. Built-in plugins ship with the
-# Krakey repo at src/plugins/<name>/; workspace plugins live at
-# workspace/plugins/<name>/ and are dropped in by the user. Both
-# locations have identical structure (a folder with meta.yaml +
-# component code) — the only distinction is "ships with code" vs
-# "user-installed".
-_BUILTIN_ROOT = Path(__file__).resolve().parent.parent / "plugins"
-_WORKSPACE_ROOT = Path("workspace") / "plugins"
+# Plugin folder roots. Built-in plugins ship with the Krakey repo at
+# src/plugins/<name>/; workspace plugins live at workspace/plugins/<name>/
+# and are dropped in by the user. Both locations have identical
+# structure (a folder with meta.yaml + component code) — the only
+# distinction is "ships with code" vs "user-installed".
+#
+# Exposed (no underscore) so the dashboard's catalogue scanner can
+# walk them too, without re-deriving the paths.
+BUILTIN_ROOT = Path(__file__).resolve().parent.parent / "plugins"
+WORKSPACE_ROOT = Path("workspace") / "plugins"
 
 
 @dataclass
@@ -105,52 +105,22 @@ class PluginMetadata:
     source_path: Path | None = None
 
 
-def discover_plugins() -> dict[str, PluginMetadata]:
-    """Scan all known plugin roots for ``meta.yaml`` files.
-
-    **Web UI use only.** Returns the full catalogue of installed
-    plugins for the dashboard's "available plugins" view. Runtime does
-    NOT use this — it loads only the names listed in ``config.plugins``
-    via ``load_plugin_meta(name)``, never scans the rest.
-
-    Pure-text — no plugin module is imported. Returns
-    ``name → PluginMetadata``. Workspace plugins override built-ins
-    with the same name (later iteration wins).
-
-    Malformed manifests are logged and skipped — best-effort scan.
-    """
-    out: dict[str, PluginMetadata] = {}
-    for root in (_BUILTIN_ROOT, _WORKSPACE_ROOT):
-        if not root.exists():
-            continue
-        for meta_path in sorted(root.glob("*/meta.yaml")):
-            try:
-                meta = _parse_meta(meta_path)
-            except Exception as e:  # noqa: BLE001
-                print(
-                    f"warning: failed to parse {meta_path}: {e}; skipping",
-                    file=sys.stderr,
-                )
-                continue
-            out[meta.name] = meta
-    return out
-
-
 def load_plugin_meta(name: str) -> PluginMetadata | None:
     """Read one plugin's ``meta.yaml`` by name. Workspace overrides
     built-in. ``None`` if the plugin folder doesn't exist or its
     meta.yaml fails to parse.
 
-    Used by Runtime in place of a full ``discover_plugins()`` scan:
+    Used by Runtime to load by-name without scanning the rest:
     when ``config.plugins: [a, b, c]``, Runtime only opens those three
-    meta.yaml files. Catalogue scanning is the dashboard's job.
+    meta.yaml files. Catalogue scanning ("list all installed") is the
+    dashboard's job — see ``src/dashboard/services/plugin_catalogue.py``.
     """
-    for root in (_WORKSPACE_ROOT, _BUILTIN_ROOT):
+    for root in (WORKSPACE_ROOT, BUILTIN_ROOT):
         meta_path = root / name / "meta.yaml"
         if not meta_path.exists():
             continue
         try:
-            return _parse_meta(meta_path)
+            return parse_meta(meta_path)
         except Exception as e:  # noqa: BLE001
             print(
                 f"warning: failed to parse {meta_path}: {e}; skipping",
@@ -171,7 +141,10 @@ def load_component(component: ComponentMetadata, ctx: "PluginContext") -> Any:
     return factory(ctx)
 
 
-def _parse_meta(path: Path) -> PluginMetadata:
+def parse_meta(path: Path) -> PluginMetadata:
+    """Parse one ``meta.yaml`` file into a ``PluginMetadata``. Public
+    (no leading underscore) so the dashboard's catalogue scanner can
+    reuse the same parsing logic instead of redeclaring the schema."""
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(raw, dict):
         raise ValueError("meta.yaml top level must be a YAML mapping")

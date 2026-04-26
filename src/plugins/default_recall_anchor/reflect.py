@@ -1,7 +1,7 @@
 """Default recall-anchor Reflect — wraps the scripted
 ``IncrementalRecall`` factory.
 
-Imported lazily by ``src.plugin_system.discovery.load_component`` only when
+Imported lazily by ``src.plugin_system.load_component`` only when
 the user enables ``default_recall_anchor`` in ``config.yaml``'s
 ``reflects:`` list.
 """

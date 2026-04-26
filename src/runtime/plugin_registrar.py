@@ -120,7 +120,7 @@ class PluginRegistrar:
         from src.interfaces.plugin_context import (
             PluginContext, load_plugin_config,
         )
-        from src.plugin_system.discovery import (
+        from src.plugin_system.loader import (
             load_component, load_plugin_meta,
         )
         from src.runtime.runtime import resolve_llm_for_tag

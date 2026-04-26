@@ -5,7 +5,7 @@ Stateless: every call is an independent LLM invocation. Converts
 Self's natural-language [DECISION] into structured ``TentacleCall``
 objects, memory writes/updates, and the sleep flag.
 
-Only loaded by ``src.plugin_system.discovery.load_component`` when
+Only loaded by ``src.plugin_system.load_component`` when
 ``default_hypothalamus`` is listed in ``config.yaml``'s ``plugins:``.
 The contract types (``TentacleCall``, ``HypothalamusResult``) live
 in ``src.interfaces.reflect`` so the runtime can consume them without

@@ -1,27 +1,27 @@
-"""Plugin system infrastructure (discovery + per-plugin config persistence).
-
-Sits between Runtime / Dashboard and the actual plugin folders. The
-plugin folders themselves (``src/plugins/<name>/`` for built-in,
-``workspace/plugins/<name>/`` for user-installed) only contain plugin
-CODE + ``meta.yaml`` + per-plugin ``config.yaml`` (user settings) —
-they don't import anything from this package.
+"""Plugin system infrastructure (load + per-plugin config persistence).
 
 Two responsibilities, two modules:
 
-  * ``discovery``  — pure-text scan of plugin folders' ``meta.yaml``
-                     files, lazy ``importlib`` loading on enable. Used
-                     by the dashboard (to show what's available) and
-                     by Runtime (to load enabled plugins by name).
-  * ``config``     — ``FilePluginConfigStore`` for the dashboard's
-                     plugin-config form (enabled flag + values). Will
-                     be merged with the in-folder ``config.yaml`` in a
-                     follow-up; currently they coexist.
+  * ``loader``  — runtime side: ``load_plugin_meta(name)`` reads one
+                  meta.yaml by name, ``load_component(c, ctx)`` lazy-
+                  imports + invokes the factory. ``parse_meta(path)``
+                  is the shared parser also used by the dashboard's
+                  catalogue scanner.
+  * ``config``  — ``FilePluginConfigStore`` for the dashboard's
+                  in-folder config.yaml read/write.
+
+Catalogue scanning ("show me all installed plugins") is intentionally
+NOT here — that's a Web UI concern and lives in
+``src/dashboard/services/plugin_catalogue.py``. Runtime only loads
+plugins by name (the names listed in ``config.yaml``'s ``plugins:``).
 """
 from src.plugin_system.config import FilePluginConfigStore  # noqa: F401
-from src.plugin_system.discovery import (  # noqa: F401
+from src.plugin_system.loader import (  # noqa: F401
+    BUILTIN_ROOT,
+    WORKSPACE_ROOT,
     ComponentMetadata,
     PluginMetadata,
-    discover_plugins,
     load_component,
     load_plugin_meta,
+    parse_meta,
 )

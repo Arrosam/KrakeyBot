@@ -2,9 +2,12 @@
 
 Architecture invariant being pinned (Samuel 2026-04-25): a Reflect's
 Python code must NOT be imported until the user explicitly enables
-it. Discovery (``src.plugin_system.discovery``) walks pure-text
-``meta.yaml`` files; ``load_component(component, ctx)`` is the only
-path that imports the plugin module.
+it. Catalogue scanning lives in
+``src.dashboard.services.plugin_catalogue.list_available_plugins``
+(Web UI side); runtime loads by name via
+``src.plugin_system.loader.load_plugin_meta``. ``load_component``
+is the only path that imports plugin modules — both scanners stay
+pure-text.
 
 Three input states for ``config.reflects`` (see Config docstring):
   * None         — field absent: register nothing + stderr nudge.
@@ -18,8 +21,11 @@ import textwrap
 
 import pytest
 
+from src.dashboard.services.plugin_catalogue import (
+    list_available_plugins as discover_plugins,
+)
 from src.models.config import load_config
-from src.plugin_system.discovery import discover_plugins, load_component
+from src.plugin_system.loader import load_component
 from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
 
 

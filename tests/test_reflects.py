@@ -26,7 +26,7 @@ from src.memory.recall import IncrementalRecall
 # them via their full module path is fine — we're not violating the
 # "no code load before user enables" rule because tests are not the
 # Web UI / config-form scan path. Production discovery still goes
-# through src.plugin_system.discovery.load_component.
+# through src.plugin_system.load_component.
 from src.plugins.default_hypothalamus.reflect import (
     DefaultHypothalamusReflect,
 )

@@ -511,7 +511,7 @@ class Runtime:
         loads each one's meta.yaml by name — no full filesystem scan.
         """
         from src.interfaces.plugin_context import load_plugin_config
-        from src.plugin_system.discovery import load_plugin_meta
+        from src.plugin_system.loader import load_plugin_meta
         from src.sandbox.backend import (
             SandboxConfig, SandboxUnavailableError, preflight,
         )
