@@ -273,26 +273,12 @@ class Runtime:
         _pl_size = getattr(dash_cfg, "prompt_log_size", 20) if dash_cfg else 20
         self._prompt_log: deque[dict[str, Any]] = deque(maxlen=max(1, _pl_size))
 
-        # Plugins — discover src/plugins/builtin/ (ships with Krakey)
-        # and workspace/plugins/ (user-dropped). Each project produces
-        # zero or more components (tentacles + sensories); loader
-        # returns a flat list of PluginInfos, one per component.
+        # Phase 2 (2026-04-26): all plugins go through
+        # _register_plugins_from_config above. _load_plugins() now
+        # only derives a PluginInfo list from the already-populated
+        # registries so the dashboard's plugin_report() keeps working
+        # — no second registration pass needed.
         self._plugin_infos = self._load_plugins()
-        for info in self._plugin_infos:
-            if info.instance is None:
-                continue
-            registry = (self.tentacles if info.kind == "tentacle"
-                        else self.sensories)
-            existing = (info.name in self.tentacles
-                        if info.kind == "tentacle"
-                        else info.name in registry._sensories)  # noqa: SLF001
-            if existing:
-                continue
-            try:
-                registry.register(info.instance)
-            except Exception as e:  # noqa: BLE001
-                info.error = f"registration failed: {e}"
-                info.instance = None
 
         # Snapshot config.yaml on every startup so a bad save can be rolled
         # back from workspace/backups/.
@@ -367,6 +353,20 @@ class Runtime:
         all_meta = _discover_unified()
         cfg_root = Path(deps.reflect_configs_root or "workspace/plugins")
 
+        # Whitelisted Runtime-built resources exposed to plugin
+        # factories via ``ctx.services``. Same shape as the legacy
+        # plugin loader's `deps` dict so old factories' lookup
+        # patterns stay familiar.
+        services = {
+            "gm": self.gm,
+            "kb_registry": self.kb_registry,
+            "embedder": self.embedder,
+            "buffer": self.buffer,
+            "web_chat_history": getattr(self, "web_chat_history", None),
+            "config": self.config,
+            "build_code_runner": self._build_code_runner,
+        }
+
         for plugin_name in names:
             meta = all_meta.get(plugin_name)
             if meta is None:
@@ -387,6 +387,12 @@ class Runtime:
                 )
                 user_purposes = {}
 
+            # Single ``plugin_cache`` dict shared across this plugin's
+            # components — multi-component plugins (telegram /
+            # web_chat) use it to share state between their sensory
+            # + tentacle factories.
+            plugin_cache: dict[str, Any] = {}
+
             for component in meta.components:
                 ctx_llms: dict[str, Any] = {}
                 for purpose_decl in component.llm_purposes:
@@ -406,6 +412,7 @@ class Runtime:
                 ctx = PluginContext(
                     deps=deps, plugin_name=plugin_name,
                     config=plugin_cfg, llms=ctx_llms,
+                    services=services, plugin_cache=plugin_cache,
                 )
 
                 try:
@@ -523,49 +530,40 @@ class Runtime:
             await asyncio.sleep(1.0)
 
     def _load_plugins(self):
-        """Discover plugin projects from both roots and return one
-        PluginInfo per component (tentacle or sensory).
-
-        Sources:
-          - `src/plugins/builtin/` — ships with Krakey (tag: "builtin").
-          - `workspace/plugins/`   — user-dropped  (tag: "plugin").
-
-        Failures are recorded on PluginInfo.error rather than raised —
-        a broken plugin must never block boot.
+        """Legacy MANIFEST plugin loader was removed in Phase 2 of the
+        plugin unification (2026-04-26). All plugins now go through
+        ``_register_plugins_from_config`` which fires earlier in
+        ``__init__``. This method survives only so the dashboard's
+        ``plugin_report()`` keeps working — it derives a list of
+        already-registered components from the registries instead of
+        discovering them anew.
         """
-        from src.plugins.loader import discover_plugins
-        workspace = Path("workspace")
-        builtin = Path(__file__).parent / "plugins" / "builtin"
-        deps = {
-            "gm": self.gm,
-            "kb_registry": self.kb_registry,
-            "embedder": self.embedder,
-            "buffer": self.buffer,
-            "web_chat_history": getattr(self, "web_chat_history", None),
-            "config": self.config,
-            # Plugin factories that need Runtime policy (coding's
-            # sandbox-vs-subprocess choice) call these rather than
-            # peek at Runtime internals.
-            "build_code_runner": self._build_code_runner,
-        }
         infos: list = []
-        infos.extend(discover_plugins(builtin, deps,
-                                            source="builtin",
-                                            config_store=self._plugin_config_store))
-        infos.extend(discover_plugins(workspace / "plugins", deps,
-                                            source="plugin",
-                                            config_store=self._plugin_config_store))
-        for info in infos:
-            if info.error:
-                self.log.runtime_error(
-                    f"{info.source} {info.kind}:{info.name} "
-                    f"(project={info.project}) failed to load — "
-                    f"{info.error.splitlines()[0]}"
-                )
-            elif info.instance is not None:
-                self.log.hb(
-                    f"{info.source} loaded: {info.kind}:{info.name}"
-                )
+        # Reflects: surfaced by name; kind = "reflect"
+        for r in self.reflects.by_kind("hypothalamus") + \
+                self.reflects.by_kind("recall_anchor") + \
+                self.reflects.by_kind("in_mind"):
+            from src.plugins.loader import PluginInfo
+            infos.append(PluginInfo(
+                name=r.name, kind="reflect", source="builtin",
+                path="", project=r.name, instance=r,
+            ))
+        # Tentacles
+        for name in sorted(self.tentacles._tentacles.keys()):
+            from src.plugins.loader import PluginInfo
+            infos.append(PluginInfo(
+                name=name, kind="tentacle", source="builtin",
+                path="", project=name,
+                instance=self.tentacles._tentacles[name],
+            ))
+        # Sensories
+        from src.plugins.loader import PluginInfo
+        for s in self.sensories._sensories.values():
+            sname = getattr(s, "name", type(s).__name__)
+            infos.append(PluginInfo(
+                name=sname, kind="sensory", source="builtin",
+                path="", project=sname, instance=s,
+            ))
         return infos
 
     def plugin_report(self) -> dict[str, Any]:

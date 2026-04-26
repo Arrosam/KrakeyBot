@@ -1,0 +1,13 @@
+name: search
+description: >
+  Web search via DuckDuckGo. Inward: results are for Self's own
+  reading; she decides whether to relay.
+config_schema:
+  - field: max_results
+    type: number
+    default: 5
+    help: Upper bound on results per query.
+components:
+  - kind: tentacle
+    factory_module: src.plugins.builtin.search
+    factory_attr: build_tentacle

@@ -153,17 +153,20 @@ def _truncate(text: str, max_chars: int) -> tuple[str, bool]:
     return text[: max_chars - 1] + "…", True
 
 
-def create_tentacle(config: dict, deps: dict) -> Tentacle:
-    build_runner = deps.get("build_code_runner")
+def build_tentacle(ctx) -> Tentacle:
+    """Unified-format factory (Phase 2). Pulls build_code_runner
+    from ctx.services; pulls sandbox / timeout / output-cap
+    from ctx.config."""
+    build_runner = ctx.services.get("build_code_runner")
     if build_runner is None:
         raise RuntimeError(
-            "coding plugin needs deps['build_code_runner'] "
+            "coding plugin needs services['build_code_runner'] "
             "(Runtime._build_code_runner callable)."
         )
-    runner = build_runner(config)
+    runner = build_runner(ctx.config)
     return CodingTentacle(
         runner=runner,
-        sandbox_dir=str(config.get("sandbox_dir", "workspace/sandbox")),
-        timeout_seconds=int(config.get("timeout_seconds", 30)),
-        max_output_chars=int(config.get("max_output_chars", 4000)),
+        sandbox_dir=str(ctx.config.get("sandbox_dir", "workspace/sandbox")),
+        timeout_seconds=int(ctx.config.get("timeout_seconds", 30)),
+        max_output_chars=int(ctx.config.get("max_output_chars", 4000)),
     )

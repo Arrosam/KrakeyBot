@@ -202,10 +202,12 @@ def _format(nodes: list[dict[str, Any]],
     return "\n".join(lines)
 
 
-def create_tentacle(config: dict, deps: dict) -> Tentacle:
+def build_tentacle(ctx) -> Tentacle:
+    """Unified-format factory (Phase 2). Pulls gm + embedder +
+    kb_registry from ctx.services."""
     return MemoryRecallTentacle(
-        gm=deps["gm"],
-        embedder=deps["embedder"],
-        kb_registry=deps["kb_registry"],
-        default_top_k=int(config.get("default_top_k", 8)),
+        gm=ctx.services["gm"],
+        embedder=ctx.services["embedder"],
+        kb_registry=ctx.services["kb_registry"],
+        default_top_k=int(ctx.config.get("default_top_k", 8)),
     )

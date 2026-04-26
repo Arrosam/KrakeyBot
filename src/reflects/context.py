@@ -41,7 +41,7 @@ _log = logging.getLogger(__name__)
 
 @dataclass
 class PluginContext:
-    """Per-plugin context handed to ``build_reflect(ctx)``."""
+    """Per-plugin context handed to ``build_<component>(ctx)``."""
     deps: "RuntimeDeps"
     plugin_name: str
     config: dict[str, Any] = field(default_factory=dict)
@@ -50,6 +50,20 @@ class PluginContext:
     # whenever the user hasn't bound that purpose to a tag (or the
     # tag references a missing provider).
     llms: dict[str, "LLMClient"] = field(default_factory=dict)
+    # Whitelisted Runtime-built resources (gm, kb_registry, embedder,
+    # buffer, web_chat_history, build_code_runner, ...). Populated by
+    # Runtime when building the ctx so plugins don't have to grab
+    # unrestricted Runtime references. Same shape as the legacy
+    # plugin loader's `deps` dict — keeps existing factories' lookup
+    # patterns familiar.
+    services: dict[str, Any] = field(default_factory=dict)
+    # Shared mutable storage scoped to a single plugin (NOT across
+    # plugins). Components of the same plugin (e.g. telegram's
+    # sensory + tentacle that share an HttpTelegramClient) can stash
+    # an instance here in the first factory call and read it in the
+    # next, so multi-component plugins don't need module-level
+    # singletons. Reset per-plugin during registration.
+    plugin_cache: dict[str, Any] = field(default_factory=dict)
 
     def get_llm(self, purpose: str) -> "LLMClient | None":
         return self.llms.get(purpose)

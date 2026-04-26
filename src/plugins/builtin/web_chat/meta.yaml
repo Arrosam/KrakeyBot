@@ -1,0 +1,28 @@
+name: web_chat
+description: >
+  Dashboard chat channel: user messages arrive as user_message
+  stimuli; Krakey replies via web_chat_reply. Sensory + tentacle
+  share one WebChatHistory (persistence + WS broadcast); the history
+  is built by Runtime BEFORE plugin discovery (the dashboard
+  WebSocket subscribes to it for broadcasting), so this plugin
+  pulls it via ``ctx.services["web_chat_history"]``.
+
+  Disable to silence chat IO while keeping the dashboard up for
+  monitoring — the sensory unregisters (no stimuli produced) and
+  the reply tentacle unregisters. Typed messages in the web UI are
+  dropped with a log warning.
+config_schema:
+  - field: history_path
+    type: text
+    default: workspace/data/web_chat.jsonl
+    help: >
+      Where the JSONL chat log is persisted. Read by Runtime BEFORE
+      this plugin loads (the dashboard subscribes to history); editing
+      here takes effect on next restart.
+components:
+  - kind: sensory
+    factory_module: src.plugins.builtin.web_chat
+    factory_attr: build_sensory
+  - kind: tentacle
+    factory_module: src.plugins.builtin.web_chat
+    factory_attr: build_tentacle
