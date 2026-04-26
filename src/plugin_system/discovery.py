@@ -33,7 +33,7 @@ config_schema: []          # plugin-level config fields (UI hints)
 components:
   - kind: reflect
     sub_kind: hypothalamus           # which Reflect kind
-    factory_module: src.plugins.builtin.my_plugin.reflect
+    factory_module: src.plugins.my_plugin.reflect
     factory_attr: build_reflect
     llm_purposes:                    # optional; what LLM purposes this
       - name: translator             # component declares
@@ -41,14 +41,14 @@ components:
         suggested_tag: fast_generation
 
   - kind: tentacle
-    factory_module: src.plugins.builtin.my_plugin.tentacle
+    factory_module: src.plugins.my_plugin.tentacle
     factory_attr: build_tentacle
     # tentacle-specific fields (capabilities, sandboxed, etc.) can
     # live alongside; the loader passes them straight to the
     # tentacle's __init__ if it accepts them.
 
   - kind: sensory
-    factory_module: src.plugins.builtin.my_plugin.sensory
+    factory_module: src.plugins.my_plugin.sensory
     factory_attr: build_sensory
 ```
 """
@@ -66,9 +66,13 @@ if TYPE_CHECKING:
     from src.interfaces.plugin_context import PluginContext
 
 
-# Roots scanned for plugin manifests. Built-in ships with Krakey;
-# workspace path is reserved for user-installed plugins.
-_BUILTIN_ROOT = Path(__file__).resolve().parent / "builtin"
+# Roots scanned for plugin manifests. Built-in plugins ship with the
+# Krakey repo at src/plugins/<name>/; workspace plugins live at
+# workspace/plugins/<name>/ and are dropped in by the user. Both
+# locations have identical structure (a folder with meta.yaml +
+# component code) — the only distinction is "ships with code" vs
+# "user-installed".
+_BUILTIN_ROOT = Path(__file__).resolve().parent.parent / "plugins"
 _WORKSPACE_ROOT = Path("workspace") / "plugins"
 
 

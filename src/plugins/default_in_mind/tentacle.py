@@ -32,7 +32,7 @@ from src.models.stimulus import Stimulus
 
 if TYPE_CHECKING:
     from src.interfaces.plugin_context import PluginContext
-    from src.plugins.builtin.default_in_mind.reflect import (
+    from src.plugins.default_in_mind.reflect import (
         InMindReflectImpl,
     )
 

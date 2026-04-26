@@ -11,5 +11,5 @@ config_schema:
       Default number of top-K nodes to return when Self doesn't specify.
 components:
   - kind: tentacle
-    factory_module: src.plugins.builtin.memory_recall
+    factory_module: src.plugins.memory_recall
     factory_attr: build_tentacle

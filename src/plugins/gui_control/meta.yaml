@@ -17,5 +17,5 @@ config_schema:
     default: workspace/screenshots
 components:
   - kind: tentacle
-    factory_module: src.plugins.builtin.gui_control
+    factory_module: src.plugins.gui_control
     factory_attr: build_tentacle

@@ -38,7 +38,7 @@ from src.runtime.heartbeat_logger import HeartbeatLogger
 from src.runtime.sliding_window import SlidingWindow
 from src.runtime.stimulus_buffer import StimulusBuffer
 # All tentacle / sensory classes now load via the plugin system
-# (src.plugins.builtin.<project>/). SubprocessRunner stays imported
+# (src.plugins.<project>/). SubprocessRunner stays imported
 # here because Runtime._build_code_runner owns the sandbox-vs-subprocess
 # policy decision and hands the runner to the coding plugin via deps.
 from src.sandbox.subprocess_runner import SubprocessRunner
@@ -199,7 +199,7 @@ class Runtime:
         # settings. peek_config() is used here because web_chat's file
         # may not exist yet (loader hasn't run) — peek falls back to
         # legacy without materializing anything.
-        from src.plugins.plugin_config import FilePluginConfigStore
+        from src.plugin_system.config import FilePluginConfigStore
         # Root is overridable (see RuntimeDeps.plugin_configs_root) so
         # tests can isolate at a tmpdir and their legacy-dict overrides
         # actually take effect.
@@ -516,7 +516,7 @@ class Runtime:
         ``requires_sandbox: true`` in its meta.yaml AND has its own
         ``sandbox`` config field on. Refuses to start the runtime
         when the agent is unreachable."""
-        from src.plugins.unified_discovery import discover_plugins
+        from src.plugin_system.discovery import discover_plugins
         from src.sandbox.backend import (
             SandboxConfig, SandboxUnavailableError, preflight,
         )

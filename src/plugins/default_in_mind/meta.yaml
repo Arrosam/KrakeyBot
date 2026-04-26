@@ -23,8 +23,8 @@ components:
   # opts out (returns None) so the runtime degrades rather than crashes.
   - kind: reflect
     sub_kind: in_mind
-    factory_module: src.plugins.builtin.default_in_mind.reflect
+    factory_module: src.plugins.default_in_mind.reflect
     factory_attr: build_reflect
   - kind: tentacle
-    factory_module: src.plugins.builtin.default_in_mind.tentacle
+    factory_module: src.plugins.default_in_mind.tentacle
     factory_attr: build_tentacle

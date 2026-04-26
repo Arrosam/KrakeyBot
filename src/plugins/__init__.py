@@ -1,13 +1,20 @@
-"""Plugin discovery + per-plugin config layer.
+"""Built-in plugin directory.
 
-Each plugin lives at ``src/plugins/builtin/<name>/`` (ships with
-Krakey) or ``workspace/plugins/<name>/`` (user-dropped) and is
-described by a ``meta.yaml`` manifest. The actual loader is
-``src.plugins.unified_discovery``; per-plugin YAML config lives
-under ``workspace/plugin-configs/`` via
-``src.plugins.plugin_config.FilePluginConfigStore``.
+Each subfolder is one plugin (sibling shape to ``workspace/plugins/<name>/``).
+A plugin folder contains:
 
-The dashboard's plugin-row dataclass lives in
-``src.runtime.plugin_registrar.PluginInfo`` (one module up because
-the registrar is the only producer).
+  * ``meta.yaml``   — manifest (name, description, components, schema)
+  * Component code (``reflect.py``, ``tentacle.py``, ``sensory.py``,
+    ``__init__.py`` factories)
+
+User-editable plugin config lives at ``workspace/plugins/<name>/config.yaml``
+regardless of whether the plugin code is built-in (here) or user-installed
+(``workspace/plugins/<name>/``). Built-in plugins NEVER have ``config.yaml``
+in this src/ directory — that would dirty the repo on user edits.
+
+The infrastructure that *discovers* + *loads* these plugins lives in
+``src.plugin_system``, NOT in this package. From the runtime's
+perspective built-in and workspace plugins are identical — same
+manifest format, same loader. The only difference is "ships with the
+code" vs "user dropped it in".
 """

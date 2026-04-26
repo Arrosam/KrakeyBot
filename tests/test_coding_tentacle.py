@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src.plugins.builtin.coding import CodingTentacle
+from src.plugins.coding import CodingTentacle
 from src.sandbox.subprocess_runner import SubprocessRunner
 
 

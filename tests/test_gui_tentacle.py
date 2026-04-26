@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from src.plugins.builtin.gui_control import GuiControlTentacle
+from src.plugins.gui_control import GuiControlTentacle
 
 
 class FakeBackend:

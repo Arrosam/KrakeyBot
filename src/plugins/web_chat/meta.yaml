@@ -21,8 +21,8 @@ config_schema:
       here takes effect on next restart.
 components:
   - kind: sensory
-    factory_module: src.plugins.builtin.web_chat
+    factory_module: src.plugins.web_chat
     factory_attr: build_sensory
   - kind: tentacle
-    factory_module: src.plugins.builtin.web_chat
+    factory_module: src.plugins.web_chat
     factory_attr: build_tentacle

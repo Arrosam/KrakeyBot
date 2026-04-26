@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from src.plugins.plugin_config import (
+from src.plugin_system.config import (
     DictPluginConfigStore,
     FilePluginConfigStore,
 )

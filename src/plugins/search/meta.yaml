@@ -9,5 +9,5 @@ config_schema:
     help: Upper bound on results per query.
 components:
   - kind: tentacle
-    factory_module: src.plugins.builtin.search
+    factory_module: src.plugins.search
     factory_attr: build_tentacle

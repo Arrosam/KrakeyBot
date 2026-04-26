@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from src.interfaces.reflect import ReflectRegistry
     from src.interfaces.tentacle import TentacleRegistry
     from src.models.config import Config
-    from src.plugins.plugin_config import FilePluginConfigStore
+    from src.plugin_system.config import FilePluginConfigStore
     from src.runtime.runtime import RuntimeDeps
     from src.runtime.stimulus_buffer import StimulusBuffer
 
@@ -118,7 +118,7 @@ class PluginRegistrar:
         from src.interfaces.plugin_context import (
             PluginContext, load_plugin_config,
         )
-        from src.plugins.unified_discovery import (
+        from src.plugin_system.discovery import (
             discover_plugins as _discover, load_component,
         )
         from src.runtime.runtime import resolve_llm_for_tag

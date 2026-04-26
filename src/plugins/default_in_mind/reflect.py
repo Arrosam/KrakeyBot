@@ -1,6 +1,6 @@
 """``default_in_mind`` Reflect — owner of Self's in-mind state.
 
-Imported lazily by ``src.plugins.unified_discovery.load_component``.
+Imported lazily by ``src.plugin_system.discovery.load_component``.
 The plugin contributes TWO components: this reflect (owns the state)
 and ``tentacle.UpdateInMindTentacle`` (lets Self mutate the state via
 the normal action-dispatch pipeline). The factories share the
@@ -13,9 +13,9 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.plugins.builtin.default_in_mind import state as state_mod
-from src.plugins.builtin.default_in_mind.state import InMindState  # noqa: F401
-from src.plugins.builtin.default_in_mind.tentacle import _CACHE_KEY
+from src.plugins.default_in_mind import state as state_mod
+from src.plugins.default_in_mind.state import InMindState  # noqa: F401
+from src.plugins.default_in_mind.tentacle import _CACHE_KEY
 
 if TYPE_CHECKING:
     from src.interfaces.plugin_context import PluginContext

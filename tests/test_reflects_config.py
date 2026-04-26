@@ -2,7 +2,7 @@
 
 Architecture invariant being pinned (Samuel 2026-04-25): a Reflect's
 Python code must NOT be imported until the user explicitly enables
-it. Discovery (``src.plugins.unified_discovery``) walks pure-text
+it. Discovery (``src.plugin_system.discovery``) walks pure-text
 ``meta.yaml`` files; ``load_component(component, ctx)`` is the only
 path that imports the plugin module.
 
@@ -19,7 +19,7 @@ import textwrap
 import pytest
 
 from src.models.config import load_config
-from src.plugins.unified_discovery import discover_plugins, load_component
+from src.plugin_system.discovery import discover_plugins, load_component
 from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
 
 
@@ -110,7 +110,7 @@ def test_discover_finds_builtin_meta_files():
     refl_comp = next(c for c in h.components if c.kind == "reflect")
     assert refl_comp.sub_kind == "hypothalamus"
     assert refl_comp.factory_module == (
-        "src.plugins.builtin.default_hypothalamus.reflect"
+        "src.plugins.default_hypothalamus.reflect"
     )
     assert refl_comp.factory_attr == "build_reflect"
 
@@ -120,8 +120,8 @@ def test_discover_does_not_import_plugin_modules():
     plugin code into sys.modules.
     """
     plugin_modules = (
-        "src.plugins.builtin.default_hypothalamus.reflect",
-        "src.plugins.builtin.default_recall_anchor.reflect",
+        "src.plugins.default_hypothalamus.reflect",
+        "src.plugins.default_recall_anchor.reflect",
     )
     before = {m: m in sys.modules for m in plugin_modules}
     metas = discover_plugins()

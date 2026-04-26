@@ -23,7 +23,7 @@ import yaml
 
 from src.dashboard.services.config import ConfigService
 from src.models.config import llm_params_schema
-from src.plugins.unified_discovery import discover_plugins as _discover_unified
+from src.plugin_system.discovery import discover_plugins as _discover_unified
 
 
 def register(app: FastAPI, *, config: ConfigService) -> None:

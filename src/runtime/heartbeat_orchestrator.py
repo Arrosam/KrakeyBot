@@ -418,7 +418,7 @@ class HeartbeatOrchestrator:
         in_mind_state = rt.reflects.in_mind_state()
         in_mind_instructions: str | None = None
         if in_mind_state is not None:
-            from src.plugins.builtin.default_in_mind.prompt import (
+            from src.plugins.default_in_mind.prompt import (
                 IN_MIND_INSTRUCTIONS_LAYER,
             )
             in_mind_instructions = IN_MIND_INSTRUCTIONS_LAYER

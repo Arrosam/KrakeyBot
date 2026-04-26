@@ -25,8 +25,8 @@ config_schema:
       specify one.
 components:
   - kind: sensory
-    factory_module: src.plugins.builtin.telegram
+    factory_module: src.plugins.telegram
     factory_attr: build_sensory
   - kind: tentacle
-    factory_module: src.plugins.builtin.telegram
+    factory_module: src.plugins.telegram
     factory_attr: build_tentacle
