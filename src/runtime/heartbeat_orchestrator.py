@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 from src.bootstrap import BOOTSTRAP_PROMPT, load_genesis
 from src.models.config import LLMParams
 from src.models.stimulus import Stimulus
-from src.prompt.builder import SlidingWindowRound
+from src.prompt.views import SlidingWindowRound
 from src.runtime.compact import compact_if_needed
 from src.runtime.event_bus import (
     DecisionEvent, GMStatsEvent, HeartbeatStartEvent, HibernateEvent,
@@ -48,7 +48,7 @@ from src.self_agent import parse_self_output
 
 if TYPE_CHECKING:
     from src.memory.recall import IncrementalRecall
-    from src.prompt.builder import CapabilityView, StatusSnapshot
+    from src.prompt.views import CapabilityView, StatusSnapshot
     from src.runtime.runtime import Runtime
 
 
@@ -545,7 +545,7 @@ class HeartbeatOrchestrator:
         """Tentacle list for the [CAPABILITIES] layer. Only changes on
         plugin reload, so this gets rendered high in the prompt above
         the cache-breaking volatile layers."""
-        from src.prompt.builder import CapabilityView
+        from src.prompt.views import CapabilityView
         return [
             CapabilityView(name=t["name"], description=t["description"])
             for t in self._rt.tentacles.list_descriptions()
@@ -556,7 +556,7 @@ class HeartbeatOrchestrator:
         """Runtime status numbers — changes every beat (heartbeat
         counter, fatigue), so this section is deliberately placed near
         the end of the prompt to preserve the cacheable prefix above it."""
-        from src.prompt.builder import StatusSnapshot
+        from src.prompt.views import StatusSnapshot
         return StatusSnapshot(
             gm_node_count=node_count,
             gm_edge_count=edge_count,

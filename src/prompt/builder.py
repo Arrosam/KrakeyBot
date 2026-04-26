@@ -6,33 +6,40 @@ Layer order goes from most stable (cacheable prefix) to most volatile
     1. DNA                  — never changes at runtime
     2. [SELF-MODEL]         — only changes when Self writes <self-model>
     3. [CAPABILITIES]       — only changes on plugin reload
-    4. [STIMULUS]            — often empty / repeated tentacle feedback,
-                               so bimodal: stable on quiet beats
+    4. [STIMULUS]           — often empty / repeated tentacle feedback,
+                              so bimodal: stable on quiet beats
     5. [GRAPH MEMORY]       — derived from [STIMULUS]; synchronized
-                               cache state with it
+                              cache state with it
     6. [HISTORY]            — appends every beat but has a stable prefix
     7. [STATUS]             — every beat changes (heartbeat counter,
-                               fatigue); kept near the end so it does
-                               NOT invalidate the stable prefix above
+                              fatigue); kept near the end so it does
+                              NOT invalidate the stable prefix above
     8. [HEARTBEAT] question — end anchor
 
 Per-stimulus timestamps are intentionally omitted — the trailer
 ``当前时间: YYYY-MM-DD HH:MM:SS`` at the bottom of [STIMULUS] is the
 single authoritative "now" read by Self. Beat-level temporal ordering
 lives in [HISTORY] via ``heartbeat_id``.
+
+This module is the assembly LOGIC only. The data shapes Builder
+consumes live in ``views`` (typed dataclasses), the static prose
+layers in ``layers`` + ``dna``.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from typing import TYPE_CHECKING
-
 from src.models.stimulus import Stimulus
 from src.prompt.dna import DNA
+from src.prompt.layers import ACTION_FORMAT_LAYER, HEARTBEAT_QUESTION
+from src.prompt.views import (
+    CapabilityView,
+    SlidingWindowRound,
+    StatusSnapshot,
+)
 
 if TYPE_CHECKING:
     from src.memory.recall import RecallResult
@@ -44,70 +51,6 @@ def _format_stim(s: Stimulus) -> list[str]:
         f"来源: {s.source} | adrenalin: {s.adrenalin}",
         f"内容: {s.content}",
     ]
-
-
-HEARTBEAT_QUESTION = (
-    "# [HEARTBEAT]\n"
-    "What do you notice? What matters? What do you do?\n"
-    "Respond using [THINKING] / [DECISION] / [NOTE] / [HIBERNATE]."
-)
-
-
-@dataclass
-class SlidingWindowRound:
-    heartbeat_id: int
-    stimulus_summary: str
-    decision_text: str
-    note_text: str
-
-
-@dataclass
-class StatusSnapshot:
-    """Per-beat runtime numbers rendered in the [STATUS] layer.
-
-    Replaces the previous ``status: dict[str, Any]`` contract. Used to
-    be a free dict where producer / consumer / test fixture all kept
-    their own copy of the schema; typoing a key (e.g. ``fatigue_pct``
-    → ``fatigue_percent``) silently rendered the default value with no
-    error. Now: producer constructs a ``StatusSnapshot``; field typo
-    is a TypeError at construction.
-    """
-    gm_node_count: int
-    gm_edge_count: int
-    fatigue_pct: int
-    fatigue_hint: str
-    last_sleep_time: str
-    heartbeats_since_sleep: int
-
-
-@dataclass
-class CapabilityView:
-    """One row in the [CAPABILITIES] layer — name + one-line blurb.
-
-    Replaces ``list[dict[str, Any]]`` with name/description keys.
-    """
-    name: str
-    description: str
-
-
-ACTION_FORMAT_LAYER = """# [ACTION FORMAT]
-当你想调用 tentacles 时, 在你的回复里写一段 [ACTION]...[/ACTION] 块,
-块内每行写一个 JSON 对象 (OpenAI tool_calls 风格):
-
-[ACTION]
-{"name": "<tentacle_name>", "arguments": {...}}
-{"name": "<another>", "arguments": {...}, "adrenalin": true}
-[/ACTION]
-
-字段:
-- name (str, 必需): 从 [CAPABILITIES] 里挑一个 tentacle 名字
-- arguments (object, 可选): 该 tentacle 的参数, 不传 = 空对象 {}
-- adrenalin (bool, 可选): 紧急标志, 不传 = false; 只在你想要这次动作的
-  反馈打断后续 hibernate 时设 true
-
-不需要调用 tentacle 的心跳 (例: 只是思考 / 写 [NOTE]) 直接省略 [ACTION] 块。
-[ACTION] 块可以出现在 [DECISION] / [THINKING] 里, 也可以出现在 [DECISION]
-之后, 都会被解析。一行解析失败不影响其它行。"""
 
 
 class PromptBuilder:
