@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from src.interfaces.reflect import ReflectRegistry
     from src.interfaces.tentacle import TentacleRegistry
-    from src.runtime.plugins.loader import PluginLoader
+    from src.runtime.plugin_register.loader import PluginLoader
     from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 

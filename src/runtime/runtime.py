@@ -222,7 +222,7 @@ class Runtime:
         # dashboard owns its own per-plugin config.
         self._prompt_log: deque[dict[str, Any]] = deque(maxlen=50)
 
-        from src.runtime.plugins.loader import PluginLoader
+        from src.runtime.plugin_register.loader import PluginLoader
         self._plugin_loader = PluginLoader(
             config=self.config,
             reflects=self.reflects,
@@ -330,7 +330,7 @@ class Runtime:
         # etc.). Components registered by the loader appear with
         # source="builtin"; everything else (BatchTracker, attach()
         # extras) appears as source="core".
-        from src.runtime.plugins.observer import PluginObserver
+        from src.runtime.plugin_register.observer import PluginObserver
         self._plugin_observer = PluginObserver(
             reflects=self.reflects,
             tentacles=self.tentacles,
