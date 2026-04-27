@@ -1,15 +1,11 @@
-"""KrakeyBot Runtime — heartbeat orchestrator (DevSpec §6.4).
+"""KrakeyBot Runtime — composition root + lifecycle.
 
-Owns GraphMemory + KBRegistry + the three plugin registries (reflects /
-tentacles / sensories) + BatchTracker + the heartbeat loop itself.
-Process entry point and ``build_runtime_from_config`` builder live in
-``src/main.py``.
-
-Internally composed helpers split out of this file:
-  * ``BootstrapCoordinator`` (src/runtime/bootstrap_coordinator.py) —
-    owns ``is_bootstrap`` + the three behaviors it gates.
-  * memory tools (src/memory/tools/, src/memory/writer.py) — keep
-    GraphMemory focused on storage + delegation.
+Wires up all collaborators (GraphMemory, KBRegistry, the three
+plugin registries, BatchTracker, dispatcher, orchestrator, plugin
+loader/observer, bootstrap coordinator) and drives the per-beat
+loop via ``run()``. Process entry point + ``build_runtime_from_config``
+live in ``src/main.py``; per-beat algorithm lives in
+``src/runtime/heartbeat/heartbeat_orchestrator.py``.
 """
 from __future__ import annotations
 
@@ -140,11 +136,12 @@ class Runtime:
         self.compact_llm = deps.compact_llm
         self.embedder = deps.embedder
         self.reranker = deps.reranker
-        # Reflect registry — kind-grouped, ordered storage of pluggable
-        # mechanisms. Plugin loader runs LATER (after tentacles +
-        # sensories registries exist) since a single plugin can
-        # contribute components of all three kinds; loading them
-        # before all three registries are built would crash.
+        # Reflect registry — role-keyed (one Reflect per role; second
+        # registration claiming the same role raises). Plugin loader
+        # runs LATER (after tentacles + sensories registries exist)
+        # since a single plugin can contribute components of all three
+        # kinds; loading them before all three registries are built
+        # would crash.
         from src.interfaces.reflect import ReflectRegistry
         self.reflects = ReflectRegistry()
         self.buffer = StimulusBuffer()
@@ -188,25 +185,19 @@ class Runtime:
                             or "workspace/plugins")
         self._plugin_configs_root = plugin_root
 
-        # Sensory ownership lives on ``self.buffer`` (see
-        # src/runtime/stimulus_buffer.py). The buffer is the single
-        # owner of the live sensory set + the live stimulus queue;
-        # ``self.sensories`` is a backward-compat alias so legacy
-        # call sites keep reading ``runtime.sensories`` if any sneak
-        # in. New code should reach for ``self.buffer`` directly.
-        self.sensories = self.buffer
+        # ``self.buffer`` is both the live stimulus queue AND the live
+        # sensory set (see src/runtime/stimuli/stimulus_buffer.py).
         # BatchTracker is core runtime infrastructure (dispatch wake-up
         # mechanism) — kept out of the plugin system so it can't be
         # disabled by accident.
         self.batch_tracker = BatchTrackerSensory()
         self.buffer.register(self.batch_tracker)
 
-        # Unified-format plugins (meta.yaml + components list). Each
-        # plugin can contribute reflect / tentacle / sensory components
-        # in any combination — see src/plugins/unified_discovery.py +
-        # docs/design/reflects-and-self-model.md (Samuel 2026-04-26).
-        # Has to run AFTER the three registries exist (above) because
-        # one plugin may register into any of them.
+        # Plugin registration. Each plugin can contribute reflect /
+        # tentacle / sensory components in any combination via its
+        # meta.yaml. Has to run AFTER the three registries exist
+        # (above) because one plugin may register into any of them.
+        #
         # Bring up log + events + config paths BEFORE plugin registration
         # so the dashboard plugin (which pulls a runtime ref via
         # ctx.services["runtime"]) sees a runtime with the fields it
@@ -288,10 +279,12 @@ class Runtime:
         self._last_node_count = 0
         self._last_edge_count = 0
 
-        # Hypothalamus side-effects executor — pure composition over
-        # the same five collaborators (tentacles, batch_tracker, buffer,
-        # gm, log+events). Built once; the heartbeat passes its current
-        # heartbeat_id on each call.
+        # DecisionDispatcher — executes the 4 side-effects of a
+        # DecisionResult (log+publish summary, dispatch tentacle calls,
+        # apply memory writes, apply memory updates). Pure composition
+        # over the same 5 collaborators (tentacles, batch_tracker,
+        # buffer, gm, log+events). Built once; heartbeat passes its
+        # current heartbeat_id on each call.
         from src.runtime.heartbeat.dispatcher import DecisionDispatcher
         self._dispatcher = DecisionDispatcher(
             tentacles=self.tentacles,
