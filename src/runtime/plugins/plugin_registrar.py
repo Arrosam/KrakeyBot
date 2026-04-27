@@ -52,25 +52,24 @@ class PluginInfo:
     tentacle / sensory). Consumed by the dashboard's /api/plugins
     endpoint via ``loaded_plugin_report()``.
 
-    ``path`` / ``source`` / ``error`` are kept for dashboard-JS
-    compatibility (the frontend renderer doesn't special-case missing
-    keys) — they're effectively stubs in the meta.yaml flow.
+    ``path`` / ``source`` are kept for dashboard-JS compatibility:
+    the frontend renderer keys off ``source`` ("builtin" vs "core")
+    to decide whether to render an enable toggle. ``path`` is always
+    "" in the meta.yaml flow but the JS template doesn't special-case
+    missing keys.
+
+    The historical ``description``, ``config_schema``, ``error`` and
+    ``instance`` fields were dropped in 2026-04-28: description +
+    schema now come from the plugin catalogue (which reads meta.yaml
+    directly), error was always None on the success path, and no
+    consumer was reading instance.
     """
     name: str                           # component name
     kind: str                           # "reflect" | "tentacle" | "sensory"
-    source: str                         # "builtin" | "plugin"
+    source: str                         # "builtin" | "core"
     path: str                           # module path on disk, "" for core
     project: str = ""                   # containing plugin folder name
-    description: str = ""
-    config_schema: list[dict[str, Any]] = field(default_factory=list)
-    # Always True for entries returned by ``derive_plugin_infos`` — a
-    # PluginInfo only gets created if the plugin successfully loaded,
-    # which only happens for names listed in ``config.yaml`` ``plugins:``.
-    # The dashboard frontend keeps the field for display continuity.
-    enabled: bool = True
-    error: str | None = None
-    # Set by the loader on success. Never JSON-serialised.
-    instance: Any = None
+    enabled: bool = True                # always True; kept for JS template
 
 
 class PluginRegistrar:
@@ -224,18 +223,17 @@ class PluginRegistrar:
         for r in self._reflects.all():
             infos.append(PluginInfo(
                 name=r.name, kind="reflect", source="builtin",
-                path="", project=r.name, instance=r,
+                path="", project=r.name,
             ))
         for t in self._tentacles.all():
             infos.append(PluginInfo(
                 name=t.name, kind="tentacle", source="builtin",
-                path="", project=t.name, instance=t,
+                path="", project=t.name,
             ))
         for sname in self._sensories.sensory_names():
-            s = self._sensories.get_sensory(sname)
             infos.append(PluginInfo(
                 name=sname, kind="sensory", source="builtin",
-                path="", project=sname, instance=s,
+                path="", project=sname,
             ))
         self._infos = infos
         return infos
@@ -263,8 +261,8 @@ class PluginRegistrar:
                 "kind": i.kind,
                 "source": i.source,
                 "project": i.project,
-                "loaded": i.name in loaded_names and i.error is None,
-                "error": i.error,
+                "loaded": i.name in loaded_names,
+                "error": None,  # JS template still reads .error; always None
             } for i in infos]
 
         plugin_t_names = {i.name for i in self._infos
