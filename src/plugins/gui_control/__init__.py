@@ -22,21 +22,6 @@ from src.interfaces.tentacle import Tentacle
 from src.models.stimulus import Stimulus
 
 
-MANIFEST = {
-    "name": "gui_control",
-    "description": "Drive a desktop (click / type / press / screenshot). "
-                   "Disabled by default; enable only when you want "
-                   "Krakey operating a visible display.",
-    "config_schema": [
-        {"field": "sandbox",        "type": "bool", "default": True,
-         "help": "Reserved for Phase S2; currently ignored (always runs "
-                 "on host PyAutoGUI)."},
-        {"field": "screenshot_dir", "type": "text",
-         "default": "workspace/screenshots"},
-    ],
-}
-
-
 class GuiBackend(Protocol):
     async def click(self, x: int, y: int, *, button: str = "left") -> None: ...
     async def move(self, x: int, y: int) -> None: ...

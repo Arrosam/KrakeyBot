@@ -18,19 +18,6 @@ from src.memory.knowledge_base import KBRegistry
 from src.models.stimulus import Stimulus
 
 
-MANIFEST = {
-    "name": "memory_recall",
-    "description": "Active recall of GM nodes (and, via KB index nodes, "
-                   "their KB entries). Self dispatches this when she "
-                   "wants to reflect or dig into past learning.",
-    "config_schema": [
-        {"field": "default_top_k", "type": "number", "default": 8,
-         "help": "Default number of top-K nodes to return when Self "
-                 "doesn't specify."},
-    ],
-}
-
-
 class AsyncEmbedder(Protocol):
     async def __call__(self, text: str) -> list[float]: ...
 

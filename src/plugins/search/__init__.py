@@ -17,17 +17,6 @@ from src.models.stimulus import Stimulus
 _BODY_CHARS = 240
 
 
-MANIFEST = {
-    "name": "search",
-    "description": "Web search via DuckDuckGo. Inward: results are for "
-                   "Self's own reading; she decides whether to relay.",
-    "config_schema": [
-        {"field": "max_results", "type": "number", "default": 5,
-         "help": "Upper bound on results per query."},
-    ],
-}
-
-
 class SearchBackend(Protocol):
     async def search(self, query: str,
                        max_results: int) -> list[dict[str, str]]: ...

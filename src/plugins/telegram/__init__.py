@@ -1,9 +1,10 @@
-"""Built-in Telegram project — sensory + outbound reply tentacle.
+"""Built-in Telegram plugin — sensory + outbound reply tentacle.
 
-Multi-component project: the sensory polls incoming messages, the
+Multi-component plugin: the sensory polls incoming messages, the
 tentacle sends replies, and both share one HttpTelegramClient instance.
-This is exactly the kind of plugin that needed the `create_plugins`
-factory — a factory-per-component would build two clients and lose
+``build_sensory`` and ``build_tentacle`` cooperate via ``ctx.plugin_cache``
+so the first factory call constructs the client and the second reuses
+it — a factory-per-component would otherwise build two clients and lose
 rate-limit / connection coordination.
 
 Layout within this package:
@@ -16,34 +17,6 @@ from __future__ import annotations
 from .client import HttpTelegramClient
 from .sensory import TelegramSensory
 from .tentacle import TelegramReplyTentacle
-
-
-MANIFEST = {
-    "name": "telegram",
-    "description": "Telegram bidirectional channel: incoming messages "
-                   "arrive as user_message stimuli; Krakey replies via "
-                   "telegram_reply. Sensory + tentacle share one HTTP "
-                   "client.",
-    "components": [
-        {"kind": "sensory",  "name": "telegram",
-         "description": "Polls Telegram getUpdates; pushes user_message "
-                        "stimuli into the buffer."},
-        {"kind": "tentacle", "name": "telegram_reply",
-         "description": "Sends a Telegram message. Outward — the text "
-                        "reaches the real human."},
-    ],
-    "config_schema": [
-        {"field": "bot_token", "type": "password", "default": "",
-         "help": "BotFather token. Use ${ENV_VAR} to pull from the "
-                 "environment at load time."},
-        {"field": "allowed_chat_ids", "type": "text", "default": "",
-         "help": "Comma-separated chat IDs the sensory will accept. "
-                 "Empty = allow any."},
-        {"field": "default_chat_id", "type": "text", "default": "",
-         "help": "Chat ID the reply tentacle sends to when Hypothalamus "
-                 "did not specify one."},
-    ],
-}
 
 
 def _parse_allowed(raw) -> set[int] | None:

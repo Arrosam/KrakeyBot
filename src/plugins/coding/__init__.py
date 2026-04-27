@@ -32,26 +32,6 @@ _DEFAULT_TIMEOUT = 30.0
 _DEFAULT_MAX_OUTPUT = 4000
 
 
-MANIFEST = {
-    "name": "coding",
-    "description": "Execute a Python or shell command and return exit "
-                   "code + stdout / stderr. Routes through the sandbox "
-                   "VM when `sandbox: true` (default).",
-    "config_schema": [
-        {"field": "sandbox",          "type": "bool",   "default": True,
-         "help": "When true, exec runs via the sandbox guest agent. "
-                 "Set to false only on trusted hosts."},
-        {"field": "sandbox_dir",      "type": "text",
-         "default": "workspace/sandbox",
-         "help": "Working directory hint passed to the runner."},
-        {"field": "timeout_seconds",  "type": "number", "default": 30,
-         "help": "Subprocess timeout. Exceeding it returns exit=124."},
-        {"field": "max_output_chars", "type": "number", "default": 4000,
-         "help": "stdout / stderr truncated past this many chars."},
-    ],
-}
-
-
 class CodingTentacle(Tentacle):
     def __init__(self, runner: CodeRunner, sandbox_dir: str | Path,
                   *, timeout_seconds: float = _DEFAULT_TIMEOUT,

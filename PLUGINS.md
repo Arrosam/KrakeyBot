@@ -1,275 +1,120 @@
 # KrakeyBot Plugin Development
 
-Krakey discovers plugins at boot by scanning two roots:
+Plugins extend Krakey by contributing one or more **components**:
 
-| Root | Source tag | Who owns it |
+| Component | Purpose | Examples |
 |---|---|---|
-| `src/plugins/builtin/` | `builtin` | ships with Krakey |
-| `workspace/plugins/`   | `plugin`  | user-dropped |
+| `reflect` | Heartbeat hook — claims a role string the runtime queries by | hypothalamus, recall_anchor, in_mind |
+| `tentacle` | Outbound action Self can dispatch | search, coding, telegram_reply |
+| `sensory`  | Inbound stimulus producer | telegram, dashboard web chat |
 
-Everything under those roots is organised as **projects**. One project =
-one folder. A project may contain one tentacle, one sensory, or a
-bundle of both that share state (e.g. a Telegram project that ships a
-sensory + a reply tentacle sharing one HTTP client).
-
-## Quick rules
-
-- **Plugins run in-process with Krakey's privileges.** Use the sandbox
-  VM (`SANDBOX.md`) for anything untrusted.
-- **A bad plugin must never block boot.** The loader catches every
-  exception, reports it on the dashboard (red card), and moves on.
-- **Per-project config lives under `plugins.<project_name>`** in
-  `config.yaml`. There is no separate `tentacle:` / `sensory:`
-  section — one project gets one dict.
+Plugins are **strictly additive**: disabling or removing any plugin must
+not break the runtime's core loop. Every plugin call site has a
+graceful fallback (null object, soft fail, phase skip). Don't introduce
+code that requires a plugin to be present.
 
 ## Layout
 
-Two equally valid shapes:
+One folder per plugin under either root:
 
-### Single file (simplest)
-
-```
-workspace/plugins/my_weather.py
-```
-
-### Package (helper modules, data files, manifest.yaml)
-
-```
-workspace/plugins/my_weather/
-  __init__.py
-  helpers.py
-  manifest.yaml        # optional — wins over inline MANIFEST
-```
-
-Rules:
-
-- Subdirs / files starting with `.` or `_`, and `__pycache__`, are skipped.
-- Non-`.py` files at the root (like a stray README) are ignored.
-
-## Contract
-
-Your project module must expose **one** of three factories. Pick by
-what the project produces:
-
-### A. Multi-component project — `create_plugins`
-
-Recommended when the project produces more than one thing, especially
-if they share state (one client, one cache, one connection pool, …).
-
-```python
-def create_plugins(config: dict, deps: dict) -> dict:
-    client = HttpClient(token=config["bot_token"])
-    return {
-        "tentacles": [MyReplyTentacle(client)],
-        "sensories": [MyPollSensory(client)],
-    }
-```
-
-Return shape: `{"tentacles": [...], "sensories": [...]}`. Either key
-may be empty or omitted.
-
-### B. Single-tentacle shortcut — `create_tentacle`
-
-```python
-def create_tentacle(config: dict, deps: dict) -> Tentacle:
-    return WeatherTentacle(api_key=config["api_key"])
-```
-
-### C. Single-sensory shortcut — `create_sensory`
-
-```python
-def create_sensory(config: dict, deps: dict) -> Sensory:
-    return FileSystemWatchSensory(watch_dir=config["dir"])
-```
-
-### D. Bare-class fallback
-
-If the module exposes no factory, the loader looks for any subclass
-of `Tentacle` or `Sensory` and instantiates it with `cls(**config)` or
-`cls()`. Useful for trivial zero-config plugins.
-
-## `deps` — runtime-injected dependencies
-
-All factories receive the same `deps` dict:
-
-| Key | Type | Notes |
-|---|---|---|
-| `gm` | `GraphMemory` | the live graph |
-| `kb_registry` | `KBRegistry` | long-term memories |
-| `embedder` | `AsyncEmbedder` | `await embedder(text) → vec` |
-| `buffer` | `StimulusQueue` | push stimuli back at Krakey |
-| `events` | `EventBus` | publish typed events (dashboard subscribers consume) |
-| `runtime` | `Runtime` \| None | full runtime ref — used by the dashboard plugin to wire its server adapters; ordinary plugins should not need this |
-| `config` | full `Config` object | read-only view of the rest of the config |
-| `build_code_runner` | callable | `(coding_cfg) → CodeRunner` — honours sandbox policy; used by the `coding` plugin |
-
-## Manifest
-
-Inline in the module:
-
-```python
-MANIFEST = {
-    "name": "my_weather",               # defaults to folder name
-    "description": "Current weather for a city",
-    "is_internal": False,                # single-tentacle shortcut: default is_internal
-    "components": [                      # REQUIRED for create_plugins
-        {"kind": "tentacle", "name": "weather",
-         "is_internal": True,
-         "description": "inward: results go to Self"},
-        {"kind": "sensory", "name": "weather_alerts",
-         "description": "optional paired sensory"},
-    ],
-    "config_schema": [
-        # DO NOT declare `enabled` — it is a reserved key owned by the
-        # loader (default False). The dashboard renders a dedicated
-        # toggle for it above your rows.
-        {"field": "api_key",     "type": "password", "default": "",
-         "help": "openweathermap.org key"},
-        {"field": "default_city","type": "text",     "default": "Auckland"},
-    ],
-}
-```
-
-Or as `manifest.yaml` next to the module (YAML overrides inline
-`MANIFEST` field-for-field):
-
-```yaml
-name: my_weather
-description: Current weather for a city
-components:
-  - kind: tentacle
-    name: weather
-    is_internal: true
-config_schema:
-  # `enabled` is reserved — do NOT add it here.
-  - field: api_key
-    type: password
-    default: ""
-    help: openweathermap.org key
-```
-
-### Reserved keys
-
-- `enabled` — loader-owned. Default **`False`**. The factory never runs
-  until the user sets `plugins.<project>.enabled: true` in
-  `config.yaml` (or toggles it on in the dashboard). Any `enabled`
-  entry a plugin author writes into `config_schema` is stripped
-  silently on load.
-
-### Component metadata
-
-For multi-component projects the `components` list declares each
-produced tentacle / sensory:
-
-- `kind` — `"tentacle"` or `"sensory"` (required)
-- `name` — component name as it will appear in `[STATUS]` and in
-  the dashboard (defaults to the instance's `.name` property)
-- `description` — one-liner shown in the dashboard card
-- `is_internal` — tentacles only; overrides the instance's own
-  `is_internal` property
-
-### Field types the dashboard understands
-
-| `type` | Widget |
+| Root | Owner |
 |---|---|
-| `bool` | toggle |
-| `number` | integer input (no spinner) |
-| `number_float` | decimal input |
-| `text` | single-line text input |
-| `password` | masked text input |
+| `src/plugins/<name>/` | ships with Krakey (built-in) |
+| `workspace/plugins/<name>/` | user-installed |
 
-Unrecognised types fall back to `text`.
+Each folder contains:
 
-## Config lookup
+- `meta.yaml` (required) — manifest read by both the runtime loader and
+  the dashboard catalogue scanner without importing plugin code.
+- Component code (`reflect.py`, `tentacle.py`, `sensory.py`, or a flat
+  `__init__.py`) exposing one factory per component.
 
-The loader reads `config.yaml`'s `plugins.<project_name>` entry and
-passes it to the factory. For a `my_weather` project:
+User-editable per-plugin config goes in `workspace/plugins/<name>/config.yaml`
+regardless of whether the plugin code is built-in or workspace.
+
+## meta.yaml
+
+The full schema lives in [`src/plugin_system/loader.py`](src/plugin_system/loader.py).
+Minimal example:
 
 ```yaml
-plugins:
-  my_weather:
-    enabled: true
-    api_key: "${OPENWEATHER_API_KEY}"
-    default_city: Wellington
+name: my_plugin
+description: "..."
+config_schema: []          # plugin-level config fields (UI hints only)
+requires_sandbox: false    # set true if any component touches the sandbox VM
+
+components:
+  - kind: reflect
+    role: my_role          # required for kind=reflect; must be unique
+    factory_module: src.plugins.my_plugin.reflect
+    factory_attr: build_reflect
+    llm_purposes:          # optional
+      - name: translator
+        description: "..."
+        suggested_tag: fast_generation
+
+  - kind: tentacle
+    factory_module: src.plugins.my_plugin.tentacle
+    factory_attr: build_tentacle
+
+  - kind: sensory
+    factory_module: src.plugins.my_plugin.sensory
+    factory_attr: build_sensory
 ```
 
-Defaults from `config_schema` fill missing keys before the factory
-sees the dict. `enabled` defaults to `false`; until the user explicitly
-sets it to `true`, the project is reported in the dashboard but its
-module is imported only for manifest reading — the factory never runs.
+A plugin can ship any combination of components. Enabling a plugin in
+`config.yaml`'s `plugins:` list loads **all** its components; there is
+no per-component toggle.
 
-## Examples
+## Factory contract
 
-### Minimal single-tentacle plugin
+Every component factory has the same signature:
 
 ```python
-# workspace/plugins/echo.py
-from datetime import datetime
-
-from src.interfaces.tentacle import Tentacle
-from src.models.stimulus import Stimulus
-
-
-MANIFEST = {
-    "description": "Echoes the intent back to Self as tentacle_feedback.",
-    "is_internal": True,
-    "config_schema": [
-        {"field": "prefix",  "type": "text", "default": "echo: "},
-    ],
-}
-
-
-class EchoTentacle(Tentacle):
-    def __init__(self, prefix):
-        self._prefix = prefix
-    @property
-    def name(self): return "echo"
-    @property
-    def description(self): return MANIFEST["description"]
-    @property
-    def parameters_schema(self):
-        return {"intent": "free text to echo back"}
-    @property
-    def is_internal(self): return True
-    async def execute(self, intent, params):
-        return Stimulus(
-            type="tentacle_feedback", source="tentacle:echo",
-            content=self._prefix + (intent or ""),
-            timestamp=datetime.now(), adrenalin=False,
-        )
-
-
-def create_tentacle(config, deps):
-    return EchoTentacle(prefix=config.get("prefix", "echo: "))
+def build_<kind>(ctx: PluginContext) -> ComponentInstance: ...
 ```
 
-Enable in `config.yaml`:
+Returning `None` opts out (e.g. when a required LLM purpose isn't bound)
+without crashing the runtime. The full `PluginContext` surface (config
+view, services whitelist, plugin_cache for multi-component plugins,
+LLM resolution) is documented in
+[`src/interfaces/plugin_context.py`](src/interfaces/plugin_context.py).
+
+## Enabling a plugin
+
+In the central `config.yaml`:
 
 ```yaml
 plugins:
-  echo:
-    enabled: true
-    prefix: "→ "
+  - my_plugin
+  - search
+  - default_hypothalamus
 ```
 
-### Multi-component project sharing a client
+All plugins default OFF. Empty list = zero components. Order in the
+list determines registration order for plugins that contribute to the
+same registry.
 
-See `src/plugins/builtin/telegram/__init__.py` — the canonical example:
-sensory + reply tentacle sharing one `HttpTelegramClient` via
-`create_plugins`.
+## Examples in-tree
 
-## Troubleshooting
+- **Single-component reflect**: [`src/plugins/recall_anchor/`](src/plugins/recall_anchor/)
+  — claims the `recall_anchor` role; one factory + one impl class.
+- **Single-component tentacle**: [`src/plugins/search/`](src/plugins/search/)
+  — flat `__init__.py` with backend Protocol, tentacle, factory.
+- **Multi-component shared state**: [`src/plugins/telegram/`](src/plugins/telegram/)
+  — sensory + tentacle share an `HttpTelegramClient` via `ctx.plugin_cache`.
+- **Multi-component with attach lifecycle**: [`src/plugins/default_in_mind/`](src/plugins/default_in_mind/)
+  — reflect + tentacle wired through `ctx.plugin_cache`; reflect uses
+  the `attach()` hook to register its sibling tentacle.
 
-- **Plugin does not show up** — check that `workspace/plugins/<name>/`
-  (or `workspace/plugins/<name>.py`) exists and is not hidden
-  (no leading `.` / `_`). Check the startup log for
-  `plugin ... failed to load`.
-- **Plugin shows `plugin ✗` in dashboard** — expand the card; the
-  full traceback is shown. Common causes: missing host dependency,
-  typo in factory name, factory raises during build.
-- **Plugin loads but Krakey never calls it** — the Hypothalamus picks
-  tentacles from `[STATUS]`. Check that `name` + `description` are
-  descriptive enough for Self to map her intent onto.
-- **Config changes ignored** — plugin instances are built at Runtime
-  construction. Restart Krakey after editing `config.yaml` (or save
-  via dashboard Settings + click Restart).
+## Architectural rules
+
+1. **No code load before user enable.** The loader walks meta.yaml files
+   only; plugin Python modules are imported lazily on enable via
+   `load_component(component, ctx)`.
+2. **Plugin granularity for enable.** Listing a plugin loads all its
+   components together.
+3. **All plugins default off.** The user must explicitly opt in.
+4. **Plugins never crash startup.** Bad config → log warning + skip.
+   Missing LLM purpose → factory returns None → component absent.
+   Architectural invariant per `CLAUDE.md`.
