@@ -8,7 +8,6 @@ Supported commands:
   /status        — print runtime + GM stats
   /memory_stats  — print full GM dump
   /sleep         — trigger 7-phase Sleep immediately
-  /wake          — no-op for now (Sleep is synchronous)
   /kill          — graceful shutdown after current heartbeat
 """
 from __future__ import annotations
@@ -21,7 +20,7 @@ if TYPE_CHECKING:
     from src.main import Runtime
 
 
-KNOWN_COMMANDS: set[str] = {"status", "memory_stats", "sleep", "wake", "kill"}
+KNOWN_COMMANDS: set[str] = {"status", "memory_stats", "sleep", "kill"}
 
 
 class OverrideAction(Enum):
@@ -61,12 +60,6 @@ async def handle_override(cmd: str, runtime: "Runtime") -> OverrideResult:
     if cmd == "sleep":
         return OverrideResult(OverrideAction.SLEEP,
                                 "manual sleep request received")
-    if cmd == "wake":
-        return OverrideResult(
-            OverrideAction.NONE,
-            "wake noop — current Sleep impl is synchronous, runtime is "
-            "already awake when this fires.",
-        )
     # cmd == "kill" — only remaining KNOWN_COMMANDS entry.
     return OverrideResult(OverrideAction.KILL,
                             "manual shutdown requested")

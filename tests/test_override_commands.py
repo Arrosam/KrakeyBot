@@ -1,4 +1,4 @@
-"""Override CLI commands: /status /memory_stats /sleep /wake /kill."""
+"""Override CLI commands: /status /memory_stats /sleep /kill."""
 import pytest
 
 from src.runtime.overrides.override_commands import (
@@ -12,7 +12,6 @@ def test_known_command_recognized():
     assert parse_override("/status") == "status"
     assert parse_override("/memory_stats") == "memory_stats"
     assert parse_override("/sleep") == "sleep"
-    assert parse_override("/wake") == "wake"
     assert parse_override("/kill") == "kill"
 
 
@@ -38,7 +37,7 @@ def test_unknown_slash_command_returns_none():
 
 
 def test_known_commands_set_complete():
-    assert KNOWN_COMMANDS == {"status", "memory_stats", "sleep", "wake", "kill"}
+    assert KNOWN_COMMANDS == {"status", "memory_stats", "sleep", "kill"}
 
 
 def test_overrideaction_enum_members():
