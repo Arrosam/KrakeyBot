@@ -33,6 +33,16 @@ from tests._runtime_helpers import (
 # ---- protocol compliance ----------------------------------------------
 
 
+def _stub_recall_anchor() -> DefaultRecallAnchorReflect:
+    """Build a DefaultRecallAnchorReflect with placeholder state for
+    tests that only inspect protocol attributes (role/name/registry
+    behavior). make_recall is never invoked on these stubs."""
+    return DefaultRecallAnchorReflect(
+        gm=None, embedder=None, reranker=None,  # type: ignore[arg-type]
+        per_stimulus_k=0, neighbor_depth=0, recall_token_budget=0,
+    )
+
+
 def test_default_hypothalamus_satisfies_protocol():
     r = DefaultHypothalamusReflect(ScriptedLLM([]))
     assert isinstance(r, Reflect)
@@ -42,7 +52,7 @@ def test_default_hypothalamus_satisfies_protocol():
 
 
 def test_default_recall_anchor_satisfies_protocol():
-    r = DefaultRecallAnchorReflect()
+    r = _stub_recall_anchor()
     assert isinstance(r, Reflect)
     assert isinstance(r, RecallAnchorReflect)
     assert r.role == "recall_anchor"
@@ -55,7 +65,7 @@ def test_default_recall_anchor_satisfies_protocol():
 def test_registry_keys_by_role():
     reg = ReflectRegistry()
     h = DefaultHypothalamusReflect(ScriptedLLM([]))
-    r = DefaultRecallAnchorReflect()
+    r = _stub_recall_anchor()
     reg.register(h)
     reg.register(r)
 
@@ -102,7 +112,7 @@ def test_registry_rejects_missing_name_or_role():
 def test_registry_iteration_in_registration_order():
     reg = ReflectRegistry()
     h = DefaultHypothalamusReflect(ScriptedLLM([]))
-    r = DefaultRecallAnchorReflect()
+    r = _stub_recall_anchor()
     reg.register(r)
     reg.register(h)
     assert reg.roles() == ["recall_anchor", "hypothalamus"]

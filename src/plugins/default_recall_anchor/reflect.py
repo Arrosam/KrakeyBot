@@ -1,53 +1,77 @@
-"""Default recall-anchor Reflect — wraps the scripted
-``IncrementalRecall`` factory.
+"""Default recall-anchor Reflect — wraps the ``IncrementalRecall``
+factory.
 
 Imported lazily by ``src.plugin_system.load_component`` only when
 the user enables ``default_recall_anchor`` in ``config.yaml``'s
-``reflects:`` list.
+``plugins:`` list.
+
+The Reflect captures everything it needs (GraphMemory, embedder,
+reranker, config knobs) from ``PluginContext`` at construction time.
+``make_recall(runtime)`` then ignores its ``runtime`` argument —
+captured state is sufficient. The runtime parameter is part of the
+``RecallAnchorReflect`` Protocol so other plugins can choose to read
+from runtime if they prefer; this implementation does not.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from src.models.config import LLMParams
 from src.plugins.default_recall_anchor.incremental import IncrementalRecall
 
 if TYPE_CHECKING:
-    from src.main import Runtime
     from src.interfaces.plugin_context import PluginContext
+    from src.memory.graph_memory import GraphMemory
+    from src.memory.recall import AsyncEmbedder, RecallLike, Reranker
 
 
 class DefaultRecallAnchorReflect:
-    """Per-beat ``IncrementalRecall`` factory using the runtime's
-    embedder + reranker + per-stim-K + token budget.
-    """
+    """Per-beat ``IncrementalRecall`` factory using captured state."""
 
     name = "default_recall_anchor"
     role = "recall_anchor"
 
-    def make_recall(self, runtime: "Runtime") -> IncrementalRecall:
-        # Reads config + deps off the runtime. Construction logic
-        # lives here (rather than on Runtime) so future recall
-        # Reflects can vary it independently — different embedder,
-        # different per_k, an LLM-anchor preprocessor — without
-        # Runtime knowing the difference.
-        from src.models.config import LLMParams
-        self_params = (
-            runtime.config.llm.core_params("self_thinking") or LLMParams()
-        )
+    def __init__(
+        self, *,
+        gm: "GraphMemory",
+        embedder: "AsyncEmbedder",
+        reranker: "Reranker | None",
+        per_stimulus_k: int,
+        neighbor_depth: int,
+        recall_token_budget: int,
+    ):
+        self._gm = gm
+        self._embedder = embedder
+        self._reranker = reranker
+        self._per_k = per_stimulus_k
+        self._neighbor_depth = neighbor_depth
+        self._token_budget = recall_token_budget
+
+    def make_recall(self, runtime: Any) -> "RecallLike":
+        del runtime
         return IncrementalRecall(
-            runtime.gm,
-            embedder=runtime.embedder,
-            per_stimulus_k=runtime.config.graph_memory.recall_per_stimulus_k,
-            recall_token_budget=self_params.recall_token_budget,
-            reranker=runtime.reranker,
-            neighbor_depth=runtime.config.graph_memory.neighbor_expand_depth,
+            self._gm,
+            embedder=self._embedder,
+            per_stimulus_k=self._per_k,
+            recall_token_budget=self._token_budget,
+            reranker=self._reranker,
+            neighbor_depth=self._neighbor_depth,
         )
 
 
 def build_reflect(ctx: "PluginContext") -> DefaultRecallAnchorReflect:
-    """Factory invoked by ``load_reflect``. ``ctx`` unused here —
-    DefaultRecallAnchorReflect reads everything off ``runtime`` at
-    ``make_recall`` call time, not at construction. No LLM purposes
-    declared in meta.yaml so ctx.get_llm is never needed."""
-    del ctx
-    return DefaultRecallAnchorReflect()
+    """Factory invoked by ``load_component``. Pulls GM + embedder +
+    reranker from ``ctx.services`` and recall config knobs from
+    ``ctx.deps.config`` so ``make_recall`` does not need a runtime
+    ref. No LLM purposes declared in meta.yaml — ``ctx.get_llm_for_tag``
+    is never needed."""
+    cfg = ctx.deps.config
+    self_params = cfg.llm.core_params("self_thinking") or LLMParams()
+    return DefaultRecallAnchorReflect(
+        gm=ctx.services["gm"],
+        embedder=ctx.services["embedder"],
+        reranker=ctx.services.get("reranker"),
+        per_stimulus_k=cfg.graph_memory.recall_per_stimulus_k,
+        neighbor_depth=cfg.graph_memory.neighbor_expand_depth,
+        recall_token_budget=self_params.recall_token_budget,
+    )

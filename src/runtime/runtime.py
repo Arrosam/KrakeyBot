@@ -165,6 +165,7 @@ class Runtime:
                 "gm": self.gm,
                 "kb_registry": self.kb_registry,
                 "embedder": self.embedder,
+                "reranker": self.reranker,
                 "buffer": self.buffer,
                 "events": self.events,
                 "config": self.config,
