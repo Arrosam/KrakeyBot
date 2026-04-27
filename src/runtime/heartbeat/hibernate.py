@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 from typing import Protocol
 
-from src.runtime.stimulus_buffer import StimulusBuffer
+from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
 class IncrementalRecallLike(Protocol):

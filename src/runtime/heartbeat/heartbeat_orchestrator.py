@@ -32,16 +32,16 @@ from src.bootstrap import BOOTSTRAP_PROMPT, load_genesis
 from src.models.config import LLMParams
 from src.models.stimulus import Stimulus
 from src.prompt.views import SlidingWindowRound
-from src.runtime.compact import compact_if_needed
-from src.runtime.event_bus import (
+from src.runtime.heartbeat.compact import compact_if_needed
+from src.runtime.events.event_bus import (
     DecisionEvent, GMStatsEvent, HeartbeatStartEvent, HibernateEvent,
     NoteEvent, PromptBuiltEvent, SleepDoneEvent, SleepStartEvent,
     StimuliQueuedEvent, ThinkingEvent,
 )
-from src.runtime.fatigue import calculate_fatigue
-from src.runtime.hibernate import hibernate_with_recall
+from src.runtime.heartbeat.fatigue import calculate_fatigue
+from src.runtime.heartbeat.hibernate import hibernate_with_recall
 from src.memory.sleep.sleep_manager import enter_sleep_mode
-from src.runtime.override_commands import (
+from src.runtime.overrides.override_commands import (
     OverrideAction, handle_override, parse_override,
 )
 from src.self_agent import parse_self_output
@@ -462,7 +462,7 @@ class HeartbeatOrchestrator:
         Returns the final (prompt, recall_result) pair. Hard cap on
         iterations so a pathological configuration can't spin forever.
         """
-        from src.runtime.compact import compact_round
+        from src.runtime.heartbeat.compact import compact_round
         from src.utils.tokens import estimate_tokens
 
         rt = self._rt

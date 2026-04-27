@@ -26,7 +26,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from src.models.stimulus import Stimulus
-from src.runtime.event_bus import (
+from src.runtime.events.event_bus import (
     DispatchEvent, HypothalamusEvent, TentacleResultEvent,
 )
 
@@ -34,10 +34,10 @@ if TYPE_CHECKING:
     from src.interfaces.reflect import HypothalamusResult, TentacleCall
     from src.interfaces.tentacle import TentacleRegistry
     from src.memory.graph_memory import GraphMemory
-    from src.runtime.batch_tracker import BatchTrackerSensory
-    from src.runtime.event_bus import EventBus
-    from src.runtime.heartbeat_logger import HeartbeatLogger
-    from src.runtime.stimulus_buffer import StimulusBuffer
+    from src.runtime.stimuli.batch_tracker import BatchTrackerSensory
+    from src.runtime.events.event_bus import EventBus
+    from src.runtime.console.heartbeat_logger import HeartbeatLogger
+    from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
 class HypothalamusDispatcher:

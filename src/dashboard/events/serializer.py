@@ -8,7 +8,7 @@ from __future__ import annotations
 import dataclasses
 from typing import Any
 
-from src.runtime.event_bus import _BaseEvent
+from src.runtime.events.event_bus import _BaseEvent
 
 
 def serialize_event(event: _BaseEvent) -> dict[str, Any]:

@@ -3,7 +3,7 @@
 This is the default tentacle dispatch path when no hypothalamus
 Reflect is registered (Reflect #1 default OFF design).
 """
-from src.runtime.action_executor import parse_action_block
+from src.runtime.heartbeat.action_executor import parse_action_block
 
 
 def test_empty_input_returns_empty():

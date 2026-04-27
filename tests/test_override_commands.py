@@ -1,7 +1,7 @@
 """Override CLI commands: /status /memory_stats /sleep /wake /kill."""
 import pytest
 
-from src.runtime.override_commands import (
+from src.runtime.overrides.override_commands import (
     KNOWN_COMMANDS, OverrideAction, parse_override,
 )
 

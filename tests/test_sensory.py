@@ -5,7 +5,7 @@ import pytest
 
 from src.interfaces.sensory import PushCallback, Sensory
 from src.models.stimulus import Stimulus
-from src.runtime.stimulus_buffer import StimulusBuffer
+from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
 class MockSensory(Sensory):

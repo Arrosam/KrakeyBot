@@ -7,7 +7,7 @@ import pytest
 from src.interfaces.sensory import PushCallback, Sensory
 from src.memory.graph_memory import GraphMemory
 from src.memory.knowledge_base import KBRegistry
-from src.runtime.stimulus_buffer import StimulusBuffer
+from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 from src.memory.sleep.sleep_manager import enter_sleep_mode
 
 

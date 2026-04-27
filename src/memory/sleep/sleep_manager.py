@@ -20,7 +20,7 @@ from src.memory.sleep.kb_lifecycle import archive_excess_kbs, consolidate_kbs
 from src.memory.sleep.migration import migrate_gm_to_kb
 
 if TYPE_CHECKING:
-    from src.runtime.stimulus_buffer import StimulusBuffer
+    from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
 class AsyncChatLLM(Protocol):

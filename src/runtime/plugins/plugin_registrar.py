@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from src.interfaces.tentacle import TentacleRegistry
     from src.models.config import Config
     from src.runtime.runtime import RuntimeDeps
-    from src.runtime.stimulus_buffer import StimulusBuffer
+    from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
 @dataclass

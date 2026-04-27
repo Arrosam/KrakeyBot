@@ -1,7 +1,7 @@
 """Phase 1.4: SlidingWindow (dynamic token-based window)."""
 import pytest
 
-from src.runtime.sliding_window import SlidingWindow, SlidingWindowRound
+from src.runtime.heartbeat.sliding_window import SlidingWindow, SlidingWindowRound
 
 
 def _round(i, stim="stim", decision="dec", note=""):

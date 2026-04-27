@@ -2,8 +2,8 @@
 batch drains."""
 import pytest
 
-from src.runtime.batch_tracker import BatchTrackerSensory
-from src.runtime.stimulus_buffer import StimulusBuffer
+from src.runtime.stimuli.batch_tracker import BatchTrackerSensory
+from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
 async def _tracker(buffer=None):

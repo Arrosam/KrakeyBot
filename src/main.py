@@ -27,7 +27,7 @@ from src.models.config import load_config
 from src.runtime.runtime import (  # noqa: F401
     AsyncEmbedder, ChatLike, Runtime, RuntimeDeps, resolve_llm_for_tag,
 )
-from src.runtime.heartbeat_orchestrator import (  # noqa: F401
+from src.runtime.heartbeat.heartbeat_orchestrator import (  # noqa: F401
     _summarize_stimuli,
 )
 

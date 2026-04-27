@@ -5,8 +5,8 @@ from datetime import datetime
 import pytest
 
 from src.models.stimulus import Stimulus
-from src.runtime.hibernate import clamp, hibernate
-from src.runtime.stimulus_buffer import StimulusBuffer
+from src.runtime.heartbeat.hibernate import clamp, hibernate
+from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
 def test_clamp_bounds():

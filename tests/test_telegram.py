@@ -4,7 +4,7 @@ from datetime import datetime
 
 import pytest
 
-from src.runtime.stimulus_buffer import StimulusBuffer
+from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 from src.plugins.telegram.sensory import TelegramSensory
 from src.plugins.telegram.tentacle import TelegramReplyTentacle
 

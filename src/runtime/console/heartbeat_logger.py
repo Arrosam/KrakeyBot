@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import sys
 
-from src.runtime.colors import cyan, green, magenta, yellow
+from src.runtime.console.colors import cyan, green, magenta, yellow
 
 
 class HeartbeatLogger:

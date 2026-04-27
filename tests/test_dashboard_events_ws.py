@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from src.dashboard.app_factory import create_app
 from src.dashboard.events import EventBroadcaster, serialize_event
-from src.runtime.event_bus import (
+from src.runtime.events.event_bus import (
     DecisionEvent, EventBus, GMStatsEvent, ThinkingEvent,
 )
 

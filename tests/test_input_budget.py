@@ -13,7 +13,7 @@ import pytest
 
 from src.memory.recall import RecallResult
 from src.models.stimulus import Stimulus
-from src.runtime.sliding_window import SlidingWindowRound
+from src.runtime.heartbeat.sliding_window import SlidingWindowRound
 from tests._runtime_helpers import (
     NullEmbedder, ScriptedLLM, build_runtime_with_fakes,
 )

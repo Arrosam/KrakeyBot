@@ -6,8 +6,8 @@ from datetime import datetime
 import pytest
 
 from src.models.stimulus import Stimulus
-from src.runtime.hibernate import hibernate_with_recall
-from src.runtime.stimulus_buffer import StimulusBuffer
+from src.runtime.heartbeat.hibernate import hibernate_with_recall
+from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
 class SpyRecall:

@@ -9,7 +9,7 @@ from src.main import Runtime, RuntimeDeps
 from src.models.self_model import SelfModelStore, default_self_model
 from tests._runtime_helpers import build_runtime_with_fakes
 from src.models.stimulus import Stimulus
-from src.runtime.stimulus_buffer import StimulusBuffer
+from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
 class ScriptedLLM:

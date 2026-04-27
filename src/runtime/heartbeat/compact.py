@@ -11,7 +11,7 @@ import re
 from typing import Any, Awaitable, Callable, Protocol
 
 from src.memory.graph_memory import GraphMemory
-from src.runtime.sliding_window import SlidingWindow, SlidingWindowRound
+from src.runtime.heartbeat.sliding_window import SlidingWindow, SlidingWindowRound
 
 
 COMPACT_PROMPT = """整理一段过去的对话记忆，提取需要记住的信息。

@@ -298,7 +298,7 @@ class ReflectRegistry:
         action_executor is imported lazily to avoid a
         ``runtime → interfaces → runtime`` import cycle.
         """
-        from src.runtime.action_executor import parse_action_block
+        from src.runtime.heartbeat.action_executor import parse_action_block
 
         calls = parse_action_block(self_text)
         return HypothalamusResult(

@@ -32,11 +32,11 @@ from src.memory.recall import IncrementalRecall, Reranker
 from src.models.config import Config, LLMParams
 from src.models.config_backup import backup_config
 from src.prompt.builder import PromptBuilder
-from src.runtime.batch_tracker import BatchTrackerSensory
-from src.runtime.event_bus import EventBus
-from src.runtime.heartbeat_logger import HeartbeatLogger
-from src.runtime.sliding_window import SlidingWindow
-from src.runtime.stimulus_buffer import StimulusBuffer
+from src.runtime.stimuli.batch_tracker import BatchTrackerSensory
+from src.runtime.events.event_bus import EventBus
+from src.runtime.console.heartbeat_logger import HeartbeatLogger
+from src.runtime.heartbeat.sliding_window import SlidingWindow
+from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 # All tentacle / sensory classes now load via the plugin system
 # (src.plugins.<project>/). SubprocessRunner stays imported
 # here because Runtime._build_code_runner owns the sandbox-vs-subprocess
@@ -224,7 +224,7 @@ class Runtime:
         # docs/design/reflects-and-self-model.md (Samuel 2026-04-26).
         # Has to run AFTER the three registries exist (above) because
         # one plugin may register into any of them.
-        from src.runtime.plugin_registrar import PluginRegistrar
+        from src.runtime.plugins.plugin_registrar import PluginRegistrar
         self._plugin_registrar = PluginRegistrar(
             config=self.config,
             reflects=self.reflects,
@@ -260,7 +260,7 @@ class Runtime:
         # scattered ``if self.is_bootstrap`` checks. The provisional
         # value here gets re-derived once gm.initialize() lets us
         # probe actual data via ``bootstrap.refine_from_data``.
-        from src.runtime.bootstrap_coordinator import BootstrapCoordinator
+        from src.runtime.bootstrap.bootstrap_coordinator import BootstrapCoordinator
         # When no test override is supplied, the coordinator initializes
         # from the self-model's bootstrap_complete marker (equivalent to
         # the legacy `detected_bootstrap` heuristic) and lets
@@ -297,14 +297,14 @@ class Runtime:
         # Dashboard server composition — owns start/stop lifecycle +
         # the on_user_message + on_restart callback wiring. server is
         # ``None`` until start_if_enabled() runs and binds successfully.
-        from src.runtime.dashboard_lifecycle import DashboardLifecycle
+        from src.runtime.dashboard.dashboard_lifecycle import DashboardLifecycle
         self._dashboard = DashboardLifecycle(self)
 
         # Hypothalamus side-effects executor — pure composition over
         # the same five collaborators (tentacles, batch_tracker, buffer,
         # gm, log+events). Built once; the heartbeat passes its current
         # heartbeat_id on each call.
-        from src.runtime.dispatcher import HypothalamusDispatcher
+        from src.runtime.heartbeat.dispatcher import HypothalamusDispatcher
         self._dispatcher = HypothalamusDispatcher(
             tentacles=self.tentacles,
             batch_tracker=self.batch_tracker,
@@ -318,7 +318,7 @@ class Runtime:
         # holds no state. Reads + mutates Runtime fields through the
         # `runtime` ref. Built last (after all collaborators exist) so
         # nothing in its phase methods sees a half-constructed Runtime.
-        from src.runtime.heartbeat_orchestrator import HeartbeatOrchestrator
+        from src.runtime.heartbeat.heartbeat_orchestrator import HeartbeatOrchestrator
         self._orchestrator = HeartbeatOrchestrator(self)
 
         # Per-run ring buffer of assembled heartbeat prompts for the

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from src.models.stimulus import Stimulus
-from src.runtime.stimulus_buffer import StimulusBuffer
+from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
 def _s(content, *, adrenalin=False, offset_seconds=0):
