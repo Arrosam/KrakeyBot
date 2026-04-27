@@ -3,7 +3,7 @@
 Architecture invariant being pinned (Samuel 2026-04-25): a Reflect's
 Python code must NOT be imported until the user explicitly enables
 it. Catalogue scanning lives in
-``src.dashboard.services.plugin_catalogue.list_available_plugins``
+``src.plugins.dashboard.services.plugin_catalogue.list_available_plugins``
 (Web UI side); runtime loads by name via
 ``src.plugin_system.loader.load_plugin_meta``. ``load_component``
 is the only path that imports plugin modules — both scanners stay
@@ -21,7 +21,7 @@ import textwrap
 
 import pytest
 
-from src.dashboard.services.plugin_catalogue import (
+from src.plugins.dashboard.services.plugin_catalogue import (
     list_available_plugins as discover_plugins,
 )
 from src.models.config import load_config

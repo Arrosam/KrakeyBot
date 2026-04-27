@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-from src.dashboard.services.events import EventBroadcasterService
+from src.plugins.dashboard.services.events import EventBroadcasterService
 
 
 def register(app: FastAPI, *, broadcaster: EventBroadcasterService) -> None:

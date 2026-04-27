@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from src.dashboard.app_factory import create_app
-from src.dashboard.web_chat import WebChatHistory
+from src.plugins.dashboard.app_factory import create_app
+from src.plugins.dashboard.web_chat import WebChatHistory
 from src.plugins.web_chat.tentacle import WebChatTentacle
 
 

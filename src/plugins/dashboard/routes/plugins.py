@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException
 
-from src.dashboard.services.plugins import PluginsService
+from src.plugins.dashboard.services.plugins import PluginsService
 
 
 def register(app: FastAPI, *, plugins: PluginsService) -> None:

@@ -4,7 +4,7 @@ import asyncio
 import httpx
 import pytest
 
-from src.dashboard.app_factory import create_app
+from src.plugins.dashboard.app_factory import create_app
 from src.memory.graph_memory import GraphMemory
 from src.memory.knowledge_base import KBRegistry
 

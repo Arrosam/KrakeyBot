@@ -24,9 +24,9 @@ from typing import Any, Awaitable, Callable
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from src.dashboard.events.ws_route import register as _register_events_ws
-from src.dashboard.middleware import attach_no_cache
-from src.dashboard.routes import (
+from src.plugins.dashboard.events.ws_route import register as _register_events_ws
+from src.plugins.dashboard.middleware import attach_no_cache
+from src.plugins.dashboard.routes import (
     health as _health,
     memory as _memory,
     plugins as _plugins,
@@ -34,22 +34,22 @@ from src.dashboard.routes import (
     settings as _settings_route,
     uploads as _uploads,
 )
-from src.dashboard.services.events import EventBroadcasterService
-from src.dashboard.services.web_chat import WebChatService
-from src.dashboard.services.adapters import (
+from src.plugins.dashboard.services.events import EventBroadcasterService
+from src.plugins.dashboard.services.web_chat import WebChatService
+from src.plugins.dashboard.services.adapters import (
     FileConfigService,
     RuntimeMemoryService,
     RuntimePluginsService,
     RuntimePromptsService,
 )
-from src.dashboard.services.memory import MemoryService
-from src.dashboard.services.plugins import PluginsService
-from src.dashboard.services.prompts import PromptsService
-from src.dashboard.services.config import ConfigService
-from src.dashboard.templates import register as _register_templates
-from src.dashboard.web_chat.history import WebChatHistory
-from src.dashboard.web_chat.service import RuntimeWebChatService
-from src.dashboard.web_chat.ws_route import register as _register_chat_ws
+from src.plugins.dashboard.services.memory import MemoryService
+from src.plugins.dashboard.services.plugins import PluginsService
+from src.plugins.dashboard.services.prompts import PromptsService
+from src.plugins.dashboard.services.config import ConfigService
+from src.plugins.dashboard.templates import register as _register_templates
+from src.plugins.dashboard.web_chat.history import WebChatHistory
+from src.plugins.dashboard.web_chat.service import RuntimeWebChatService
+from src.plugins.dashboard.web_chat.ws_route import register as _register_chat_ws
 
 
 _STATIC_DIR = Path(__file__).parent / "static"

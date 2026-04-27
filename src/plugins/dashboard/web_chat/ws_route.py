@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-from src.dashboard.services.web_chat import WebChatService
+from src.plugins.dashboard.services.web_chat import WebChatService
 
 
 def register(app: FastAPI, *, service: WebChatService) -> None:

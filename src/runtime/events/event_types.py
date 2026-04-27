@@ -2,7 +2,7 @@
 
 Each event is a dataclass; the base class derives its ``kind`` string
 (used for dashboard WS routing) from the class name. Subscribers live
-on the dashboard side (see ``src.dashboard.events``); the runtime
+on the dashboard side (see ``src.plugins.dashboard.events``); the runtime
 only publishes.
 """
 from __future__ import annotations

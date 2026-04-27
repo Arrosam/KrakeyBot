@@ -12,7 +12,7 @@ Two responsibilities, two modules:
 
 Catalogue scanning ("show me all installed plugins") is intentionally
 NOT here — that's a Web UI concern and lives in
-``src/dashboard/services/plugin_catalogue.py``. Runtime only loads
+``src/plugins/dashboard/services/plugin_catalogue.py``. Runtime only loads
 plugins by name (the names listed in ``config.yaml``'s ``plugins:``).
 """
 from src.plugin_system.config import FilePluginConfigStore  # noqa: F401

@@ -21,9 +21,9 @@ from pathlib import Path
 
 import yaml
 
-from src.dashboard.services.config import ConfigService
+from src.plugins.dashboard.services.config import ConfigService
 from src.models.config import llm_params_schema
-from src.dashboard.services.plugin_catalogue import (
+from src.plugins.dashboard.services.plugin_catalogue import (
     list_available_plugins as _discover_unified,
 )
 

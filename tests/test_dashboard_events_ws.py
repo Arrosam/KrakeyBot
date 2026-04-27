@@ -6,8 +6,8 @@ from collections import deque
 import pytest
 from fastapi.testclient import TestClient
 
-from src.dashboard.app_factory import create_app
-from src.dashboard.events import EventBroadcaster, serialize_event
+from src.plugins.dashboard.app_factory import create_app
+from src.plugins.dashboard.events import EventBroadcaster, serialize_event
 from src.runtime.events.event_types import DecisionEvent, GMStatsEvent, ThinkingEvent
 from src.runtime.events.event_bus import EventBus
 

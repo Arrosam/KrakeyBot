@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Protocol, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.dashboard.web_chat.history import WebChatHistory
+    from src.plugins.dashboard.web_chat.history import WebChatHistory
 
 
 class WebChatService(Protocol):

@@ -8,7 +8,7 @@ Split into:
 Re-exports kept here for the stable public API used by Runtime wiring
 and tests.
 """
-from src.dashboard.events.broadcaster import EventBroadcaster
-from src.dashboard.events.serializer import serialize_event
+from src.plugins.dashboard.events.broadcaster import EventBroadcaster
+from src.plugins.dashboard.events.serializer import serialize_event
 
 __all__ = ["EventBroadcaster", "serialize_event"]

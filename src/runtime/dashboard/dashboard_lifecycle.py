@@ -23,9 +23,9 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.dashboard.app_factory import create_app as create_dashboard_app
-from src.dashboard.events import EventBroadcaster
-from src.dashboard.server import DashboardServer
+from src.plugins.dashboard.app_factory import create_app as create_dashboard_app
+from src.plugins.dashboard.events import EventBroadcaster
+from src.plugins.dashboard.server import DashboardServer
 
 if TYPE_CHECKING:
     from src.runtime.runtime import Runtime

@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from src.bootstrap import load_self_model_or_default
-from src.dashboard.web_chat import WebChatHistory
+from src.plugins.dashboard.web_chat import WebChatHistory
 from src.models.self_model import SelfModelStore
 from src.interfaces.tentacle import TentacleRegistry
 from src.llm.client import LLMClient

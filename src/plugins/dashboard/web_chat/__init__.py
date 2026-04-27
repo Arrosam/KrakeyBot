@@ -7,9 +7,9 @@ else in the codebase does.
 
 Re-exporting `WebChatHistory` here keeps imports short: both the
 dashboard wiring and the `web_chat` plugin read
-`from src.dashboard.web_chat import WebChatHistory`.
+`from src.plugins.dashboard.web_chat import WebChatHistory`.
 """
-from src.dashboard.web_chat.history import WebChatHistory
-from src.dashboard.web_chat.service import RuntimeWebChatService
+from src.plugins.dashboard.web_chat.history import WebChatHistory
+from src.plugins.dashboard.web_chat.service import RuntimeWebChatService
 
 __all__ = ["WebChatHistory", "RuntimeWebChatService"]

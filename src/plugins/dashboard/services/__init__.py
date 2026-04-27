@@ -15,12 +15,12 @@ This means:
 Concrete adapters live in `services/adapters.py`. Keep Protocols free
 of import-from-Runtime so tests can import them cheaply.
 """
-from src.dashboard.services.events import EventBroadcasterService
-from src.dashboard.services.web_chat import WebChatService
-from src.dashboard.services.memory import MemoryService
-from src.dashboard.services.prompts import PromptsService
-from src.dashboard.services.plugins import PluginsService
-from src.dashboard.services.config import ConfigService
+from src.plugins.dashboard.services.events import EventBroadcasterService
+from src.plugins.dashboard.services.web_chat import WebChatService
+from src.plugins.dashboard.services.memory import MemoryService
+from src.plugins.dashboard.services.prompts import PromptsService
+from src.plugins.dashboard.services.plugins import PluginsService
+from src.plugins.dashboard.services.config import ConfigService
 
 __all__ = [
     "EventBroadcasterService",

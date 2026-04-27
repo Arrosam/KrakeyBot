@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
 
-from src.dashboard.web_chat.history import WebChatHistory
+from src.plugins.dashboard.web_chat.history import WebChatHistory
 
 
 UserMessageCallback = Callable[[str, list[dict[str, Any]]], Awaitable[None]]

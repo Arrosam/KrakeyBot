@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException, Query
 
-from src.dashboard.services.memory import MemoryService
+from src.plugins.dashboard.services.memory import MemoryService
 
 
 def register(app: FastAPI, *, memory: MemoryService) -> None:

@@ -6,7 +6,7 @@ import httpx
 import pytest
 import yaml
 
-from src.dashboard.app_factory import create_app
+from src.plugins.dashboard.app_factory import create_app
 from src.models.config_backup import (
     BACKUP_FILENAME_PREFIX, backup_config, list_backups,
 )
@@ -190,7 +190,7 @@ async def test_config_schema_reasoning_mode_has_choices(tmp_path):
 
 async def test_upload_endpoint_saves_files_and_serves_them(tmp_path, monkeypatch):
     # Re-point the upload dir at tmp so we don't litter the repo workspace.
-    import src.dashboard.routes.uploads as uploads_route
+    import src.plugins.dashboard.routes.uploads as uploads_route
     monkeypatch.setattr(uploads_route, "_UPLOAD_DIR", tmp_path / "uploads")
 
     async with _client() as c:

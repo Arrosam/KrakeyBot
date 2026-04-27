@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException, Query
 
-from src.dashboard.services.prompts import PromptsService
+from src.plugins.dashboard.services.prompts import PromptsService
 
 
 def register(app: FastAPI, *, prompts: PromptsService) -> None:

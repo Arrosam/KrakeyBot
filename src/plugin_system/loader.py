@@ -4,7 +4,7 @@ Pure-text meta.yaml parsing + ``importlib`` on enable. **Runtime never
 scans plugin folders** — it only opens the meta.yaml files for the
 names listed in ``config.yaml`` ``plugins:``. Catalogue scanning
 ("show me everything available") is a Web UI concern and lives in
-``src/dashboard/services/plugin_catalogue.py``.
+``src/plugins/dashboard/services/plugin_catalogue.py``.
 
 A "plugin" is the unit of distribution + enable. A plugin can declare
 any combination of components, each one of:
@@ -113,7 +113,7 @@ def load_plugin_meta(name: str) -> PluginMetadata | None:
     Used by Runtime to load by-name without scanning the rest:
     when ``config.plugins: [a, b, c]``, Runtime only opens those three
     meta.yaml files. Catalogue scanning ("list all installed") is the
-    dashboard's job — see ``src/dashboard/services/plugin_catalogue.py``.
+    dashboard's job — see ``src/plugins/dashboard/services/plugin_catalogue.py``.
     """
     for root in (WORKSPACE_ROOT, BUILTIN_ROOT):
         meta_path = root / name / "meta.yaml"

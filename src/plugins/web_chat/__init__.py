@@ -4,7 +4,7 @@ Multi-component project: sensory (user → Krakey) + reply tentacle
 (Krakey → user) share one `WebChatHistory` instance (built by Runtime
 before plugin discovery because the dashboard WebSocket also
 subscribes to it for broadcasting). WebChatHistory itself lives in
-`src.dashboard.web_chat` — it's a data layer the dashboard owns, not
+`src.plugins.dashboard.web_chat` — it's a data layer the dashboard owns, not
 a plugin implementation detail.
 
 Disable this project to silence chat IO while keeping the dashboard
