@@ -4,7 +4,7 @@ from datetime import datetime
 
 import pytest
 
-from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
+from src.runtime.stimuli.queue import StimulusQueue
 from src.plugins.telegram.sensory import TelegramSensory
 from src.plugins.telegram.tentacle import TelegramReplyTentacle
 
@@ -45,7 +45,7 @@ async def test_sensory_pushes_incoming_message_as_user_stimulus():
     client = FakeClient(updates_batches=[
         [_msg(10, 123, "hello bot")],
     ])
-    buf = StimulusBuffer()
+    buf = StimulusQueue()
     sensory = TelegramSensory(client=client)
     await sensory.start(buf.push)
     await asyncio.sleep(0.1)
@@ -63,7 +63,7 @@ async def test_sensory_advances_offset_so_old_msgs_not_replayed():
         [_msg(5, 1, "first")],
         [_msg(6, 1, "second")],
     ])
-    buf = StimulusBuffer()
+    buf = StimulusQueue()
     sensory = TelegramSensory(client=client)
     await sensory.start(buf.push)
     await asyncio.sleep(0.15)
@@ -79,7 +79,7 @@ async def test_sensory_allowed_chat_filter():
         [_msg(1, 999, "from stranger"),
          _msg(2, 42, "from friend")],
     ])
-    buf = StimulusBuffer()
+    buf = StimulusQueue()
     sensory = TelegramSensory(client=client, allowed_chat_ids={42})
     await sensory.start(buf.push)
     await asyncio.sleep(0.1)
@@ -96,7 +96,7 @@ async def test_sensory_handles_get_updates_exception_and_continues():
         RuntimeError("net flap"),
         [_msg(1, 1, "after recovery")],
     ])
-    buf = StimulusBuffer()
+    buf = StimulusQueue()
     sensory = TelegramSensory(client=client, error_backoff=0.01)
     await sensory.start(buf.push)
     await asyncio.sleep(0.15)
@@ -110,7 +110,7 @@ async def test_sensory_skips_messages_without_text():
         [{"update_id": 1, "message": {"chat": {"id": 1}}},  # no text
          _msg(2, 1, "real")],
     ])
-    buf = StimulusBuffer()
+    buf = StimulusQueue()
     sensory = TelegramSensory(client=client)
     await sensory.start(buf.push)
     await asyncio.sleep(0.1)

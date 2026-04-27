@@ -51,7 +51,7 @@ class DashboardLifecycle:
         # (plugin-registered). If the plugin is disabled, no sensory
         # exists — install a noop callback that logs the drop so the
         # dashboard can still show history in monitor-only mode.
-        web_chat_sensory = rt.buffer.get_sensory("web_chat")
+        web_chat_sensory = rt.sensories.get_sensory("web_chat")
         if web_chat_sensory is not None:
             on_user_message = web_chat_sensory.push_user_message
         else:

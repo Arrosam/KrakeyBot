@@ -26,7 +26,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from src.models.stimulus import Stimulus
-from src.runtime.events.event_bus import (
+from src.runtime.events.event_types import (
     DispatchEvent, HypothalamusEvent, TentacleResultEvent,
 )
 
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from src.runtime.stimuli.batch_tracker import BatchTrackerSensory
     from src.runtime.events.event_bus import EventBus
     from src.runtime.console.heartbeat_logger import HeartbeatLogger
-    from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
+    from src.runtime.stimuli.queue import StimulusQueue
 
 
 class HypothalamusDispatcher:
@@ -48,14 +48,14 @@ class HypothalamusDispatcher:
         *,
         tentacles: "TentacleRegistry",
         batch_tracker: "BatchTrackerSensory",
-        buffer: "StimulusBuffer",
+        queue: "StimulusQueue",
         gm: "GraphMemory",
         log: "HeartbeatLogger",
         events: "EventBus",
     ):
         self._tentacles = tentacles
         self._batch_tracker = batch_tracker
-        self._buffer = buffer
+        self._queue = queue
         self._gm = gm
         self._log = log
         self._events = events
@@ -100,7 +100,7 @@ class HypothalamusDispatcher:
         try:
             tentacle = self._tentacles.get(call.tentacle)
         except KeyError:
-            await self._buffer.push(Stimulus(
+            await self._queue.push(Stimulus(
                 type="system_event", source="runtime",
                 content=f"Unknown tentacle: {call.tentacle}",
                 timestamp=datetime.now(), adrenalin=False,
@@ -123,7 +123,7 @@ class HypothalamusDispatcher:
             # Catastrophic tentacle crash — worth waking Self regardless
             # of whether the original call was urgent.
             self._log.dispatch(f"{call.tentacle} error: {e}")
-            await self._buffer.push(Stimulus(
+            await self._queue.push(Stimulus(
                 type="system_event", source=f"tentacle:{call.tentacle}",
                 content=f"error: {e}", timestamp=datetime.now(),
                 adrenalin=True,
@@ -148,7 +148,7 @@ class HypothalamusDispatcher:
         self._events.publish(TentacleResultEvent(
             tentacle=call.tentacle, content=stim.content,
         ))
-        await self._buffer.push(stim)
+        await self._queue.push(stim)
         await self._batch_tracker.mark_completed(call_id)
 
     # ---- memory side-effects -------------------------------------------

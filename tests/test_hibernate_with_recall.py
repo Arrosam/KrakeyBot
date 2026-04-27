@@ -7,7 +7,7 @@ import pytest
 
 from src.models.stimulus import Stimulus
 from src.runtime.heartbeat.hibernate import hibernate_with_recall
-from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
+from src.runtime.stimuli.queue import StimulusQueue
 
 
 class SpyRecall:
@@ -28,7 +28,7 @@ def _stim(content, *, adrenalin=False):
 
 
 async def test_times_out_with_no_stimulus():
-    buf = StimulusBuffer()
+    buf = StimulusQueue()
     recall = SpyRecall()
     t0 = time.perf_counter()
     await hibernate_with_recall(0.2, buf, recall,
@@ -39,7 +39,7 @@ async def test_times_out_with_no_stimulus():
 
 
 async def test_preloads_non_adrenalin_stimulus_during_hibernate():
-    buf = StimulusBuffer()
+    buf = StimulusQueue()
     recall = SpyRecall()
 
     async def producer():
@@ -57,7 +57,7 @@ async def test_preloads_non_adrenalin_stimulus_during_hibernate():
 
 
 async def test_adrenalin_stimulus_breaks_hibernate_early():
-    buf = StimulusBuffer()
+    buf = StimulusQueue()
     recall = SpyRecall()
 
     async def producer():
@@ -75,7 +75,7 @@ async def test_adrenalin_stimulus_breaks_hibernate_early():
 
 
 async def test_multiple_stimuli_all_fed_to_recall():
-    buf = StimulusBuffer()
+    buf = StimulusQueue()
     recall = SpyRecall()
 
     async def producer():
@@ -91,7 +91,7 @@ async def test_multiple_stimuli_all_fed_to_recall():
 
 
 async def test_preexisting_adrenalin_returns_immediately():
-    buf = StimulusBuffer()
+    buf = StimulusQueue()
     await buf.push(_stim("urgent!", adrenalin=True))
     recall = SpyRecall()
     t0 = time.perf_counter()
@@ -104,7 +104,7 @@ async def test_preexisting_adrenalin_returns_immediately():
 async def test_peek_does_not_consume_buffer():
     """After hibernate preloads stimuli, drain() must still return them
     so the next heartbeat sees the full batch."""
-    buf = StimulusBuffer()
+    buf = StimulusQueue()
     recall = SpyRecall()
 
     async def producer():

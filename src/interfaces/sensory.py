@@ -9,9 +9,10 @@ stimulus by invoking the ``push`` callback handed to it at
 Ownership inversion (Samuel 2026-04-26): sensories used to take a
 ``StimulusBuffer`` reference at start() and call buffer.push()
 themselves — making the buffer (a high-level runtime object) a
-dependency of every sensory implementation. Now the buffer owns
-sensories, hands each one a bare push callback at start(), and the
-sensory has no knowledge of (and no import on) the buffer class.
+dependency of every sensory implementation. Now ``SensoryRegistry``
+owns the live sensory set and hands each one a bare push callback
+(from ``StimulusQueue.push``) at start(); sensories have no
+knowledge of (and no import on) the queue or registry classes.
 """
 from __future__ import annotations
 

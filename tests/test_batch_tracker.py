@@ -3,11 +3,11 @@ batch drains."""
 import pytest
 
 from src.runtime.stimuli.batch_tracker import BatchTrackerSensory
-from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
+from src.runtime.stimuli.queue import StimulusQueue
 
 
 async def _tracker(buffer=None):
-    buf = buffer or StimulusBuffer()
+    buf = buffer or StimulusQueue()
     t = BatchTrackerSensory()
     await t.start(buf.push)
     return t, buf
@@ -70,7 +70,7 @@ async def test_sensory_interface():
     t = BatchTrackerSensory()
     assert t.name == "batch_tracker"
     assert t.default_adrenalin is True
-    buf = StimulusBuffer()
+    buf = StimulusQueue()
     await t.start(buf.push)
     await t.stop()  # no-op, must not raise
 

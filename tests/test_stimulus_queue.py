@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from src.models.stimulus import Stimulus
-from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
+from src.runtime.stimuli.queue import StimulusQueue
 
 
 def _s(content, *, adrenalin=False, offset_seconds=0):
@@ -18,7 +18,7 @@ def _s(content, *, adrenalin=False, offset_seconds=0):
 
 
 async def test_push_drain_preserves_time_order():
-    buf = StimulusBuffer()
+    buf = StimulusQueue()
     await buf.push(_s("a", offset_seconds=2))
     await buf.push(_s("b", offset_seconds=1))
     await buf.push(_s("c", adrenalin=True, offset_seconds=3))
@@ -29,7 +29,7 @@ async def test_push_drain_preserves_time_order():
 
 
 async def test_adrenalin_sets_event_and_cleared_by_drain():
-    buf = StimulusBuffer()
+    buf = StimulusQueue()
     await buf.push(_s("calm"))
     assert not buf.has_adrenalin()
 
@@ -41,7 +41,7 @@ async def test_adrenalin_sets_event_and_cleared_by_drain():
 
 
 async def test_wait_for_adrenalin_returns_when_set():
-    buf = StimulusBuffer()
+    buf = StimulusQueue()
 
     async def producer():
         await asyncio.sleep(0.02)
@@ -53,7 +53,7 @@ async def test_wait_for_adrenalin_returns_when_set():
 
 
 async def test_wait_for_any_returns_on_any_push():
-    buf = StimulusBuffer()
+    buf = StimulusQueue()
 
     async def producer():
         await asyncio.sleep(0.02)
@@ -64,7 +64,7 @@ async def test_wait_for_any_returns_on_any_push():
 
 
 async def test_peek_unrecalled_returns_new_items_only_once():
-    buf = StimulusBuffer()
+    buf = StimulusQueue()
     await buf.push(_s("a", offset_seconds=1))
     await buf.push(_s("b", offset_seconds=2))
 
@@ -80,7 +80,7 @@ async def test_peek_unrecalled_returns_new_items_only_once():
 
 
 async def test_drain_resets_peek_index():
-    buf = StimulusBuffer()
+    buf = StimulusQueue()
     await buf.push(_s("a", offset_seconds=1))
     buf.peek_unrecalled()
     buf.drain()

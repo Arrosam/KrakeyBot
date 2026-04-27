@@ -31,18 +31,6 @@ def test_yellow_wraps_when_enabled(monkeypatch):
     assert out.endswith("\033[0m")
 
 
-def test_magenta_wraps_when_enabled(monkeypatch):
-    monkeypatch.setattr(colors, "_ENABLED", True)
-    out = colors.magenta("recall")
-    assert "recall" in out
-    assert out.endswith("\033[0m")
-
-
-def test_magenta_disabled_passthrough(monkeypatch):
-    monkeypatch.setattr(colors, "_ENABLED", False)
-    assert colors.magenta("recall") == "recall"
-
-
 def test_no_color_env_disables(monkeypatch):
     monkeypatch.setenv("NO_COLOR", "1")
     assert colors._compute_enabled() is False

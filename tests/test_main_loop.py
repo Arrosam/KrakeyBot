@@ -9,7 +9,7 @@ from src.main import Runtime, RuntimeDeps
 from src.models.self_model import SelfModelStore, default_self_model
 from tests._runtime_helpers import build_runtime_with_fakes
 from src.models.stimulus import Stimulus
-from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
+from src.runtime.stimuli.queue import StimulusQueue
 
 
 class ScriptedLLM:
@@ -42,7 +42,7 @@ async def test_single_iteration_user_message_triggers_tentacle_dispatch():
 
     runtime = build_runtime_with_fakes(self_llm=self_llm, hypo_llm=hypo_llm)
 
-    await runtime.buffer.push(Stimulus(
+    await runtime.queue.push(Stimulus(
         type="user_message", source="sensory:cli_input",
         content="hello", timestamp=datetime.now(), adrenalin=True,
     ))
@@ -51,7 +51,7 @@ async def test_single_iteration_user_message_triggers_tentacle_dispatch():
 
     # Wait for tentacle task to complete and push feedback
     await asyncio.sleep(0.05)
-    remaining = runtime.buffer.drain()
+    remaining = runtime.queue.drain()
     contents = [s.content for s in remaining]
     # web_chat_reply returns scripted "Sent to web chat (N chars)."
     assert any("Sent to web chat" in c for c in contents)
@@ -69,7 +69,7 @@ async def test_no_action_decision_runs_no_tentacle():
     runtime = build_runtime_with_fakes(self_llm=self_llm, hypo_llm=hypo_llm)
     await runtime.run(iterations=1)
     await asyncio.sleep(0.05)
-    stims = runtime.buffer.drain()
+    stims = runtime.queue.drain()
     assert [s for s in stims if s.type == "tentacle_feedback"] == []
 
 
@@ -86,7 +86,7 @@ async def test_hypothalamus_error_pushes_system_event_stimulus():
     runtime = build_runtime_with_fakes(self_llm=self_llm, hypo_llm=hypo_llm)
     await runtime.run(iterations=1)
 
-    stims = runtime.buffer.drain()
+    stims = runtime.queue.drain()
     hypo_errs = [s for s in stims
                  if s.type == "system_event"
                  and s.source == "system:hypothalamus"]
@@ -116,7 +116,7 @@ async def test_tentacle_feedback_does_not_inherit_adrenalin_from_hypothalamus():
     await runtime.run(iterations=1)
 
     await asyncio.sleep(0.05)
-    stims = runtime.buffer.drain()
+    stims = runtime.queue.drain()
     tentacle_stims = [s for s in stims if s.type == "tentacle_feedback"]
     assert tentacle_stims
     # Feedback returned from a successful web_chat_reply → adrenalin=False.
@@ -156,7 +156,7 @@ async def test_heartbeat_with_connected_recall_nodes_does_not_crash():
 
     # Seed a user stimulus that embeds close to apple → recall finds both,
     # plus the edge between them, exercising the builder's edge rendering.
-    await runtime.buffer.push(Stimulus(
+    await runtime.queue.push(Stimulus(
         type="user_message", source="sensory:cli_input",
         content="tell me about apple", timestamp=datetime.now(),
         adrenalin=True,
@@ -204,7 +204,7 @@ async def test_voluntary_sleep_via_hypothalamus_runs_full_sleep(tmp_path):
     kbs = await runtime.kb_registry.list_kbs()
     assert len(kbs) == 1
     # Wake-up stimulus pushed
-    drained = runtime.buffer.drain()
+    drained = runtime.queue.drain()
     assert any(s.source == "system:sleep" for s in drained)
     # Sleep counter is now in-memory (was self_model.statistics until
     # the 2026-04-25 slim refactor).
@@ -239,7 +239,7 @@ async def test_force_sleep_when_fatigue_exceeds_threshold(tmp_path):
     # Self LLM should have NOT been called (force-sleep short-circuited)
     assert self_llm.calls == []
     # Wake-up stimulus is the special '昏睡' message
-    drained = runtime.buffer.drain()
+    drained = runtime.queue.drain()
     wake = [s for s in drained if s.source == "system:sleep"]
     assert len(wake) == 1
     assert "昏睡" in wake[0].content
@@ -307,7 +307,7 @@ async def test_override_kill_stops_runtime():
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
     )
-    await runtime.buffer.push(Stimulus(
+    await runtime.queue.push(Stimulus(
         type="user_message", source="sensory:cli_input",
         content="/kill", timestamp=datetime.now(), adrenalin=True,
     ))
@@ -326,7 +326,7 @@ async def test_override_status_pushes_system_event_for_self(tmp_path):
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
     )
-    await runtime.buffer.push(Stimulus(
+    await runtime.queue.push(Stimulus(
         type="user_message", source="sensory:cli_input",
         content="/status", timestamp=datetime.now(), adrenalin=True,
     ))
@@ -352,7 +352,7 @@ async def test_override_sleep_triggers_full_sleep(tmp_path):
         name="apple", category="FACT", description="red fruit",
         embedding=[1.0, 0.0],
     )
-    await runtime.buffer.push(Stimulus(
+    await runtime.queue.push(Stimulus(
         type="user_message", source="sensory:cli_input",
         content="/sleep", timestamp=datetime.now(), adrenalin=True,
     ))
@@ -372,7 +372,7 @@ async def test_override_normal_text_passes_through_to_self():
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
     )
-    await runtime.buffer.push(Stimulus(
+    await runtime.queue.push(Stimulus(
         type="user_message", source="sensory:cli_input",
         content="hello there", timestamp=datetime.now(), adrenalin=True,
     ))
@@ -448,7 +448,7 @@ async def test_uncovered_stimulus_push_back_capped_at_one_retry():
         type="user_message", source="sensory:cli_input",
         content="hello", timestamp=datetime.now(), adrenalin=True,
     )
-    await runtime.buffer.push(orig)
+    await runtime.queue.push(orig)
 
     await runtime.run(iterations=3)
     await runtime.close()
@@ -482,7 +482,7 @@ async def test_tentacle_feedback_auto_ingested_to_gm():
         self_llm=self_llm, hypo_llm=hypo_llm,
     )
 
-    await runtime.buffer.push(Stimulus(
+    await runtime.queue.push(Stimulus(
         type="user_message", source="sensory:cli_input",
         content="hi", timestamp=datetime.now(), adrenalin=True,
     ))
@@ -515,7 +515,7 @@ async def test_batch_complete_stimulus_wakes_next_heartbeat():
         hibernate_min=0.01, hibernate_max=5.0,
     )
 
-    await runtime.buffer.push(Stimulus(
+    await runtime.queue.push(Stimulus(
         type="user_message", source="test", content="go",
         timestamp=datetime.now(), adrenalin=True,
     ))
@@ -552,7 +552,7 @@ async def test_explicit_write_from_hypothalamus_memory_writes():
         classify_llm=extract_llm,
     )
 
-    await runtime.buffer.push(Stimulus(
+    await runtime.queue.push(Stimulus(
         type="user_message", source="test", content="please be detailed",
         timestamp=datetime.now(), adrenalin=True,
     ))
@@ -581,7 +581,7 @@ async def test_hibernate_interrupts_on_adrenalin_stimulus():
     # Push adrenalin stimulus just after first iteration enters hibernate
     async def shouter():
         await asyncio.sleep(0.05)
-        await runtime.buffer.push(Stimulus(
+        await runtime.queue.push(Stimulus(
             type="user_message", source="test",
             content="urgent!", timestamp=datetime.now(), adrenalin=True,
         ))
