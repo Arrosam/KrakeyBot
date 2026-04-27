@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from src.interfaces.tentacle import TentacleRegistry
     from src.models.config import Config
     from src.runtime.runtime import RuntimeDeps
-    from src.runtime.stimuli.sensory_registry import SensoryRegistry
+    from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
 @dataclass
@@ -77,10 +77,8 @@ class PluginInfo:
 
 
 class PluginRegistrar:
-    """Loads meta.yaml plugins into the runtime's three registries
-    (reflect / tentacle / sensory) + exposes the read-only
-    ``loaded_plugin_report`` observation the dashboard combines with
-    its own on-disk config reads."""
+    """Loads meta.yaml plugins into the runtime's three registries +
+    serves the dashboard's read/write surface for plugin config."""
 
     def __init__(
         self,
@@ -88,12 +86,15 @@ class PluginRegistrar:
         config: "Config",
         reflects: "ReflectRegistry",
         tentacles: "TentacleRegistry",
-        sensories: "SensoryRegistry",
+        sensories: "StimulusBuffer",
         services: dict[str, Any],
     ):
         self._config = config
         self._reflects = reflects
         self._tentacles = tentacles
+        # ``sensories`` is the StimulusBuffer (it owns the registered
+        # sensories now). Kept the ``sensories`` parameter name so
+        # Runtime's call site stays self-documenting.
         self._sensories = sensories
         self._services = services
         self._infos: list = []

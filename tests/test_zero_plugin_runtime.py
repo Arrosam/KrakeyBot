@@ -120,7 +120,7 @@ async def test_runtime_heartbeat_with_no_tentacles_emits_unknown_tentacle(tmp_pa
     await runtime.run(iterations=1)
     # The buffer should now contain a system_event explaining the
     # missing tentacle, ready for Self to see next beat.
-    drained = runtime.queue.drain()
+    drained = runtime.buffer.drain()
     unknown_events = [
         s for s in drained
         if s.type == "system_event"

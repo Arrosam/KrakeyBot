@@ -6,8 +6,7 @@ from collections import deque
 from typing import Any, Awaitable, Callable
 
 from src.dashboard.events.serializer import serialize_event
-from src.runtime.events.event_types import _BaseEvent
-from src.runtime.events.event_bus import EventBus
+from src.runtime.events.event_bus import EventBus, _BaseEvent
 
 
 SocketSend = Callable[[dict[str, Any]], Awaitable[None]]

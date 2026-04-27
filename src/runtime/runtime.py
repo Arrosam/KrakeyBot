@@ -36,9 +36,12 @@ from src.runtime.stimuli.batch_tracker import BatchTrackerSensory
 from src.runtime.events.event_bus import EventBus
 from src.runtime.console.heartbeat_logger import HeartbeatLogger
 from src.runtime.heartbeat.sliding_window import SlidingWindow
-from src.runtime.stimuli.queue import StimulusQueue
-from src.runtime.stimuli.sensory_registry import SensoryRegistry
-from src.sandbox.policy import build_code_runner, preflight_if_required
+from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
+# All tentacle / sensory classes now load via the plugin system
+# (src.plugins.<project>/). SubprocessRunner stays imported
+# here because Runtime._build_code_runner owns the sandbox-vs-subprocess
+# policy decision and hands the runner to the coding plugin via deps.
+from src.sandbox.subprocess_runner import SubprocessRunner
 
 
 class ChatLike(Protocol):
@@ -145,11 +148,7 @@ class Runtime:
         # before all three registries are built would crash.
         from src.interfaces.reflect import ReflectRegistry
         self.reflects = ReflectRegistry()
-        # Stimulus subsystem: queue handles stimuli flow, registry owns
-        # the live sensory set. The registry is given queue.push so it
-        # can hand each sensory the callable at start time.
-        self.queue = StimulusQueue()
-        self.sensories = SensoryRegistry(push=self.queue.push)
+        self.buffer = StimulusBuffer()
         # History token budget is derived from the Self role's input
         # context window × history_token_fraction. The Self role's
         # params.max_input_tokens is already resolved by the config
@@ -206,11 +205,18 @@ class Runtime:
                                    "workspace/data/web_chat.jsonl")
         self.web_chat_history = WebChatHistory(chat_path)
 
+        # Sensory ownership lives on ``self.buffer`` (see
+        # src/runtime/stimulus_buffer.py). The buffer is the single
+        # owner of the live sensory set + the live stimulus queue;
+        # ``self.sensories`` is a backward-compat alias so legacy
+        # call sites keep reading ``runtime.sensories`` if any sneak
+        # in. New code should reach for ``self.buffer`` directly.
+        self.sensories = self.buffer
         # BatchTracker is core runtime infrastructure (dispatch wake-up
         # mechanism) — kept out of the plugin system so it can't be
         # disabled by accident.
         self.batch_tracker = BatchTrackerSensory()
-        self.sensories.register(self.batch_tracker)
+        self.buffer.register(self.batch_tracker)
 
         # Unified-format plugins (meta.yaml + components list). Each
         # plugin can contribute reflect / tentacle / sensory components
@@ -223,12 +229,12 @@ class Runtime:
             config=self.config,
             reflects=self.reflects,
             tentacles=self.tentacles,
-            sensories=self.sensories,
+            sensories=self.buffer,
             services={
                 "gm": self.gm,
                 "kb_registry": self.kb_registry,
                 "embedder": self.embedder,
-                "queue": self.queue,
+                "buffer": self.buffer,
                 "web_chat_history": getattr(self, "web_chat_history", None),
                 "config": self.config,
                 "build_code_runner": self._build_code_runner,
@@ -295,14 +301,14 @@ class Runtime:
         self._dashboard = DashboardLifecycle(self)
 
         # Hypothalamus side-effects executor — pure composition over
-        # the same five collaborators (tentacles, batch_tracker, queue,
+        # the same five collaborators (tentacles, batch_tracker, buffer,
         # gm, log+events). Built once; the heartbeat passes its current
         # heartbeat_id on each call.
         from src.runtime.heartbeat.dispatcher import HypothalamusDispatcher
         self._dispatcher = HypothalamusDispatcher(
             tentacles=self.tentacles,
             batch_tracker=self.batch_tracker,
-            queue=self.queue,
+            buffer=self.buffer,
             gm=self.gm,
             log=self.log,
             events=self.events,
@@ -383,12 +389,12 @@ class Runtime:
         await self.gm.initialize()
         await self._preflight_sandbox()
         await self._refine_bootstrap_from_data()
-        await self.sensories.start_all()
+        await self.buffer.start_all()
         await self._maybe_start_dashboard()
 
         if self.is_setup_mode:
             await self._run_setup_mode()
-            await self.sensories.stop_all()
+            await self.buffer.stop_all()
             return
 
         self._recall = self._new_recall()
@@ -400,16 +406,38 @@ class Runtime:
                 if iterations is not None and count >= iterations:
                     return
         finally:
-            await self.sensories.stop_all()
+            await self.buffer.stop_all()
             # Cancel in-flight background classify tasks so asyncio doesn't warn.
             pending = [t for t in self._classify_tasks if not t.done()]
             for t in pending:
                 t.cancel()
 
     async def _run_setup_mode(self) -> None:
-        # Facade — banner + idle loop live in src.runtime.setup_mode.
-        from src.runtime.setup_mode import run_setup_mode
-        await run_setup_mode(self)
+        """Setup-mode loop: dashboard is up, heartbeat is skipped.
+
+        Idle here until the user signals stop (Ctrl-C / kill / a
+        dashboard /api/restart). This gives the Web UI a process to
+        live in while the user fills in the missing providers + tags
+        + ``core_purposes.self_thinking`` binding.
+        """
+        host = self.config.dashboard.host
+        port = self.config.dashboard.port
+        msg = (
+            "\n=========================================================\n"
+            "  Krakey is in SETUP MODE.\n\n"
+            "  No `core_purposes.self_thinking` tag binding found in\n"
+            "  config.yaml — the heartbeat is paused. Open the Web UI\n"
+            "  to finish setup:\n\n"
+            f"      http://{host}:{port}\n\n"
+            "  Then in the LLM section: add a provider, define a tag,\n"
+            "  bind core_purposes.self_thinking + embedding. Save +\n"
+            "  Restart. The next boot will run the real heartbeat.\n"
+            "=========================================================\n"
+        )
+        self.log.runtime_error(msg)
+        # Idle until externally stopped.
+        while not self._stop:
+            await asyncio.sleep(1.0)
 
     @property
     def _plugin_infos(self) -> list:
@@ -426,14 +454,40 @@ class Runtime:
         return self._plugin_registrar.loaded_plugin_report()
 
     def _build_code_runner(self, coding_cfg: dict):
-        # Facade — sandbox vs subprocess policy lives in
-        # src.sandbox.policy. Kept as a method so the services dict
-        # can hand a bound callable to the coding plugin.
-        return build_code_runner(coding_cfg, self.config.sandbox)
+        """Return Subprocess on sandbox=false, SandboxRunner otherwise.
+
+        Sandbox defaults to TRUE. When any tentacle enables sandbox but
+        the top-level `sandbox` config is incomplete, refuse to start
+        with a clear error — user must configure the guest VM first.
+        """
+        want_sandbox = bool(coding_cfg.get("sandbox", True))
+        if not want_sandbox:
+            return SubprocessRunner()
+        sb = self.config.sandbox
+        missing = []
+        if not sb.guest_os:
+            missing.append("sandbox.guest_os")
+        if not sb.agent.url:
+            missing.append("sandbox.agent.url")
+        if not sb.agent.token:
+            missing.append("sandbox.agent.token")
+        if missing:
+            raise RuntimeError(
+                "coding.sandbox=true but sandbox is not configured. "
+                "Missing: " + ", ".join(missing) + ". "
+                "Either complete the `sandbox:` block in config.yaml or "
+                "set tentacle.coding.sandbox=false (unsafe)."
+            )
+        from src.sandbox.backend import SandboxConfig, SandboxRunner
+        return SandboxRunner(SandboxConfig(
+            agent_url=sb.agent.url,
+            agent_token=sb.agent.token,
+            guest_os=sb.guest_os,
+        ))
 
     def _record_prompt(self, heartbeat_id: int, prompt: str) -> None:
-        # Facade — prompt logging lives in PromptAssembler.
-        self._orchestrator._assembler.record_prompt(heartbeat_id, prompt)
+        # Facade — heartbeat algorithm lives in HeartbeatOrchestrator.
+        self._orchestrator.record_prompt(heartbeat_id, prompt)
 
     def recent_prompts(self, limit: int | None = None) -> list[dict[str, Any]]:
         """Newest-first list of recorded prompts. Used by the dashboard
@@ -445,15 +499,50 @@ class Runtime:
         return [dict(p) for p in items]
 
     async def _preflight_sandbox(self) -> None:
-        # Facade — preflight scan logic lives in src.sandbox.policy.
-        # Wrapper exists so the log line stays attached to the
-        # heartbeat log, not stderr from a free function.
-        info = await preflight_if_required(self.config)
-        if info is not None:
-            self.log.hb(
-                f"sandbox preflight ok: guest_os={info.get('guest_os')} "
-                f"agent_version={info.get('agent_version')}"
+        """Ping the guest agent if any enabled plugin self-declared
+        ``requires_sandbox: true`` in its meta.yaml AND has its own
+        ``sandbox`` config field on. Refuses to start the runtime
+        when the agent is unreachable.
+
+        Iterates ``config.plugins`` (the explicit enabled list) and
+        loads each one's meta.yaml by name — no full filesystem scan.
+        """
+        from src.interfaces.plugin_context import load_plugin_config
+        from src.plugin_system.loader import load_plugin_meta
+        from src.sandbox.backend import (
+            SandboxConfig, SandboxUnavailableError, preflight,
+        )
+        cfg_root = Path("workspace/plugins")
+        any_sandboxed = False
+        for name in self.config.plugins or []:
+            meta = load_plugin_meta(name)
+            if meta is None or not meta.requires_sandbox:
+                continue
+            # Plugin's own `sandbox: false` opts out (e.g. coding on a
+            # trusted host).
+            plugin_cfg = load_plugin_config(name, cfg_root)
+            if bool(plugin_cfg.get("sandbox", True)):
+                any_sandboxed = True
+                break
+        if not any_sandboxed:
+            return
+        sb = self.config.sandbox
+        cfg = SandboxConfig(
+            agent_url=sb.agent.url,
+            agent_token=sb.agent.token,
+            guest_os=sb.guest_os,
+        )
+        try:
+            info = await preflight(cfg)
+        except SandboxUnavailableError as e:
+            raise RuntimeError(
+                f"sandbox preflight failed: {e}. "
+                "Start the guest agent or disable sandboxed tentacles."
             )
+        self.log.hb(
+            f"sandbox preflight ok: guest_os={info.get('guest_os')} "
+            f"agent_version={info.get('agent_version')}"
+        )
 
     async def _refine_bootstrap_from_data(self) -> None:
         """Thin wrapper around ``BootstrapCoordinator.refine_from_data``
@@ -482,20 +571,20 @@ class Runtime:
     # The next four facades exist because tests reach in directly to
     # exercise prompt assembly + budget enforcement + GENESIS lazy-load
     # without running a whole heartbeat. Production callers go through
-    # the orchestrator → assembler.
+    # the orchestrator.
 
     def _build_self_prompt(self, stimuli, recall_result, counts):
-        return self._orchestrator._assembler.build_self_prompt(
+        return self._orchestrator.build_self_prompt(
             stimuli, recall_result, counts,
         )
 
     async def _enforce_input_budget(self, stimuli, recall_result, counts):
-        return await self._orchestrator._assembler.enforce_input_budget(
+        return await self._orchestrator.enforce_input_budget(
             stimuli, recall_result, counts,
         )
 
     def _get_genesis_text(self) -> str:
-        return self._orchestrator._assembler.get_genesis_text()
+        return self._orchestrator.get_genesis_text()
 
 
 

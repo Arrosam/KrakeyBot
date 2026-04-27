@@ -7,8 +7,7 @@ import pytest
 from src.interfaces.sensory import PushCallback, Sensory
 from src.memory.graph_memory import GraphMemory
 from src.memory.knowledge_base import KBRegistry
-from src.runtime.stimuli.queue import StimulusQueue
-from src.runtime.stimuli.sensory_registry import SensoryRegistry
+from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 from src.memory.sleep.sleep_manager import enter_sleep_mode
 
 
@@ -59,10 +58,9 @@ async def _setup(tmp_path, with_sensory=False):
     gm = GraphMemory(tmp_path / "gm.sqlite", embedder=embed)
     await gm.initialize()
     reg = KBRegistry(gm, kb_dir=tmp_path / "kbs", embedder=embed)
-    # enter_sleep_mode pauses non-urgent sensories and resumes them at
-    # wake-up; it never touches the queue, so we hand it just the
-    # registry.
-    sensories = SensoryRegistry(push=StimulusQueue().push)
+    # The buffer now also owns the sensory set (SensoryRegistry merged
+    # into StimulusBuffer). Pass the buffer to enter_sleep_mode.
+    sensories = StimulusBuffer()
     spies = []
     if with_sensory:
         calm = _SpySensory("calm", urgent=False)

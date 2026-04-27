@@ -10,20 +10,12 @@ Supported commands:
   /sleep         — trigger 7-phase Sleep immediately
   /wake          — no-op for now (Sleep is synchronous)
   /kill          — graceful shutdown after current heartbeat
-
-This module owns parsing + dispatch only. The actual rendering for
-``/status`` and ``/memory_stats`` lives in
-``src.runtime.overrides.state_formatters``.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
-
-from src.runtime.overrides.state_formatters import (
-    format_memory_stats, format_status,
-)
 
 if TYPE_CHECKING:
     from src.main import Runtime
@@ -58,13 +50,13 @@ def parse_override(content: str | None) -> str | None:
 
 async def handle_override(cmd: str, runtime: "Runtime") -> OverrideResult:
     if cmd == "status":
-        return OverrideResult(OverrideAction.NONE, await format_status(runtime))
+        return OverrideResult(OverrideAction.NONE, await _format_status(runtime))
     if cmd == "memory_stats":
         return OverrideResult(OverrideAction.NONE,
-                              await format_memory_stats(runtime))
+                                await _format_memory_stats(runtime))
     if cmd == "sleep":
         return OverrideResult(OverrideAction.SLEEP,
-                              "manual sleep request received")
+                                "manual sleep request received")
     if cmd == "wake":
         return OverrideResult(
             OverrideAction.NONE,
@@ -73,6 +65,52 @@ async def handle_override(cmd: str, runtime: "Runtime") -> OverrideResult:
         )
     if cmd == "kill":
         return OverrideResult(OverrideAction.KILL,
-                              "manual shutdown requested")
+                                "manual shutdown requested")
     return OverrideResult(OverrideAction.NONE,
-                          f"unknown command: /{cmd}")
+                            f"unknown command: /{cmd}")
+
+
+# ---------------- formatters ----------------
+
+
+async def _format_status(runtime: "Runtime") -> str:
+    nodes = await runtime.gm.count_nodes()
+    edges = await runtime.gm.count_edges()
+    pct = int(nodes / runtime.config.fatigue.gm_node_soft_limit * 100) \
+        if runtime.config.fatigue.gm_node_soft_limit else 0
+    # `_sleep_cycles` is a runtime-lifetime counter (per-process, not
+    # persisted) since the 2026-04-25 self-model slim — see
+    # docs/design/reflects-and-self-model.md Part 1.
+    cycles = getattr(runtime, "_sleep_cycles", 0)
+    name = runtime.self_model.get("identity", {}).get("name", "(unnamed)")
+    return (
+        f"name={name} "
+        f"heartbeats={runtime.heartbeat_count} "
+        f"gm_nodes={nodes} gm_edges={edges} fatigue={pct}% "
+        f"sleep_cycles={cycles} "
+        f"bootstrap_complete={not runtime.is_bootstrap}"
+    )
+
+
+async def _format_memory_stats(runtime: "Runtime") -> str:
+    nodes = await runtime.gm.count_nodes()
+    edges = await runtime.gm.count_edges()
+    db = runtime.gm._require()  # noqa: SLF001
+    async with db.execute(
+        "SELECT category, COUNT(*) FROM gm_nodes GROUP BY category"
+    ) as cur:
+        cat_rows = await cur.fetchall()
+    async with db.execute(
+        "SELECT source_type, COUNT(*) FROM gm_nodes GROUP BY source_type"
+    ) as cur:
+        src_rows = await cur.fetchall()
+    kbs = await runtime.kb_registry.list_kbs()
+
+    by_cat = ", ".join(f"{r[0]}={r[1]}" for r in cat_rows) or "(none)"
+    by_src = ", ".join(f"{r[0]}={r[1]}" for r in src_rows) or "(none)"
+    kb_line = f"{len(kbs)} KB(s)" + (
+        ": " + ", ".join(f"{k['kb_id']}({k['entry_count']})" for k in kbs)
+        if kbs else ""
+    )
+    return (f"gm: {nodes} nodes, {edges} edges  |  by_cat: {by_cat}  |  "
+            f"by_src: {by_src}  |  {kb_line}")

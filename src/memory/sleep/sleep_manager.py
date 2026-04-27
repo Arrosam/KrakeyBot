@@ -20,7 +20,7 @@ from src.memory.sleep.kb_lifecycle import archive_excess_kbs, consolidate_kbs
 from src.memory.sleep.migration import migrate_gm_to_kb
 
 if TYPE_CHECKING:
-    from src.runtime.stimuli.sensory_registry import SensoryRegistry
+    from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
 class AsyncChatLLM(Protocol):
@@ -32,7 +32,7 @@ class AsyncEmbedder(Protocol):
 
 
 async def enter_sleep_mode(
-    gm: GraphMemory, reg: KBRegistry, sensories: "SensoryRegistry",
+    gm: GraphMemory, reg: KBRegistry, sensories: "StimulusBuffer",
     *, llm: AsyncChatLLM, embedder: AsyncEmbedder,
     log_dir: str | Path = "workspace/logs",
     min_community_size: int = 1,

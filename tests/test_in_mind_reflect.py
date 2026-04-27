@@ -334,7 +334,7 @@ async def test_self_can_dispatch_update_in_mind_via_action_executor(
     assert snap["focus"] == "debug recall regression"
     assert snap["mood"] == "curious"
     # Feedback stimulus landed in buffer
-    drained = runtime.queue.drain()
+    drained = runtime.buffer.drain()
     feedback = [
         s for s in drained
         if s.type == "tentacle_feedback"

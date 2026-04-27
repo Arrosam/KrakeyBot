@@ -46,6 +46,18 @@ def test_hypo_uses_yellow(monkeypatch):
     assert rendered.startswith("\033[")
 
 
+def test_internal_uses_magenta(monkeypatch):
+    """memory_recall and other internal-only tentacles render magenta to
+    visually distinguish from green outward chat."""
+    out, _ = _capture(monkeypatch)
+    monkeypatch.setattr(colors, "_ENABLED", True)
+    log = HeartbeatLogger()
+    log.internal("memory_recall", "Recall result for 'apple'...")
+    rendered = out.getvalue()
+    assert "[memory_recall] Recall result" in rendered
+    assert rendered.startswith("\033[35m")  # magenta
+
+
 def test_chat_uses_green(monkeypatch):
     out, _ = _capture(monkeypatch)
     monkeypatch.setattr(colors, "_ENABLED", True)
