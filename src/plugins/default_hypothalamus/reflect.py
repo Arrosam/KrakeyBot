@@ -86,6 +86,14 @@ class DefaultHypothalamusReflect:
     def __init__(self, llm: ChatLike):
         self._llm = llm
 
+    def modify_prompt(self, elements) -> None:
+        """The hypothalamus owns the [DECISION] → tentacle-call
+        translation, so teaching Self the structured-tag syntax in
+        [ACTION FORMAT] would create competing dispatch paths. Drop
+        the action_format element."""
+        if "action_format" in elements:
+            del elements["action_format"]
+
     async def translate(
         self, decision: str, tentacles: list[dict[str, Any]],
     ) -> HypothalamusResult:

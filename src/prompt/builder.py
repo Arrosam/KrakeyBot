@@ -1,29 +1,30 @@
 """Prompt assembler — Layers ordered for LLM prefix cache (DevSpec §3.6).
 
-Layer order goes from most stable (cacheable prefix) to most volatile
-(cache-breaking tail):
+Layer order (most-stable cacheable prefix first → most-volatile last):
 
-    1. DNA                  — never changes at runtime
-    2. [SELF-MODEL]         — only changes when Self writes <self-model>
-    3. [CAPABILITIES]       — only changes on plugin reload
-    4. [STIMULUS]           — often empty / repeated tentacle feedback,
-                              so bimodal: stable on quiet beats
-    5. [GRAPH MEMORY]       — derived from [STIMULUS]; synchronized
-                              cache state with it
-    6. [HISTORY]            — appends every beat but has a stable prefix
-    7. [STATUS]             — every beat changes (heartbeat counter,
-                              fatigue); kept near the end so it does
-                              NOT invalidate the stable prefix above
-    8. [HEARTBEAT] question — end anchor
+    1. dna                  — never changes at runtime
+    2. self_model           — only changes when Self writes <self-model>
+    3. capabilities         — only changes on plugin reload
+    4. action_format        — taught only when no decision-translator
+                              role is registered (plugins delete this
+                              key when they own the dispatch path)
+    5. in_mind_instructions — standing instruction (added by in_mind plugin)
+    6. stimulus             — often empty / repeated tentacle feedback
+    7. recall               — derived from stimulus
+    8. in_mind_round        — virtual "Heartbeat #now (in mind)" round
+                              (filled by in_mind plugin; empty otherwise)
+    9. history              — appends every beat but stable prefix
+    10. status              — every beat changes; near the end so it
+                              doesn't invalidate the cacheable prefix
+    11. heartbeat_question  — end anchor
 
-Per-stimulus timestamps are intentionally omitted — the trailer
-``当前时间: YYYY-MM-DD HH:MM:SS`` at the bottom of [STIMULUS] is the
-single authoritative "now" read by Self. Beat-level temporal ordering
-lives in [HISTORY] via ``heartbeat_id``.
+Plugins receive a ``PromptElements`` per heartbeat (via their Reflect's
+``modify_prompt`` hook) and can read/write/delete any element. The
+runtime tracks per-element modifications and warns on conflicts.
 
-This module is the assembly LOGIC only. The data shapes Builder
-consumes live in ``views`` (typed dataclasses), the static prose
-layers in ``layers`` + ``dna``.
+This module owns the LAYER RENDERING logic (``render_*`` helpers).
+The runtime side composes a PromptElements dict from these renders +
+hands it to plugins + serializes to a string.
 """
 from __future__ import annotations
 
@@ -34,6 +35,7 @@ import yaml
 
 from src.models.stimulus import Stimulus
 from src.prompt.dna import DNA
+from src.prompt.elements import PromptElements
 from src.prompt.layers import ACTION_FORMAT_LAYER, HEARTBEAT_QUESTION
 from src.prompt.views import (
     CapabilityView,
@@ -45,6 +47,23 @@ if TYPE_CHECKING:
     from src.memory.recall import RecallResult
 
 
+# Default ordered element keys. Runtime constructs a PromptElements
+# with these keys (in order) before letting plugins modify.
+DEFAULT_ELEMENT_KEYS: tuple[str, ...] = (
+    "dna",
+    "self_model",
+    "capabilities",
+    "action_format",
+    "in_mind_instructions",
+    "stimulus",
+    "recall",
+    "in_mind_round",
+    "history",
+    "status",
+    "heartbeat_question",
+)
+
+
 def _format_stim(s: Stimulus) -> list[str]:
     return [
         "---",
@@ -54,6 +73,49 @@ def _format_stim(s: Stimulus) -> list[str]:
 
 
 class PromptBuilder:
+    """Renders the canonical default elements, then assembles a
+    PromptElements collection plugins can mutate.
+
+    Two entry points:
+      * ``build_default_elements(...)`` — produces a fully-populated
+        PromptElements (with all DEFAULT_ELEMENT_KEYS set, some to
+        empty strings if the layer is contextually absent).
+      * ``render(elements)`` — concatenates the elements into the
+        final prompt string.
+    """
+
+    def build_default_elements(
+        self,
+        *,
+        self_model: dict[str, Any],
+        capabilities: list[CapabilityView],
+        status: StatusSnapshot,
+        recall: "RecallResult",
+        window: list[SlidingWindowRound],
+        stimuli: list[Stimulus],
+        current_time: datetime | None = None,
+    ) -> PromptElements:
+        """Build the default-state PromptElements before plugin
+        modification. Each known key gets a value; empty-string slots
+        (in_mind_instructions, in_mind_round) are reserved for plugins
+        to fill in."""
+        return PromptElements(initial=[
+            ("dna", DNA),
+            ("self_model", self.render_self_model(self_model)),
+            ("capabilities", self.render_capabilities(capabilities)),
+            ("action_format", ACTION_FORMAT_LAYER),
+            ("in_mind_instructions", ""),
+            ("stimulus", self.render_stimulus(stimuli, current_time)),
+            ("recall", self.render_recall(recall)),
+            ("in_mind_round", ""),
+            ("history", self.render_history(window)),
+            ("status", self.render_status(status)),
+            ("heartbeat_question", HEARTBEAT_QUESTION),
+        ])
+
+    def render(self, elements: PromptElements) -> str:
+        return elements.render()
+
     def build(
         self,
         *,
@@ -64,44 +126,21 @@ class PromptBuilder:
         window: list[SlidingWindowRound],
         stimuli: list[Stimulus],
         current_time: datetime | None = None,
-        suppress_action_format: bool = False,
-        in_mind: dict[str, str] | None = None,
-        in_mind_instructions: str | None = None,
     ) -> str:
-        """Assemble the Self prompt.
+        """Convenience: build the default elements (no plugin
+        modification) and serialize. Used by tests that exercise the
+        basic prompt shape without the runtime's full Reflect pipeline.
+        Production callers should use ``build_default_elements`` +
+        plugin ``modify_prompt`` hooks + ``render`` instead."""
+        return self.render(self.build_default_elements(
+            self_model=self_model, capabilities=capabilities,
+            status=status, recall=recall, window=window, stimuli=stimuli,
+            current_time=current_time,
+        ))
 
-        ``suppress_action_format``: True → omit the ``[ACTION FORMAT]``
-        layer. Set when a Reflect of kind="hypothalamus" is registered.
+    # ---- layer renderers (used by build_default_elements) -----------
 
-        ``in_mind`` / ``in_mind_instructions``: when an in_mind Reflect
-        is registered, Runtime passes its state snapshot (``in_mind``)
-        + the standing instruction text (``in_mind_instructions``) to
-        the builder. The instructions block is added as a stable layer
-        between [ACTION FORMAT] and [STIMULUS]; the state is
-        prepended as a virtual "Heartbeat #now (in mind)" round at
-        the head of [HISTORY] when at least one field is non-empty.
-        Both are absent (no virtual round, no instruction layer) when
-        no in_mind Reflect is registered — zero-plugin invariant.
-        """
-        layers: list[str] = [
-            DNA,
-            self._layer_self_model(self_model),
-            self._layer_capabilities(capabilities),
-        ]
-        if not suppress_action_format:
-            layers.append(ACTION_FORMAT_LAYER)
-        if in_mind_instructions:
-            layers.append(in_mind_instructions)
-        layers.extend([
-            self._layer_stimulus(stimuli, current_time),
-            self._layer_recall(recall),
-            self._layer_history(window, in_mind=in_mind),
-            self._layer_status(status),
-            HEARTBEAT_QUESTION,
-        ])
-        return "\n\n".join(layers)
-
-    def _layer_self_model(self, sm: dict[str, Any]) -> str:
+    def render_self_model(self, sm: dict[str, Any]) -> str:
         body = (
             yaml.safe_dump(sm, allow_unicode=True, sort_keys=False).strip()
             if sm
@@ -109,7 +148,7 @@ class PromptBuilder:
         )
         return f"# [SELF-MODEL]\n{body}"
 
-    def _layer_capabilities(self, tentacles: list[CapabilityView]) -> str:
+    def render_capabilities(self, tentacles: list[CapabilityView]) -> str:
         if tentacles:
             lines = "\n".join(
                 f"- {t.name}: {t.description}" for t in tentacles
@@ -122,7 +161,7 @@ class PromptBuilder:
             f"{lines}"
         )
 
-    def _layer_status(self, s: StatusSnapshot) -> str:
+    def render_status(self, s: StatusSnapshot) -> str:
         return (
             "# [STATUS]\n"
             f"Graph Memory: {s.gm_node_count} nodes, "
@@ -132,15 +171,10 @@ class PromptBuilder:
             f"心跳数 (自上次 Sleep): {s.heartbeats_since_sleep}"
         )
 
-    def _layer_recall(self, recall: "RecallResult") -> str:
+    def render_recall(self, recall: "RecallResult") -> str:
         if not recall.nodes and not recall.edges:
             return "# [GRAPH MEMORY]\n(no recall)"
         lines = ["# [GRAPH MEMORY]"]
-        # Nodes/edges are dicts (originate from GraphMemory rows). All
-        # field reads use .get() with sensible defaults so a slimmer GM
-        # row schema doesn't crash the prompt builder; the previous mix
-        # of [] + .get() on the same dict was inconsistent and could
-        # KeyError for missing 'name' or 'category'.
         for n in recall.nodes:
             kw = ", ".join(n.get("neighbor_keywords", []))
             lines.append(
@@ -157,31 +191,16 @@ class PromptBuilder:
             )
         return "\n".join(lines)
 
-    def _layer_history(
-        self, window: list[SlidingWindowRound],
-        *, in_mind: dict[str, str] | None = None,
-    ) -> str:
-        """Render the [HISTORY] layer.
+    def render_history(self, window: list[SlidingWindowRound]) -> str:
+        """Render the [HISTORY] layer from real heartbeat rounds only.
 
-        When ``in_mind`` is provided and at least one of its content
-        fields (``thoughts`` / ``mood`` / ``focus``) is non-empty, a
-        virtual "Heartbeat #now (in mind)" round is prepended before
-        the real heartbeat history. This is the single channel by
-        which Self's current mental state reaches every prompt
-        consumer (Self LLM, recall LLM, future Reflects) — see
-        docs/design/reflects-and-self-model.md Reflect #3 (Part 3).
+        The in-mind virtual round (``--- Heartbeat #now (in mind) ---``)
+        is rendered by the in_mind plugin into the separate
+        ``in_mind_round`` element, which renders just before this one.
         """
         lines = ["# [HISTORY]"]
-        virtual = self._format_in_mind_round(in_mind)
-        if virtual is not None:
-            lines.append(virtual)
         if not window:
-            if virtual is None:
-                # Nothing at all in history — keep the historical
-                # "(empty)" sentinel so existing tests / Self's
-                # mental model stay consistent.
-                return "# [HISTORY]\n(empty)"
-            return "\n".join(lines)
+            return "# [HISTORY]\n(empty)"
         for r in window:
             lines.append(f"--- Heartbeat #{r.heartbeat_id} ---")
             lines.append(f"Stimulus: {r.stimulus_summary}")
@@ -190,23 +209,23 @@ class PromptBuilder:
                 lines.append(f"Note: {r.note_text}")
         return "\n".join(lines)
 
-    def _format_in_mind_round(
+    def render_in_mind_round(
         self, in_mind: dict[str, str] | None,
-    ) -> str | None:
-        """Format the virtual round at the head of [HISTORY], or
-        return None if no in_mind state was passed / every field is
-        empty. Lives on the builder rather than in the in_mind
-        Reflect's prompt.py because the builder owns the [HISTORY]
-        layer's exact line shape — keeping the formatting consistent
-        with real heartbeat rounds matters for Self's pattern-match.
-        """
+    ) -> str:
+        """Format the virtual "Heartbeat #now (in mind)" round, or
+        empty string if no in_mind state was passed / every field is
+        empty.
+
+        Called by the in_mind plugin's modify_prompt hook (not by
+        runtime directly), which writes the result into the
+        ``in_mind_round`` element."""
         if not in_mind:
-            return None
+            return ""
         thoughts = (in_mind.get("thoughts") or "").strip()
         mood = (in_mind.get("mood") or "").strip()
         focus = (in_mind.get("focus") or "").strip()
         if not (thoughts or mood or focus):
-            return None
+            return ""
         out = ["--- Heartbeat #now (in mind) ---"]
         if thoughts:
             out.append(f"Thoughts: {thoughts}")
@@ -216,7 +235,7 @@ class PromptBuilder:
             out.append(f"Focus: {focus}")
         return "\n".join(out)
 
-    def _layer_stimulus(
+    def render_stimulus(
         self,
         stimuli: list[Stimulus],
         current_time: datetime | None,
@@ -232,7 +251,7 @@ class PromptBuilder:
                     incoming.append(s)
                 elif s.type == "tentacle_feedback":
                     own_actions.append(s)
-                else:  # batch_complete | system_event | unknown
+                else:
                     system.append(s)
 
             lines = [

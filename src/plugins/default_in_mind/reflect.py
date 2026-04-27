@@ -50,6 +50,31 @@ class InMindReflectImpl:
         dataclass across callers."""
         return dict(self._state.to_dict())
 
+    # ---- prompt modification hook -----------------------------------
+
+    def modify_prompt(self, elements) -> None:
+        """Inject the in-mind state into the prompt.
+
+        Writes the standing instructions block into ``in_mind_instructions``
+        and the virtual "Heartbeat #now (in mind)" round into
+        ``in_mind_round`` (only when at least one of thoughts/mood/focus
+        is non-empty — otherwise the slot stays empty and renders as
+        nothing).
+        """
+        from src.plugins.default_in_mind.prompt import (
+            IN_MIND_INSTRUCTIONS_LAYER,
+        )
+        from src.prompt.builder import PromptBuilder
+
+        elements["in_mind_instructions"] = IN_MIND_INSTRUCTIONS_LAYER
+        # Reuse the builder's renderer for the virtual round so the
+        # exact line shape stays consistent with real heartbeat rounds.
+        rendered = PromptBuilder().render_in_mind_round(self.read())
+        if rendered:
+            elements["in_mind_round"] = rendered
+
+    # ---- mutation -----------------------------------------------------
+
     def update(
         self,
         thoughts: str | None = None,

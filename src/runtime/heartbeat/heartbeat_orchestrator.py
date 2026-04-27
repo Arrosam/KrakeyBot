@@ -416,19 +416,8 @@ class HeartbeatOrchestrator:
     def build_self_prompt(self, stimuli, recall_result,
                               counts: "_GMCounts") -> str:
         rt = self._rt
-        # Suppress the [ACTION FORMAT] layer when a translator role is
-        # registered: the translator owns dispatch, and teaching Self
-        # the structured-tag syntax would conflict with the
-        # translator's job.
-        in_mind_reflect = rt.reflects.by_role("in_mind")
-        in_mind_state = in_mind_reflect.read() if in_mind_reflect else None
-        in_mind_instructions: str | None = None
-        if in_mind_state is not None:
-            from src.plugins.default_in_mind.prompt import (
-                IN_MIND_INSTRUCTIONS_LAYER,
-            )
-            in_mind_instructions = IN_MIND_INSTRUCTIONS_LAYER
-        prompt = rt.builder.build(
+        # 1. Runtime constructs the canonical default elements.
+        elements = rt.builder.build_default_elements(
             self_model=rt.self_model,
             capabilities=self._capabilities(),
             status=self._status(counts.node_count, counts.edge_count,
@@ -437,10 +426,24 @@ class HeartbeatOrchestrator:
             window=rt.window.get_rounds(),
             stimuli=stimuli,
             current_time=datetime.now(),
-            suppress_action_format=rt.reflects.has_role("hypothalamus"),
-            in_mind=in_mind_state,
-            in_mind_instructions=in_mind_instructions,
         )
+        # 2. Each Reflect that defines a modify_prompt hook gets its
+        #    chance to mutate. Modifications are tracked per element;
+        #    PromptElements logs a warning on second-write conflicts.
+        for reflect in rt.reflects.all():
+            modify = getattr(reflect, "modify_prompt", None)
+            if modify is None:
+                continue
+            try:
+                modify(elements.for_plugin(reflect.name))
+            except Exception as e:  # noqa: BLE001
+                rt.log.runtime_error(
+                    f"Reflect {reflect.name!r} modify_prompt raised "
+                    f"{type(e).__name__}: {e}; ignoring its modifications"
+                )
+        # 3. Bootstrap intro is runtime-owned (BootstrapCoordinator is
+        #    not a plugin). If active, prepend before serializing.
+        prompt = elements.render()
         if rt.bootstrap.should_inject_intro_prompt():
             prompt = (BOOTSTRAP_PROMPT.format(
                           genesis_text=self.get_genesis_text())
