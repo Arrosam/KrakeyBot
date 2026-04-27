@@ -50,12 +50,14 @@ def build_sensory(ctx: "PluginContext"):
     plugin_configs_root = (
         getattr(ctx.deps, "plugin_configs_root", None) or "workspace/plugins"
     )
+    config_path = getattr(ctx.deps, "config_path", None)
     return DashboardSensory(
         runtime=runtime,
         history=history,
         host=host,
         port=port,
         plugin_configs_root=Path(plugin_configs_root),
+        config_path=config_path,
     )
 
 

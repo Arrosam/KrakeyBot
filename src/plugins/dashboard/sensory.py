@@ -11,8 +11,8 @@ Two classes:
     factory builds. Inherits WebChatSensory's push behavior AND owns
     the FastAPI/uvicorn lifecycle. ``start()`` spins up the Web UI
     server (editor pages + observation events WS + chat WS); ``stop()``
-    tears it down. Replaces the old ``DashboardLifecycle`` that used to
-    live in ``src/runtime/dashboard/``.
+    tears it down. Sits in the standard sensory start/stop flow —
+    runtime has no dashboard-specific code path.
 
 If port=0, ``DashboardSensory`` skips the server bind — useful for
 tests that want the plugin's tentacle/sensory registered without
@@ -86,6 +86,7 @@ class DashboardSensory(WebChatSensory):
         host: str,
         port: int,
         plugin_configs_root: Path | str,
+        config_path: Path | str | None = None,
     ) -> None:
         super().__init__()
         self._runtime = runtime
@@ -93,6 +94,7 @@ class DashboardSensory(WebChatSensory):
         self._host = host
         self._port = port
         self._plugin_configs_root = plugin_configs_root
+        self._config_path = config_path
         self._server: Any = None  # DashboardServer
 
     async def start(self, push: PushCallback) -> None:
@@ -132,8 +134,8 @@ class DashboardSensory(WebChatSensory):
                     web_chat_history=self._history,
                     on_user_message=self.push_user_message,
                     event_broadcaster=broadcaster,
-                    config_path=(Path(rt._config_path)
-                                  if rt._config_path else None),
+                    config_path=(Path(self._config_path)
+                                  if self._config_path else None),
                     on_restart=on_restart,
                     plugin_configs_root=self._plugin_configs_root,
                 ),

@@ -97,8 +97,9 @@ All factories receive the same `deps` dict:
 | `gm` | `GraphMemory` | the live graph |
 | `kb_registry` | `KBRegistry` | long-term memories |
 | `embedder` | `AsyncEmbedder` | `await embedder(text) → vec` |
-| `buffer` | `StimulusBuffer` | push stimuli back at Krakey |
-| `web_chat_history` | `WebChatHistory` \| None | dashboard chat persistence |
+| `buffer` | `StimulusQueue` | push stimuli back at Krakey |
+| `events` | `EventBus` | publish typed events (dashboard subscribers consume) |
+| `runtime` | `Runtime` \| None | full runtime ref — used by the dashboard plugin to wire its server adapters; ordinary plugins should not need this |
 | `config` | full `Config` object | read-only view of the rest of the config |
 | `build_code_runner` | callable | `(coding_cfg) → CodeRunner` — honours sandbox policy; used by the `coding` plugin |
 
