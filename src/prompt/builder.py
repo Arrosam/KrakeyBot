@@ -221,32 +221,6 @@ class PromptBuilder:
                 lines.append(f"Note: {r.note_text}")
         return "\n".join(lines)
 
-    def render_in_mind_round(
-        self, in_mind: dict[str, str] | None,
-    ) -> str:
-        """Format the virtual "Heartbeat #now (in mind)" round, or
-        empty string if no in_mind state was passed / every field is
-        empty.
-
-        Called by the in_mind plugin's modify_prompt hook (not by
-        runtime directly), which writes the result into the
-        ``in_mind_round`` element."""
-        if not in_mind:
-            return ""
-        thoughts = (in_mind.get("thoughts") or "").strip()
-        mood = (in_mind.get("mood") or "").strip()
-        focus = (in_mind.get("focus") or "").strip()
-        if not (thoughts or mood or focus):
-            return ""
-        out = ["--- Heartbeat #now (in mind) ---"]
-        if thoughts:
-            out.append(f"Thoughts: {thoughts}")
-        if mood:
-            out.append(f"Mood: {mood}")
-        if focus:
-            out.append(f"Focus: {focus}")
-        return "\n".join(out)
-
     def render_stimulus(
         self,
         stimuli: list[Stimulus],

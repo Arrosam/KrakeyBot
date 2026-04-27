@@ -62,14 +62,10 @@ class InMindReflectImpl:
         nothing).
         """
         from src.plugins.default_in_mind.prompt import (
-            IN_MIND_INSTRUCTIONS_LAYER,
+            IN_MIND_INSTRUCTIONS_LAYER, render_virtual_round,
         )
-        from src.prompt.builder import PromptBuilder
-
         elements["in_mind_instructions"] = IN_MIND_INSTRUCTIONS_LAYER
-        # Reuse the builder's renderer for the virtual round so the
-        # exact line shape stays consistent with real heartbeat rounds.
-        rendered = PromptBuilder().render_in_mind_round(self.read())
+        rendered = render_virtual_round(self._state)
         if rendered:
             elements["in_mind_round"] = rendered
 
