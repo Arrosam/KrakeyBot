@@ -21,8 +21,8 @@ config_schema:
     type: text
     default: ""
     help: >
-      Chat ID the reply tentacle sends to when Hypothalamus did not
-      specify one.
+      Chat ID the reply tentacle sends to when no chat_id is specified
+      in the tentacle call.
 components:
   - kind: sensory
     factory_module: src.plugins.telegram

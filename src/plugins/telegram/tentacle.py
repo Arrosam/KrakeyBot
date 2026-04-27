@@ -28,8 +28,9 @@ class TelegramReplyTentacle(Tentacle):
     @property
     def description(self) -> str:
         return ("Send a Telegram message to a chat the bot is in. "
-                "params: chat_id (optional, defaults to last-known), text "
-                "(optional, defaults to the natural-language intent).")
+                "params: chat_id (optional, defaults to default_chat_id "
+                "from plugin config), text (optional, defaults to the "
+                "natural-language intent).")
 
     @property
     def parameters_schema(self) -> dict[str, Any]:
