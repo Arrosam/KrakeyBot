@@ -299,7 +299,7 @@ async def test_bootstrap_self_model_update_and_completion(tmp_path):
     assert runtime.is_bootstrap is False
 
 
-async def test_override_kill_stops_runtime():
+async def test_command_kill_stops_runtime():
     self_llm = ScriptedLLM([
         # Heartbeat 1 should hit /kill before reaching Self.
         "[DECISION]\nNo action.\n[HIBERNATE]\n1",
@@ -317,8 +317,8 @@ async def test_override_kill_stops_runtime():
     assert self_llm.calls == []
 
 
-async def test_override_status_pushes_system_event_for_self(tmp_path):
-    """Override result lands in buffer, visible on the *next* heartbeat."""
+async def test_command_status_pushes_system_event_for_self(tmp_path):
+    """Command result lands in buffer, visible on the *next* heartbeat."""
     self_llm = ScriptedLLM([
         "[DECISION]\nNo action.\n[HIBERNATE]\n1",  # HB #1: handles /status
         "[DECISION]\nNo action.\n[HIBERNATE]\n1",  # HB #2: sees system_event
@@ -334,11 +334,11 @@ async def test_override_status_pushes_system_event_for_self(tmp_path):
     await runtime.close()
 
     joined = json.dumps(self_llm.calls[1], ensure_ascii=False)
-    assert "system:override" in joined
+    assert "system:command" in joined
     assert "/status" in joined or "heartbeats=" in joined
 
 
-async def test_override_sleep_triggers_full_sleep(tmp_path):
+async def test_command_sleep_triggers_full_sleep(tmp_path):
     sleep_llm = ScriptedLLM(["summary"] * 5)
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
@@ -364,7 +364,7 @@ async def test_override_sleep_triggers_full_sleep(tmp_path):
     await runtime.close()
 
 
-async def test_override_normal_text_passes_through_to_self():
+async def test_normal_text_passes_through_to_self():
     """Sanity: non-/cmd messages still reach Self normally."""
     self_llm = ScriptedLLM([
         "[DECISION]\nNo action.\n[HIBERNATE]\n1",

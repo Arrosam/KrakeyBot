@@ -39,8 +39,8 @@ from src.runtime.events.event_types import (
 from src.runtime.heartbeat.fatigue import calculate_fatigue
 from src.runtime.heartbeat.hibernate import hibernate_with_recall
 from src.memory.sleep.sleep_manager import enter_sleep_mode
-from src.runtime.overrides.override_commands import (
-    OverrideAction, handle_override, parse_override,
+from src.runtime.commands.commands import (
+    CommandAction, handle_command, parse_command,
 )
 from src.self_agent import parse_self_output
 
@@ -100,20 +100,20 @@ class HeartbeatOrchestrator:
     async def beat(self) -> None:
         """Orchestrates one heartbeat. Sleep can short-circuit at two
         points (force-sleep at fatigue threshold, voluntary sleep from
-        Self's [DECISION]). Override commands (/kill, /sleep) can also
+        Self's [DECISION]). Slash-commands (/kill, /sleep) can also
         short-circuit."""
         rt = self._rt
         rt.heartbeat_count += 1
         rt.log.set_heartbeat(rt.heartbeat_count)
         stimuli = await self._phase_drain_and_seed_recall()
 
-        # Override commands run out-of-band (Self never sees /<cmd>).
-        stimuli, override_action = await self._phase_handle_overrides(stimuli)
-        if override_action is OverrideAction.KILL:
+        # Slash-commands run out-of-band (Self never sees /<cmd>).
+        stimuli, command_action = await self._phase_handle_commands(stimuli)
+        if command_action is CommandAction.KILL:
             return
-        if override_action is OverrideAction.SLEEP:
+        if command_action is CommandAction.SLEEP:
             await self._perform_sleep(
-                "manual /sleep override",
+                "manual /sleep command",
                 wake_msg="完成了一次手动触发的睡眠。",
             )
             return
@@ -152,36 +152,36 @@ class HeartbeatOrchestrator:
 
     # ---- phases --------------------------------------------------------
 
-    async def _phase_handle_overrides(
+    async def _phase_handle_commands(
         self, stimuli: list[Stimulus],
-    ) -> tuple[list[Stimulus], "OverrideAction | None"]:
+    ) -> tuple[list[Stimulus], "CommandAction | None"]:
         """Scan drained stimuli for /<cmd>. Each match is consumed (Self
         never sees it) and executed out-of-band. Returns the filtered
         stimulus list + the highest-priority action (KILL > SLEEP)."""
         rt = self._rt
         filtered: list[Stimulus] = []
-        triggered: OverrideAction | None = None
+        triggered: CommandAction | None = None
         for s in stimuli:
             if s.type != "user_message":
                 filtered.append(s)
                 continue
-            cmd = parse_override(s.content)
+            cmd = parse_command(s.content)
             if cmd is None:
                 filtered.append(s)
                 continue
-            result = await handle_override(cmd, rt)
-            rt.log.hb(f"override /{cmd}: {result.output}")
-            if result.action is OverrideAction.KILL:
-                triggered = OverrideAction.KILL
+            result = await handle_command(cmd, rt)
+            rt.log.hb(f"command /{cmd}: {result.output}")
+            if result.action is CommandAction.KILL:
+                triggered = CommandAction.KILL
                 rt._stop = True
                 break
-            if (result.action is OverrideAction.SLEEP
-                    and triggered is not OverrideAction.KILL):
-                triggered = OverrideAction.SLEEP
-            # Self can still see informational overrides as system events
-            if result.action is OverrideAction.NONE:
+            if (result.action is CommandAction.SLEEP
+                    and triggered is not CommandAction.KILL):
+                triggered = CommandAction.SLEEP
+            # Self can still see informational commands as system events
+            if result.action is CommandAction.NONE:
                 await rt.buffer.push(Stimulus(
-                    type="system_event", source="system:override",
+                    type="system_event", source="system:command",
                     content=f"/{cmd}: {result.output}",
                     timestamp=datetime.now(), adrenalin=False,
                 ))

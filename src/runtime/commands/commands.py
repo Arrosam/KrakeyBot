@@ -1,8 +1,10 @@
-"""CLI override commands (DevSpec §19).
+"""CLI / chat slash-commands (DevSpec §19).
 
-The CLI sensory pushes everything as a `user_message` stimulus. The runtime's
-override phase scans drained stimuli for a leading `/<cmd>`; when matched the
-stimulus is consumed (Self never sees it) and the action runs out-of-band.
+Any sensory that surfaces user text (CLI, web chat, telegram, ...)
+pushes it as a ``user_message`` stimulus. The runtime's command phase
+scans drained stimuli for a leading ``/<cmd>``; when matched the
+stimulus is consumed (Self never sees it) and the action runs
+out-of-band — the command bypasses Self's decision loop entirely.
 
 Supported commands:
   /status        — print runtime + GM stats
@@ -23,21 +25,21 @@ if TYPE_CHECKING:
 KNOWN_COMMANDS: set[str] = {"status", "memory_stats", "sleep", "kill"}
 
 
-class OverrideAction(Enum):
+class CommandAction(Enum):
     NONE = "none"      # informational only — caller continues normal flow
     SLEEP = "sleep"    # caller should run _perform_sleep
     KILL = "kill"      # caller should set _stop = True
 
 
 @dataclass
-class OverrideResult:
-    action: OverrideAction
+class CommandResult:
+    action: CommandAction
     output: str       # human-readable summary printed via logger
 
 
-def parse_override(content: str | None) -> str | None:
-    """Return the command name (without slash) iff the content is a known
-    override; otherwise None."""
+def parse_command(content: str | None) -> str | None:
+    """Return the command name (without slash) iff the content is a
+    recognised slash-command; otherwise None."""
     if not content:
         return None
     text = content.strip()
@@ -47,21 +49,21 @@ def parse_override(content: str | None) -> str | None:
     return cmd if cmd in KNOWN_COMMANDS else None
 
 
-async def handle_override(cmd: str, runtime: "Runtime") -> OverrideResult:
-    """Interpret ``cmd`` (already validated by ``parse_override`` to be in
-    ``KNOWN_COMMANDS``) into an ``OverrideResult``. Caller acts on
+async def handle_command(cmd: str, runtime: "Runtime") -> CommandResult:
+    """Interpret ``cmd`` (already validated by ``parse_command`` to be
+    in ``KNOWN_COMMANDS``) into a ``CommandResult``. Caller acts on
     ``result.action``; SLEEP/KILL trigger their side-effects in the
-    heartbeat orchestrator's override phase, NONE just logs the output."""
+    heartbeat orchestrator's command phase, NONE just logs the output."""
     if cmd == "status":
-        return OverrideResult(OverrideAction.NONE, await _format_status(runtime))
+        return CommandResult(CommandAction.NONE, await _format_status(runtime))
     if cmd == "memory_stats":
-        return OverrideResult(OverrideAction.NONE,
+        return CommandResult(CommandAction.NONE,
                                 await _format_memory_stats(runtime))
     if cmd == "sleep":
-        return OverrideResult(OverrideAction.SLEEP,
+        return CommandResult(CommandAction.SLEEP,
                                 "manual sleep request received")
     # cmd == "kill" — only remaining KNOWN_COMMANDS entry.
-    return OverrideResult(OverrideAction.KILL,
+    return CommandResult(CommandAction.KILL,
                             "manual shutdown requested")
 
 
