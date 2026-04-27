@@ -394,31 +394,9 @@ class Runtime:
                 t.cancel()
 
     async def _run_setup_mode(self) -> None:
-        """Setup-mode loop: dashboard is up (if enabled in plugins),
-        heartbeat is skipped.
-
-        Idle here until the user signals stop (Ctrl-C / kill / a
-        dashboard /api/restart). The dashboard plugin must be in
-        ``config.plugins`` for the user to actually have a Web UI to
-        edit config in; otherwise the user has to edit config.yaml on
-        disk directly.
-        """
-        msg = (
-            "\n=========================================================\n"
-            "  Krakey is in SETUP MODE.\n\n"
-            "  No `core_purposes.self_thinking` tag binding found in\n"
-            "  config.yaml — the heartbeat is paused. Edit config.yaml:\n\n"
-            "      1. Make sure 'dashboard' is in your plugins: list\n"
-            "         (so you have a Web UI to edit settings in).\n"
-            "      2. In the LLM section: add a provider, define a tag,\n"
-            "         bind core_purposes.self_thinking + embedding.\n"
-            "      3. Save + Restart.\n"
-            "=========================================================\n"
-        )
-        self.log.runtime_error(msg)
-        # Idle until externally stopped.
-        while not self._stop:
-            await asyncio.sleep(1.0)
+        # Facade — banner + idle loop live in src.runtime.setup_mode.
+        from src.runtime.setup_mode import run_setup_mode
+        await run_setup_mode(self)
 
     @property
     def _plugin_infos(self) -> list:
