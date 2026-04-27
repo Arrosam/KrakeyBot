@@ -1,0 +1,27 @@
+name: recall
+description: >
+  GM/KB recall — both halves of the discovery pipeline. The reflect
+  half (claims `recall_anchor` role) auto-recalls per beat and fills
+  [GRAPH MEMORY]; the tentacle half (`memory_recall`) lets Self
+  explicitly drill into nodes she's noticed, including KB index nodes
+  that lead her into a specific KnowledgeBase. Ships as one plugin
+  because the two halves form one pipeline — without auto-recall
+  surfacing KB index nodes, Self can't know what KBs exist to drill
+  into.
+
+config_schema:
+  - field: default_top_k
+    type: number
+    default: 8
+    help: >
+      Default top-K for the explicit memory_recall tentacle when Self
+      doesn't pass `top_k` in arguments.
+
+components:
+  - kind: reflect
+    role: recall_anchor
+    factory_module: src.plugins.recall.reflect
+    factory_attr: build_reflect
+  - kind: tentacle
+    factory_module: src.plugins.recall.tentacle
+    factory_attr: build_tentacle

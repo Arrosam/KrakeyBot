@@ -1,8 +1,7 @@
 """Recall-anchor Reflect — wraps the ``IncrementalRecall`` factory.
 
 Imported lazily by ``src.plugin_system.load_component`` only when
-the user enables ``recall_anchor`` in ``config.yaml``'s ``plugins:``
-list.
+the user enables ``recall`` in ``config.yaml``'s ``plugins:`` list.
 
 The Reflect captures everything it needs (GraphMemory, embedder,
 reranker, config knobs) from ``PluginContext`` at construction time.
@@ -17,7 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from src.models.config import LLMParams
-from src.plugins.recall_anchor.incremental import IncrementalRecall
+from src.plugins.recall.incremental import IncrementalRecall
 
 if TYPE_CHECKING:
     from src.interfaces.plugin_context import PluginContext

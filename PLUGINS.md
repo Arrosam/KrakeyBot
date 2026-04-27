@@ -97,15 +97,19 @@ same registry.
 
 ## Examples in-tree
 
-- **Single-component reflect**: [`src/plugins/recall_anchor/`](src/plugins/recall_anchor/)
-  — claims the `recall_anchor` role; one factory + one impl class.
 - **Single-component tentacle**: [`src/plugins/duckduckgo_search/`](src/plugins/duckduckgo_search/)
   — flat `__init__.py` with backend Protocol, tentacle, factory.
-- **Multi-component shared state**: [`src/plugins/telegram/`](src/plugins/telegram/)
+- **Multi-component sharing a client**: [`src/plugins/telegram/`](src/plugins/telegram/)
   — sensory + tentacle share an `HttpTelegramClient` via `ctx.plugin_cache`.
-- **Multi-component with shared state**: [`src/plugins/in_mind_note/`](src/plugins/in_mind_note/)
-  — reflect + tentacle declared together in meta.yaml, sharing the
-  reflect instance through `ctx.plugin_cache`.
+- **Multi-component sharing a reflect**: [`src/plugins/in_mind_note/`](src/plugins/in_mind_note/)
+  — reflect owns state, tentacle mutates it; both wired through
+  `ctx.plugin_cache`.
+- **Multi-component as a pipeline**: [`src/plugins/recall/`](src/plugins/recall/)
+  — passive reflect (auto-recall, claims `recall_anchor` role) +
+  active tentacle (`memory_recall`, Self drills into noticed nodes).
+  Two halves of one discovery flow; ship together so the pipeline
+  enables/disables atomically. Shared GM-query primitive in
+  `gm_query.py`.
 
 ## Architectural rules
 

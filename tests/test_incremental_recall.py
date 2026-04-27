@@ -6,7 +6,7 @@ import pytest
 
 from src.memory.graph_memory import GraphMemory
 from src.memory.recall import RecallResult, ScoringWeights
-from src.plugins.recall_anchor.incremental import IncrementalRecall
+from src.plugins.recall.incremental import IncrementalRecall
 from src.models.stimulus import Stimulus
 
 

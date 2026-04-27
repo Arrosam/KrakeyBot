@@ -20,7 +20,7 @@ from src.interfaces.reflect import (
     Reflect, ReflectRegistry,
 )
 from src.plugins.hypothalamus.reflect import HypothalamusReflectImpl
-from src.plugins.recall_anchor.reflect import RecallAnchorReflectImpl
+from src.plugins.recall.reflect import RecallAnchorReflectImpl
 from tests._runtime_helpers import (
     NullEmbedder, ScriptedLLM, build_runtime_with_fakes,
 )

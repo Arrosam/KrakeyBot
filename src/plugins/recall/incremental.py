@@ -10,7 +10,8 @@ touching core.
 
 Per-beat algorithm:
   1. ``add_stimuli(stims)`` — for each stimulus, vec_search top-K
-     candidates, rerank, accumulate into ``merged`` with weight
+     candidates (via the shared ``gm_query`` helper, FTS fallback
+     included), rerank, accumulate into ``merged`` with weight
      accumulation across stimuli (adrenalin ×10).
   2. ``finalize()`` — sort merged entries by weight, walk in order
      admitting nodes whose rendered token cost fits the budget,
@@ -31,6 +32,7 @@ from typing import Any, Callable, TYPE_CHECKING
 from src.memory.recall import (
     AsyncEmbedder, RecallResult, Reranker, ScoringWeights, rank_candidates,
 )
+from src.plugins.recall.gm_query import query_gm_with_fts_fallback
 from src.utils.tokens import estimate_tokens
 
 if TYPE_CHECKING:
@@ -121,7 +123,11 @@ class IncrementalRecall:
 
     async def add_stimuli(self, stimuli: list["Stimulus"]) -> None:
         for s in stimuli:
-            candidates = await self._search_for(s.content)
+            candidates = await query_gm_with_fts_fallback(
+                self.gm, self.embedder, s.content,
+                top_k=self._screening_top_k(),
+                min_similarity=self._vec_min_sim,
+            )
             ranked = await rank_candidates(
                 candidates, query=s.content, reranker=self.reranker,
                 weights=self.weights, now=self._now(),
@@ -137,22 +143,6 @@ class IncrementalRecall:
                     self.merged[nid] = {"node": node, "weight": weight}
             self._per_stimulus_ids.append(hit_ids)
             self.processed_stimuli.append(s)
-
-    async def _search_for(self, text: str
-                           ) -> list[tuple[dict[str, Any], float]]:
-        top_k = self._screening_top_k()
-        candidates: list[tuple[dict[str, Any], float]] = []
-        try:
-            vec = await self.embedder(text)
-            candidates = await self.gm.vec_search(
-                vec, top_k=top_k, min_similarity=self._vec_min_sim,
-            )
-        except Exception:  # noqa: BLE001
-            candidates = []
-        if not candidates:
-            fts_hits = await self.gm.fts_search(text, top_k=top_k)
-            candidates = [(n, 0.0) for n in fts_hits]
-        return candidates
 
     async def finalize(self) -> RecallResult:
         sorted_entries = sorted(self.merged.values(),

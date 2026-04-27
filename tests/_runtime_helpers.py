@@ -125,8 +125,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
             if reflects is not None
             else [
                 "hypothalamus",
-                "recall_anchor",
-                "memory_recall",
+                "recall",
                 "dashboard",
             ]
         ),

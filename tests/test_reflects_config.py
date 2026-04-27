@@ -96,12 +96,12 @@ def test_loader_returns_ordered_list_when_specified(tmp_path):
           core_purposes:
             self_thinking: t1
         reflects:
-          - recall_anchor
+          - recall
           - hypothalamus
     """)
     cfg = load_config(p)
     assert cfg.plugins == [
-        "recall_anchor", "hypothalamus",
+        "recall", "hypothalamus",
     ]
 
 
@@ -109,12 +109,12 @@ def test_loader_returns_ordered_list_when_specified(tmp_path):
 
 
 def test_discover_finds_builtin_meta_files():
-    """The three in-tree default plugins (hypothalamus, recall_anchor,
-    in_mind) must each be discoverable as a unified-format plugin
-    with at least one component."""
+    """The three in-tree built-in plugins (hypothalamus, recall,
+    in_mind_note) must each be discoverable as a unified-format
+    plugin with at least one component."""
     metas = discover_plugins()
     assert "hypothalamus" in metas
-    assert "recall_anchor" in metas
+    assert "recall" in metas
     assert "in_mind_note" in metas
     h = metas["hypothalamus"]
     assert len(h.components) >= 1
@@ -132,7 +132,8 @@ def test_discover_does_not_import_plugin_modules():
     """
     plugin_modules = (
         "src.plugins.hypothalamus.reflect",
-        "src.plugins.recall_anchor.reflect",
+        "src.plugins.recall.reflect",
+        "src.plugins.recall.tentacle",
     )
     before = {m: m in sys.modules for m in plugin_modules}
     metas = discover_plugins()
@@ -183,7 +184,7 @@ async def test_runtime_registers_explicit_list_in_order(tmp_path, capsys):
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=["hypothalamus", "recall_anchor"],
+        reflects=["hypothalamus", "recall"],
     )
     err = capsys.readouterr().err
     assert "no `plugins:`" not in err
@@ -232,7 +233,7 @@ async def test_runtime_skips_unknown_reflect_names_loudly(tmp_path, capsys):
     )
     runtime.reflects._by_role.clear(); runtime.reflects._order.clear()
     runtime.config.plugins = [
-        "recall_anchor", "typo_reflect", "hypothalamus",
+        "recall", "typo_reflect", "hypothalamus",
     ]
     capsys.readouterr()
 

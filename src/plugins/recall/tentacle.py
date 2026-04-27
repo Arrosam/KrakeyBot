@@ -1,25 +1,35 @@
-"""Built-in `memory_recall` plugin — Self-driven GM + KB exploration.
+"""``memory_recall`` tentacle — Self-driven explicit GM/KB exploration.
 
-Read-side counterpart to explicit_write. Self uses [DECISION] like
-"recall what I know about X" or "回忆一下 Y" → Hypothalamus translates
-to a memory_recall tentacle call → this tentacle queries GM
-(vec → FTS fallback → neighbor expansion) and returns the result as a
-tentacle_feedback stimulus, surfaced under [STIMULUS] / YOUR RECENT
-ACTIONS on the next heartbeat.
+Read-side counterpart to ``gm.explicit_write`` (the LLM-extraction
+write path). Self emits ``[DECISION]`` like "recall what I know about
+X" → orchestrator dispatches a ``memory_recall`` tentacle call → this
+tentacle queries GM (via the shared ``gm_query`` helper) and returns
+the result as a ``tentacle_feedback`` Stimulus, surfaced under
+``[STIMULUS]`` / ``YOUR RECENT ACTIONS`` on the next heartbeat.
+
+Two query paths, picked by the presence of ``kb_id`` in params:
+  * ``kb_id`` given → bypass GM, query that KnowledgeBase directly.
+    Used when Self has noticed a KB index node in ``[GRAPH MEMORY]``
+    on a prior beat and wants to drill in.
+  * default → vec_search GM with FTS fallback, dedup to top-K, fetch
+    neighbors + edges. Plus: any recalled node that itself is a
+    ``kb_index`` (placed by Sleep when migrating GM content into a
+    KB) auto-expands its KB's matching entries into the result. That
+    auto-expansion is the very mechanism that *introduces* Self to
+    KB existence — surface a KB index node, and on the next active
+    recall Self can name the KB and drill in.
 """
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any
 
 from src.interfaces.tentacle import Tentacle
 from src.memory.graph_memory import GraphMemory
 from src.memory.knowledge_base import KBRegistry
+from src.memory.recall import AsyncEmbedder
 from src.models.stimulus import Stimulus
-
-
-class AsyncEmbedder(Protocol):
-    async def __call__(self, text: str) -> list[float]: ...
+from src.plugins.recall.gm_query import query_gm_with_fts_fallback
 
 
 class MemoryRecallTentacle(Tentacle):
@@ -51,14 +61,13 @@ class MemoryRecallTentacle(Tentacle):
             "kb_id": "optional — query a specific KB directly, skipping GM",
         }
 
-    @property
-    def sandboxed(self) -> bool:
-        return True
-
-
     async def execute(self, intent: str,
                         params: dict[str, Any]) -> Stimulus:
-        assert self._gm is not None and self._embedder is not None
+        if self._gm is None or self._embedder is None:
+            return self._stim(
+                "memory_recall not configured (gm or embedder missing). "
+                "This is a setup error — check the runtime services dict."
+            )
         query = (params.get("query") or intent or "").strip()
         top_k = int(params.get("top_k") or self._default_top_k)
         explicit_kb = params.get("kb_id")
@@ -76,7 +85,7 @@ class MemoryRecallTentacle(Tentacle):
                 )
             return self._stim(_format_kb(explicit_kb, entries, query))
 
-        # Normal path: GM vec → FTS fallback
+        # Normal path: GM vec → FTS fallback (via shared helper)
         nodes = await self._search_gm(query, top_k)
         if not nodes:
             return self._stim(
@@ -88,7 +97,8 @@ class MemoryRecallTentacle(Tentacle):
         edges = await self._gm.get_edges_among(node_ids)
 
         # KB index expansion: if any recalled node is a KB index, also
-        # pull entries from that KB.
+        # pull entries from that KB. This is how Self learns a KB
+        # exists — see module docstring.
         kb_sections = await self._expand_kb_indexes(nodes, query, top_k)
 
         return self._stim(_format(nodes, neighbor_map, edges, query)
@@ -96,17 +106,12 @@ class MemoryRecallTentacle(Tentacle):
 
     async def _search_gm(self, query: str,
                           top_k: int) -> list[dict[str, Any]]:
-        candidates: list[tuple[dict[str, Any], float]] = []
-        try:
-            vec = await self._embedder(query)
-            candidates = await self._gm.vec_search(
-                vec, top_k=top_k, min_similarity=0.3,
-            )
-        except Exception:  # noqa: BLE001
-            candidates = []
-        if not candidates:
-            fts_hits = await self._gm.fts_search(query, top_k=top_k)
-            candidates = [(n, 0.0) for n in fts_hits]
+        candidates = await query_gm_with_fts_fallback(
+            self._gm, self._embedder, query, top_k=top_k,
+        )
+        # Dedup + cap to top_k. Defensive — vec_search and fts_search
+        # individually shouldn't repeat a node, but the cap layer here
+        # also limits the nodes Self sees regardless of search quirks.
         seen: set[int] = set()
         out: list[dict[str, Any]] = []
         for node, _sim in candidates:
@@ -185,8 +190,8 @@ def _format(nodes: list[dict[str, Any]],
 
 
 def build_tentacle(ctx) -> Tentacle:
-    """Unified-format factory (Phase 2). Pulls gm + embedder +
-    kb_registry from ctx.services."""
+    """Unified-format factory. Pulls gm + embedder + kb_registry from
+    ctx.services."""
     return MemoryRecallTentacle(
         gm=ctx.services["gm"],
         embedder=ctx.services["embedder"],
