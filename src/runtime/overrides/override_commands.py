@@ -49,6 +49,10 @@ def parse_override(content: str | None) -> str | None:
 
 
 async def handle_override(cmd: str, runtime: "Runtime") -> OverrideResult:
+    """Interpret ``cmd`` (already validated by ``parse_override`` to be in
+    ``KNOWN_COMMANDS``) into an ``OverrideResult``. Caller acts on
+    ``result.action``; SLEEP/KILL trigger their side-effects in the
+    heartbeat orchestrator's override phase, NONE just logs the output."""
     if cmd == "status":
         return OverrideResult(OverrideAction.NONE, await _format_status(runtime))
     if cmd == "memory_stats":
@@ -63,11 +67,9 @@ async def handle_override(cmd: str, runtime: "Runtime") -> OverrideResult:
             "wake noop — current Sleep impl is synchronous, runtime is "
             "already awake when this fires.",
         )
-    if cmd == "kill":
-        return OverrideResult(OverrideAction.KILL,
-                                "manual shutdown requested")
-    return OverrideResult(OverrideAction.NONE,
-                            f"unknown command: /{cmd}")
+    # cmd == "kill" — only remaining KNOWN_COMMANDS entry.
+    return OverrideResult(OverrideAction.KILL,
+                            "manual shutdown requested")
 
 
 # ---------------- formatters ----------------
@@ -78,16 +80,12 @@ async def _format_status(runtime: "Runtime") -> str:
     edges = await runtime.gm.count_edges()
     pct = int(nodes / runtime.config.fatigue.gm_node_soft_limit * 100) \
         if runtime.config.fatigue.gm_node_soft_limit else 0
-    # `_sleep_cycles` is a runtime-lifetime counter (per-process, not
-    # persisted) since the 2026-04-25 self-model slim — see
-    # docs/design/reflects-and-self-model.md Part 1.
-    cycles = getattr(runtime, "_sleep_cycles", 0)
     name = runtime.self_model.get("identity", {}).get("name", "(unnamed)")
     return (
         f"name={name} "
         f"heartbeats={runtime.heartbeat_count} "
         f"gm_nodes={nodes} gm_edges={edges} fatigue={pct}% "
-        f"sleep_cycles={cycles} "
+        f"sleep_cycles={runtime._sleep_cycles} "
         f"bootstrap_complete={not runtime.is_bootstrap}"
     )
 
@@ -95,19 +93,12 @@ async def _format_status(runtime: "Runtime") -> str:
 async def _format_memory_stats(runtime: "Runtime") -> str:
     nodes = await runtime.gm.count_nodes()
     edges = await runtime.gm.count_edges()
-    db = runtime.gm._require()  # noqa: SLF001
-    async with db.execute(
-        "SELECT category, COUNT(*) FROM gm_nodes GROUP BY category"
-    ) as cur:
-        cat_rows = await cur.fetchall()
-    async with db.execute(
-        "SELECT source_type, COUNT(*) FROM gm_nodes GROUP BY source_type"
-    ) as cur:
-        src_rows = await cur.fetchall()
+    cat_counts = await runtime.gm.counts_by_category()
+    src_counts = await runtime.gm.counts_by_source()
     kbs = await runtime.kb_registry.list_kbs()
 
-    by_cat = ", ".join(f"{r[0]}={r[1]}" for r in cat_rows) or "(none)"
-    by_src = ", ".join(f"{r[0]}={r[1]}" for r in src_rows) or "(none)"
+    by_cat = ", ".join(f"{k}={v}" for k, v in cat_counts.items()) or "(none)"
+    by_src = ", ".join(f"{k}={v}" for k, v in src_counts.items()) or "(none)"
     kb_line = f"{len(kbs)} KB(s)" + (
         ": " + ", ".join(f"{k['kb_id']}({k['entry_count']})" for k in kbs)
         if kbs else ""
