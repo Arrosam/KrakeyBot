@@ -42,12 +42,12 @@ class TentacleCall:
 
 
 @dataclass
-class HypothalamusResult:
+class DecisionResult:
     """Aggregate result of one decision-translation pass: the tentacle
-    calls to dispatch, plus any memory side-effects and the sleep flag.
-
-    Name kept for back-compat; will be renamed when the dispatcher
-    naming cleanup lands."""
+    calls to dispatch, plus any memory side-effects and the sleep
+    flag. Produced by either the hypothalamus role's translate() or
+    the bare tool-call parser fallback; the dispatcher consumes it
+    without caring which path produced it."""
     tentacle_calls: list[TentacleCall] = field(default_factory=list)
     memory_writes: list[dict[str, Any]] = field(default_factory=list)
     memory_updates: list[dict[str, Any]] = field(default_factory=list)
@@ -82,7 +82,7 @@ class HypothalamusReflect(Protocol):
 
     async def translate(
         self, decision: str, tentacles: list[dict[str, Any]],
-    ) -> HypothalamusResult: ...
+    ) -> DecisionResult: ...
 
 
 @runtime_checkable

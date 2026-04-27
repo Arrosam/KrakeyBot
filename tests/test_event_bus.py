@@ -8,7 +8,7 @@ import asyncio
 import pytest
 
 from src.runtime.events.event_types import (
-    DecisionEvent, HeartbeatStartEvent, HypothalamusEvent, PromptBuiltEvent, StimuliQueuedEvent, TentacleResultEvent, ThinkingEvent,
+    DecisionEvent, HeartbeatStartEvent, DecisionExecutedEvent, PromptBuiltEvent, StimuliQueuedEvent, TentacleResultEvent, ThinkingEvent,
 )
 from src.runtime.events.event_bus import EventBus
 
@@ -18,7 +18,7 @@ def test_event_dataclasses_carry_typed_fields():
     assert e.heartbeat_id == 3
     assert e.text == "thinking text"
 
-    h = HypothalamusEvent(heartbeat_id=3, tentacle_calls_count=2,
+    h = DecisionExecutedEvent(heartbeat_id=3, tentacle_calls_count=2,
                             memory_writes_count=1, memory_updates_count=0,
                             sleep_requested=False)
     assert h.tentacle_calls_count == 2 and h.sleep_requested is False

@@ -7,7 +7,7 @@ objects, memory writes/updates, and the sleep flag.
 
 Only loaded by ``src.plugin_system.load_component`` when
 ``default_hypothalamus`` is listed in ``config.yaml``'s ``plugins:``.
-The contract types (``TentacleCall``, ``HypothalamusResult``) live
+The contract types (``TentacleCall``, ``DecisionResult``) live
 in ``src.interfaces.reflect`` so the runtime can consume them without
 importing this plugin.
 """
@@ -17,7 +17,7 @@ import json
 import re
 from typing import TYPE_CHECKING, Any, Protocol
 
-from src.interfaces.reflect import HypothalamusResult, TentacleCall
+from src.interfaces.reflect import DecisionResult, TentacleCall
 
 if TYPE_CHECKING:
     from src.interfaces.plugin_context import PluginContext
@@ -96,7 +96,7 @@ class DefaultHypothalamusReflect:
 
     async def translate(
         self, decision: str, tentacles: list[dict[str, Any]],
-    ) -> HypothalamusResult:
+    ) -> DecisionResult:
         system = SYSTEM_PROMPT.format(tentacle_list=_format_tentacles(tentacles))
         messages = [
             {"role": "system", "content": system},
@@ -193,7 +193,7 @@ def _sanitize(text: str) -> str:
     return text
 
 
-def _to_result(data: dict[str, Any]) -> HypothalamusResult:
+def _to_result(data: dict[str, Any]) -> DecisionResult:
     calls = [
         TentacleCall(
             tentacle=c["tentacle"],
@@ -203,7 +203,7 @@ def _to_result(data: dict[str, Any]) -> HypothalamusResult:
         )
         for c in (data.get("tentacle_calls") or [])
     ]
-    return HypothalamusResult(
+    return DecisionResult(
         tentacle_calls=calls,
         memory_writes=list(data.get("memory_writes") or []),
         memory_updates=list(data.get("memory_updates") or []),

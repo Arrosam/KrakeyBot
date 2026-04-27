@@ -1,8 +1,8 @@
 """Per-beat heartbeat algorithm — extracted from Runtime.
 
 Owns the orchestration of one heartbeat: phase ordering, sleep
-short-circuits, override consumption, the prompt-build / Self-call /
-hypothalamus-dispatch / hibernate flow.
+short-circuits, command consumption, the prompt-build / Self-call /
+decision-dispatch / hibernate flow.
 
 Composition over inheritance: takes a ``Runtime`` reference and reads
 state through it (``rt.gm``, ``rt.window``, ``rt.heartbeat_count``,
@@ -34,7 +34,9 @@ from src.models.stimulus import Stimulus
 from src.prompt.views import SlidingWindowRound
 from src.runtime.heartbeat.compact import compact_if_needed
 from src.runtime.events.event_types import (
-    DecisionEvent, GMStatsEvent, HeartbeatStartEvent, HibernateEvent, NoteEvent, PromptBuiltEvent, SleepDoneEvent, SleepStartEvent, StimuliQueuedEvent, ThinkingEvent,
+    DecisionEvent, GMStatsEvent, HeartbeatStartEvent, HibernateEvent,
+    NoteEvent, PromptBuiltEvent, SleepDoneEvent, SleepStartEvent,
+    StimuliQueuedEvent, ThinkingEvent,
 )
 from src.runtime.heartbeat.fatigue import calculate_fatigue
 from src.runtime.heartbeat.hibernate import hibernate_with_recall
@@ -341,7 +343,7 @@ class HeartbeatOrchestrator:
         Returns True iff Self requested sleep.
         """
         rt = self._rt
-        from src.interfaces.reflect import HypothalamusResult
+        from src.interfaces.reflect import DecisionResult
         from src.runtime.heartbeat.action_executor import parse_action_block
 
         decision = parsed.decision.strip().lower()
@@ -355,7 +357,7 @@ class HeartbeatOrchestrator:
                     parsed.decision, rt.tentacles.list_descriptions(),
                 )
             else:
-                result = HypothalamusResult(
+                result = DecisionResult(
                     tentacle_calls=parse_action_block(parsed.raw),
                 )
         except Exception as e:  # noqa: BLE001

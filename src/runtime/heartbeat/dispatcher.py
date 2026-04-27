@@ -1,8 +1,8 @@
-"""Hypothalamus side-effects executor — extracted from Runtime.
+"""Decision-result side-effects executor — extracted from Runtime.
 
 After the hypothalamus Reflect (or the tool-call executor fallback)
 turns Self's natural-language [DECISION] into a structured
-``HypothalamusResult``, four side-effects need to fire:
+``DecisionResult``, four side-effects need to fire:
 
   1. **Log + publish** the summary (counts + sleep flag).
   2. **Dispatch** each TentacleCall as an async task and register
@@ -26,10 +26,12 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from src.models.stimulus import Stimulus
-from src.runtime.events.event_types import DispatchEvent, HypothalamusEvent, TentacleResultEvent
+from src.runtime.events.event_types import (
+    DecisionExecutedEvent, DispatchEvent, TentacleResultEvent,
+)
 
 if TYPE_CHECKING:
-    from src.interfaces.reflect import HypothalamusResult, TentacleCall
+    from src.interfaces.reflect import DecisionResult, TentacleCall
     from src.interfaces.tentacle import TentacleRegistry
     from src.memory.graph_memory import GraphMemory
     from src.runtime.stimuli.batch_tracker import BatchTrackerSensory
@@ -38,8 +40,8 @@ if TYPE_CHECKING:
     from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
-class HypothalamusDispatcher:
-    """Executes the four side-effects of a HypothalamusResult."""
+class DecisionDispatcher:
+    """Executes the four side-effects of a DecisionResult."""
 
     def __init__(
         self,
@@ -61,15 +63,15 @@ class HypothalamusDispatcher:
     # ---- summary --------------------------------------------------------
 
     def log_summary(self, heartbeat_id: int,
-                    result: "HypothalamusResult") -> None:
-        """Log + publish HypothalamusEvent (counts + sleep flag)."""
+                    result: "DecisionResult") -> None:
+        """Log + publish DecisionExecutedEvent (counts + sleep flag)."""
         self._log.hypo(
             f"tentacle_calls={len(result.tentacle_calls)} "
             f"memory_writes={len(result.memory_writes)} "
             f"memory_updates={len(result.memory_updates)} "
             f"sleep={result.sleep}"
         )
-        self._events.publish(HypothalamusEvent(
+        self._events.publish(DecisionExecutedEvent(
             heartbeat_id=heartbeat_id,
             tentacle_calls_count=len(result.tentacle_calls),
             memory_writes_count=len(result.memory_writes),

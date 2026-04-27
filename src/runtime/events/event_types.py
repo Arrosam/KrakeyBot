@@ -81,7 +81,7 @@ class NoteEvent(_BaseEvent):
 
 
 @dataclass
-class HypothalamusEvent(_BaseEvent):
+class DecisionExecutedEvent(_BaseEvent):
     heartbeat_id: int
     tentacle_calls_count: int
     memory_writes_count: int

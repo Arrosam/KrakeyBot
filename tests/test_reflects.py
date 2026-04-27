@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.interfaces.reflect import (
-    HypothalamusReflect, HypothalamusResult, RecallAnchorReflect,
+    HypothalamusReflect, DecisionResult, RecallAnchorReflect,
     Reflect, ReflectRegistry,
 )
 from src.memory.recall import IncrementalRecall

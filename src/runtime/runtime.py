@@ -292,8 +292,8 @@ class Runtime:
         # the same five collaborators (tentacles, batch_tracker, buffer,
         # gm, log+events). Built once; the heartbeat passes its current
         # heartbeat_id on each call.
-        from src.runtime.heartbeat.dispatcher import HypothalamusDispatcher
-        self._dispatcher = HypothalamusDispatcher(
+        from src.runtime.heartbeat.dispatcher import DecisionDispatcher
+        self._dispatcher = DecisionDispatcher(
             tentacles=self.tentacles,
             batch_tracker=self.batch_tracker,
             buffer=self.buffer,
