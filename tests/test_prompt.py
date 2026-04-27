@@ -28,12 +28,18 @@ def test_dna_disambiguates_sleep_and_hibernate():
 
 
 def test_dna_mentions_active_memory_recall():
-    """Self must know it can dispatch memory_recall to actively explore GM,
-    not just receive passive auto-recall."""
-    assert "memory_recall" in DNA
+    """Self must know it can dispatch a recall tentacle to actively
+    explore GM, not just receive passive auto-recall. DNA does not
+    name a specific tentacle (the live name lives in [CAPABILITIES]
+    — naming it in DNA would couple the always-on prompt prefix to a
+    swappable plugin), but it must teach the *concept* of proactive
+    recall and point Self at [CAPABILITIES] to find the actual name.
+    """
     d = DNA.lower()
     assert "proactive" in d or "主动" in DNA or "explicit" in d
+    assert "recall" in d
     assert "reflect" in d or "反思" in DNA
+    assert "[capabilities]" in d
 
 
 def test_dna_warns_about_self_vs_external_signals():
