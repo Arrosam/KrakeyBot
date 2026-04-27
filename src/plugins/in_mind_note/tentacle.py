@@ -2,7 +2,7 @@
 in_mind state.
 
 Built by ``build_tentacle(ctx)`` as the second component of the
-``default_in_mind`` plugin. Pulls the already-built reflect instance
+``in_mind_note`` plugin. Pulls the already-built reflect instance
 from ``ctx.plugin_cache`` (the reflect factory ran first because
 ``components:`` lists it first). The execute() result is a feedback
 receipt for Self only — there's no separate human-facing channel
@@ -29,11 +29,11 @@ from datetime import datetime
 
 from src.interfaces.tentacle import Tentacle
 from src.models.stimulus import Stimulus
-from src.plugins.default_in_mind import _CACHE_KEY
+from src.plugins.in_mind_note import _CACHE_KEY
 
 if TYPE_CHECKING:
     from src.interfaces.plugin_context import PluginContext
-    from src.plugins.default_in_mind.reflect import (
+    from src.plugins.in_mind_note.reflect import (
         InMindReflectImpl,
     )
 
@@ -48,7 +48,7 @@ def build_tentacle(ctx: "PluginContext") -> "UpdateInMindTentacle | None":
     if reflect is None:
         import logging
         logging.getLogger(__name__).warning(
-            "default_in_mind tentacle skipped: reflect not in "
+            "in_mind_note tentacle skipped: reflect not in "
             "plugin_cache. Components likely loaded out of order.",
         )
         return None

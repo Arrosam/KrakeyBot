@@ -115,7 +115,7 @@ def test_discover_finds_builtin_meta_files():
     metas = discover_plugins()
     assert "hypothalamus" in metas
     assert "recall_anchor" in metas
-    assert "default_in_mind" in metas
+    assert "in_mind_note" in metas
     h = metas["hypothalamus"]
     assert len(h.components) >= 1
     refl_comp = next(c for c in h.components if c.kind == "reflect")

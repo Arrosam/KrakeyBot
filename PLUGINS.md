@@ -103,9 +103,9 @@ same registry.
   — flat `__init__.py` with backend Protocol, tentacle, factory.
 - **Multi-component shared state**: [`src/plugins/telegram/`](src/plugins/telegram/)
   — sensory + tentacle share an `HttpTelegramClient` via `ctx.plugin_cache`.
-- **Multi-component with attach lifecycle**: [`src/plugins/default_in_mind/`](src/plugins/default_in_mind/)
-  — reflect + tentacle wired through `ctx.plugin_cache`; reflect uses
-  the `attach()` hook to register its sibling tentacle.
+- **Multi-component with shared state**: [`src/plugins/in_mind_note/`](src/plugins/in_mind_note/)
+  — reflect + tentacle declared together in meta.yaml, sharing the
+  reflect instance through `ctx.plugin_cache`.
 
 ## Architectural rules
 

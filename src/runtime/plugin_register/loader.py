@@ -109,7 +109,7 @@ class PluginLoader:
 
             # Single ``plugin_cache`` dict shared across this plugin's
             # components — multi-component plugins (telegram /
-            # default_in_mind / dashboard) use it to share state
+            # in_mind_note / dashboard) use it to share state
             # between their factories.
             plugin_cache: dict[str, Any] = {}
 

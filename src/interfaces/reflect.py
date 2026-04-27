@@ -190,9 +190,10 @@ class ReflectRegistry:
 
         Each registered Reflect that defines an ``attach`` method
         gets called with the runtime so it can wire up its own
-        runtime-coupled assets — e.g. the in_mind Reflect uses this
-        to register its ``update_in_mind`` tentacle into
-        ``runtime.tentacles``.
+        runtime-coupled assets that don't fit the meta.yaml
+        ``components:`` shape (in-tree plugins ship sibling tentacles
+        as additional components instead, but the hook stays available
+        for plugins that need direct runtime references at startup).
 
         Errors in one Reflect's attach must not block the others —
         plugins are strictly additive (CLAUDE.md invariant).

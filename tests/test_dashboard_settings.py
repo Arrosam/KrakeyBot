@@ -226,7 +226,7 @@ async def test_reflects_available_lists_metadata(tmp_path):
     names = {entry["name"] for entry in r.json()["reflects"]}
     # All three in-tree built-ins must be discovered
     assert {"hypothalamus", "recall_anchor",
-            "default_in_mind"} <= names
+            "in_mind_note"} <= names
 
     # Hypothalamus declares its `translator` purpose
     by_name = {e["name"]: e for e in r.json()["reflects"]}

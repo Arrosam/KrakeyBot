@@ -1,4 +1,4 @@
-"""``default_in_mind`` plugin package.
+"""``in_mind_note`` plugin package.
 
 Holds the one shared cross-component coordination key. Both the
 reflect (writer) and the tentacle (reader) import ``_CACHE_KEY``

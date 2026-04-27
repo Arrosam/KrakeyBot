@@ -1,4 +1,4 @@
-"""Reflect #3 — default_in_mind.
+"""Reflect #3 — in_mind_note.
 
 Coverage:
   * State store: missing file / load+save round-trip / corrupted JSON
@@ -23,13 +23,13 @@ from types import SimpleNamespace
 import pytest
 
 from src.memory.recall import RecallResult
-from src.plugins.default_in_mind.reflect import (
+from src.plugins.in_mind_note.reflect import (
     InMindReflectImpl, build_reflect,
 )
-from src.plugins.default_in_mind.state import (
+from src.plugins.in_mind_note.state import (
     InMindState, load, now_iso, save,
 )
-from src.plugins.default_in_mind.prompt import (
+from src.plugins.in_mind_note.prompt import (
     IN_MIND_INSTRUCTIONS_LAYER, render_virtual_round,
 )
 from tests._runtime_helpers import (
@@ -167,12 +167,12 @@ def test_build_reflect_factory_signature():
     path override (None for the default behavior)."""
     from src.interfaces.plugin_context import PluginContext
     fake_deps = SimpleNamespace(in_mind_state_path=None)
-    ctx = PluginContext(deps=fake_deps, plugin_name="default_in_mind",
+    ctx = PluginContext(deps=fake_deps, plugin_name="in_mind_note",
                           config={})
     r = build_reflect(ctx)
     assert isinstance(r, InMindReflectImpl)
     assert r.role == "in_mind"
-    assert r.name == "default_in_mind"
+    assert r.name == "in_mind_note"
 
 
 # ---- prompt rendering helpers ----------------------------------------
@@ -234,7 +234,7 @@ async def test_runtime_prompt_includes_instructions_when_in_mind_active(
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=["default_in_mind"],
+        reflects=["in_mind_note"],
     )
     await runtime.gm.initialize()
     runtime._recall = runtime._new_recall()
@@ -255,7 +255,7 @@ async def test_runtime_prompt_includes_virtual_round_when_state_set(
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=["default_in_mind"],
+        reflects=["in_mind_note"],
     )
     # Mutate the in_mind Reflect's state directly so we don't need to
     # round-trip through the tentacle for this prompt-shape test.
@@ -281,7 +281,7 @@ async def test_attach_registers_update_in_mind_tentacle(tmp_path):
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=["default_in_mind"],
+        reflects=["in_mind_note"],
     )
     assert "update_in_mind" in runtime.tentacles
 
@@ -292,7 +292,7 @@ async def test_attach_tolerates_pre_existing_tentacle(tmp_path):
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=["default_in_mind"],
+        reflects=["in_mind_note"],
     )
     # Second attach shouldn't raise
     runtime.reflects.attach_all(runtime)
@@ -318,7 +318,7 @@ async def test_self_can_dispatch_update_in_mind_via_action_executor(
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=["default_in_mind"],  # only in_mind, no hypothalamus
+        reflects=["in_mind_note"],  # only in_mind, no hypothalamus
     )
     # The helper has already provisioned a tmpdir state file via
     # RuntimeDeps.in_mind_state_path, so the Reflect's state lives

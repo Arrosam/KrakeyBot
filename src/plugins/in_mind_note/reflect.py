@@ -1,11 +1,11 @@
-"""``default_in_mind`` Reflect — owner of Self's in-mind state.
+"""``in_mind_note`` Reflect — owner of Self's in-mind state.
 
 Imported lazily by ``src.plugin_system.load_component``.
 The plugin contributes TWO components: this reflect (owns the state)
 and ``tentacle.UpdateInMindTentacle`` (lets Self mutate the state via
 the normal action-dispatch pipeline). The factories share the
 reflect instance via ``ctx.plugin_cache`` — same pattern telegram +
-web_chat use to share a client / history across their components.
+dashboard use to share a client / history across their components.
 """
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.plugins.default_in_mind import _CACHE_KEY, state as state_mod
-from src.plugins.default_in_mind.state import InMindState  # noqa: F401
+from src.plugins.in_mind_note import _CACHE_KEY, state as state_mod
+from src.plugins.in_mind_note.state import InMindState  # noqa: F401
 
 if TYPE_CHECKING:
     from src.interfaces.plugin_context import PluginContext
@@ -35,7 +35,7 @@ class InMindReflectImpl:
     tentacle. No LLM in this Reflect — pure state plumbing.
     """
 
-    name = "default_in_mind"
+    name = "in_mind_note"
     role = "in_mind"
 
     def __init__(self, state_path: str | Path = DEFAULT_STATE_PATH):
@@ -60,7 +60,7 @@ class InMindReflectImpl:
         is non-empty — otherwise the slot stays empty and renders as
         nothing).
         """
-        from src.plugins.default_in_mind.prompt import (
+        from src.plugins.in_mind_note.prompt import (
             IN_MIND_INSTRUCTIONS_LAYER, render_virtual_round,
         )
         elements["in_mind_instructions"] = IN_MIND_INSTRUCTIONS_LAYER

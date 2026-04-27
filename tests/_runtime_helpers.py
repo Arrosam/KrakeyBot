@@ -77,7 +77,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     # the production workspace/self_model.yaml.
     self_model_path = f"{tempfile.mkdtemp(prefix='krakey_test_sm_')}/self_model.yaml"
     # And the in_mind Reflect's state file. Tests that enable
-    # default_in_mind would otherwise dispatch update_in_mind into
+    # in_mind_note would otherwise dispatch update_in_mind into
     # the production workspace/data/in_mind.json — same class of
     # leak as the web_chat history bug.
     in_mind_state_path = (

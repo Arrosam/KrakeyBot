@@ -1,4 +1,4 @@
-name: default_in_mind
+name: in_mind_note
 description: >
   Persistent "in-mind" state — three short fields (thoughts / mood /
   focus) that Self maintains across heartbeats to declare what's
@@ -23,8 +23,8 @@ components:
   # opts out (returns None) so the runtime degrades rather than crashes.
   - kind: reflect
     role: in_mind
-    factory_module: src.plugins.default_in_mind.reflect
+    factory_module: src.plugins.in_mind_note.reflect
     factory_attr: build_reflect
   - kind: tentacle
-    factory_module: src.plugins.default_in_mind.tentacle
+    factory_module: src.plugins.in_mind_note.tentacle
     factory_attr: build_tentacle

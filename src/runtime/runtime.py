@@ -254,17 +254,19 @@ class Runtime:
 
         # Reflect attach() lifecycle hook — fires after every other
         # subsystem (TentacleRegistry, plugin loader, etc.) is up so
-        # Reflects that need to register their own tentacles
-        # (in_mind's update_in_mind, and future hooks) can do so
-        # without ordering surprises. attach_all is exception-tolerant
-        # by contract; one bad Reflect won't block the others.
+        # Reflects with extra runtime-coupled wiring beyond what the
+        # meta.yaml components: list expresses can do it without
+        # ordering surprises. No in-tree Reflect uses this today —
+        # multi-component plugins ship sibling tentacles via meta.yaml
+        # — but the hook stays available. attach_all is exception-
+        # tolerant by contract; one bad Reflect won't block the others.
         self.reflects.attach_all(self)
 
         # Plugin observer is built AFTER attach_all so the snapshot it
-        # walks includes reflect-attached components (update_in_mind,
-        # etc.). Components registered by the loader appear with
-        # source="builtin"; everything else (BatchTracker, attach()
-        # extras) appears as source="core".
+        # walks includes anything an attach() hook added. Components
+        # registered by the loader appear with source="builtin";
+        # everything else (BatchTracker, attach() extras) appears as
+        # source="core".
         from src.runtime.plugin_register.observer import PluginObserver
         self._plugin_observer = PluginObserver(
             reflects=self.reflects,
