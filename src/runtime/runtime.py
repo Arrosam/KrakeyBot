@@ -222,8 +222,8 @@ class Runtime:
         # dashboard owns its own per-plugin config.
         self._prompt_log: deque[dict[str, Any]] = deque(maxlen=50)
 
-        from src.runtime.plugins.plugin_registrar import PluginRegistrar
-        self._plugin_registrar = PluginRegistrar(
+        from src.runtime.plugins.loader import PluginLoader
+        self._plugin_loader = PluginLoader(
             config=self.config,
             reflects=self.reflects,
             tentacles=self.tentacles,
@@ -239,7 +239,7 @@ class Runtime:
                 "build_code_runner": self._build_code_runner,
             },
         )
-        self._plugin_registrar.register_from_config(deps)
+        self._plugin_loader.register_from_config(deps)
 
         # Self-model + Bootstrap state (Phase 2.1)
         sm_path = deps.self_model_path or "workspace/self_model.yaml"
@@ -309,12 +309,6 @@ class Runtime:
         from src.runtime.heartbeat.heartbeat_orchestrator import HeartbeatOrchestrator
         self._orchestrator = HeartbeatOrchestrator(self)
 
-        # Phase 2 (2026-04-26): all plugins go through the registrar.
-        # The PluginInfo list lets the dashboard's loaded_plugin_report()
-        # describe the loaded set; surfaced as a property below for
-        # callers (mostly tests) that still touch it directly.
-        self._plugin_registrar.derive_plugin_infos()
-
         # Snapshot config.yaml on every startup so a bad save can be rolled
         # back from workspace/backups/.
         if self._config_path:
@@ -331,11 +325,24 @@ class Runtime:
         # by contract; one bad Reflect won't block the others.
         self.reflects.attach_all(self)
 
+        # Plugin observer is built AFTER attach_all so the snapshot it
+        # walks includes reflect-attached components (update_in_mind,
+        # etc.). Components registered by the loader appear with
+        # source="builtin"; everything else (BatchTracker, attach()
+        # extras) appears as source="core".
+        from src.runtime.plugins.observer import PluginObserver
+        self._plugin_observer = PluginObserver(
+            reflects=self.reflects,
+            tentacles=self.tentacles,
+            sensories=self.buffer,
+            loader=self._plugin_loader,
+        )
+
     # Test-only facade — two reflect-config tests rebuild registries by
     # clearing them and re-running registration. New code should reach
-    # for ``self._plugin_registrar.register_from_config(deps)`` directly.
+    # for ``self._plugin_loader.register_from_config(deps)`` directly.
     def _register_plugins_from_config(self, deps: "RuntimeDeps") -> None:
-        self._plugin_registrar.register_from_config(deps)
+        self._plugin_loader.register_from_config(deps)
 
     def _new_recall(self) -> IncrementalRecall:
         # Facade — heartbeat algorithm lives in HeartbeatOrchestrator.
@@ -426,17 +433,17 @@ class Runtime:
 
     @property
     def _plugin_infos(self) -> list:
-        """PluginInfo list owned by the registrar — exposed as a
-        property so call sites that historically read
-        ``self._plugin_infos`` (mostly tests) keep working."""
-        return self._plugin_registrar._infos
+        """PluginInfo list — exposed as a property so call sites that
+        historically read ``self._plugin_infos`` (mostly tests) keep
+        working. Walks the live registries each call."""
+        return self._plugin_observer.collect_infos()
 
     def loaded_plugin_report(self) -> dict[str, Any]:
         """Pure runtime observation of which tentacles + sensories are
         live (no plugin-config file reads). The dashboard adapter
         combines this with its own ``FilePluginConfigStore`` reads to
         build the ``/api/plugins`` payload."""
-        return self._plugin_registrar.loaded_plugin_report()
+        return self._plugin_observer.loaded_report()
 
     def _build_code_runner(self, coding_cfg: dict):
         """Return Subprocess on sandbox=false, SandboxRunner otherwise.
