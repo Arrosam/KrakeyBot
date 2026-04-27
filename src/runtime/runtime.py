@@ -32,11 +32,7 @@ from src.runtime.events.event_bus import EventBus
 from src.runtime.console.heartbeat_logger import HeartbeatLogger
 from src.runtime.heartbeat.sliding_window import SlidingWindow
 from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
-# All tentacle / sensory classes now load via the plugin system
-# (src.plugins.<project>/). SubprocessRunner stays imported
-# here because Runtime._build_code_runner owns the sandbox-vs-subprocess
-# policy decision and hands the runner to the coding plugin via deps.
-from src.sandbox.subprocess_runner import SubprocessRunner
+from src.sandbox.policy import build_code_runner, preflight_if_required
 
 
 class ChatLike(Protocol):
@@ -439,36 +435,10 @@ class Runtime:
         return self._plugin_observer.loaded_report()
 
     def _build_code_runner(self, coding_cfg: dict):
-        """Return Subprocess on sandbox=false, SandboxRunner otherwise.
-
-        Sandbox defaults to TRUE. When any tentacle enables sandbox but
-        the top-level `sandbox` config is incomplete, refuse to start
-        with a clear error — user must configure the guest VM first.
-        """
-        want_sandbox = bool(coding_cfg.get("sandbox", True))
-        if not want_sandbox:
-            return SubprocessRunner()
-        sb = self.config.sandbox
-        missing = []
-        if not sb.guest_os:
-            missing.append("sandbox.guest_os")
-        if not sb.agent.url:
-            missing.append("sandbox.agent.url")
-        if not sb.agent.token:
-            missing.append("sandbox.agent.token")
-        if missing:
-            raise RuntimeError(
-                "coding.sandbox=true but sandbox is not configured. "
-                "Missing: " + ", ".join(missing) + ". "
-                "Either complete the `sandbox:` block in config.yaml or "
-                "set tentacle.coding.sandbox=false (unsafe)."
-            )
-        from src.sandbox.backend import SandboxConfig, SandboxRunner
-        return SandboxRunner(SandboxConfig(
-            agent_url=sb.agent.url,
-            agent_token=sb.agent.token,
-            guest_os=sb.guest_os,
-        ))
+        # Facade — sandbox vs subprocess policy lives in
+        # src.sandbox.policy. Kept as a method so the services dict
+        # can hand a bound callable to the coding plugin.
+        return build_code_runner(coding_cfg, self.config.sandbox)
 
     def _record_prompt(self, heartbeat_id: int, prompt: str) -> None:
         # Facade — heartbeat algorithm lives in HeartbeatOrchestrator.
@@ -484,50 +454,17 @@ class Runtime:
         return [dict(p) for p in items]
 
     async def _preflight_sandbox(self) -> None:
-        """Ping the guest agent if any enabled plugin self-declared
-        ``requires_sandbox: true`` in its meta.yaml AND has its own
-        ``sandbox`` config field on. Refuses to start the runtime
-        when the agent is unreachable.
-
-        Iterates ``config.plugins`` (the explicit enabled list) and
-        loads each one's meta.yaml by name — no full filesystem scan.
-        """
-        from src.interfaces.plugin_context import load_plugin_config
-        from src.plugin_system.loader import load_plugin_meta
-        from src.sandbox.backend import (
-            SandboxConfig, SandboxUnavailableError, preflight,
+        # Facade — preflight scan logic lives in src.sandbox.policy.
+        # Wrapper keeps the success log line attached to the heartbeat
+        # log instead of stderr from a free function.
+        info = await preflight_if_required(
+            self.config, plugin_configs_root=self._plugin_configs_root,
         )
-        cfg_root = Path("workspace/plugins")
-        any_sandboxed = False
-        for name in self.config.plugins or []:
-            meta = load_plugin_meta(name)
-            if meta is None or not meta.requires_sandbox:
-                continue
-            # Plugin's own `sandbox: false` opts out (e.g. coding on a
-            # trusted host).
-            plugin_cfg = load_plugin_config(name, cfg_root)
-            if bool(plugin_cfg.get("sandbox", True)):
-                any_sandboxed = True
-                break
-        if not any_sandboxed:
-            return
-        sb = self.config.sandbox
-        cfg = SandboxConfig(
-            agent_url=sb.agent.url,
-            agent_token=sb.agent.token,
-            guest_os=sb.guest_os,
-        )
-        try:
-            info = await preflight(cfg)
-        except SandboxUnavailableError as e:
-            raise RuntimeError(
-                f"sandbox preflight failed: {e}. "
-                "Start the guest agent or disable sandboxed tentacles."
+        if info is not None:
+            self.log.hb(
+                f"sandbox preflight ok: guest_os={info.get('guest_os')} "
+                f"agent_version={info.get('agent_version')}"
             )
-        self.log.hb(
-            f"sandbox preflight ok: guest_os={info.get('guest_os')} "
-            f"agent_version={info.get('agent_version')}"
-        )
 
     async def _refine_bootstrap_from_data(self) -> None:
         """Thin wrapper around ``BootstrapCoordinator.refine_from_data``
