@@ -7,13 +7,9 @@ already has fresh context.
 from __future__ import annotations
 
 import asyncio
-from typing import Protocol
 
+from src.memory.recall import RecallLike
 from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
-
-
-class IncrementalRecallLike(Protocol):
-    async def add_stimuli(self, stimuli) -> None: ...
 
 
 def clamp(value: float, lo: float, hi: float) -> float:
@@ -22,7 +18,7 @@ def clamp(value: float, lo: float, hi: float) -> float:
 
 async def hibernate_with_recall(
     interval: float, buffer: StimulusBuffer,
-    recall: IncrementalRecallLike, *,
+    recall: RecallLike, *,
     min_interval: float, max_interval: float,
     poll_slice: float = 0.05,
 ) -> None:

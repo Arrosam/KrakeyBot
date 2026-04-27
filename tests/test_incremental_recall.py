@@ -5,9 +5,8 @@ from datetime import datetime
 import pytest
 
 from src.memory.graph_memory import GraphMemory
-from src.memory.recall import (
-    IncrementalRecall, RecallResult, ScoringWeights,
-)
+from src.memory.recall import RecallResult, ScoringWeights
+from src.plugins.default_recall_anchor.incremental import IncrementalRecall
 from src.models.stimulus import Stimulus
 
 

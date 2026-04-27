@@ -47,7 +47,7 @@ from src.runtime.commands.commands import (
 from src.self_agent import parse_self_output
 
 if TYPE_CHECKING:
-    from src.memory.recall import IncrementalRecall
+    from src.memory.recall import RecallLike
     from src.prompt.views import CapabilityView, StatusSnapshot
     from src.runtime.runtime import Runtime
 
@@ -545,7 +545,7 @@ class HeartbeatOrchestrator:
             "full_prompt": prompt,
         })
 
-    def new_recall(self) -> "IncrementalRecall":
+    def new_recall(self) -> "RecallLike":
         # Look up the Reflect that claimed the "recall_anchor" role.
         # Without one, fall back to NoopRecall (Self heartbeats with
         # an empty [GRAPH MEMORY] layer — graceful degradation per
@@ -553,7 +553,7 @@ class HeartbeatOrchestrator:
         anchor = self._rt.reflects.by_role("recall_anchor")
         if anchor is None:
             from src.memory.recall import NoopRecall
-            return NoopRecall()  # type: ignore[return-value]
+            return NoopRecall()
         return anchor.make_recall(self._rt)
 
     def _capabilities(self) -> list["CapabilityView"]:

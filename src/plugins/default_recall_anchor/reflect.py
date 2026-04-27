@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.memory.recall import IncrementalRecall
+from src.plugins.default_recall_anchor.incremental import IncrementalRecall
 
 if TYPE_CHECKING:
     from src.main import Runtime

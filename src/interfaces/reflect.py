@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from src.memory.recall import IncrementalRecall
+    from src.memory.recall import RecallLike
 
 
 # --------------------------------------------------------------------
@@ -92,7 +92,7 @@ class RecallAnchorReflect(Protocol):
     name: str
     role: str
 
-    def make_recall(self, runtime: Any) -> "IncrementalRecall": ...
+    def make_recall(self, runtime: Any) -> "RecallLike": ...
 
 
 @runtime_checkable

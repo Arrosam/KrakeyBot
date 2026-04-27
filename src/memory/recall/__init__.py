@@ -5,18 +5,25 @@ Two modules:
   * ``scoring``     — pure functions + ``ScoringWeights``. Category
                        weights, time decay, scripted score, reranker
                        orchestration, ``Reranker`` Protocol.
-  * ``incremental`` — the ``IncrementalRecall`` driver itself plus the
-                       ``RecallResult`` dataclass and the ``NoopRecall``
-                       null-object (zero-plugin invariant fallback).
+  * ``incremental`` — Protocols + null object: ``RecallLike``
+                       (the duck-typed surface runtime types
+                       against), ``RecallResult`` dataclass,
+                       ``NoopRecall`` (zero-plugin fallback),
+                       ``AsyncEmbedder`` Protocol.
 
-Public API re-exported at this package root so existing imports
-``from src.memory.recall import IncrementalRecall, NoopRecall,
-RecallResult, Reranker`` keep working unchanged.
+Public API re-exported at this package root so
+``from src.memory.recall import RecallLike, NoopRecall,
+RecallResult, Reranker`` keeps working unchanged.
+
+Note: the concrete ``IncrementalRecall`` driver lives in the
+``default_recall_anchor`` plugin and is NOT re-exported from core.
+Disabling that plugin removes the class from the import graph
+entirely.
 """
 from src.memory.recall.incremental import (  # noqa: F401
     AsyncEmbedder,
-    IncrementalRecall,
     NoopRecall,
+    RecallLike,
     RecallResult,
 )
 from src.memory.recall.scoring import (  # noqa: F401

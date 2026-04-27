@@ -22,7 +22,7 @@ from src.interfaces.tentacle import TentacleRegistry
 from src.llm.resolve import AsyncEmbedder, ChatLike, resolve_llm_for_tag
 from src.memory.graph_memory import GraphMemory
 from src.memory.knowledge_base import KBRegistry
-from src.memory.recall import IncrementalRecall, Reranker
+from src.memory.recall import RecallLike, Reranker
 from src.models.config import Config, LLMParams
 from src.models.config_backup import backup_config
 from src.prompt.builder import PromptBuilder
@@ -215,7 +215,7 @@ class Runtime:
         self._min = hibernate_min if hibernate_min is not None else self.config.hibernate.min_interval
         self._max = hibernate_max if hibernate_max is not None else self.config.hibernate.max_interval
 
-        self._recall: IncrementalRecall | None = None
+        self._recall: RecallLike | None = None
         self._classify_tasks: list[asyncio.Task] = []
         self._last_node_count = 0
         self._last_edge_count = 0
@@ -278,7 +278,7 @@ class Runtime:
     def _register_plugins_from_config(self, deps: "RuntimeDeps") -> None:
         self._plugin_loader.register_from_config(deps)
 
-    def _new_recall(self) -> IncrementalRecall:
+    def _new_recall(self) -> RecallLike:
         # Facade — heartbeat algorithm lives in HeartbeatOrchestrator.
         return self._orchestrator.new_recall()
 

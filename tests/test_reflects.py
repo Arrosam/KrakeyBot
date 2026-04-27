@@ -19,7 +19,6 @@ from src.interfaces.reflect import (
     HypothalamusReflect, DecisionResult, RecallAnchorReflect,
     Reflect, ReflectRegistry,
 )
-from src.memory.recall import IncrementalRecall
 from src.plugins.default_hypothalamus.reflect import (
     DefaultHypothalamusReflect,
 )
