@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from src.interfaces.reflect import DecisionResult, TentacleCall
+from src.llm.resolve import ChatLike
 
 if TYPE_CHECKING:
     from src.interfaces.plugin_context import PluginContext
@@ -64,20 +65,16 @@ SYSTEM_PROMPT = """# Hypothalamus — 行动翻译器
 """
 
 
-class ChatLike(Protocol):
-    async def chat(self, messages, **kwargs) -> str: ...
-
-
 _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 
 
 class DefaultHypothalamusReflect:
-    """LLM-driven decision → tentacle-call translator.
+    """LLM-driven [DECISION] → tentacle-call translator.
 
-    Was previously a thin wrapper around an inner ``Hypothalamus``
-    class living in ``src/hypothalamus.py``; folded together when
-    that core leftover was removed (the Reflect IS the translator —
-    no third party uses the inner class).
+    Stateless: every ``translate()`` call is an independent
+    system+user message pair. The translator LLM is bound at
+    construction (resolved from ``ctx.get_llm_for_tag`` in the
+    factory) and never mutated.
     """
 
     name = "default_hypothalamus"
@@ -157,8 +154,12 @@ def _parse_json(raw: str) -> dict[str, Any]:
       3. sanitized version of (2): smart quotes → straight, trailing
          commas removed, single quotes → double (when unambiguous)
 
-    Falls through to a safe empty-result dict on total failure rather
-    than raising — Hypothalamus errors should never crash the heartbeat.
+    Raises ``json.JSONDecodeError`` if every candidate fails. The
+    heartbeat orchestrator catches the exception and pushes an
+    adrenalin system_event back to Self instead of crashing — that
+    surfaces the parse failure to the agent so it can re-state the
+    decision more concretely on the next beat (a silent empty-result
+    fallback would hide the problem).
     """
     text = raw.strip()
     if text.startswith("```"):
