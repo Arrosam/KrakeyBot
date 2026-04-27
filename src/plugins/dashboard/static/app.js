@@ -600,7 +600,8 @@ const SECTION_DEFAULTS = {
   graph_memory: {
     db_path: "workspace/data/graph_memory.sqlite",
     auto_ingest_similarity_threshold: 0.92,
-    recall_per_stimulus_k: 5, neighbor_expand_depth: 1,
+    recall_per_stimulus_k: 50, recall_screening_token_multiplier: 3.0,
+    neighbor_expand_depth: 1,
     // `max_recall_nodes` removed — recall is now capped by Self role's
     // recall_token_budget (absolute token cap, not a node count).
   },
@@ -624,7 +625,8 @@ const HELP = {
   "fatigue.force_sleep_threshold": "强制睡眠阈值（fatigue%）。超过这个值, runtime 不等 Self 同意直接进 sleep。",
   "graph_memory.db_path": "GM SQLite 文件路径。",
   "graph_memory.auto_ingest_similarity_threshold": "stimulus auto_ingest 的相似度阈值 (0-1)。低于则当作新节点入 GM。",
-  "graph_memory.recall_per_stimulus_k": "每条 stimulus 向量搜索返回的 top-K 候选节点数 (搜索阈, 不是 prompt 阈)。prompt 阈由 Self role 的 recall_token_budget 控制。",
+  "graph_memory.recall_per_stimulus_k": "每条 stimulus vec_search top_k 的硬上限。实际 top_k 由 recall_screening_token_multiplier 动态算出, 最多不超过这个。",
+  "graph_memory.recall_screening_token_multiplier": "粗筛池的 token 倍数: 每条 stimulus 试图捞 multiplier × recall_token_budget 个 token 的候选, 给最终 token 预算切割留充裕选择空间。1.0 = 不过采样; 默认 3.0。",
   "graph_memory.neighbor_expand_depth": "召回时邻居展开深度（沿 edges 走几跳）。",
   "knowledge_base.dir": "KB SQLite 文件目录, sleep migration 会写到这里。",
   "sleep.max_duration_seconds": "单次 sleep 最长允许时长（秒）, 防 sleep 卡死。",
@@ -678,6 +680,7 @@ const SCHEMAS = {
     ["db_path", "text"],
     ["auto_ingest_similarity_threshold", "number_float"],
     ["recall_per_stimulus_k", "number"],
+    ["recall_screening_token_multiplier", "number_float"],
     ["neighbor_expand_depth", "number"],
   ],
   knowledge_base: [

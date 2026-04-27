@@ -39,6 +39,7 @@ class RecallAnchorReflectImpl:
         per_stimulus_k: int,
         neighbor_depth: int,
         recall_token_budget: int,
+        screening_token_multiplier: float,
     ):
         self._gm = gm
         self._embedder = embedder
@@ -46,6 +47,7 @@ class RecallAnchorReflectImpl:
         self._per_k = per_stimulus_k
         self._neighbor_depth = neighbor_depth
         self._token_budget = recall_token_budget
+        self._screening_multiplier = screening_token_multiplier
 
     def make_recall(self, runtime: Any) -> "RecallLike":
         del runtime
@@ -54,6 +56,7 @@ class RecallAnchorReflectImpl:
             embedder=self._embedder,
             per_stimulus_k=self._per_k,
             recall_token_budget=self._token_budget,
+            screening_token_multiplier=self._screening_multiplier,
             reranker=self._reranker,
             neighbor_depth=self._neighbor_depth,
         )
@@ -74,4 +77,7 @@ def build_reflect(ctx: "PluginContext") -> RecallAnchorReflectImpl:
         per_stimulus_k=cfg.graph_memory.recall_per_stimulus_k,
         neighbor_depth=cfg.graph_memory.neighbor_expand_depth,
         recall_token_budget=self_params.recall_token_budget,
+        screening_token_multiplier=(
+            cfg.graph_memory.recall_screening_token_multiplier
+        ),
     )

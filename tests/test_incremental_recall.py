@@ -160,6 +160,54 @@ async def test_recall_token_budget_admits_at_least_one(tmp_path):
     await gm.close()
 
 
+def test_screening_top_k_capped_by_per_k(tmp_path):
+    """Multiplier × budget produces a soft target larger than per_k —
+    top_k must clamp to the per_k hard ceiling."""
+    r = IncrementalRecall(
+        gm=None, embedder=None,  # type: ignore[arg-type]
+        per_stimulus_k=10,
+        recall_token_budget=600,
+        screening_token_multiplier=3.0,  # target ≈ 1800 / 30 = 60 nodes
+    )
+    assert r._screening_top_k() == 10  # clamped to per_k
+
+
+def test_screening_top_k_uses_target_when_below_per_k():
+    """When the soft target fits inside per_k, top_k follows the
+    multiplier × budget sizing instead of saturating per_k."""
+    r = IncrementalRecall(
+        gm=None, embedder=None,  # type: ignore[arg-type]
+        per_stimulus_k=200,
+        recall_token_budget=600,
+        screening_token_multiplier=3.0,  # target = 1800 / 30 = 60
+    )
+    assert r._screening_top_k() == 60
+
+
+def test_screening_top_k_default_multiplier_disables_oversampling():
+    """multiplier=1.0 means screening pool ≈ final cut — equivalent
+    to no oversampling."""
+    r = IncrementalRecall(
+        gm=None, embedder=None,  # type: ignore[arg-type]
+        per_stimulus_k=200,
+        recall_token_budget=600,
+        screening_token_multiplier=1.0,  # target = 600 / 30 = 20
+    )
+    assert r._screening_top_k() == 20
+
+
+def test_screening_top_k_floors_at_one():
+    """Degenerate config (zero budget or zero multiplier) must still
+    pull at least one candidate per stimulus or recall silently dies."""
+    r = IncrementalRecall(
+        gm=None, embedder=None,  # type: ignore[arg-type]
+        per_stimulus_k=50,
+        recall_token_budget=0,
+        screening_token_multiplier=3.0,
+    )
+    assert r._screening_top_k() == 1
+
+
 async def test_embedder_failure_uses_fts_fallback(tmp_path):
     gm = GraphMemory(tmp_path / "gm.sqlite", embedder=FailingEmbedder())
     await gm.initialize()

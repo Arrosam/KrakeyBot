@@ -24,6 +24,7 @@ plugin may want to reuse them.
 """
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from typing import Any, Callable, TYPE_CHECKING
 
@@ -35,6 +36,13 @@ from src.utils.tokens import estimate_tokens
 if TYPE_CHECKING:
     from src.memory.graph_memory import GraphMemory
     from src.models.stimulus import Stimulus
+
+
+# Heuristic average rendered-token cost of a single GM node header.
+# Used to translate the per-stimulus screening token target into a
+# vec_search top_k. Doesn't need to be precise — finalize() does the
+# real token accounting against the budget.
+_AVG_NODE_TOKENS_FOR_SCREENING = 30
 
 
 def _estimate_node_render_tokens(node: dict[str, Any],
@@ -69,6 +77,7 @@ class IncrementalRecall:
                   embedder: AsyncEmbedder,
                   per_stimulus_k: int,
                   recall_token_budget: int,
+                  screening_token_multiplier: float = 1.0,
                   weights: ScoringWeights | None = None,
                   reranker: Reranker | None = None,
                   neighbor_depth: int = 1,
@@ -80,11 +89,19 @@ class IncrementalRecall:
         budget. An absolute token cap (not a fraction of context) —
         too many recall items pollute the prompt regardless of how big
         the model's context is. See ``LLMParams.recall_token_budget``.
+
+        ``screening_token_multiplier`` widens the per-stimulus vec_search
+        pool: each stimulus aims to surface ``recall_token_budget *
+        screening_token_multiplier`` tokens worth of candidates so the
+        cross-stimulus dedup + weight-merge has real material to compete
+        on before the final budget cut admits the winners. ``per_stimulus_k``
+        is the hard ceiling on vec_search top_k either way.
         """
         self.gm = gm
         self.embedder = embedder
         self.per_k = per_stimulus_k
         self.recall_token_budget = recall_token_budget
+        self.screening_multiplier = screening_token_multiplier
         self.weights = weights or ScoringWeights()
         self.reranker = reranker
         self.neighbor_depth = neighbor_depth
@@ -93,6 +110,14 @@ class IncrementalRecall:
         self.merged: dict[int, dict[str, Any]] = {}
         self.processed_stimuli: list[Any] = []
         self._per_stimulus_ids: list[set[int]] = []
+
+    def _screening_top_k(self) -> int:
+        """Per-stimulus vec_search top_k. Sized to roughly cover the
+        screening token target; capped by ``per_stimulus_k``; floored
+        at 1 so degenerate config doesn't silently disable recall."""
+        target = self.recall_token_budget * self.screening_multiplier
+        soft = math.ceil(target / _AVG_NODE_TOKENS_FOR_SCREENING)
+        return max(1, min(self.per_k, soft))
 
     async def add_stimuli(self, stimuli: list["Stimulus"]) -> None:
         for s in stimuli:
@@ -115,16 +140,17 @@ class IncrementalRecall:
 
     async def _search_for(self, text: str
                            ) -> list[tuple[dict[str, Any], float]]:
+        top_k = self._screening_top_k()
         candidates: list[tuple[dict[str, Any], float]] = []
         try:
             vec = await self.embedder(text)
             candidates = await self.gm.vec_search(
-                vec, top_k=self.per_k, min_similarity=self._vec_min_sim,
+                vec, top_k=top_k, min_similarity=self._vec_min_sim,
             )
         except Exception:  # noqa: BLE001
             candidates = []
         if not candidates:
-            fts_hits = await self.gm.fts_search(text, top_k=self.per_k)
+            fts_hits = await self.gm.fts_search(text, top_k=top_k)
             candidates = [(n, 0.0) for n in fts_hits]
         return candidates
 

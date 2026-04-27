@@ -15,11 +15,22 @@ from typing import Any
 class GraphMemorySection:
     db_path: str = "workspace/data/graph_memory.sqlite"
     auto_ingest_similarity_threshold: float = 0.92
-    # Top-K candidate nodes per stimulus during vec_search. A SEARCH
-    # cap, not a prompt cap — the prompt cap is the per-role
-    # `recall_token_budget` in LLMParams. Keeping this separate avoids
-    # blowing compute on vec_search results we'd only truncate anyway.
-    recall_per_stimulus_k: int = 5
+    # Hard upper bound on vec_search top_k per stimulus. The actual
+    # top_k is computed dynamically from the screening-token target
+    # (see ``recall_screening_token_multiplier``) and capped by this.
+    # Keep generous: too small starves the oversampling pool that the
+    # multiplier exists to fill.
+    recall_per_stimulus_k: int = 50
+    # Per-stimulus screening pool size, expressed as a MULTIPLIER of
+    # the role's ``recall_token_budget``. With multiplier=3.0 and a
+    # budget of 600 tokens, vec_search aims to surface ~1800 tokens
+    # worth of candidate nodes per stimulus — enough that the dedup +
+    # weight-merge across stimuli leaves the final ``finalize()``
+    # token-budget cut with real selection choice instead of just
+    # admitting everything. Multiplier=1.0 disables oversampling
+    # (screening pool ≈ final cut). Capped by ``recall_per_stimulus_k``
+    # in either direction.
+    recall_screening_token_multiplier: float = 3.0
     neighbor_expand_depth: int = 1
 
 
@@ -68,6 +79,10 @@ def _build_graph_memory(raw: dict[str, Any]) -> GraphMemorySection:
         ),
         recall_per_stimulus_k=int(raw.get("recall_per_stimulus_k",
                                               d.recall_per_stimulus_k)),
+        recall_screening_token_multiplier=float(
+            raw.get("recall_screening_token_multiplier",
+                     d.recall_screening_token_multiplier)
+        ),
         neighbor_expand_depth=int(raw.get("neighbor_expand_depth",
                                               d.neighbor_expand_depth)),
     )

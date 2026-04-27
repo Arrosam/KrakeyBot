@@ -38,6 +38,7 @@ def _stub_recall_anchor() -> RecallAnchorReflectImpl:
     return RecallAnchorReflectImpl(
         gm=None, embedder=None, reranker=None,  # type: ignore[arg-type]
         per_stimulus_k=0, neighbor_depth=0, recall_token_budget=0,
+        screening_token_multiplier=1.0,
     )
 
 
