@@ -39,11 +39,9 @@ from src.models.config.heartbeat import (  # noqa: F401
     _validate_fatigue_thresholds,
 )
 from src.models.config.infra import (  # noqa: F401
-    DashboardSection,
     SandboxAgentSection,
     SandboxResourcesSection,
     SandboxSection,
-    _build_dashboard,
     _build_sandbox,
 )
 from src.models.config.llm import (  # noqa: F401
@@ -103,7 +101,6 @@ class Config:
     plugins: list[str] | None = None
     sleep: SleepSection = field(default_factory=SleepSection)
     safety: SafetySection = field(default_factory=SafetySection)
-    dashboard: DashboardSection = field(default_factory=DashboardSection)
     sandbox: SandboxSection = field(default_factory=SandboxSection)
 
 
@@ -215,7 +212,6 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         plugins=_build_plugins(raw),
         sleep=_build_sleep(raw.get("sleep") or {}),
         safety=_build_safety(raw.get("safety") or {}),
-        dashboard=_build_dashboard(raw.get("dashboard")),
         sandbox=_build_sandbox(raw.get("sandbox")),
     )
 
@@ -302,5 +298,14 @@ def _warn_about_removed_sections(raw: dict[str, Any]) -> None:
             "used.\n  Recall size is now capped by tokens via "
             "`llm.roles.self.params.recall_token_budget`. Remove the "
             "key from your config. Your previous value is being ignored.",
+            file=sys.stderr,
+        )
+    if "dashboard" in raw:
+        print(
+            "deprecated: top-level `dashboard:` section is no longer "
+            "read.\n  The dashboard is now a regular plugin: add "
+            "'dashboard' to your `plugins:` list, and put host/port/"
+            "history_path in `workspace/plugins/dashboard/config.yaml`.\n"
+            "  Your previous values are being ignored.",
             file=sys.stderr,
         )

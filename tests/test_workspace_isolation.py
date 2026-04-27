@@ -65,20 +65,24 @@ async def test_runtime_construction_does_not_touch_prod_paths(tmp_path):
 async def test_web_chat_reply_writes_to_tmpdir_not_prod(tmp_path):
     """Dispatching the web_chat_reply tentacle must write only to the
     helper's tmpdir chat JSONL, never to workspace/data/web_chat.jsonl.
+
+    Web chat is owned by the dashboard plugin now; we reach into the
+    registered tentacle's history (the same object the dashboard
+    sensory's chat-WS handler would push to) instead of touching a
+    runtime field that no longer exists.
     """
     before = _baseline_sizes()
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
     )
-    # Bypass plugin discovery wiring — just append directly to the
-    # history object the runtime wired up. That's the exact object
-    # the web_chat_reply tentacle would also write through.
-    await runtime.web_chat_history.append("bot", "this must not leak")
+    tent = runtime.tentacles.get("web_chat_reply")
+    history = tent._history  # noqa: SLF001 — test reaches into plugin
+    await history.append("bot", "this must not leak")
     # Prod files untouched
     _assert_unchanged(before)
     # And the actual target is the tmpdir the helper provisioned
-    target = Path(runtime.web_chat_history.path)
+    target = Path(history.path)
     assert target.exists(), "bot message never hit disk"
     assert "krakey_test_chat_" in str(target), (
         f"expected history_path under a test tmpdir; got {target}"

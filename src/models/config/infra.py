@@ -1,26 +1,16 @@
-"""Infrastructure-side config sections: dashboard server + sandbox VM.
+"""Infrastructure-side config: sandbox VM.
 
-Both describe how the runtime relates to *external* surfaces — the
-dashboard exposes a local HTTP server, the sandbox describes a guest
-VM and its agent endpoint. Grouped because they're "shape of what
-runs alongside Krakey," not core algorithm tuning.
+Describes how the runtime relates to the external sandbox surface (a
+guest VM and its agent endpoint). The dashboard used to live here
+too, but it became a regular plugin (`src/plugins/dashboard/`) and
+its config moved to the per-plugin yaml at
+`workspace/plugins/dashboard/config.yaml`.
 """
 from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, field
 from typing import Any
-
-
-@dataclass
-class DashboardSection:
-    enabled: bool = True
-    host: str = "127.0.0.1"
-    port: int = 8765
-    # Ring buffer for the "Prompts" tab. Runtime keeps the last N fully
-    # built heartbeat prompts so the UI can show a scrollable log rather
-    # than only the single latest one. Per-run, not persisted to disk.
-    prompt_log_size: int = 20
 
 
 @dataclass
@@ -59,18 +49,6 @@ class SandboxSection:
     # not by this config. Stored for clarity + future tooling.
     network_mode: str = "nat_allowlist"  # nat_allowlist | host_only | isolated
     allowlist_domains: list[str] = field(default_factory=list)
-
-
-def _build_dashboard(raw: dict[str, Any] | None) -> DashboardSection:
-    raw = raw or {}
-    d = DashboardSection()
-    return DashboardSection(
-        enabled=bool(raw.get("enabled", d.enabled)),
-        host=str(raw.get("host", d.host)),
-        port=int(raw.get("port", d.port)),
-        prompt_log_size=max(1, int(raw.get("prompt_log_size",
-                                               d.prompt_log_size))),
-    )
 
 
 def _build_sandbox(raw: dict[str, Any] | None) -> SandboxSection:

@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from src.bootstrap import load_self_model_or_default
-from src.plugins.dashboard.web_chat import WebChatHistory
 from src.models.self_model import SelfModelStore
 from src.interfaces.tentacle import TentacleRegistry
 from src.llm.client import LLMClient
@@ -179,13 +178,6 @@ class Runtime:
         )
 
         self.tentacles = TentacleRegistry()
-        # Web chat history is a data layer (JSONL persistence + broadcast
-        # bus) that the dashboard WebSocket subscribes to. Must exist
-        # before the plugin loader so the `web_chat` project (sensory +
-        # reply tentacle) can pick it up via deps. Built regardless of
-        # `web_chat.enabled` so the dashboard can still display the
-        # existing transcript in monitor-only mode.
-        #
         # Each plugin's config lives at
         # <plugin_configs_root>/<name>/config.yaml. Same root as the
         # plugin folders themselves (workspace/plugins/) so user config
@@ -195,15 +187,6 @@ class Runtime:
         plugin_root = Path(deps.plugin_configs_root
                             or "workspace/plugins")
         self._plugin_configs_root = plugin_root
-        # Web chat history path comes from the plugin's own config
-        # file. Read here ad-hoc because the WebChatHistory must exist
-        # BEFORE plugin discovery so the dashboard's WebSocket can
-        # subscribe to it.
-        from src.interfaces.plugin_context import load_plugin_config
-        wc_cfg = load_plugin_config("web_chat", plugin_root)
-        chat_path = wc_cfg.get("history_path",
-                                   "workspace/data/web_chat.jsonl")
-        self.web_chat_history = WebChatHistory(chat_path)
 
         # Sensory ownership lives on ``self.buffer`` (see
         # src/runtime/stimulus_buffer.py). The buffer is the single
@@ -224,6 +207,21 @@ class Runtime:
         # docs/design/reflects-and-self-model.md (Samuel 2026-04-26).
         # Has to run AFTER the three registries exist (above) because
         # one plugin may register into any of them.
+        # Bring up log + events + config paths BEFORE plugin registration
+        # so the dashboard plugin (which pulls a runtime ref via
+        # ctx.services["runtime"]) sees a runtime with the fields it
+        # needs at sensory.start() time.
+        self.log = logger or HeartbeatLogger()
+        self.sleep_log_dir = "workspace/logs"
+        self.events = event_bus or EventBus()
+        self._config_path = deps.config_path  # for dashboard settings page
+        self._backup_dir = deps.backup_dir or "workspace/backups"
+        # Per-run ring buffer of assembled heartbeat prompts for the
+        # dashboard Prompts tab. Hardcoded size — was tied to
+        # config.dashboard.prompt_log_size which is gone now that the
+        # dashboard owns its own per-plugin config.
+        self._prompt_log: deque[dict[str, Any]] = deque(maxlen=50)
+
         from src.runtime.plugins.plugin_registrar import PluginRegistrar
         self._plugin_registrar = PluginRegistrar(
             config=self.config,
@@ -231,11 +229,12 @@ class Runtime:
             tentacles=self.tentacles,
             sensories=self.buffer,
             services={
+                "runtime": self,
                 "gm": self.gm,
                 "kb_registry": self.kb_registry,
                 "embedder": self.embedder,
                 "buffer": self.buffer,
-                "web_chat_history": getattr(self, "web_chat_history", None),
+                "events": self.events,
                 "config": self.config,
                 "build_code_runner": self._build_code_runner,
             },
@@ -288,17 +287,6 @@ class Runtime:
         self._classify_tasks: list[asyncio.Task] = []
         self._last_node_count = 0
         self._last_edge_count = 0
-        self.log = logger or HeartbeatLogger()
-        self.sleep_log_dir = "workspace/logs"
-        self.events = event_bus or EventBus()
-        self._config_path = deps.config_path  # for dashboard settings page
-        self._backup_dir = deps.backup_dir or "workspace/backups"
-
-        # Dashboard server composition — owns start/stop lifecycle +
-        # the on_user_message + on_restart callback wiring. server is
-        # ``None`` until start_if_enabled() runs and binds successfully.
-        from src.runtime.dashboard.dashboard_lifecycle import DashboardLifecycle
-        self._dashboard = DashboardLifecycle(self)
 
         # Hypothalamus side-effects executor — pure composition over
         # the same five collaborators (tentacles, batch_tracker, buffer,
@@ -320,12 +308,6 @@ class Runtime:
         # nothing in its phase methods sees a half-constructed Runtime.
         from src.runtime.heartbeat.heartbeat_orchestrator import HeartbeatOrchestrator
         self._orchestrator = HeartbeatOrchestrator(self)
-
-        # Per-run ring buffer of assembled heartbeat prompts for the
-        # dashboard Prompts tab. Size from config; not persisted.
-        dash_cfg = getattr(self.config, "dashboard", None)
-        _pl_size = getattr(dash_cfg, "prompt_log_size", 20) if dash_cfg else 20
-        self._prompt_log: deque[dict[str, Any]] = deque(maxlen=max(1, _pl_size))
 
         # Phase 2 (2026-04-26): all plugins go through the registrar.
         # The PluginInfo list lets the dashboard's loaded_plugin_report()
@@ -389,8 +371,11 @@ class Runtime:
         await self.gm.initialize()
         await self._preflight_sandbox()
         await self._refine_bootstrap_from_data()
+        # buffer.start_all() walks every registered sensory and calls its
+        # start(); the dashboard plugin's sensory uses that hook to spin
+        # up the Web UI server. No special-case "start dashboard" path —
+        # dashboard is just a sensory like any other.
         await self.buffer.start_all()
-        await self._maybe_start_dashboard()
 
         if self.is_setup_mode:
             await self._run_setup_mode()
@@ -413,25 +398,25 @@ class Runtime:
                 t.cancel()
 
     async def _run_setup_mode(self) -> None:
-        """Setup-mode loop: dashboard is up, heartbeat is skipped.
+        """Setup-mode loop: dashboard is up (if enabled in plugins),
+        heartbeat is skipped.
 
         Idle here until the user signals stop (Ctrl-C / kill / a
-        dashboard /api/restart). This gives the Web UI a process to
-        live in while the user fills in the missing providers + tags
-        + ``core_purposes.self_thinking`` binding.
+        dashboard /api/restart). The dashboard plugin must be in
+        ``config.plugins`` for the user to actually have a Web UI to
+        edit config in; otherwise the user has to edit config.yaml on
+        disk directly.
         """
-        host = self.config.dashboard.host
-        port = self.config.dashboard.port
         msg = (
             "\n=========================================================\n"
             "  Krakey is in SETUP MODE.\n\n"
             "  No `core_purposes.self_thinking` tag binding found in\n"
-            "  config.yaml — the heartbeat is paused. Open the Web UI\n"
-            "  to finish setup:\n\n"
-            f"      http://{host}:{port}\n\n"
-            "  Then in the LLM section: add a provider, define a tag,\n"
-            "  bind core_purposes.self_thinking + embedding. Save +\n"
-            "  Restart. The next boot will run the real heartbeat.\n"
+            "  config.yaml — the heartbeat is paused. Edit config.yaml:\n\n"
+            "      1. Make sure 'dashboard' is in your plugins: list\n"
+            "         (so you have a Web UI to edit settings in).\n"
+            "      2. In the LLM section: add a provider, define a tag,\n"
+            "         bind core_purposes.self_thinking + embedding.\n"
+            "      3. Save + Restart.\n"
             "=========================================================\n"
         )
         self.log.runtime_error(msg)
@@ -553,14 +538,11 @@ class Runtime:
             self.log.hb("bootstrap mode: empty GM + KBs → injecting GENESIS")
 
     async def close(self) -> None:
-        """Shut down persistent resources (Dashboard + GM + open KBs)."""
-        await self._dashboard.stop()
+        """Shut down persistent resources (GM + open KBs). Sensories
+        — including the dashboard plugin's server — are stopped via
+        ``buffer.stop_all()`` in ``run()``'s finally block."""
         await self.kb_registry.close_all()
         await self.gm.close()
-
-    async def _maybe_start_dashboard(self) -> None:
-        # Facade — lifecycle lives in DashboardLifecycle.
-        await self._dashboard.start_if_enabled()
 
     # ---------- heartbeat algorithm ----------
 

@@ -1,9 +1,13 @@
 """Krakey → web chat outbound reply tentacle.
 
 No LLM — Hypothalamus already crafted the text; this tentacle just
-persists + broadcasts it. Returns success/failure as feedback.
-Failure preserves the underlying error message and is marked
-adrenalin so Self knows to react.
+persists + broadcasts it to the connected chat clients. Returns
+success/failure as feedback. Failure preserves the underlying error
+message and is marked adrenalin so Self knows to react.
+
+Lives with the dashboard plugin because the embedded chat UI is part
+of the dashboard bundle. Runtime never references this tentacle by
+name.
 """
 from __future__ import annotations
 
@@ -18,7 +22,7 @@ class _HistoryLike(Protocol):
     async def append(self, sender: str, content: str) -> Any: ...
 
 
-class WebChatTentacle(Tentacle):
+class WebChatReplyTentacle(Tentacle):
     def __init__(self, history: _HistoryLike):
         self._history = history
 
@@ -36,9 +40,8 @@ class WebChatTentacle(Tentacle):
     def parameters_schema(self) -> dict[str, Any]:
         return {"text": "message body (defaults to intent)"}
 
-
     async def execute(self, intent: str,
-                        params: dict[str, Any]) -> Stimulus:
+                      params: dict[str, Any]) -> Stimulus:
         text = (params.get("text") or intent or "").strip()
         if not text:
             return self._stim("Empty message body; nothing sent.")

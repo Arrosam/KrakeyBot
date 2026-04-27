@@ -84,7 +84,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         f"{tempfile.mkdtemp(prefix='krakey_test_im_')}/in_mind.json"
     )
     from src.models.config import (
-        Config, DashboardSection, FatigueSection, GraphMemorySection,
+        Config, FatigueSection, GraphMemorySection,
         HibernateSection, KnowledgeBaseSection, LLMParams, LLMSection,
         Provider, SafetySection, SleepSection, TagBinding,
     )
@@ -112,24 +112,22 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         fatigue=FatigueSection(gm_node_soft_limit=200,
                                 force_sleep_threshold=120,
                                 thresholds={}),
-        # Test convenience: opt into both built-in Reflect plugins
-        # when the caller didn't say otherwise. Stored under
-        # `Config.plugins` (the unified field, post Samuel
-        # 2026-04-26). Tests on the zero-plugin path pass
-        # ``reflects=[]`` to opt out explicitly.
-        # All plugins go through `Config.plugins` post Phase 2.
-        # Default helper turns on the historical convenience set:
-        # both default Reflects + the web_chat (sensory + tentacle)
-        # and memory_recall (tentacle) plugins. Tests on the
-        # zero-plugin path pass `reflects=[]` to opt out.
+        # Test convenience: opt into the historical default plugin set
+        # when the caller didn't say otherwise. Tests on the zero-plugin
+        # path pass ``reflects=[]`` to opt out explicitly.
+        #
+        # The dashboard plugin is included so the web_chat_reply
+        # tentacle is registered (existing tests dispatch to it). Its
+        # per-plugin config (planted below) sets port=0 so the Web UI
+        # server never binds — only the sensory + tentacle live.
         plugins=(
             list(reflects)
             if reflects is not None
             else [
                 "default_hypothalamus",
                 "default_recall_anchor",
-                "web_chat",
                 "memory_recall",
+                "dashboard",
             ]
         ),
         graph_memory=GraphMemorySection(
@@ -141,7 +139,6 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
                               min_community_size=1),
         safety=SafetySection(gm_node_hard_limit=500,
                                max_consecutive_no_action=50),
-        dashboard=DashboardSection(enabled=False),
     )
     # Pre-cache the LLMClient slots that plugins will resolve through
     # ctx.get_llm_for_tag. We point the helper's "_test_default" tag at
@@ -162,15 +159,18 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     Path(plugin_configs_dir, "default_hypothalamus", "config.yaml").write_text(
         "llm_purposes:\n  translator: _test_default\n", encoding="utf-8",
     )
-    # web_chat plugin's per-plugin config (history path → tmpdir so
-    # tests don't write to workspace/data/web_chat.jsonl). MUST be
-    # planted before Runtime construction because Runtime.__init__
-    # reads it before plugin discovery runs.
-    Path(plugin_configs_dir, "web_chat").mkdir(
+    # Dashboard plugin (which now owns the embedded web chat). Plant
+    # config that:
+    #   * points history at a tmpdir so tests don't pollute
+    #     workspace/data/web_chat.jsonl
+    #   * sets port=0 so the dashboard's sensory.start() short-circuits
+    #     before binding a port (no flaky port conflicts in tests)
+    Path(plugin_configs_dir, "dashboard").mkdir(
         parents=True, exist_ok=True,
     )
-    Path(plugin_configs_dir, "web_chat", "config.yaml").write_text(
-        f"history_path: {chat_dir}/chat.jsonl\n", encoding="utf-8",
+    Path(plugin_configs_dir, "dashboard", "config.yaml").write_text(
+        f"port: 0\nhistory_path: {chat_dir}/chat.jsonl\n",
+        encoding="utf-8",
     )
 
     deps = RuntimeDeps(

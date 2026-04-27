@@ -15,7 +15,7 @@ Passed to ``build_<component>(ctx)`` for every plugin kind
     + secrets stay in Runtime; plugin only ever holds the resolved
     client object.
   * ``ctx.services`` — Runtime-built resources whitelisted for
-    plugin use (gm, kb_registry, embedder, web_chat_history, ...).
+    plugin use (gm, kb_registry, embedder, runtime, ...).
   * ``ctx.plugin_cache`` — per-plugin scratch dict for sharing
     instances across multi-component plugins (e.g. telegram's
     sensory + tentacle share an HttpTelegramClient via this).
@@ -48,7 +48,7 @@ class PluginContext:
     plugin_name: str
     config: dict[str, Any] = field(default_factory=dict)
     # Whitelisted Runtime-built resources (gm, kb_registry, embedder,
-    # buffer, web_chat_history, build_code_runner, ...). Populated by
+    # buffer, runtime, build_code_runner, ...). Populated by
     # Runtime when building the ctx so plugins don't have to grab
     # unrestricted Runtime references.
     services: dict[str, Any] = field(default_factory=dict)
