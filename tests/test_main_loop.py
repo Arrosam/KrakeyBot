@@ -87,13 +87,12 @@ async def test_hypothalamus_error_pushes_system_event_stimulus():
     await runtime.run(iterations=1)
 
     stims = runtime.buffer.drain()
-    hypo_errs = [s for s in stims
-                 if s.type == "system_event"
-                 and s.source == "system:hypothalamus"]
-    assert hypo_errs, "no hypothalamus error stimulus pushed"
-    assert hypo_errs[0].adrenalin is True
-    assert "could not be translated" in hypo_errs[0].content.lower() \
-        or "hypothalamus" in hypo_errs[0].content.lower()
+    decision_errs = [s for s in stims
+                     if s.type == "system_event"
+                     and s.source == "system:decision"]
+    assert decision_errs, "no decision-dispatch error stimulus pushed"
+    assert decision_errs[0].adrenalin is True
+    assert "could not be translated" in decision_errs[0].content.lower()
 
 
 async def test_tentacle_feedback_does_not_inherit_adrenalin_from_hypothalamus():

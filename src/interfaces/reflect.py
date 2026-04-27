@@ -1,27 +1,20 @@
 """Reflect plugin interface — protocols + registry.
 
 Sibling to ``sensory.py`` and ``tentacle.py``: defines the contract
-runtime depends on and the registry it stores instances in. Concrete
-Reflects live under ``src/plugins/builtin/default_*/``.
+the runtime depends on and the registry it stores instances in.
+Concrete Reflects live under ``src/plugins/<plugin>/``.
 
-A Reflect listens at heartbeat boundaries (``on_heartbeat_start`` /
-``on_heartbeat_end``) and can implement one or more ``kind``-specific
-hooks that replace or augment a runtime mechanism:
+Each Reflect declares a ``role`` string. The registry rejects a
+second registration claiming an already-taken role: roles are
+unique. The runtime does not interpret role names — it just looks
+up a role and calls its protocol-specific methods. Plugins free to
+mint new role names; they only collide with each other if they
+chose the same string.
 
-  * ``kind="hypothalamus"`` — translates Self's natural-language
-    ``[DECISION]`` into structured tentacle calls.
-  * ``kind="recall_anchor"`` — produces the per-beat recall instance
-    used to populate ``[GRAPH MEMORY]``.
-  * ``kind="in_mind"`` — owns the persistent thoughts/mood/focus
-    state Self can update each beat.
-
-Multiple Reflects of the same ``kind`` are allowed; they execute in
-registration order (``config.yaml`` ordering wins). Chain semantics
-are kind-specific — see each kind's dispatch helper below.
-
-Protocols (vs ABCs) so concrete classes don't have to inherit
-anything; structural typing keeps plugin code free of interface
-imports it doesn't need.
+Optional advisory protocols below (HypothalamusReflect, ...) document
+the method shapes the runtime expects when a particular role is
+used. Reflects don't have to inherit from them — structural typing
+keeps plugin code free of interface imports it doesn't need.
 """
 from __future__ import annotations
 
@@ -39,10 +32,9 @@ if TYPE_CHECKING:
 
 @dataclass
 class TentacleCall:
-    """Structured tentacle invocation produced by a hypothalamus
-    Reflect's ``translate()``. Consumed by ``Runtime._dispatch`` and
-    by the script-only action executor (when no hypothalamus is
-    registered)."""
+    """Structured tentacle invocation produced by a decision-translator
+    Reflect's ``translate()``. Consumed by the dispatcher and by the
+    script-only action executor (when no translator is registered)."""
     tentacle: str
     intent: str
     params: dict[str, Any] = field(default_factory=dict)
@@ -51,9 +43,11 @@ class TentacleCall:
 
 @dataclass
 class HypothalamusResult:
-    """Aggregate result of one hypothalamus translation pass: the
-    tentacle calls to dispatch, plus any memory side-effects and the
-    sleep flag."""
+    """Aggregate result of one decision-translation pass: the tentacle
+    calls to dispatch, plus any memory side-effects and the sleep flag.
+
+    Name kept for back-compat; will be renamed when the dispatcher
+    naming cleanup lands."""
     tentacle_calls: list[TentacleCall] = field(default_factory=list)
     memory_writes: list[dict[str, Any]] = field(default_factory=list)
     memory_updates: list[dict[str, Any]] = field(default_factory=list)
@@ -62,44 +56,29 @@ class HypothalamusResult:
 
 @dataclass
 class HeartbeatContext:
-    """Bundle passed to ``on_heartbeat_start`` / ``on_heartbeat_end``.
-
-    Carries enough runtime references that a Reflect can read state
-    or schedule side effects without needing the whole Runtime as
-    an opaque parameter. Kept intentionally small — Reflects that
-    need more should accept a dedicated ``runtime`` reference at
-    construction time, not via this context.
-    """
+    """Bundle passed to ``on_heartbeat_start`` / ``on_heartbeat_end``."""
     heartbeat_id: int
     phase: str  # "start" | "end"
 
 
 # --------------------------------------------------------------------
-# Protocols — Reflect shapes the runtime depends on
+# Protocols — Reflect shapes (advisory; runtime uses by_role lookup)
 # --------------------------------------------------------------------
 
 
 @runtime_checkable
 class Reflect(Protocol):
-    """Base shape — every Reflect has a name + kind."""
+    """Base shape — every Reflect has a name + role."""
     name: str
-    kind: str  # "hypothalamus" | "recall_anchor" | "in_mind" | ...
+    role: str
 
 
 @runtime_checkable
 class HypothalamusReflect(Protocol):
-    """A Reflect that translates Self's [DECISION] text into structured
-    tentacle calls. Kind = "hypothalamus".
-
-    Multi-Reflect chain semantics (when more than one is registered):
-    each subsequent Reflect can post-process the prior result; the
-    chain dispatch in ``ReflectRegistry.translate`` defines the
-    composition. The skeleton supports length-1 chains only; chain
-    composition is finalized when Reflect #1 (toggle-able
-    Hypothalamus + executor engine) lands.
-    """
+    """Optional shape advised for Reflects that translate Self's
+    [DECISION] text into structured tentacle calls."""
     name: str
-    kind: str  # always "hypothalamus"
+    role: str
 
     async def translate(
         self, decision: str, tentacles: list[dict[str, Any]],
@@ -108,49 +87,20 @@ class HypothalamusReflect(Protocol):
 
 @runtime_checkable
 class RecallAnchorReflect(Protocol):
-    """A Reflect that builds the per-beat recall instance. Kind =
-    "recall_anchor".
-
-    The default in-tree Reflect wraps the existing scripted
-    ``IncrementalRecall`` factory. A future LLM-anchor Reflect
-    (Reflect #2) will produce a Recall driver that pre-extracts
-    anchors from stimuli/history before running vec_search.
-
-    The factory shape (``make_recall(runtime)``) preserves the
-    existing per-run lifecycle: Runtime instantiates one Recall at
-    ``run()`` start and re-instantiates whenever budget enforcement
-    requires a fresh re-recall.
-    """
+    """Optional shape advised for Reflects that build the per-beat
+    recall instance."""
     name: str
-    kind: str  # always "recall_anchor"
+    role: str
 
     def make_recall(self, runtime: Any) -> "IncrementalRecall": ...
 
 
 @runtime_checkable
 class InMindReflect(Protocol):
-    """A Reflect that owns Self's persistent "in-mind" state — the
-    three short fields (``thoughts`` / ``mood`` / ``focus``) that
-    capture what Self currently has at the front of its mental
-    workspace. Kind = "in_mind".
-
-    Architecture (see docs/design/reflects-and-self-model.md
-    Reflect #3):
-
-      * ``read()`` returns the current state dict; consumed by the
-        prompt builder which prepends a "Heartbeat #now (in mind)"
-        virtual round at the head of ``[HISTORY]``.
-      * ``update(thoughts=, mood=, focus=)`` patches state and
-        persists. ``None`` for a field = leave alone; empty string =
-        clear; non-empty string = set.
-
-    The companion ``update_in_mind`` tentacle is contributed as a
-    sibling component in ``meta.yaml``; the two share the reflect
-    instance via ``ctx.plugin_cache`` rather than the reflect
-    reaching into the runtime to register the tentacle itself.
-    """
+    """Optional shape advised for Reflects that own Self's persistent
+    in-mind state (thoughts / mood / focus)."""
     name: str
-    kind: str  # always "in_mind"
+    role: str
 
     def read(self) -> dict[str, str]: ...
 
@@ -163,85 +113,77 @@ class InMindReflect(Protocol):
 
 
 # --------------------------------------------------------------------
-# Registry — ordered storage + kind-specific dispatch
+# Registry — role-keyed, role-unique
 # --------------------------------------------------------------------
 
 
 class ReflectRegistry:
-    """Ordered, kind-grouped registry for Reflects.
+    """Role-keyed registry for Reflects.
 
-    Order within a kind = registration order. ``register`` appends
-    to the kind's list; chain dispatch iterates the list head-to-tail.
+    Each role is held by at most one Reflect. Registering a second
+    Reflect with the same role raises — the runtime can't reasonably
+    decide which one to use, so the user has to fix the conflict in
+    config.
+
+    The registry is intentionally narrow: the runtime queries by role
+    string (``by_role("hypothalamus")``), checks existence
+    (``has_role(...)``), or iterates everything (``all()``). It does
+    NOT interpret role names or know what methods exist for any
+    particular role — that's the caller's responsibility.
     """
 
     def __init__(self):
-        self._by_kind: dict[str, list[Reflect]] = {}
+        self._by_role: dict[str, Reflect] = {}
+        self._order: list[str] = []  # registration order, for `all()`
 
     # ---- registration ------------------------------------------------
 
     def register(self, reflect: Reflect) -> None:
-        """Append a Reflect to its kind's chain."""
-        if not getattr(reflect, "kind", None):
+        """Register a Reflect under its declared role. Raises if the
+        role is already taken or the reflect is missing required
+        attributes."""
+        role = getattr(reflect, "role", None)
+        name = getattr(reflect, "name", None)
+        if not role:
             raise ValueError(
-                f"Reflect {reflect!r} missing required `kind` attribute"
+                f"Reflect {reflect!r} missing required `role` attribute"
             )
-        if not getattr(reflect, "name", None):
+        if not name:
             raise ValueError(
                 f"Reflect {reflect!r} missing required `name` attribute"
             )
-        self._by_kind.setdefault(reflect.kind, []).append(reflect)
+        if role in self._by_role:
+            existing = self._by_role[role]
+            raise ValueError(
+                f"role {role!r} already claimed by Reflect "
+                f"{existing.name!r}; cannot register {name!r}"
+            )
+        self._by_role[role] = reflect
+        self._order.append(role)
 
-    def by_kind(self, kind: str) -> list[Reflect]:
-        """All Reflects of a given kind, in registration order."""
-        return list(self._by_kind.get(kind, []))
+    # ---- lookup ------------------------------------------------------
 
-    def names(self, kind: str | None = None) -> list[str]:
-        """Names of all registered Reflects (optionally filtered by kind).
-        Used by /status and dashboard display."""
-        if kind is not None:
-            return [r.name for r in self._by_kind.get(kind, [])]
-        return [r.name for kind_list in self._by_kind.values()
-                 for r in kind_list]
+    def by_role(self, role: str) -> Reflect | None:
+        """The Reflect for ``role``, or ``None`` if no Reflect has
+        claimed it."""
+        return self._by_role.get(role)
+
+    def has_role(self, role: str) -> bool:
+        return role in self._by_role
+
+    def roles(self) -> list[str]:
+        """All claimed role names, in registration order."""
+        return list(self._order)
+
+    def names(self) -> list[str]:
+        """All registered Reflect names, in registration order."""
+        return [self._by_role[r].name for r in self._order]
 
     def all(self) -> list[Reflect]:
-        """Snapshot of every registered Reflect across all kinds, in
-        registration order within each kind. Used by observers (e.g.
-        the dashboard plugin report) that don't care about the
-        kind-grouping."""
-        return [r for kind_list in self._by_kind.values()
-                for r in kind_list]
+        """All registered Reflects, in registration order."""
+        return [self._by_role[r] for r in self._order]
 
-    # ---- kind-specific dispatch -------------------------------------
-
-    def has_hypothalamus(self) -> bool:
-        """Whether any kind=\"hypothalamus\" Reflect is registered.
-
-        Drives the prompt-layer suppression for ``[ACTION FORMAT]``:
-        when a hypothalamus Reflect is active it owns the translation
-        path, so teaching Self the structured-tag syntax would create
-        an interpretive conflict (Self would emit tags, Hypothalamus
-        would also try to translate them). Suppress the teaching
-        layer when Hypothalamus is on duty.
-        """
-        return bool(self._by_kind.get("hypothalamus"))
-
-    def in_mind_state(self) -> dict[str, str] | None:
-        """Snapshot of the in_mind state, or ``None`` if no in_mind
-        Reflect is registered (zero-plugin invariant — runtime keeps
-        working, prompt builder just won't insert the virtual
-        round / instruction layer).
-
-        Skeleton supports length-1 in_mind chain; multi-Reflect
-        in_mind composition isn't a real use case yet — if more than
-        one in_mind Reflect is registered, the FIRST one's state is
-        returned and a warning is logged on the chain rather than
-        raising (better to keep running with the first state than
-        crash).
-        """
-        chain = self._by_kind.get("in_mind") or []
-        if not chain:
-            return None
-        return chain[0].read()  # type: ignore[attr-defined]
+    # ---- lifecycle hook ---------------------------------------------
 
     def attach_all(self, runtime: Any) -> None:
         """One-time post-registration lifecycle hook.
@@ -257,105 +199,15 @@ class ReflectRegistry:
         """
         import logging
         log = logging.getLogger(__name__)
-        for kind_chain in self._by_kind.values():
-            for reflect in kind_chain:
-                attach = getattr(reflect, "attach", None)
-                if attach is None:
-                    continue
-                try:
-                    attach(runtime)
-                except Exception as e:  # noqa: BLE001
-                    log.warning(
-                        "Reflect %r attach() raised %s; continuing "
-                        "without its runtime hooks",
-                        getattr(reflect, "name", "?"), e,
-                    )
-
-    async def dispatch_decision(
-        self, self_text: str, decision: str,
-        tentacles: list[dict[str, Any]],
-    ) -> HypothalamusResult:
-        """Convert Self's response into structured tentacle calls.
-
-        Picks the path based on registration:
-          * hypothalamus Reflect registered → run translate (existing
-            LLM-based path; Self's decision is natural language).
-          * no hypothalamus Reflect → action executor parses
-            ``[ACTION]...[/ACTION]`` JSONL out of ``self_text``.
-
-        ``self_text`` is the raw Self LLM response; ``decision`` is
-        the parsed [DECISION] section. Hypothalamus uses ``decision``
-        (clean natural language); the action executor uses
-        ``self_text`` (the structured tags can appear anywhere).
-        """
-        chain = self._by_kind.get("hypothalamus") or []
-        if not chain:
-            return self._dispatch_via_executor(self_text)
-        if len(chain) > 1:
-            raise NotImplementedError(
-                "hypothalamus chain length > 1 — chain composition "
-                "semantics will land when Reflect #2 forces them. "
-                "For now only one hypothalamus Reflect at a time."
-            )
-        return await chain[0].translate(decision, tentacles)  # type: ignore[attr-defined]
-
-    def _dispatch_via_executor(self, self_text: str) -> HypothalamusResult:
-        """Parse [ACTION] JSONL, wrap as a HypothalamusResult so the
-        downstream call site doesn't care which path produced it.
-
-        action_executor is imported lazily to avoid a
-        ``runtime → interfaces → runtime`` import cycle.
-        """
-        from src.runtime.heartbeat.action_executor import parse_action_block
-
-        calls = parse_action_block(self_text)
-        return HypothalamusResult(
-            tentacle_calls=calls,
-            memory_writes=[], memory_updates=[], sleep=False,
-        )
-
-    # Back-compat alias used by tests written before dispatch_decision
-    # existed. Functionally equivalent to the hypothalamus-only path:
-    # this method ignores the executor route on purpose so legacy
-    # tests asserting "translate routes through hypothalamus chain"
-    # still mean what they meant.
-    async def translate(
-        self, decision: str, tentacles: list[dict[str, Any]],
-    ) -> HypothalamusResult:
-        chain = self._by_kind.get("hypothalamus") or []
-        if not chain:
-            raise RuntimeError(
-                "no hypothalamus Reflect registered — register one or "
-                "use dispatch_decision() to fall back to the executor"
-            )
-        if len(chain) > 1:
-            raise NotImplementedError(
-                "hypothalamus chain length > 1 — see dispatch_decision"
-            )
-        return await chain[0].translate(decision, tentacles)  # type: ignore[attr-defined]
-
-    def make_recall(self, runtime: Any) -> "IncrementalRecall":
-        """Build a fresh per-beat recall instance via the
-        ``recall_anchor`` chain.
-
-        **No registered Reflect → returns a ``NoopRecall``** (not an
-        exception). This is load-bearing per Samuel's 2026-04-25
-        principle: disabling any plugin must not break the runtime's
-        core loop. Without recall, Self heartbeats with an empty
-        ``[GRAPH MEMORY]`` layer — graceful degradation.
-
-        Skeleton supports length-1 chains only; multi-Reflect
-        composition lands when Reflect #2 forces semantics.
-        """
-        from src.memory.recall import NoopRecall
-
-        chain = self._by_kind.get("recall_anchor") or []
-        if not chain:
-            return NoopRecall()  # type: ignore[return-value]
-        if len(chain) > 1:
-            raise NotImplementedError(
-                "recall_anchor chain length > 1 — semantics will land "
-                "with Reflect #2 (LLM anchor extractor). For now only "
-                "the default built-in is allowed."
-            )
-        return chain[0].make_recall(runtime)  # type: ignore[attr-defined]
+        for reflect in self.all():
+            attach = getattr(reflect, "attach", None)
+            if attach is None:
+                continue
+            try:
+                attach(runtime)
+            except Exception as e:  # noqa: BLE001
+                log.warning(
+                    "Reflect %r attach() raised %s; continuing "
+                    "without its runtime hooks",
+                    getattr(reflect, "name", "?"), e,
+                )

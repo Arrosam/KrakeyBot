@@ -119,7 +119,7 @@ def test_discover_finds_builtin_meta_files():
     h = metas["default_hypothalamus"]
     assert len(h.components) >= 1
     refl_comp = next(c for c in h.components if c.kind == "reflect")
-    assert refl_comp.sub_kind == "hypothalamus"
+    assert refl_comp.role == "hypothalamus"
     assert refl_comp.factory_module == (
         "src.plugins.default_hypothalamus.reflect"
     )
@@ -172,7 +172,7 @@ def test_load_component_imports_and_calls_factory():
     )
     r = load_component(refl_comp, ctx)
     assert r is not None
-    assert r.kind == "hypothalamus"
+    assert r.role == "hypothalamus"
     assert r.name == "default_hypothalamus"
 
 
@@ -213,7 +213,7 @@ async def test_runtime_warns_when_reflects_field_is_none(tmp_path, capsys):
         gm_path=str(tmp_path / "gm.sqlite"),
         reflects=[],  # helper preset; we'll simulate the None case below
     )
-    runtime.reflects._by_kind.clear()
+    runtime.reflects._by_role.clear(); runtime.reflects._order.clear()
     runtime.config.plugins = None
     capsys.readouterr()  # discard prior output
 
@@ -230,7 +230,7 @@ async def test_runtime_skips_unknown_reflect_names_loudly(tmp_path, capsys):
         gm_path=str(tmp_path / "gm.sqlite"),
         reflects=[],
     )
-    runtime.reflects._by_kind.clear()
+    runtime.reflects._by_role.clear(); runtime.reflects._order.clear()
     runtime.config.plugins = [
         "default_recall_anchor", "typo_reflect", "default_hypothalamus",
     ]

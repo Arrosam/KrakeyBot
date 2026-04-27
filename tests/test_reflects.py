@@ -1,19 +1,17 @@
-"""Reflect protocol + registry skeleton tests.
+"""Reflect protocol + registry tests.
 
-The 2026-04-25 skeleton wraps the existing Hypothalamus +
-IncrementalRecall factory as default built-in Reflects, with no
-behavior change. These tests pin:
-  * Built-ins implement their kind's Protocol structurally.
-  * Registry preserves registration order per kind.
-  * Length-1 chain dispatch matches what the equivalent direct call
-    would have produced.
-  * Length >1 chains raise NotImplementedError until the multi-Reflect
-    composition lands with Reflect #1 / #2.
-  * Bad Reflects (missing name/kind) are rejected at register-time
-    rather than blowing up at dispatch-time.
+Pins:
+  * Built-ins implement the role contract (each declares a unique
+    role string).
+  * Registry is role-keyed; second registration claiming the same
+    role raises.
+  * Runtime auto-registers the default reflects.
+  * Prompt suppression: [ACTION FORMAT] layer is included iff no
+    Reflect has claimed role="hypothalamus".
 """
 import json
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -22,11 +20,6 @@ from src.interfaces.reflect import (
     Reflect, ReflectRegistry,
 )
 from src.memory.recall import IncrementalRecall
-# Tests legitimately need to instantiate the Reflect classes; importing
-# them via their full module path is fine — we're not violating the
-# "no code load before user enables" rule because tests are not the
-# Web UI / config-form scan path. Production discovery still goes
-# through src.plugin_system.load_component.
 from src.plugins.default_hypothalamus.reflect import (
     DefaultHypothalamusReflect,
 )
@@ -45,7 +38,7 @@ def test_default_hypothalamus_satisfies_protocol():
     r = DefaultHypothalamusReflect(ScriptedLLM([]))
     assert isinstance(r, Reflect)
     assert isinstance(r, HypothalamusReflect)
-    assert r.kind == "hypothalamus"
+    assert r.role == "hypothalamus"
     assert r.name == "default_hypothalamus"
 
 
@@ -53,139 +46,72 @@ def test_default_recall_anchor_satisfies_protocol():
     r = DefaultRecallAnchorReflect()
     assert isinstance(r, Reflect)
     assert isinstance(r, RecallAnchorReflect)
-    assert r.kind == "recall_anchor"
+    assert r.role == "recall_anchor"
     assert r.name == "default_recall_anchor"
 
 
-# ---- registry registration --------------------------------------------
+# ---- registry --------------------------------------------------------
 
 
-def test_registry_groups_by_kind():
+def test_registry_keys_by_role():
     reg = ReflectRegistry()
     h = DefaultHypothalamusReflect(ScriptedLLM([]))
     r = DefaultRecallAnchorReflect()
     reg.register(h)
     reg.register(r)
 
-    assert reg.by_kind("hypothalamus") == [h]
-    assert reg.by_kind("recall_anchor") == [r]
-    assert reg.by_kind("nonexistent") == []
+    assert reg.by_role("hypothalamus") is h
+    assert reg.by_role("recall_anchor") is r
+    assert reg.by_role("nonexistent") is None
+    assert reg.has_role("hypothalamus") is True
+    assert reg.has_role("nonexistent") is False
 
 
-def test_registry_preserves_registration_order_within_a_kind():
-    """Same-kind chain order = registration order. This is the
-    contract Samuel locked: config.yaml's order IS execution order."""
+def test_registry_rejects_duplicate_role():
+    """Two Reflects claiming the same role is a startup error — the
+    runtime can't pick which one to use."""
     reg = ReflectRegistry()
 
     class A:
-        name, kind = "a", "hypothalamus"
-        async def translate(self, decision, tentacles):
-            return HypothalamusResult()
+        name, role = "a", "hypothalamus"
 
     class B:
-        name, kind = "b", "hypothalamus"
-        async def translate(self, decision, tentacles):
-            return HypothalamusResult()
+        name, role = "b", "hypothalamus"
 
-    a, b = A(), B()
-    reg.register(a)
-    reg.register(b)
-    assert reg.by_kind("hypothalamus") == [a, b]
+    reg.register(A())
+    with pytest.raises(ValueError, match="role.*already claimed"):
+        reg.register(B())
 
 
-def test_registry_rejects_missing_name_or_kind():
+def test_registry_rejects_missing_name_or_role():
     reg = ReflectRegistry()
 
-    class NoKind:
+    class NoRole:
         name = "x"
-        kind = ""
+        role = ""
 
     class NoName:
         name = ""
-        kind = "hypothalamus"
+        role = "hypothalamus"
 
-    with pytest.raises(ValueError, match="kind"):
-        reg.register(NoKind())
+    with pytest.raises(ValueError, match="role"):
+        reg.register(NoRole())
     with pytest.raises(ValueError, match="name"):
         reg.register(NoName())
 
 
-def test_registry_names_listing():
+def test_registry_iteration_in_registration_order():
     reg = ReflectRegistry()
-    reg.register(DefaultHypothalamusReflect(ScriptedLLM([])))
-    reg.register(DefaultRecallAnchorReflect())
-    assert set(reg.names()) == {
-        "default_hypothalamus", "default_recall_anchor",
-    }
-    assert reg.names("hypothalamus") == ["default_hypothalamus"]
-    assert reg.names("recall_anchor") == ["default_recall_anchor"]
+    h = DefaultHypothalamusReflect(ScriptedLLM([]))
+    r = DefaultRecallAnchorReflect()
+    reg.register(r)
+    reg.register(h)
+    assert reg.roles() == ["recall_anchor", "hypothalamus"]
+    assert reg.all() == [r, h]
+    assert reg.names() == ["default_recall_anchor", "default_hypothalamus"]
 
 
-# ---- dispatch ---------------------------------------------------------
-
-
-async def test_translate_dispatches_through_default_hypothalamus():
-    """Length-1 chain: registry.translate() returns exactly what the
-    underlying default Reflect would have returned via direct call."""
-    reg = ReflectRegistry()
-    fake_llm = ScriptedLLM([json.dumps({
-        "tentacle_calls": [{"tentacle": "search",
-                            "intent": "find weather",
-                            "params": {"q": "today"},
-                            "adrenalin": False}],
-        "memory_writes": [], "memory_updates": [], "sleep": False,
-    })])
-    reg.register(DefaultHypothalamusReflect(fake_llm))
-
-    result = await reg.translate("check weather", [
-        {"name": "search", "description": "web search",
-         "parameters_schema": {}},
-    ])
-    assert len(result.tentacle_calls) == 1
-    assert result.tentacle_calls[0].tentacle == "search"
-
-
-async def test_translate_raises_when_no_hypothalamus_registered():
-    reg = ReflectRegistry()
-    reg.register(DefaultRecallAnchorReflect())  # wrong kind
-    with pytest.raises(RuntimeError, match="hypothalamus"):
-        await reg.translate("x", [])
-
-
-async def test_translate_raises_on_chain_length_above_one():
-    """Skeleton-phase guardrail: multi-Reflect composition is
-    deliberately deferred. Two same-kind Reflects must be a loud
-    failure until Reflect #1 lands proper chain semantics."""
-    reg = ReflectRegistry()
-    reg.register(DefaultHypothalamusReflect(ScriptedLLM([])))
-    reg.register(DefaultHypothalamusReflect(ScriptedLLM([])))
-    with pytest.raises(NotImplementedError, match="chain length"):
-        await reg.translate("x", [])
-
-
-async def test_make_recall_dispatches_through_default(tmp_path):
-    """Registry.make_recall returns an IncrementalRecall with the same
-    knobs the direct factory used to set."""
-    runtime = build_runtime_with_fakes(
-        self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
-        gm_path=str(tmp_path / "gm.sqlite"),
-    )
-    await runtime.gm.initialize()
-
-    rec = runtime.reflects.make_recall(runtime)
-    assert isinstance(rec, IncrementalRecall)
-    # Knobs match the runtime's config slots.
-    assert rec.per_k == runtime.config.graph_memory.recall_per_stimulus_k
-    assert rec.recall_token_budget == (
-        (runtime.config.llm.core_params("self_thinking")
-         .recall_token_budget)
-    )
-    assert rec.neighbor_depth == (
-        runtime.config.graph_memory.neighbor_expand_depth
-    )
-
-
-# ---- runtime integration ---------------------------------------------
+# ---- runtime integration --------------------------------------------
 
 
 async def test_runtime_registers_default_reflects(tmp_path):
@@ -195,17 +121,14 @@ async def test_runtime_registers_default_reflects(tmp_path):
     )
     assert "default_hypothalamus" in runtime.reflects.names()
     assert "default_recall_anchor" in runtime.reflects.names()
-    # And only those two — no surprise extras.
-    assert set(runtime.reflects.names()) == {
-        "default_hypothalamus", "default_recall_anchor",
-    }
+    # Roles registered:
+    assert runtime.reflects.has_role("hypothalamus")
+    assert runtime.reflects.has_role("recall_anchor")
 
 
 async def test_runtime_no_longer_holds_hypothalamus_attribute(tmp_path):
-    """Regression: Runtime used to expose `self.hypothalamus`. After
-    the skeleton refactor it goes through `self.reflects.translate(...)`.
-    Tests that imported `runtime.hypothalamus` should fail loudly so
-    we notice and migrate."""
+    """Regression: Runtime used to expose `self.hypothalamus`. Now it's
+    looked up via reflects.by_role("hypothalamus")."""
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
@@ -213,81 +136,24 @@ async def test_runtime_no_longer_holds_hypothalamus_attribute(tmp_path):
     assert not hasattr(runtime, "hypothalamus")
 
 
-# ---- has_hypothalamus + dispatch_decision routing -------------------
-
-
-def test_has_hypothalamus_reports_registration():
-    reg = ReflectRegistry()
-    assert reg.has_hypothalamus() is False
-    reg.register(DefaultRecallAnchorReflect())
-    assert reg.has_hypothalamus() is False  # different kind
-    reg.register(DefaultHypothalamusReflect(ScriptedLLM([])))
-    assert reg.has_hypothalamus() is True
-
-
-async def test_dispatch_decision_uses_hypothalamus_when_registered():
-    """With a hypothalamus Reflect, Self's natural-language decision is
-    translated by the LLM (existing behavior). The action executor
-    path is bypassed entirely."""
-    reg = ReflectRegistry()
-    reg.register(DefaultHypothalamusReflect(ScriptedLLM([json.dumps({
-        "tentacle_calls": [{"tentacle": "search",
-                            "intent": "find weather",
-                            "params": {"q": "today"},
-                            "adrenalin": False}],
-        "memory_writes": [], "memory_updates": [], "sleep": False,
-    })])))
-    raw = "[DECISION]\nLook up the weather.\n[ACTION]\n{\"name\":\"ignored\"}\n[/ACTION]"
-    result = await reg.dispatch_decision(raw, "Look up the weather.", [])
-    # Hypothalamus output wins; the [ACTION] block in raw is ignored.
-    assert len(result.tentacle_calls) == 1
-    assert result.tentacle_calls[0].tentacle == "search"
-
-
-async def test_dispatch_decision_uses_executor_when_no_hypothalamus():
-    """Without any hypothalamus Reflect registered, dispatch parses
-    [ACTION] JSONL out of the raw Self response."""
-    reg = ReflectRegistry()  # nothing registered
-    raw = """[DECISION]
-greet user
-[ACTION]
-{"name": "web_chat_reply", "arguments": {"text": "Hi"}}
-[/ACTION]
-"""
-    result = await reg.dispatch_decision(raw, "greet user", [])
-    assert len(result.tentacle_calls) == 1
-    assert result.tentacle_calls[0].tentacle == "web_chat_reply"
-    assert result.tentacle_calls[0].params == {"text": "Hi"}
-
-
-async def test_dispatch_decision_executor_with_no_action_block_returns_empty():
-    """Self can write a [DECISION] without invoking any tentacle. The
-    executor returns zero calls — that's a valid 'just thinking' beat."""
-    reg = ReflectRegistry()
-    raw = "[DECISION]\nJust noting this for later.\n[NOTE]\nReflective beat.\n"
-    result = await reg.dispatch_decision(raw, "Just noting this", [])
-    assert result.tentacle_calls == []
-
-
-# ---- prompt-layer suppression ---------------------------------------
+# ---- prompt suppression --------------------------------------------
 
 
 async def test_prompt_includes_action_format_when_no_hypothalamus(tmp_path):
-    """Default state: no hypothalamus Reflect → Self prompt MUST
-    include the [ACTION FORMAT] block teaching the JSONL syntax."""
+    """No translator role registered → Self prompt MUST include the
+    [ACTION FORMAT] block teaching the JSONL syntax."""
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
     )
-    # Strip the auto-registered default hypothalamus to put the runtime
-    # in the "Reflect #1 default OFF" state.
-    runtime.reflects._by_kind.pop("hypothalamus", None)
-    assert runtime.reflects.has_hypothalamus() is False
+    # Drop the auto-registered hypothalamus.
+    runtime.reflects._by_role.pop("hypothalamus", None)
+    runtime.reflects._order.remove("hypothalamus")
+    assert runtime.reflects.has_role("hypothalamus") is False
 
     await runtime.gm.initialize()
     runtime._recall = runtime._new_recall()
     from src.memory.recall import RecallResult
-    from types import SimpleNamespace
     counts = SimpleNamespace(node_count=0, edge_count=0,
                               fatigue_pct=0, fatigue_hint="")
     prompt = runtime._build_self_prompt(
@@ -296,23 +162,20 @@ async def test_prompt_includes_action_format_when_no_hypothalamus(tmp_path):
         counts=counts,
     )
     assert "[ACTION FORMAT]" in prompt
-    assert '{"name":' in prompt or '"name"' in prompt  # syntax shown
+    assert '{"name":' in prompt or '"name"' in prompt
 
 
 async def test_prompt_omits_action_format_when_hypothalamus_active(tmp_path):
-    """Hypothalamus Reflect active → suppress [ACTION FORMAT] so Self
-    doesn't see two competing dispatch instructions."""
+    """Translator role registered → suppress [ACTION FORMAT]."""
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
     )
-    # Default helper auto-registers the default hypothalamus.
-    assert runtime.reflects.has_hypothalamus() is True
+    assert runtime.reflects.has_role("hypothalamus") is True
 
     await runtime.gm.initialize()
     runtime._recall = runtime._new_recall()
     from src.memory.recall import RecallResult
-    from types import SimpleNamespace
     counts = SimpleNamespace(node_count=0, edge_count=0,
                               fatigue_pct=0, fatigue_hint="")
     prompt = runtime._build_self_prompt(

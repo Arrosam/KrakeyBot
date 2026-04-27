@@ -105,7 +105,7 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
                 "description": meta.description,
                 "config_schema": meta.config_schema,
                 "components": [
-                    {"kind": c.kind, "sub_kind": c.sub_kind}
+                    {"kind": c.kind, "role": c.role}
                     for c in meta.components
                 ],
                 "llm_purposes": all_purposes,

@@ -12,6 +12,6 @@ config_schema: []
 
 components:
   - kind: reflect
-    sub_kind: recall_anchor
+    role: recall_anchor
     factory_module: src.plugins.default_recall_anchor.reflect
     factory_attr: build_reflect

@@ -171,7 +171,7 @@ def test_build_reflect_factory_signature():
                           config={})
     r = build_reflect(ctx)
     assert isinstance(r, InMindReflectImpl)
-    assert r.kind == "in_mind"
+    assert r.role == "in_mind"
     assert r.name == "default_in_mind"
 
 
@@ -259,9 +259,9 @@ async def test_runtime_prompt_includes_virtual_round_when_state_set(
     )
     # Mutate the in_mind Reflect's state directly so we don't need to
     # round-trip through the tentacle for this prompt-shape test.
-    in_mind_chain = runtime.reflects.by_kind("in_mind")
-    assert in_mind_chain
-    in_mind_chain[0].update(
+    in_mind = runtime.reflects.by_role("in_mind")
+    assert in_mind is not None
+    in_mind.update(
         thoughts="thinking about Cython hot loops",
         focus="port the inner loop",
     )
@@ -324,7 +324,7 @@ async def test_self_can_dispatch_update_in_mind_via_action_executor(
     # RuntimeDeps.in_mind_state_path, so the Reflect's state lives
     # there — not in production. Capture the path for the post-run
     # assertion below.
-    in_mind = runtime.reflects.by_kind("in_mind")[0]
+    in_mind = runtime.reflects.by_role("in_mind")
     isolated_state_path = in_mind._state_path
 
     await runtime.run(iterations=1)

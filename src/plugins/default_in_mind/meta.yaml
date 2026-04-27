@@ -22,7 +22,7 @@ components:
   # loading would leave the tentacle with no reflect — its factory
   # opts out (returns None) so the runtime degrades rather than crashes.
   - kind: reflect
-    sub_kind: in_mind
+    role: in_mind
     factory_module: src.plugins.default_in_mind.reflect
     factory_attr: build_reflect
   - kind: tentacle

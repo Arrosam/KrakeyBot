@@ -137,7 +137,7 @@ class HeartbeatOrchestrator:
         if rt.bootstrap.is_active:
             self._phase_apply_bootstrap_signals(parsed)
         await self._phase_auto_ingest_feedback(stimuli)
-        sleep_requested = await self._phase_apply_hypothalamus(
+        sleep_requested = await self._phase_apply_decision(
             parsed, recall_result,
         )
         if sleep_requested:
@@ -329,36 +329,44 @@ class HeartbeatOrchestrator:
             except Exception as e:  # noqa: BLE001
                 rt.log.runtime_error(f"auto_ingest error: {e}")
 
-    async def _phase_apply_hypothalamus(self, parsed, recall_result) -> bool:
+    async def _phase_apply_decision(self, parsed, recall_result) -> bool:
         """Convert Self's response into tentacle calls + dispatch.
 
-        Routes through ``rt.reflects.dispatch_decision`` which picks
-        the path:
-          * Hypothalamus Reflect registered → LLM translation of
-            ``parsed.decision`` (existing behavior).
-          * No Hypothalamus Reflect → script-only action executor
-            scans ``parsed.raw`` for ``[ACTION]...[/ACTION]`` JSONL.
+        Two paths, picked by registry lookup:
+          * A Reflect with role="hypothalamus" registered → LLM
+            translation of ``parsed.decision``.
+          * No such Reflect → script-only action executor scans
+            ``parsed.raw`` for ``[ACTION]...[/ACTION]`` JSONL.
 
         Returns True iff Self requested sleep.
         """
         rt = self._rt
+        from src.interfaces.reflect import HypothalamusResult
+        from src.runtime.heartbeat.action_executor import parse_action_block
+
         decision = parsed.decision.strip().lower()
         if not decision or decision in ("no action", "无行动"):
             return False
+
+        translator = rt.reflects.by_role("hypothalamus")
         try:
-            result = await rt.reflects.dispatch_decision(
-                parsed.raw, parsed.decision,
-                rt.tentacles.list_descriptions(),
-            )
+            if translator is not None:
+                result = await translator.translate(
+                    parsed.decision, rt.tentacles.list_descriptions(),
+                )
+            else:
+                result = HypothalamusResult(
+                    tentacle_calls=parse_action_block(parsed.raw),
+                )
         except Exception as e:  # noqa: BLE001
             err = f"{type(e).__name__}: {e!r}"
-            rt.log.hb(f"Hypothalamus error: {err}")
+            rt.log.hb(f"Decision dispatch error: {err}")
             await rt.buffer.push(Stimulus(
-                type="system_event", source="system:hypothalamus",
+                type="system_event", source="system:decision",
                 content=(
-                    "Your last [DECISION] could not be translated by the "
-                    f"Hypothalamus ({err}). Nothing was dispatched. "
-                    "Try re-stating the intent more explicitly next beat."
+                    "Your last [DECISION] could not be translated "
+                    f"({err}). Nothing was dispatched. Try re-stating "
+                    "the intent more explicitly next beat."
                 ),
                 timestamp=datetime.now(),
                 adrenalin=True,
@@ -408,12 +416,12 @@ class HeartbeatOrchestrator:
     def build_self_prompt(self, stimuli, recall_result,
                               counts: "_GMCounts") -> str:
         rt = self._rt
-        # Suppress the [ACTION FORMAT] layer when a hypothalamus
-        # Reflect is registered: the translator owns the dispatch
-        # path, and teaching Self structured tags would conflict with
-        # its job. See docs/design/reflects-and-self-model.md
-        # Reflect #1 design.
-        in_mind_state = rt.reflects.in_mind_state()
+        # Suppress the [ACTION FORMAT] layer when a translator role is
+        # registered: the translator owns dispatch, and teaching Self
+        # the structured-tag syntax would conflict with the
+        # translator's job.
+        in_mind_reflect = rt.reflects.by_role("in_mind")
+        in_mind_state = in_mind_reflect.read() if in_mind_reflect else None
         in_mind_instructions: str | None = None
         if in_mind_state is not None:
             from src.plugins.default_in_mind.prompt import (
@@ -429,7 +437,7 @@ class HeartbeatOrchestrator:
             window=rt.window.get_rounds(),
             stimuli=stimuli,
             current_time=datetime.now(),
-            suppress_action_format=rt.reflects.has_hypothalamus(),
+            suppress_action_format=rt.reflects.has_role("hypothalamus"),
             in_mind=in_mind_state,
             in_mind_instructions=in_mind_instructions,
         )
@@ -533,11 +541,15 @@ class HeartbeatOrchestrator:
         })
 
     def new_recall(self) -> "IncrementalRecall":
-        # Routed through the Reflect registry (kind="recall_anchor").
-        # Default built-in mirrors the previous in-line factory; future
-        # Reflects (#2 LLM-anchor) replace it from config without
-        # Runtime needing to know.
-        return self._rt.reflects.make_recall(self._rt)
+        # Look up the Reflect that claimed the "recall_anchor" role.
+        # Without one, fall back to NoopRecall (Self heartbeats with
+        # an empty [GRAPH MEMORY] layer — graceful degradation per
+        # the additive-plugin invariant).
+        anchor = self._rt.reflects.by_role("recall_anchor")
+        if anchor is None:
+            from src.memory.recall import NoopRecall
+            return NoopRecall()  # type: ignore[return-value]
+        return anchor.make_recall(self._rt)
 
     def _capabilities(self) -> list["CapabilityView"]:
         """Tentacle list for the [CAPABILITIES] layer. Only changes on

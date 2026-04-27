@@ -33,7 +33,8 @@ config_schema: []          # plugin-level config fields (UI hints)
 
 components:
   - kind: reflect
-    sub_kind: hypothalamus           # which Reflect kind
+    role: hypothalamus               # the Reflect's role (must be unique
+                                     # across all enabled plugins)
     factory_module: src.plugins.my_plugin.reflect
     factory_attr: build_reflect
     llm_purposes:                    # optional; what LLM purposes this
@@ -82,7 +83,8 @@ class ComponentMetadata:
     kind: str  # "reflect" | "tentacle" | "sensory"
     factory_module: str
     factory_attr: str
-    sub_kind: str | None = None  # for kind="reflect": hypothalamus / etc
+    role: str | None = None  # for kind="reflect": role string the
+                              # Reflect claims; runtime errors on dup
     llm_purposes: list[dict[str, Any]] = field(default_factory=list)
     # Anything else from the component dict is preserved as `extra` so
     # plugin-specific options can ride along without schema changes.
@@ -184,13 +186,13 @@ def _parse_component(c: Any) -> ComponentMetadata:
     purposes = c.get("llm_purposes") or []
     if not isinstance(purposes, list):
         raise ValueError("component `llm_purposes:` must be a list")
-    # Stash the rest (sub_kind already pulled, factory_* already pulled)
-    known = {"kind", "sub_kind", "factory_module", "factory_attr",
+    # Stash the rest (role already pulled, factory_* already pulled)
+    known = {"kind", "role", "factory_module", "factory_attr",
              "llm_purposes"}
     extra = {k: v for k, v in c.items() if k not in known}
     return ComponentMetadata(
         kind=kind,
-        sub_kind=str(c["sub_kind"]) if c.get("sub_kind") else None,
+        role=str(c["role"]) if c.get("role") else None,
         factory_module=str(c["factory_module"]),
         factory_attr=str(c["factory_attr"]),
         llm_purposes=list(purposes),

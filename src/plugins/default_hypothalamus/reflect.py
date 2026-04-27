@@ -81,7 +81,7 @@ class DefaultHypothalamusReflect:
     """
 
     name = "default_hypothalamus"
-    kind = "hypothalamus"
+    role = "hypothalamus"
 
     def __init__(self, llm: ChatLike):
         self._llm = llm

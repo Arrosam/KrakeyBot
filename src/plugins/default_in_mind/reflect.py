@@ -37,7 +37,7 @@ class InMindReflectImpl:
     """
 
     name = "default_in_mind"
-    kind = "in_mind"
+    role = "in_mind"
 
     def __init__(self, state_path: str | Path = DEFAULT_STATE_PATH):
         self._state_path = Path(state_path)

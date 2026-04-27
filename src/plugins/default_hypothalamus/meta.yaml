@@ -13,7 +13,7 @@ config_schema: []
 
 components:
   - kind: reflect
-    sub_kind: hypothalamus
+    role: hypothalamus
     factory_module: src.plugins.default_hypothalamus.reflect
     factory_attr: build_reflect
     llm_purposes:

@@ -22,7 +22,7 @@ class DefaultRecallAnchorReflect:
     """
 
     name = "default_recall_anchor"
-    kind = "recall_anchor"
+    role = "recall_anchor"
 
     def make_recall(self, runtime: "Runtime") -> IncrementalRecall:
         # Reads config + deps off the runtime. Construction logic
