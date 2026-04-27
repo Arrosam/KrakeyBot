@@ -1,18 +1,25 @@
 """Dashboard plugin — Web UI bundle (config editor + observation +
 embedded chat).
 
-Two components:
-  * sensory: hosts the FastAPI/uvicorn server AND pushes inbound chat
-    messages into the runtime queue. See ``sensory.py``.
-  * tentacle: the ``web_chat_reply`` outbound tentacle. See
-    ``tentacle.py``.
+Two component factories:
+  * ``build_sensory``: returns the chat sensory AND, as a side effect,
+    starts the dashboard's uvicorn server in a daemon thread (see
+    ``threaded_server.py``). The server start happens at plugin
+    registration time so it doesn't pollute the Sensory ABC's
+    ``start()/stop()`` hooks with non-sensory work.
+  * ``build_tentacle``: returns the ``web_chat_reply`` outbound
+    tentacle. Shares the ``WebChatHistory`` instance with the sensory
+    via ``ctx.plugin_cache``.
 
-Both share one ``WebChatHistory`` instance built in ``build_sensory``
-and stashed in ``ctx.plugin_cache`` so the tentacle factory can read
-it.
+``port=0`` in the per-plugin config short-circuits the server start
+(used by tests so the sensory + tentacle register without binding
+a port).
 """
 from __future__ import annotations
 
+import os
+import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -23,11 +30,9 @@ _HISTORY_CACHE_KEY = "web_chat_history"
 
 
 def build_sensory(ctx: "PluginContext"):
-    """Create the dashboard server + chat sensory. Owns the
-    WebChatHistory and stashes it for the sibling tentacle factory."""
-    from pathlib import Path
-
-    from src.plugins.dashboard.sensory import DashboardSensory
+    """Create the chat sensory; start the dashboard server in a
+    background thread (skipped when port=0)."""
+    from src.plugins.dashboard.sensory import WebChatSensory
     from src.plugins.dashboard.web_chat.history import WebChatHistory
 
     cfg = ctx.config or {}
@@ -40,30 +45,15 @@ def build_sensory(ctx: "PluginContext"):
     history = WebChatHistory(history_path)
     ctx.plugin_cache[_HISTORY_CACHE_KEY] = history
 
-    runtime = ctx.services.get("runtime")
-    if runtime is None:
-        raise RuntimeError(
-            "dashboard plugin needs services['runtime']; the runtime "
-            "must expose itself in PluginContext.services."
-        )
-
-    plugin_configs_root = (
-        getattr(ctx.deps, "plugin_configs_root", None) or "workspace/plugins"
-    )
-    config_path = getattr(ctx.deps, "config_path", None)
-    return DashboardSensory(
-        runtime=runtime,
-        history=history,
-        host=host,
-        port=port,
-        plugin_configs_root=Path(plugin_configs_root),
-        config_path=config_path,
-    )
+    sensory = WebChatSensory()
+    if port != 0:
+        _start_dashboard_server(ctx, sensory, history, host, port)
+    return sensory
 
 
 def build_tentacle(ctx: "PluginContext"):
-    """Reply tentacle — shares the WebChatHistory instance the sibling
-    sensory factory created."""
+    """Reply tentacle — shares the WebChatHistory the sibling sensory
+    factory built."""
     from src.plugins.dashboard.tentacle import WebChatReplyTentacle
 
     history = ctx.plugin_cache.get(_HISTORY_CACHE_KEY)
@@ -73,3 +63,55 @@ def build_tentacle(ctx: "PluginContext"):
             "build_sensory must run first (meta.yaml component order)."
         )
     return WebChatReplyTentacle(history=history)
+
+
+def _start_dashboard_server(ctx, sensory, history, host: str, port: int) -> None:
+    """Build the dashboard FastAPI app + start uvicorn in a daemon
+    thread. Failures (port in use, etc.) log + leave the server
+    absent — runtime continues without dashboard."""
+    from src.plugins.dashboard.app_factory import (
+        create_app as create_dashboard_app,
+    )
+    from src.plugins.dashboard.events import EventBroadcaster
+    from src.plugins.dashboard.threaded_server import ThreadedDashboardServer
+
+    runtime = ctx.services.get("runtime")
+    if runtime is None:
+        raise RuntimeError(
+            "dashboard plugin needs services['runtime']; the runtime "
+            "must expose itself in PluginContext.services."
+        )
+
+    config_path = getattr(ctx.deps, "config_path", None)
+    plugin_configs_root = (
+        getattr(ctx.deps, "plugin_configs_root", None) or "workspace/plugins"
+    )
+
+    def on_restart() -> None:
+        runtime.log.hb("restart requested via dashboard — re-execing")
+        os.execv(sys.executable, [sys.executable, *sys.argv])
+
+    try:
+        broadcaster = EventBroadcaster(runtime.events)
+        app = create_dashboard_app(
+            runtime=runtime,
+            web_chat_history=history,
+            on_user_message=sensory.push_user_message,
+            event_broadcaster=broadcaster,
+            config_path=Path(config_path) if config_path else None,
+            on_restart=on_restart,
+            plugin_configs_root=Path(plugin_configs_root),
+        )
+        server = ThreadedDashboardServer(app, host=host, port=port)
+        server.start()
+        ctx.plugin_cache["server"] = server
+        runtime.log.hb(
+            f"dashboard listening on http://{host}:{server.port}"
+        )
+    except OSError as e:
+        runtime.log.runtime_error(
+            f"dashboard failed to start (port {port} in use? {e}); "
+            "runtime continues without dashboard"
+        )
+    except Exception as e:  # noqa: BLE001
+        runtime.log.runtime_error(f"dashboard startup error: {e}")
