@@ -87,7 +87,7 @@ In the central `config.yaml`:
 ```yaml
 plugins:
   - my_plugin
-  - search
+  - duckduckgo_search
   - default_hypothalamus
 ```
 
@@ -99,7 +99,7 @@ same registry.
 
 - **Single-component reflect**: [`src/plugins/recall_anchor/`](src/plugins/recall_anchor/)
   — claims the `recall_anchor` role; one factory + one impl class.
-- **Single-component tentacle**: [`src/plugins/search/`](src/plugins/search/)
+- **Single-component tentacle**: [`src/plugins/duckduckgo_search/`](src/plugins/duckduckgo_search/)
   — flat `__init__.py` with backend Protocol, tentacle, factory.
 - **Multi-component shared state**: [`src/plugins/telegram/`](src/plugins/telegram/)
   — sensory + tentacle share an `HttpTelegramClient` via `ctx.plugin_cache`.

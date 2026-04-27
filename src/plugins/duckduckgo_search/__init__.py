@@ -1,8 +1,12 @@
-"""Built-in `search` plugin — DuckDuckGo web search via ddgs.
+"""Built-in ``duckduckgo_search`` plugin — web search via the ddgs library.
 
 Krakey's "look out the window" — fetches results and returns them as a
 tentacle_feedback stimulus. Self decides whether/how to relay them
 to the user.
+
+Tentacle name is the abstract verb ``search`` so Self can address it
+without caring about the backend; the plugin folder name pins the
+implementation (DuckDuckGo via ``ddgs``).
 """
 from __future__ import annotations
 
