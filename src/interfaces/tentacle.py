@@ -20,10 +20,6 @@ class Tentacle(ABC):
     @abstractmethod
     def parameters_schema(self) -> dict[str, Any]: ...
 
-    @property
-    def sandboxed(self) -> bool:
-        return True
-
     @abstractmethod
     async def execute(self, intent: str, params: dict[str, Any]) -> Stimulus: ...
 

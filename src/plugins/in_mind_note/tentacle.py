@@ -101,12 +101,6 @@ class UpdateInMindTentacle(Tentacle):
             },
         }
 
-    @property
-    def sandboxed(self) -> bool:
-        # Pure in-process state mutation, no external surface.
-        return False
-
-
     async def execute(
         self, intent: str, params: dict[str, Any],
     ) -> Stimulus:
