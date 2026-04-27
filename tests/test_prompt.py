@@ -229,6 +229,47 @@ def test_builder_splits_stimulus_by_source_type():
         "tentacle_feedback must land under YOUR RECENT ACTIONS"
 
 
+def test_builder_marks_recall_retry_stimuli():
+    """When the recall_anchor plugin couldn't find any GraphMemory
+    context for a stimulus on the prior beat, the orchestrator
+    re-pushes it with `recall_retries` incremented. The prompt must
+    surface that flag so Self knows the [GRAPH MEMORY] layer has no
+    related context for that signal."""
+    fresh = Stimulus(
+        type="user_message", source="sensory:cli",
+        content="brand new question",
+        timestamp=datetime(2026, 4, 19),
+    )
+    retried = Stimulus(
+        type="user_message", source="sensory:cli",
+        content="lonely message",
+        timestamp=datetime(2026, 4, 19),
+        metadata={"recall_retries": 1},
+    )
+    p = PromptBuilder().build(
+        self_model={}, capabilities=[], status=_basic_status(),
+        recall=RecallResult(), window=[], stimuli=[fresh, retried],
+        current_time=datetime(2026, 4, 24),
+    )
+    stim_block = p[p.rindex("# [STIMULUS]"):p.index("# [GRAPH MEMORY]")]
+
+    # Fresh stimulus has NO retry marker
+    fresh_idx = stim_block.find("brand new question")
+    assert fresh_idx >= 0
+    next_sep = stim_block.find("---", fresh_idx)
+    fresh_chunk = (
+        stim_block[fresh_idx:next_sep] if next_sep != -1
+        else stim_block[fresh_idx:]
+    )
+    assert "未召回" not in fresh_chunk
+
+    # Retried stimulus has the marker (with retry count)
+    retried_idx = stim_block.find("lonely message")
+    assert retried_idx >= 0
+    assert "未召回到与本条相关的图记忆" in stim_block[retried_idx:]
+    assert "重试第 1 次" in stim_block[retried_idx:]
+
+
 def test_builder_omits_empty_subsections():
     """If no incoming, that subsection header should not appear."""
     stimuli = [

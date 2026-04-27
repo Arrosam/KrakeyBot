@@ -65,11 +65,23 @@ DEFAULT_ELEMENT_KEYS: tuple[str, ...] = (
 
 
 def _format_stim(s: Stimulus) -> list[str]:
-    return [
+    lines = [
         "---",
         f"来源: {s.source} | adrenalin: {s.adrenalin}",
         f"内容: {s.content}",
     ]
+    # When the recall_anchor plugin couldn't find any GraphMemory
+    # context for this stimulus on the previous beat, the orchestrator
+    # re-pushes it with an incremented `recall_retries` counter. Surface
+    # that to Self so it knows the [GRAPH MEMORY] layer has nothing to
+    # offer for this signal — Self can ask follow-up questions or fall
+    # back to its own knowledge instead of assuming silent context.
+    retries = s.metadata.get("recall_retries", 0)
+    if retries:
+        lines.append(
+            f"⚠ 上一次心跳未召回到与本条相关的图记忆 (重试第 {retries} 次)"
+        )
+    return lines
 
 
 class PromptBuilder:
