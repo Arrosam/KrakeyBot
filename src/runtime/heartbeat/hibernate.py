@@ -1,7 +1,8 @@
 """Hibernate — wait + adrenalin break (DevSpec §6.3).
 
 Adrenalin only interrupts hibernation, never LLM inference.
-Phase 1 adds `hibernate_with_recall` to preload recall during the wait.
+Preloads recall during the wait so the next heartbeat's prompt
+already has fresh context.
 """
 from __future__ import annotations
 
@@ -17,15 +18,6 @@ class IncrementalRecallLike(Protocol):
 
 def clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
-
-
-async def hibernate(interval: float, buffer: StimulusBuffer, *,
-                    min_interval: float, max_interval: float) -> None:
-    duration = clamp(interval, min_interval, max_interval)
-    try:
-        await asyncio.wait_for(buffer.wait_for_adrenalin(), timeout=duration)
-    except asyncio.TimeoutError:
-        pass
 
 
 async def hibernate_with_recall(
