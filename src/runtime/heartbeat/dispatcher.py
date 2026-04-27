@@ -26,9 +26,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from src.models.stimulus import Stimulus
-from src.runtime.events.event_bus import (
-    DispatchEvent, HypothalamusEvent, TentacleResultEvent,
-)
+from src.runtime.events.event_types import DispatchEvent, HypothalamusEvent, TentacleResultEvent
 
 if TYPE_CHECKING:
     from src.interfaces.reflect import HypothalamusResult, TentacleCall

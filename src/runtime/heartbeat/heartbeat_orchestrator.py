@@ -33,10 +33,8 @@ from src.models.config import LLMParams
 from src.models.stimulus import Stimulus
 from src.prompt.views import SlidingWindowRound
 from src.runtime.heartbeat.compact import compact_if_needed
-from src.runtime.events.event_bus import (
-    DecisionEvent, GMStatsEvent, HeartbeatStartEvent, HibernateEvent,
-    NoteEvent, PromptBuiltEvent, SleepDoneEvent, SleepStartEvent,
-    StimuliQueuedEvent, ThinkingEvent,
+from src.runtime.events.event_types import (
+    DecisionEvent, GMStatsEvent, HeartbeatStartEvent, HibernateEvent, NoteEvent, PromptBuiltEvent, SleepDoneEvent, SleepStartEvent, StimuliQueuedEvent, ThinkingEvent,
 )
 from src.runtime.heartbeat.fatigue import calculate_fatigue
 from src.runtime.heartbeat.hibernate import hibernate_with_recall
