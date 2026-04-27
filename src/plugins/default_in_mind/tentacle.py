@@ -8,7 +8,7 @@ from ``ctx.plugin_cache`` (the reflect factory ran first because
 receipt for Self only — there's no separate human-facing channel
 to broadcast to (in_mind is pure inner state).
 
-Argument shape (matches what Self emits in the [ACTION] JSONL block):
+Argument shape (matches what Self emits in the <tool_call> block):
 
     {"name": "update_in_mind", "arguments": {
         "thoughts": "...",   # all three optional

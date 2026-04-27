@@ -1,31 +1,30 @@
-"""Action executor — parses Self's ``[ACTION]...[/ACTION]`` block into
-``TentacleCall`` objects.
+"""Tool-call parser — extracts ``<tool_call>...</tool_call>`` blocks
+out of Self's raw response into ``TentacleCall`` objects.
 
-This is the default tentacle-dispatch path for strong models that can
-emit structured calls directly. Skips the Hypothalamus translation
-LLM entirely: one Self LLM call produces a decision *and* the calls,
-the executor parses, runtime dispatches. Cheaper + faster than the
-Hypothalamus path.
+This is the default tentacle-dispatch path when no decision-translator
+Reflect (e.g. the hypothalamus plugin) is registered. Format chosen
+for breadth of training coverage in modern open-source models —
+Hermes / Qwen 2.5+ emit this format natively (their tokenizers
+reserve ``<tool_call>`` / ``</tool_call>`` as special tokens), and
+Llama / Mistral / DeepSeek families emit it readily with one or two
+in-prompt examples because the inner ``name``+``arguments`` JSON
+shape matches what they were already trained on.
 
-Format (locked 2026-04-25, see docs/design/reflects-and-self-model.md):
-OpenAI tool_calls flavored JSONL, one call per line, wrapped in
-``[ACTION]...[/ACTION]`` sentinels::
+Format:
 
-    [ACTION]
-    {"name": "web_chat_reply", "arguments": {"text": "Hi"}}
-    {"name": "search", "arguments": {"query": "..."}, "adrenalin": true}
-    [/ACTION]
+    <tool_call>
+    {"name": "<tentacle_name>", "arguments": {...}}
+    </tool_call>
 
-Fields per call:
-    name: str (required)            — tentacle name
-    arguments: dict (optional)      — params for the tentacle; default {}
-    adrenalin: bool (optional)      — urgency flag; default False
+Parallel calls = repeat the tag. Each tag wraps exactly one JSON
+object. Fields per call:
 
-Failure modes are isolated per-line: a single malformed JSON line is
-skipped (logged), the rest of the block still dispatches. We don't
-collapse the whole block on one bad line because that would make the
-parser brittle in a way Hypothalamus's whole-blob JSON parsing
-already showed is risky.
+    name:       str (required)         — tentacle name
+    arguments:  dict (optional)        — params for the tentacle; default {}
+    adrenalin:  bool (optional)        — urgency flag; default False
+
+Failure modes are isolated per-block: a single malformed payload is
+skipped (logged), the rest of Self's response still dispatches.
 """
 from __future__ import annotations
 
@@ -38,60 +37,65 @@ from src.interfaces.reflect import TentacleCall
 
 _log = logging.getLogger(__name__)
 
-_ACTION_BLOCK = re.compile(
-    r"\[ACTION\](.*?)\[/ACTION\]",
+# Match <tool_call>...</tool_call> non-greedily; tolerant of leading/
+# trailing whitespace and newlines inside the block. Case-insensitive
+# in case a model emits TOOL_CALL or similar.
+_TOOL_CALL_BLOCK = re.compile(
+    r"<tool_call>\s*(.*?)\s*</tool_call>",
     re.DOTALL | re.IGNORECASE,
 )
 
 
-def parse_action_block(self_text: str) -> list[TentacleCall]:
-    """Extract all ``[ACTION]...[/ACTION]`` JSONL blocks from
+def parse_tool_calls(self_text: str) -> list[TentacleCall]:
+    """Extract every ``<tool_call>...</tool_call>`` block from
     ``self_text`` and return the parsed ``TentacleCall`` list.
 
-    Multiple blocks are concatenated (rare but legal — Self might emit
-    actions split across [DECISION] sections). Empty / missing blocks
-    return ``[]``. Malformed lines are skipped with a warning.
+    Empty / missing blocks return ``[]``. Malformed payloads are
+    skipped with a warning so one bad tag doesn't poison the others.
     """
     if not self_text:
         return []
     calls: list[TentacleCall] = []
-    for block_match in _ACTION_BLOCK.finditer(self_text):
-        body = block_match.group(1)
-        for line in body.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            call = _parse_one_call(line)
-            if call is not None:
-                calls.append(call)
+    for block_match in _TOOL_CALL_BLOCK.finditer(self_text):
+        payload = block_match.group(1).strip()
+        if not payload:
+            continue
+        call = _parse_one_call(payload)
+        if call is not None:
+            calls.append(call)
     return calls
 
 
-def _parse_one_call(line: str) -> TentacleCall | None:
-    """Parse a single line. Returns None on any failure mode.
+# Back-compat alias — old name still imported in a couple of places.
+parse_action_block = parse_tool_calls
 
-    The line must JSON-decode to an object with at least a ``name``
-    string. Anything else is skipped with a single-line warning so a
-    bad call doesn't poison adjacent good ones.
+
+def _parse_one_call(payload: str) -> TentacleCall | None:
+    """Parse the JSON payload of one ``<tool_call>`` block.
+
+    The payload must JSON-decode to an object with a non-empty
+    ``name`` string. Anything else is skipped with a warning.
     """
     try:
-        obj = json.loads(line)
+        obj = json.loads(payload)
     except json.JSONDecodeError as e:
-        _log.warning("action executor: skipping unparseable line %r (%s)",
-                     line, e)
+        _log.warning(
+            "tool_call: skipping unparseable payload %r (%s)", payload, e,
+        )
         return None
     if not isinstance(obj, dict):
-        _log.warning("action executor: line is JSON but not an object: %r",
-                     line)
+        _log.warning(
+            "tool_call: payload is JSON but not an object: %r", payload,
+        )
         return None
     name = obj.get("name")
     if not isinstance(name, str) or not name:
-        _log.warning("action executor: line missing/empty `name`: %r", line)
+        _log.warning("tool_call: payload missing/empty `name`: %r", payload)
         return None
     arguments = obj.get("arguments") or {}
     if not isinstance(arguments, dict):
         _log.warning(
-            "action executor: arguments is not an object on call %r; "
+            "tool_call: arguments is not an object on call %r; "
             "treating as empty", name,
         )
         arguments = {}
@@ -107,7 +111,7 @@ def _parse_one_call(line: str) -> TentacleCall | None:
 
 
 def _synth_intent(name: str, arguments: dict[str, Any]) -> str:
-    """Compact one-line label for /dispatch event display.
+    """Compact one-line label for the dispatch event display.
 
     Avoids dumping the entire arguments dict — large prompts /
     file-write tentacles would render unreadably long.

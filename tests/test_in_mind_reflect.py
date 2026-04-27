@@ -5,7 +5,7 @@ Coverage:
     fallback / atomic write / now_iso bumped on update.
   * Reflect: read / partial update / explicit clear via empty string /
     None means leave-alone / timestamp updates.
-  * Tentacle: dispatch via [ACTION] JSONL → state mutated + feedback
+  * Tentacle: dispatch via <tool_call> → state mutated + feedback
     receipt names what changed.
   * Prompt injection: virtual round appears in [HISTORY] when state
     populated; absent when all fields empty; instructions layer
@@ -302,17 +302,17 @@ async def test_attach_tolerates_pre_existing_tentacle(tmp_path):
 async def test_self_can_dispatch_update_in_mind_via_action_executor(
     tmp_path,
 ):
-    """End-to-end via the ACTION executor path: Self emits an
-    [ACTION] block calling update_in_mind, runtime dispatches, state
-    file gets written, feedback stimulus arrives in the buffer.
+    """End-to-end via the tool-call executor path: Self emits a
+    <tool_call> block calling update_in_mind, runtime dispatches,
+    state file gets written, feedback stimulus arrives in the buffer.
     """
     self_llm = ScriptedLLM([
         '[THINKING]\nshifting focus to debug session.\n'
         '[DECISION]\nUpdate in_mind.\n'
-        '[ACTION]\n'
+        '<tool_call>\n'
         '{"name": "update_in_mind", "arguments": '
         '{"focus": "debug recall regression", "mood": "curious"}}\n'
-        '[/ACTION]\n'
+        '</tool_call>\n'
         '[HIBERNATE]\n1'
     ])
     runtime = build_runtime_with_fakes(

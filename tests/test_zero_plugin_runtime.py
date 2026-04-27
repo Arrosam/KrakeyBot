@@ -8,8 +8,8 @@ runtime's core loop.
 Specific paths exercised:
   * No recall_anchor role registered → ``new_recall`` returns
     ``NoopRecall``, heartbeat completes with empty ``[GRAPH MEMORY]``.
-  * No hypothalamus role registered → action-executor fallback parses
-    ``[ACTION]...[/ACTION]`` JSONL out of the raw Self response.
+  * No hypothalamus role registered → tool-call fallback parses
+    ``<tool_call>...</tool_call>`` blocks out of the raw Self response.
   * Zero registered tentacles → Self's tentacle calls produce
     ``Unknown tentacle: X`` system events, runtime keeps heartbeating.
   * All three at once → cold runtime + empty stimulus → still
@@ -52,8 +52,8 @@ async def test_noop_recall_satisfies_runtime_lifecycle(tmp_path):
 
 
 async def test_runtime_heartbeat_survives_all_reflects_unregistered(tmp_path):
-    """A heartbeat with zero Reflects, zero stimuli, and the action
-    executor finding no [ACTION] blocks must complete without raising.
+    """A heartbeat with zero Reflects, zero stimuli, and the tool-call
+    parser finding no <tool_call> blocks must complete without raising.
 
     This is the core invariant in its strongest form: the runtime can
     breathe in vacuum.
@@ -73,14 +73,14 @@ async def test_runtime_heartbeat_survives_all_reflects_unregistered(tmp_path):
 
 
 async def test_runtime_heartbeat_with_no_tentacles_emits_unknown_tentacle(tmp_path):
-    """Self emits an [ACTION] call referencing a tentacle name that
+    """Self emits a <tool_call> referencing a tentacle name that
     doesn't exist in the registry. Runtime must NOT crash; it must
     push an `Unknown tentacle: ...` system event so Self can correct
     on the next beat."""
     self_llm = ScriptedLLM([
         '[THINKING]\nlet me reply.\n'
         '[DECISION]\nGreet.\n'
-        '[ACTION]\n{"name": "nonexistent_tentacle", "arguments": {}}\n[/ACTION]\n'
+        '<tool_call>\n{"name": "nonexistent_tentacle", "arguments": {}}\n</tool_call>\n'
         '[HIBERNATE]\n1'
     ])
     runtime = build_runtime_with_fakes(

@@ -6,7 +6,7 @@ description: >
   plugin is enabled the [ACTION FORMAT] prompt block is suppressed
   automatically — Self stays in natural-language mode and lets this
   Reflect handle the structuring. Recommended only for weaker models
-  that can't reliably emit [ACTION] JSONL on their own; strong models
+  that can't reliably emit <tool_call> blocks on their own; strong models
   should leave this OFF and use the direct action executor path.
 
 config_schema: []

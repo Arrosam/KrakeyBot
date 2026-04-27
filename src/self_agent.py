@@ -16,10 +16,10 @@ class ParsedSelfOutput:
     decision: str = ""
     note: str = ""
     hibernate_seconds: int | None = None
-    # Full unparsed response. Kept so the action executor (Reflect #1
-    # default-off path) can locate ``[ACTION]...[/ACTION]`` blocks
-    # wherever Self placed them in the response, not just inside one
-    # of the four known tag sections.
+    # Full unparsed response. Kept so the tool-call parser
+    # (default-off path) can locate ``<tool_call>...</tool_call>``
+    # blocks wherever Self placed them in the response, not just
+    # inside one of the four known tag sections.
     raw: str = ""
 
 

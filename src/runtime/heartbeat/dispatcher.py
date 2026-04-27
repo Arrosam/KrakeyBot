@@ -1,6 +1,6 @@
 """Hypothalamus side-effects executor — extracted from Runtime.
 
-After the hypothalamus Reflect (or the [ACTION] executor fallback)
+After the hypothalamus Reflect (or the tool-call executor fallback)
 turns Self's natural-language [DECISION] into a structured
 ``HypothalamusResult``, four side-effects need to fire:
 

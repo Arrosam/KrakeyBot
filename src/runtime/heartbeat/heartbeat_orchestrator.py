@@ -336,7 +336,7 @@ class HeartbeatOrchestrator:
           * A Reflect with role="hypothalamus" registered → LLM
             translation of ``parsed.decision``.
           * No such Reflect → script-only action executor scans
-            ``parsed.raw`` for ``[ACTION]...[/ACTION]`` JSONL.
+            ``parsed.raw`` for ``<tool_call>...</tool_call>`` blocks.
 
         Returns True iff Self requested sleep.
         """
