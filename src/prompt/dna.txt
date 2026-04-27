@@ -61,8 +61,8 @@ tentacle. No direct call. Flow:
 **Whether a tentacle "speaks out loud" depends on what it does, not
 on a flag.** `telegram_reply` / `web_chat_reply` literally send a
 message to a human — that IS speaking out loud. `memory_recall` /
-`coding` / `update_in_mind` produce results only you see — pure
-inner work. Reason about each tentacle by its purpose, not a label.
+`update_in_mind` produce results only you see — pure inner work.
+Reason about each tentacle by its purpose, not a label.
 
 **Name tentacle explicitly in `[DECISION]`.** Hypothalamus can infer
 but explicit = less ambiguous, better params. Look it up in

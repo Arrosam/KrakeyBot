@@ -5,7 +5,7 @@ Plugins extend Krakey by contributing one or more **components**:
 | Component | Purpose | Examples |
 |---|---|---|
 | `reflect` | Heartbeat hook — claims a role string the runtime queries by | hypothalamus, recall_anchor, in_mind |
-| `tentacle` | Outbound action Self can dispatch | search, coding, telegram_reply |
+| `tentacle` | Outbound action Self can dispatch | search, telegram_reply, update_in_mind |
 | `sensory`  | Inbound stimulus producer | telegram, dashboard web chat |
 
 Plugins are **strictly additive**: disabling or removing any plugin must
