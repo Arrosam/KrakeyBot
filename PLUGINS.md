@@ -88,7 +88,7 @@ In the central `config.yaml`:
 plugins:
   - my_plugin
   - duckduckgo_search
-  - default_hypothalamus
+  - hypothalamus
 ```
 
 All plugins default OFF. Empty list = zero components. Order in the

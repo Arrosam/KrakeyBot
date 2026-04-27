@@ -97,11 +97,11 @@ def test_loader_returns_ordered_list_when_specified(tmp_path):
             self_thinking: t1
         reflects:
           - recall_anchor
-          - default_hypothalamus
+          - hypothalamus
     """)
     cfg = load_config(p)
     assert cfg.plugins == [
-        "recall_anchor", "default_hypothalamus",
+        "recall_anchor", "hypothalamus",
     ]
 
 
@@ -113,15 +113,15 @@ def test_discover_finds_builtin_meta_files():
     in_mind) must each be discoverable as a unified-format plugin
     with at least one component."""
     metas = discover_plugins()
-    assert "default_hypothalamus" in metas
+    assert "hypothalamus" in metas
     assert "recall_anchor" in metas
     assert "default_in_mind" in metas
-    h = metas["default_hypothalamus"]
+    h = metas["hypothalamus"]
     assert len(h.components) >= 1
     refl_comp = next(c for c in h.components if c.kind == "reflect")
     assert refl_comp.role == "hypothalamus"
     assert refl_comp.factory_module == (
-        "src.plugins.default_hypothalamus.reflect"
+        "src.plugins.hypothalamus.reflect"
     )
     assert refl_comp.factory_attr == "build_reflect"
 
@@ -131,13 +131,13 @@ def test_discover_does_not_import_plugin_modules():
     plugin code into sys.modules.
     """
     plugin_modules = (
-        "src.plugins.default_hypothalamus.reflect",
+        "src.plugins.hypothalamus.reflect",
         "src.plugins.recall_anchor.reflect",
     )
     before = {m: m in sys.modules for m in plugin_modules}
     metas = discover_plugins()
     after = {m: m in sys.modules for m in plugin_modules}
-    assert "default_hypothalamus" in metas
+    assert "hypothalamus" in metas
     for m in plugin_modules:
         if not before[m]:
             assert not after[m], (
@@ -157,12 +157,12 @@ def test_load_component_imports_and_calls_factory():
 
     from src.interfaces.plugin_context import PluginContext
     metas = discover_plugins()
-    refl_comp = next(c for c in metas["default_hypothalamus"].components
+    refl_comp = next(c for c in metas["hypothalamus"].components
                      if c.kind == "reflect")
     fake_llm = ScriptedLLM([])
     ctx = PluginContext(
         deps=SimpleNamespace(config=None, llm_clients_by_tag={}),
-        plugin_name="default_hypothalamus",
+        plugin_name="hypothalamus",
         config={"llm_purposes": {"translator": "_fake_tag"}},
     )
     # Bypass the runtime resolver — return our scripted LLM whenever
@@ -173,7 +173,7 @@ def test_load_component_imports_and_calls_factory():
     r = load_component(refl_comp, ctx)
     assert r is not None
     assert r.role == "hypothalamus"
-    assert r.name == "default_hypothalamus"
+    assert r.name == "hypothalamus"
 
 
 # ---- Runtime registration end-to-end --------------------------------
@@ -183,12 +183,12 @@ async def test_runtime_registers_explicit_list_in_order(tmp_path, capsys):
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=["default_hypothalamus", "recall_anchor"],
+        reflects=["hypothalamus", "recall_anchor"],
     )
     err = capsys.readouterr().err
     assert "no `plugins:`" not in err
     assert set(runtime.reflects.names()) == {
-        "default_hypothalamus", "recall_anchor",
+        "hypothalamus", "recall_anchor",
     }
 
 
@@ -232,7 +232,7 @@ async def test_runtime_skips_unknown_reflect_names_loudly(tmp_path, capsys):
     )
     runtime.reflects._by_role.clear(); runtime.reflects._order.clear()
     runtime.config.plugins = [
-        "recall_anchor", "typo_reflect", "default_hypothalamus",
+        "recall_anchor", "typo_reflect", "hypothalamus",
     ]
     capsys.readouterr()
 
@@ -240,5 +240,5 @@ async def test_runtime_skips_unknown_reflect_names_loudly(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "typo_reflect" in err
     assert set(runtime.reflects.names()) == {
-        "recall_anchor", "default_hypothalamus",
+        "recall_anchor", "hypothalamus",
     }

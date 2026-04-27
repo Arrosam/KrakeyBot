@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from src.plugins.default_hypothalamus.reflect import (
-    DefaultHypothalamusReflect as Hypothalamus,
+from src.plugins.hypothalamus.reflect import (
+    HypothalamusReflectImpl as Hypothalamus,
 )
 from src.interfaces.reflect import DecisionResult
 

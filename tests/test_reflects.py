@@ -19,9 +19,7 @@ from src.interfaces.reflect import (
     HypothalamusReflect, DecisionResult, RecallAnchorReflect,
     Reflect, ReflectRegistry,
 )
-from src.plugins.default_hypothalamus.reflect import (
-    DefaultHypothalamusReflect,
-)
+from src.plugins.hypothalamus.reflect import HypothalamusReflectImpl
 from src.plugins.recall_anchor.reflect import RecallAnchorReflectImpl
 from tests._runtime_helpers import (
     NullEmbedder, ScriptedLLM, build_runtime_with_fakes,
@@ -42,12 +40,12 @@ def _stub_recall_anchor() -> RecallAnchorReflectImpl:
     )
 
 
-def test_default_hypothalamus_satisfies_protocol():
-    r = DefaultHypothalamusReflect(ScriptedLLM([]))
+def test_hypothalamus_satisfies_protocol():
+    r = HypothalamusReflectImpl(ScriptedLLM([]))
     assert isinstance(r, Reflect)
     assert isinstance(r, HypothalamusReflect)
     assert r.role == "hypothalamus"
-    assert r.name == "default_hypothalamus"
+    assert r.name == "hypothalamus"
 
 
 def test_recall_anchor_satisfies_protocol():
@@ -63,7 +61,7 @@ def test_recall_anchor_satisfies_protocol():
 
 def test_registry_keys_by_role():
     reg = ReflectRegistry()
-    h = DefaultHypothalamusReflect(ScriptedLLM([]))
+    h = HypothalamusReflectImpl(ScriptedLLM([]))
     r = _stub_recall_anchor()
     reg.register(h)
     reg.register(r)
@@ -110,13 +108,13 @@ def test_registry_rejects_missing_name_or_role():
 
 def test_registry_iteration_in_registration_order():
     reg = ReflectRegistry()
-    h = DefaultHypothalamusReflect(ScriptedLLM([]))
+    h = HypothalamusReflectImpl(ScriptedLLM([]))
     r = _stub_recall_anchor()
     reg.register(r)
     reg.register(h)
     assert reg.roles() == ["recall_anchor", "hypothalamus"]
     assert reg.all() == [r, h]
-    assert reg.names() == ["recall_anchor", "default_hypothalamus"]
+    assert reg.names() == ["recall_anchor", "hypothalamus"]
 
 
 # ---- runtime integration --------------------------------------------
@@ -127,7 +125,7 @@ async def test_runtime_registers_default_reflects(tmp_path):
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
     )
-    assert "default_hypothalamus" in runtime.reflects.names()
+    assert "hypothalamus" in runtime.reflects.names()
     assert "recall_anchor" in runtime.reflects.names()
     # Roles registered:
     assert runtime.reflects.has_role("hypothalamus")

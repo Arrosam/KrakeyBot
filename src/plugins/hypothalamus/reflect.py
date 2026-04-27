@@ -1,12 +1,11 @@
-"""Default Hypothalamus Reflect — LLM-driven [DECISION] → tentacle-call
-translator.
+"""Hypothalamus Reflect — LLM-driven [DECISION] → tentacle-call translator.
 
 Stateless: every call is an independent LLM invocation. Converts
 Self's natural-language [DECISION] into structured ``TentacleCall``
 objects, memory writes/updates, and the sleep flag.
 
 Only loaded by ``src.plugin_system.load_component`` when
-``default_hypothalamus`` is listed in ``config.yaml``'s ``plugins:``.
+``hypothalamus`` is listed in ``config.yaml``'s ``plugins:``.
 The contract types (``TentacleCall``, ``DecisionResult``) live
 in ``src.interfaces.reflect`` so the runtime can consume them without
 importing this plugin.
@@ -68,7 +67,7 @@ SYSTEM_PROMPT = """# Hypothalamus — 行动翻译器
 _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 
 
-class DefaultHypothalamusReflect:
+class HypothalamusReflectImpl:
     """LLM-driven [DECISION] → tentacle-call translator.
 
     Stateless: every ``translate()`` call is an independent
@@ -77,7 +76,7 @@ class DefaultHypothalamusReflect:
     factory) and never mutated.
     """
 
-    name = "default_hypothalamus"
+    name = "hypothalamus"
     role = "hypothalamus"
 
     def __init__(self, llm: ChatLike):
@@ -110,12 +109,12 @@ class DefaultHypothalamusReflect:
         return _to_result(data)
 
 
-def build_reflect(ctx: "PluginContext") -> DefaultHypothalamusReflect | None:
+def build_reflect(ctx: "PluginContext") -> HypothalamusReflectImpl | None:
     """Factory invoked by ``load_component``.
 
     Reads its own ``llm_purposes.translator`` binding from
-    ``workspace/plugins/default_hypothalamus/config.yaml`` (surfaced
-    via ``ctx.config``), then asks the runtime to resolve that tag to
+    ``workspace/plugins/hypothalamus/config.yaml`` (surfaced via
+    ``ctx.config``), then asks the runtime to resolve that tag to
     a concrete ``LLMClient``. When the binding is missing or the tag
     is unknown, returns ``None`` — the loader skips this Reflect
     rather than crashing the runtime (additive plugin model).
@@ -128,13 +127,13 @@ def build_reflect(ctx: "PluginContext") -> DefaultHypothalamusReflect | None:
     llm = ctx.get_llm_for_tag(tag_name)
     if llm is None:
         logging.getLogger(__name__).warning(
-            "default_hypothalamus: no LLM resolved for purpose 'translator' "
-            "(check workspace/plugins/default_hypothalamus/config.yaml's "
+            "hypothalamus: no LLM resolved for purpose 'translator' "
+            "(check workspace/plugins/hypothalamus/config.yaml's "
             "llm_purposes.translator and llm.tags in central config). "
             "Skipping registration."
         )
         return None
-    return DefaultHypothalamusReflect(llm)
+    return HypothalamusReflectImpl(llm)
 
 
 def _format_tentacles(tentacles: list[dict[str, Any]]) -> str:

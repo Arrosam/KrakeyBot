@@ -225,12 +225,12 @@ async def test_reflects_available_lists_metadata(tmp_path):
     assert r.status_code == 200
     names = {entry["name"] for entry in r.json()["reflects"]}
     # All three in-tree built-ins must be discovered
-    assert {"default_hypothalamus", "recall_anchor",
+    assert {"hypothalamus", "recall_anchor",
             "default_in_mind"} <= names
 
     # Hypothalamus declares its `translator` purpose
     by_name = {e["name"]: e for e in r.json()["reflects"]}
-    purposes = by_name["default_hypothalamus"]["llm_purposes"]
+    purposes = by_name["hypothalamus"]["llm_purposes"]
     assert any(p.get("name") == "translator" for p in purposes)
 
 
@@ -254,7 +254,7 @@ async def test_reflect_config_save_and_read_back(tmp_path, monkeypatch):
 
     async with _client(config_path=cfg_path) as c:
         save = await c.post(
-            "/api/reflects/default_hypothalamus/config",
+            "/api/reflects/hypothalamus/config",
             json={"config": {
                 "llm_purposes": {"translator": "fast_generation"},
             }},
@@ -262,14 +262,14 @@ async def test_reflect_config_save_and_read_back(tmp_path, monkeypatch):
         assert save.status_code == 200
         assert save.json()["restart_required"] is True
 
-        read = await c.get("/api/reflects/default_hypothalamus/config")
+        read = await c.get("/api/reflects/hypothalamus/config")
         assert read.status_code == 200
         body = read.json()["config"]
         assert body["llm_purposes"] == {"translator": "fast_generation"}
 
     # File actually landed under workspace/plugins/
     written = (tmp_path / "workspace" / "plugins"
-               / "default_hypothalamus" / "config.yaml")
+               / "hypothalamus" / "config.yaml")
     assert written.exists()
     parsed = yaml.safe_load(written.read_text(encoding="utf-8"))
     assert parsed["llm_purposes"]["translator"] == "fast_generation"

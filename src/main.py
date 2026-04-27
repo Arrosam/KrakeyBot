@@ -92,7 +92,7 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
         reranker = _RerankerAdapter()
 
     # hypo_llm is no longer eagerly required at the core level — it's
-    # bound through the per-plugin config of `default_hypothalamus`.
+    # bound through the per-plugin config of `hypothalamus`.
     # We still keep the field on RuntimeDeps for back-compat with
     # existing plugin factories that pull `deps.hypo_llm`. Resolve
     # from the dedicated `hypothalamus` core purpose if the user
