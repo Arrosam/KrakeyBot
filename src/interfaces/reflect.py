@@ -203,6 +203,14 @@ class ReflectRegistry:
         return [r.name for kind_list in self._by_kind.values()
                  for r in kind_list]
 
+    def all(self) -> list[Reflect]:
+        """Snapshot of every registered Reflect across all kinds, in
+        registration order within each kind. Used by observers (e.g.
+        the dashboard plugin report) that don't care about the
+        kind-grouping."""
+        return [r for kind_list in self._by_kind.values()
+                for r in kind_list]
+
     # ---- kind-specific dispatch -------------------------------------
 
     def has_hypothalamus(self) -> bool:

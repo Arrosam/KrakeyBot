@@ -52,5 +52,13 @@ class TentacleRegistry:
             for t in self._tentacles.values()
         ]
 
+    def names(self) -> list[str]:
+        """Sorted snapshot of all registered tentacle names."""
+        return sorted(self._tentacles.keys())
+
+    def all(self) -> list[Tentacle]:
+        """Snapshot of every registered tentacle (insertion order)."""
+        return list(self._tentacles.values())
+
     def __contains__(self, name: str) -> bool:
         return name in self._tentacles

@@ -52,12 +52,9 @@ class PluginInfo:
     tentacle / sensory). Consumed by the dashboard's /api/plugins
     endpoint via ``loaded_plugin_report()``.
 
-    Originally lived in ``src.plugins.loader`` (the legacy MANIFEST
-    loader) which has since been removed; the dataclass moved here
-    when it became the only used export. Field shape preserved for
-    dashboard JS compatibility — ``path`` / ``source`` / ``error``
-    are stubs in the meta.yaml flow but kept so the frontend renderer
-    doesn't have to special-case missing keys.
+    ``path`` / ``source`` / ``error`` are kept for dashboard-JS
+    compatibility (the frontend renderer doesn't special-case missing
+    keys) — they're effectively stubs in the meta.yaml flow.
     """
     name: str                           # component name
     kind: str                           # "reflect" | "tentacle" | "sensory"
@@ -224,18 +221,15 @@ class PluginRegistrar:
         for the caller's convenience.
         """
         infos: list = []
-        for r in (self._reflects.by_kind("hypothalamus")
-                  + self._reflects.by_kind("recall_anchor")
-                  + self._reflects.by_kind("in_mind")):
+        for r in self._reflects.all():
             infos.append(PluginInfo(
                 name=r.name, kind="reflect", source="builtin",
                 path="", project=r.name, instance=r,
             ))
-        for name in sorted(self._tentacles._tentacles.keys()):  # noqa: SLF001
+        for t in self._tentacles.all():
             infos.append(PluginInfo(
-                name=name, kind="tentacle", source="builtin",
-                path="", project=name,
-                instance=self._tentacles._tentacles[name],  # noqa: SLF001
+                name=t.name, kind="tentacle", source="builtin",
+                path="", project=t.name, instance=t,
             ))
         for sname in self._sensories.sensory_names():
             s = self._sensories.get_sensory(sname)
@@ -277,13 +271,13 @@ class PluginRegistrar:
                           if i.kind == "tentacle"}
         plugin_s_names = {i.name for i in self._infos
                           if i.kind == "sensory"}
-        loaded_t = {n for n in self._tentacles._tentacles}  # noqa: SLF001
+        loaded_t = set(self._tentacles.names())
         loaded_s = set(self._sensories.sensory_names())
 
         core_tentacles = [
             {"name": t.name, "kind": "tentacle", "source": "core",
              "project": "", "loaded": True, "error": None}
-            for t in self._tentacles._tentacles.values()  # noqa: SLF001
+            for t in self._tentacles.all()
             if t.name not in plugin_t_names
         ]
         core_sensories = [
