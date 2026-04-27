@@ -17,9 +17,10 @@
 
 > **插件无法访问中央 ``config.yaml`` (含 API key + provider 配置)。**
 > 插件 Python 代码看到的只有：(1) 自己 folder 下的 ``config.yaml``
-> 纯文本设置；(2) ``ctx.get_llm(purpose_name)`` 返回的 ``LLMClient``
-> 实例。LLMClient 内部封装 provider 信息，但插件**拿不到底层 API
-> key**。
+> 纯文本设置（通过 ``ctx.config`` 获取）；(2) ``ctx.get_llm_for_tag(tag_name)``
+> 返回的 ``LLMClient`` 实例。插件读自己的 config 拿到 ``llm_purposes``
+> 里绑定的 tag 名，再向 runtime 要对应的 client。LLMClient 内部封装
+> provider 信息，但插件**拿不到底层 API key**。
 
 ## 🏷️ Tag-based LLM 系统（2026-04-26）
 
@@ -99,7 +100,11 @@ llm_purposes:
 
 ```python
 def build_reflect(ctx: PluginContext) -> Reflect | None:
-    llm = ctx.get_llm("translator")
+    # 插件读自己的 config 拿到绑定的 tag 名，
+    # 再向 runtime 要对应的 LLMClient。
+    purposes = ctx.config.get("llm_purposes") or {}
+    tag = purposes.get("translator") if isinstance(purposes, dict) else None
+    llm = ctx.get_llm_for_tag(tag)
     if llm is None:
         return None    # 没绑定 → 跳过自己注册 (additive 原则)
     return MyReflect(llm)

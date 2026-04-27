@@ -168,7 +168,7 @@ def test_build_reflect_factory_signature():
     from src.interfaces.plugin_context import PluginContext
     fake_deps = SimpleNamespace(in_mind_state_path=None)
     ctx = PluginContext(deps=fake_deps, plugin_name="default_in_mind",
-                          config={}, llms={})
+                          config={})
     r = build_reflect(ctx)
     assert isinstance(r, InMindReflectImpl)
     assert r.kind == "in_mind"

@@ -105,24 +105,55 @@ class RuntimePromptsService:
 
 
 class RuntimePluginsService:
-    def __init__(self, runtime: Any):
+    """Combines runtime observation (which plugins are loaded) with
+    direct file I/O on per-plugin config files.
+
+    Plugin config WRITES never go through Runtime — the dashboard owns
+    a ``FilePluginConfigStore`` and edits files directly. Runtime is
+    the source of truth ONLY for "is this component currently
+    registered?" — the rest (descriptions, schemas, current values)
+    comes from the on-disk plugin folders.
+    """
+
+    def __init__(
+        self,
+        runtime: Any,
+        plugin_configs_root: Path | str = "workspace/plugins",
+    ):
+        from src.plugin_system.config import FilePluginConfigStore
         self._rt = runtime
+        self._store = FilePluginConfigStore(root=plugin_configs_root)
 
     def report(self) -> dict[str, Any]:
         if self._rt is None:
             raise RuntimeError("runtime not available")
-        if not hasattr(self._rt, "plugin_report"):
+        if not hasattr(self._rt, "loaded_plugin_report"):
             return {"tentacles": [], "sensories": []}
-        return self._rt.plugin_report()
+        report = self._rt.loaded_plugin_report()
+        for kind in ("tentacles", "sensories"):
+            for entry in report.get(kind, []):
+                project = entry.get("project") or ""
+                entry["values"] = (
+                    self._store.read(project) if project else {}
+                )
+                entry.setdefault("description", "")
+                entry.setdefault("config_schema", [])
+                entry.setdefault("path", "")
+                entry.setdefault("enabled", True)
+        return report
 
     def update_config(
         self, project: str, body: dict[str, Any],
     ) -> dict[str, Any]:
-        if self._rt is None:
-            raise RuntimeError("runtime not available")
-        if not hasattr(self._rt, "update_plugin_config"):
-            raise RuntimeError("runtime does not support plugin config updates")
-        return self._rt.update_plugin_config(project, body)
+        """Persist a dashboard edit by writing the per-plugin
+        ``<root>/<project>/config.yaml`` directly. Runtime is not
+        involved — the dashboard owns this file."""
+        if not project or not isinstance(project, str):
+            raise ValueError("project name required")
+        values = dict(body.get("values") or {})
+        values.pop("enabled", None)  # central config.yaml owns enable/disable
+        path = self._store.write(project, values)
+        return {"project": project, "path": str(path), "config": values}
 
 
 # ---------------- config ----------------

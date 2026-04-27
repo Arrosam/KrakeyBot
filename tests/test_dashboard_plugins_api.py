@@ -122,8 +122,20 @@ async def test_update_config_strips_enabled_from_values(tmp_path):
     assert on_disk["max_results"] == 5
 
 
-async def test_update_config_503_when_no_runtime():
+async def test_update_config_succeeds_without_runtime(tmp_path, monkeypatch):
+    """Plugin-config writes go straight to the on-disk file via the
+    dashboard's own FilePluginConfigStore — runtime is not on the
+    write path. Expect a successful save even when runtime=None."""
+    monkeypatch.chdir(tmp_path)
     async with _client(plugins_service=None) as c:
-        r = await c.post("/api/plugins/search/config",
-                            json={"enabled": True, "values": {}})
-    assert r.status_code == 503
+        r = await c.post(
+            "/api/plugins/search/config",
+            json={"enabled": True, "values": {"max_results": 9}},
+        )
+    assert r.status_code == 200
+    on_disk = yaml.safe_load(
+        (tmp_path / "workspace" / "plugins" / "search"
+         / "config.yaml").read_text(encoding="utf-8")
+    )
+    # `enabled` is dropped (central config.yaml owns enable/disable).
+    assert on_disk == {"max_results": 9}

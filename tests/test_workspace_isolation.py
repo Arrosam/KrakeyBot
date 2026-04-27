@@ -90,13 +90,13 @@ async def test_web_chat_reply_writes_to_tmpdir_not_prod(tmp_path):
 
 def test_helper_provisions_isolated_plugin_configs_root(tmp_path):
     """The helper must set RuntimeDeps.plugin_configs_root to a
-    tmpdir — without that, FilePluginConfigStore reads the prod YAML
-    and silently shadows the helper's legacy_plugins dict."""
+    tmpdir — without that, the runtime + dashboard adapter would read
+    the prod YAML and silently shadow the helper's overrides."""
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
     )
-    root = runtime._plugin_config_store._root
+    root = runtime._plugin_configs_root
     assert "krakey_test_plugcfg_" in str(root), (
         f"plugin_configs_root not isolated; got {root}"
     )

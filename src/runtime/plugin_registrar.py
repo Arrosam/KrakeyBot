@@ -1,29 +1,35 @@
 """Plugin registration + dashboard introspection — extracted from Runtime.
 
-Owns three responsibilities that used to live as ``Runtime`` methods
+Owns two responsibilities that used to live as ``Runtime`` methods
 on a 1300-line god class:
 
   1. **register_from_config(deps)** — walk ``config.plugins`` and
      lazily load each enabled plugin's meta.yaml components into
-     the right registry (reflect / tentacle / sensory).
+     the right registry (reflect / tentacle / sensory). The
+     plugin's per-plugin config file is read here AND HANDED TO
+     THE PLUGIN AS-IS via ``ctx.config`` — runtime does not parse
+     ``llm_purposes`` or any other plugin-internal field. Plugins
+     that need an LLM read their own ``llm_purposes`` and call
+     ``ctx.get_llm_for_tag(tag_name)``.
   2. **derive_plugin_infos()** — build a ``PluginInfo`` list from the
-     populated registries so the dashboard's plugins endpoint can
-     describe what's loaded.
-  3. **plugin_report() / update_plugin_config(...)** — the
-     dashboard read + write surface, kept here so all "plugin"
-     concerns share one home.
+     populated registries so observers (dashboard plugins endpoint)
+     can describe what's loaded.
 
-Runtime composes the registrar in its ``__init__`` and exposes
-``plugin_report`` + ``update_plugin_config`` as one-line facades.
-The two registry mutators (``_register_plugins_from_config`` and
+Runtime composes the registrar in its ``__init__``. The two
+registry mutators (``_register_plugins_from_config`` and
 ``_register_component``) survive on Runtime as facades only because
 two existing tests call them directly; new code should reach for
 ``runtime._plugin_registrar.register_from_config(deps)`` instead.
 
+Plugin config WRITES are NOT a runtime concern: the dashboard owns
+its own ``FilePluginConfigStore`` and writes plugin config files
+directly. The runtime only ever READS them (during registration)
+to build ``PluginContext.config`` for the plugin.
+
 Failure modes are isolated per-plugin AND per-component (broken
-metadata, missing config, factory exceptions, unbound LLM
-purposes) — they log to stderr and skip without blocking startup
-of the rest. Strictly additive plugin model, per CLAUDE.md.
+metadata, factory exceptions, unbound LLM purposes) — they log to
+stderr and skip without blocking startup of the rest. Strictly
+additive plugin model, per CLAUDE.md.
 """
 from __future__ import annotations
 
@@ -36,7 +42,6 @@ if TYPE_CHECKING:
     from src.interfaces.reflect import ReflectRegistry
     from src.interfaces.tentacle import TentacleRegistry
     from src.models.config import Config
-    from src.plugin_system.config import FilePluginConfigStore
     from src.runtime.runtime import RuntimeDeps
     from src.runtime.stimulus_buffer import StimulusBuffer
 
@@ -45,7 +50,7 @@ if TYPE_CHECKING:
 class PluginInfo:
     """Descriptor for one registered plugin component (reflect /
     tentacle / sensory). Consumed by the dashboard's /api/plugins
-    endpoint via ``plugin_report()``.
+    endpoint via ``loaded_plugin_report()``.
 
     Originally lived in ``src.plugins.loader`` (the legacy MANIFEST
     loader) which has since been removed; the dataclass moved here
@@ -82,7 +87,6 @@ class PluginRegistrar:
         reflects: "ReflectRegistry",
         tentacles: "TentacleRegistry",
         sensories: "StimulusBuffer",
-        plugin_config_store: "FilePluginConfigStore",
         services: dict[str, Any],
     ):
         self._config = config
@@ -92,7 +96,6 @@ class PluginRegistrar:
         # sensories now). Kept the ``sensories`` parameter name so
         # Runtime's call site stays self-documenting.
         self._sensories = sensories
-        self._store = plugin_config_store
         self._services = services
         self._infos: list = []
 
@@ -104,17 +107,16 @@ class PluginRegistrar:
         For each enabled plugin name:
           1. Look up its metadata (no plugin code imported yet).
           2. Read its per-plugin config from
-             ``<reflect_configs_root>/<name>/config.yaml`` —
-             pure-text settings the plugin is allowed to see (no
-             API keys / providers).
+             ``<plugin_configs_root>/<name>/config.yaml`` and hand
+             it to the plugin AS-IS via ``ctx.config``. Runtime does
+             not parse ``llm_purposes`` or any other plugin-internal
+             field — that's the plugin's job.
           3. For each declared component:
-             a. Resolve its declared ``llm_purposes`` entries to
-                ``LLMClient`` instances via the shared tag cache,
-                using the user's ``llm_purposes`` mapping in the
-                per-plugin config.
-             b. Build a ``PluginContext`` for that component.
-             c. Lazy-import the factory module + invoke factory.
-             d. Route the returned object to the right registry by
+             a. Build a ``PluginContext`` (carries config, services,
+                a shared per-plugin cache, and ``get_llm_for_tag``
+                for plugins that need an LLM).
+             b. Lazy-import the factory module + invoke factory.
+             c. Route the returned object to the right registry by
                 component kind.
         """
         from src.interfaces.plugin_context import (
@@ -123,7 +125,6 @@ class PluginRegistrar:
         from src.plugin_system.loader import (
             load_component, load_plugin_meta,
         )
-        from src.runtime.runtime import resolve_llm_for_tag
 
         names = self._config.plugins
         if names is None:
@@ -157,14 +158,6 @@ class PluginRegistrar:
                 continue
 
             plugin_cfg = load_plugin_config(plugin_name, cfg_root)
-            user_purposes = plugin_cfg.get("llm_purposes") or {}
-            if not isinstance(user_purposes, dict):
-                print(
-                    f"config: {plugin_name}/config.yaml `llm_purposes:` "
-                    "must be a mapping; ignoring all purpose bindings",
-                    file=sys.stderr,
-                )
-                user_purposes = {}
 
             # Single ``plugin_cache`` dict shared across this plugin's
             # components — multi-component plugins (telegram /
@@ -173,24 +166,9 @@ class PluginRegistrar:
             plugin_cache: dict[str, Any] = {}
 
             for component in meta.components:
-                ctx_llms: dict[str, Any] = {}
-                for purpose_decl in component.llm_purposes:
-                    purpose_name = str(purpose_decl.get("name", "")).strip()
-                    if not purpose_name:
-                        continue
-                    tag_name = user_purposes.get(purpose_name)
-                    if not isinstance(tag_name, str) or not tag_name:
-                        continue
-                    client = resolve_llm_for_tag(
-                        self._config, tag_name, deps.llm_clients_by_tag,
-                    )
-                    if client is None:
-                        continue
-                    ctx_llms[purpose_name] = client
-
                 ctx = PluginContext(
                     deps=deps, plugin_name=plugin_name,
-                    config=plugin_cfg, llms=ctx_llms,
+                    config=plugin_cfg,
                     services=self._services, plugin_cache=plugin_cache,
                 )
 
@@ -268,32 +246,29 @@ class PluginRegistrar:
         self._infos = infos
         return infos
 
-    # ---- dashboard read/write -------------------------------------------
+    # ---- runtime observation (for the dashboard's plugins panel) -------
 
-    def plugin_report(self) -> dict[str, Any]:
-        """Serializable snapshot for the dashboard /api/plugins endpoint.
+    def loaded_plugin_report(self) -> dict[str, Any]:
+        """Pure runtime observation: which tentacles + sensories are
+        actually live right now.
 
-        Each component carries a ``values`` dict (the current on-disk
-        config for its project, minus the loader-owned ``enabled``
-        flag, which is surfaced separately). The dashboard renders
-        forms directly from ``config_schema`` + ``values``.
+        Read-only — does NOT touch any plugin config files. The
+        dashboard adapter combines this with its own
+        ``FilePluginConfigStore`` reads to assemble the final
+        ``/api/plugins`` payload (values come from the store, not
+        from the runtime).
+
+        Each entry carries name + kind + project + a ``loaded`` flag.
+        Schema and description fields are intentionally omitted —
+        those come from the plugin catalogue / meta.yaml on the
+        dashboard side, not from the live runtime.
         """
-        def _values_for(project: str) -> dict[str, Any]:
-            if not project:
-                return {}
-            return self._store.read(project)
-
         def _flatten(infos, loaded_names):
             return [{
                 "name": i.name,
                 "kind": i.kind,
                 "source": i.source,
-                "path": i.path,
                 "project": i.project,
-                "description": i.description,
-                "config_schema": i.config_schema,
-                "enabled": i.enabled,
-                "values": _values_for(i.project),
                 "loaded": i.name in loaded_names and i.error is None,
                 "error": i.error,
             } for i in infos]
@@ -307,19 +282,13 @@ class PluginRegistrar:
 
         core_tentacles = [
             {"name": t.name, "kind": "tentacle", "source": "core",
-             "path": "", "project": "", "description": t.description,
-             "config_schema": [],
-             "enabled": True, "values": {},
-             "loaded": True, "error": None}
+             "project": "", "loaded": True, "error": None}
             for t in self._tentacles._tentacles.values()  # noqa: SLF001
             if t.name not in plugin_t_names
         ]
         core_sensories = [
             {"name": sname, "kind": "sensory", "source": "core",
-             "path": "", "project": "", "description": "",
-             "config_schema": [],
-             "enabled": True, "values": {},
-             "loaded": True, "error": None}
+             "project": "", "loaded": True, "error": None}
             for sname in self._sensories.sensory_names()
             if sname not in plugin_s_names
         ]
@@ -329,22 +298,3 @@ class PluginRegistrar:
             "tentacles": core_tentacles + _flatten(t_infos, loaded_t),
             "sensories": core_sensories + _flatten(s_infos, loaded_s),
         }
-
-    def update_plugin_config(
-        self, project: str, body: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Persist an edit from the dashboard into the per-plugin
-        ``workspace/plugins/<name>/config.yaml`` file.
-
-        ``body`` carries ``{"values": {...}}``. Enable/disable is NOT
-        stored here — that's driven by the central ``config.yaml``'s
-        ``plugins:`` list. Any ``enabled`` key the dashboard sends is
-        silently dropped to keep the in-folder file purely settings.
-        Changes take effect on next restart (plugins aren't hot-reloaded).
-        """
-        if not project or not isinstance(project, str):
-            raise ValueError("project name required")
-        values = dict(body.get("values") or {})
-        values.pop("enabled", None)  # loader-owned, not per-plugin
-        path = self._store.write(project, values)
-        return {"project": project, "path": str(path), "config": values}

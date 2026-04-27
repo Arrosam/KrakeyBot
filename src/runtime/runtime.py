@@ -186,20 +186,21 @@ class Runtime:
         # `web_chat.enabled` so the dashboard can still display the
         # existing transcript in monitor-only mode.
         #
-        # Per-plugin config store: each plugin's config lives at
+        # Each plugin's config lives at
         # <plugin_configs_root>/<name>/config.yaml. Same root as the
         # plugin folders themselves (workspace/plugins/) so user config
         # is co-located with plugin code, exactly like third-party
-        # workspace plugins.
-        from src.plugin_system.config import FilePluginConfigStore
+        # workspace plugins. Runtime never WRITES to these files —
+        # the dashboard owns its own FilePluginConfigStore for that.
         plugin_root = Path(deps.plugin_configs_root
                             or "workspace/plugins")
-        self._plugin_config_store = FilePluginConfigStore(root=plugin_root)
+        self._plugin_configs_root = plugin_root
         # Web chat history path comes from the plugin's own config
-        # file. Read directly here (not via the store) because the
-        # WebChatHistory must exist BEFORE plugin discovery so the
-        # dashboard's WebSocket can subscribe to it.
-        wc_cfg = self._plugin_config_store.read("web_chat")
+        # file. Read here ad-hoc because the WebChatHistory must exist
+        # BEFORE plugin discovery so the dashboard's WebSocket can
+        # subscribe to it.
+        from src.interfaces.plugin_context import load_plugin_config
+        wc_cfg = load_plugin_config("web_chat", plugin_root)
         chat_path = wc_cfg.get("history_path",
                                    "workspace/data/web_chat.jsonl")
         self.web_chat_history = WebChatHistory(chat_path)
@@ -229,7 +230,6 @@ class Runtime:
             reflects=self.reflects,
             tentacles=self.tentacles,
             sensories=self.buffer,
-            plugin_config_store=self._plugin_config_store,
             services={
                 "gm": self.gm,
                 "kb_registry": self.kb_registry,
@@ -328,7 +328,7 @@ class Runtime:
         self._prompt_log: deque[dict[str, Any]] = deque(maxlen=max(1, _pl_size))
 
         # Phase 2 (2026-04-26): all plugins go through the registrar.
-        # The PluginInfo list lets the dashboard's plugin_report()
+        # The PluginInfo list lets the dashboard's loaded_plugin_report()
         # describe the loaded set; surfaced as a property below for
         # callers (mostly tests) that still touch it directly.
         self._plugin_registrar.derive_plugin_infos()
@@ -446,15 +446,12 @@ class Runtime:
         ``self._plugin_infos`` (mostly tests) keep working."""
         return self._plugin_registrar._infos
 
-    def plugin_report(self) -> dict[str, Any]:
-        """Dashboard ``/api/plugins`` view — delegated to the registrar."""
-        return self._plugin_registrar.plugin_report()
-
-    def update_plugin_config(
-        self, project: str, body: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Dashboard plugin-config write — delegated to the registrar."""
-        return self._plugin_registrar.update_plugin_config(project, body)
+    def loaded_plugin_report(self) -> dict[str, Any]:
+        """Pure runtime observation of which tentacles + sensories are
+        live (no plugin-config file reads). The dashboard adapter
+        combines this with its own ``FilePluginConfigStore`` reads to
+        build the ``/api/plugins`` payload."""
+        return self._plugin_registrar.loaded_plugin_report()
 
     def _build_code_runner(self, coding_cfg: dict):
         """Return Subprocess on sandbox=false, SandboxRunner otherwise.

@@ -1,20 +1,19 @@
 """``PluginContext`` — what every plugin's factory sees.
 
 Passed to ``build_<component>(ctx)`` for every plugin kind
-(reflect / tentacle / sensory). Wraps the runtime deps with
-**plugin-scoped helpers**:
+(reflect / tentacle / sensory). Carries:
 
-  * ``ctx.get_llm(purpose_name)`` — resolves the user's
-    ``workspace/plugins/<plugin>/config.yaml`` ``llm_purposes:``
-    entry for the named purpose to a concrete ``LLMClient``, or
-    returns ``None`` if the user hasn't bound that purpose to a tag.
-    The plugin decides what to do with ``None`` (skip itself /
-    degrade gracefully / log loud).
   * ``ctx.config`` — the parsed contents of the plugin's own
-    ``config.yaml`` (per-plugin folder under ``workspace/plugins/``).
-    Plugin code reads its own settings from here and **never** sees
-    the central config.yaml — keeps plugin code one step removed
-    from API keys + provider configs.
+    ``workspace/plugins/<plugin>/config.yaml``. Plugin code reads
+    ALL of its own settings from here, including its
+    ``llm_purposes:`` map (purpose name → tag name). Runtime never
+    inspects this dict — it's purely the plugin's data.
+  * ``ctx.get_llm_for_tag(tag_name)`` — resolves a tag name to a
+    concrete ``LLMClient``, or returns ``None`` if the tag is
+    undefined / unbound. Plugin reads its config to find the tag
+    name, then asks for the client. **API key isolation**: providers
+    + secrets stay in Runtime; plugin only ever holds the resolved
+    client object.
   * ``ctx.services`` — Runtime-built resources whitelisted for
     plugin use (gm, kb_registry, embedder, web_chat_history, ...).
   * ``ctx.plugin_cache`` — per-plugin scratch dict for sharing
@@ -22,8 +21,7 @@ Passed to ``build_<component>(ctx)`` for every plugin kind
     sensory + tentacle share an HttpTelegramClient via this).
   * ``ctx.deps`` — escape hatch to ``RuntimeDeps`` for plugins that
     truly need it. Reading ``deps.config.llm.providers`` from a
-    plugin is allowed but discouraged — by convention, plugins
-    shouldn't poke at provider bindings.
+    plugin breaks API-key isolation; don't.
 
 Built by ``Runtime._register_plugins_from_config`` per plugin.
 """
@@ -49,17 +47,10 @@ class PluginContext:
     deps: "RuntimeDeps"
     plugin_name: str
     config: dict[str, Any] = field(default_factory=dict)
-    # Resolved ``purpose_name → LLMClient`` map. Populated by the
-    # registrar before the factory is called; an entry is absent
-    # whenever the user hasn't bound that purpose to a tag (or the
-    # tag references a missing provider).
-    llms: dict[str, "LLMClient"] = field(default_factory=dict)
     # Whitelisted Runtime-built resources (gm, kb_registry, embedder,
     # buffer, web_chat_history, build_code_runner, ...). Populated by
     # Runtime when building the ctx so plugins don't have to grab
-    # unrestricted Runtime references. Same shape as the legacy
-    # plugin loader's `deps` dict — keeps existing factories' lookup
-    # patterns familiar.
+    # unrestricted Runtime references.
     services: dict[str, Any] = field(default_factory=dict)
     # Shared mutable storage scoped to a single plugin (NOT across
     # plugins). Components of the same plugin (e.g. telegram's
@@ -69,8 +60,29 @@ class PluginContext:
     # singletons. Reset per-plugin during registration.
     plugin_cache: dict[str, Any] = field(default_factory=dict)
 
-    def get_llm(self, purpose: str) -> "LLMClient | None":
-        return self.llms.get(purpose)
+    def get_llm_for_tag(self, tag_name: str | None) -> "LLMClient | None":
+        """Resolve a tag name to a concrete ``LLMClient``.
+
+        The plugin reads its own ``config.yaml`` to find which tag the
+        user bound (typically under ``llm_purposes: { my_purpose:
+        my_tag }``), then calls this method with the tag name. Returns
+        ``None`` for: missing tag name, undefined tag, malformed tag,
+        unknown provider — all the failure modes of
+        ``resolve_llm_for_tag``.
+
+        Plugins NEVER see provider configs / API keys; the resolved
+        ``LLMClient`` is the only thing that crosses the boundary.
+        """
+        if not tag_name:
+            return None
+        # Lazy import — runtime depends on interfaces, not the other
+        # way; the runtime symbol is fetched only when a plugin
+        # actually asks to resolve a tag (i.e. always at call-time,
+        # never at import-time).
+        from src.runtime.runtime import resolve_llm_for_tag
+        return resolve_llm_for_tag(
+            self.deps.config, tag_name, self.deps.llm_clients_by_tag,
+        )
 
 
 def load_plugin_config(plugin_name: str, root: Path | str) -> dict[str, Any]:
@@ -79,6 +91,9 @@ def load_plugin_config(plugin_name: str, root: Path | str) -> dict[str, Any]:
     Missing file → empty dict (the plugin operates with whatever
     defaults its code defines). Malformed YAML → empty dict + log
     warning, so a typo doesn't crash startup.
+
+    Used by both Runtime (to pre-load ``ctx.config`` as a convenience)
+    AND by plugins that want to re-read their own config later.
     """
     path = Path(root) / plugin_name / "config.yaml"
     if not path.exists():

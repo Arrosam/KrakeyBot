@@ -144,15 +144,16 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         dashboard=DashboardSection(enabled=False),
     )
     # Pre-cache the LLMClient slots that plugins will resolve through
-    # ctx.get_llm. We point the helper's "_test_default" tag at the
-    # caller's hypo_llm (ScriptedLLM in most tests) so the
+    # ctx.get_llm_for_tag. We point the helper's "_test_default" tag at
+    # the caller's hypo_llm (ScriptedLLM in most tests) so the
     # default_hypothalamus Reflect's `translator` purpose lands on the
     # scripted fake instead of trying to make a real HTTP call.
     llm_clients_by_tag: dict = {"_test_default": hypo_llm}
 
     # Plant a per-plugin config for default_hypothalamus that binds
-    # its `translator` purpose to "_test_default" — without this,
-    # ctx.get_llm("translator") returns None and the factory skips
+    # its `translator` purpose to "_test_default" — without this, the
+    # plugin's factory reads no purposes from ctx.config,
+    # ctx.get_llm_for_tag(None) returns None, and the factory skips
     # registration (correct behavior, but would break tests that
     # expect the Reflect to be registered).
     Path(plugin_configs_dir, "default_hypothalamus").mkdir(

@@ -7,9 +7,16 @@ from typing import Any, Protocol
 class PluginsService(Protocol):
     """Unified tentacle + sensory + plugin report.
 
-    The shape mirrors what Runtime.plugin_report() returns, but routes
-    depend on this Protocol so a fake (or a non-Runtime backing store)
-    can substitute in tests.
+    Routes depend on this Protocol so a fake (or a non-Runtime backing
+    store) can substitute in tests. The default adapter combines two
+    things:
+      * runtime observation (which components are currently loaded —
+        from ``runtime.loaded_plugin_report()``);
+      * direct disk reads/writes against ``workspace/plugins/<name>/
+        config.yaml`` via its own ``FilePluginConfigStore``.
+
+    The runtime is NEVER in the write path — the dashboard owns
+    plugin-config edits.
     """
 
     def report(self) -> dict[str, Any]: ...

@@ -79,6 +79,7 @@ class DashboardLifecycle:
                     config_path=(Path(rt._config_path)
                                   if rt._config_path else None),
                     on_restart=on_restart,
+                    plugin_configs_root=rt._plugin_configs_root,
                 ),
                 host=cfg.host, port=cfg.port,
             )

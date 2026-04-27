@@ -108,19 +108,25 @@ class DefaultHypothalamusReflect:
 def build_reflect(ctx: "PluginContext") -> DefaultHypothalamusReflect | None:
     """Factory invoked by ``load_component``.
 
-    Pulls the ``translator`` LLM via the plugin's per-plugin config
-    binding (``workspace/plugins/default_hypothalamus/config.yaml``
-    → ``llm_purposes.translator: <tag_name>``). When the user hasn't
-    bound the tag, returns ``None`` — the loader skips this Reflect
+    Reads its own ``llm_purposes.translator`` binding from
+    ``workspace/plugins/default_hypothalamus/config.yaml`` (surfaced
+    via ``ctx.config``), then asks the runtime to resolve that tag to
+    a concrete ``LLMClient``. When the binding is missing or the tag
+    is unknown, returns ``None`` — the loader skips this Reflect
     rather than crashing the runtime (additive plugin model).
     """
     import logging
-    llm = ctx.get_llm("translator")
+    purposes = ctx.config.get("llm_purposes") or {}
+    tag_name = (
+        purposes.get("translator") if isinstance(purposes, dict) else None
+    )
+    llm = ctx.get_llm_for_tag(tag_name)
     if llm is None:
         logging.getLogger(__name__).warning(
-            "default_hypothalamus: no LLM bound for purpose 'translator' "
-            "(check workspace/plugins/default_hypothalamus/config.yaml "
-            "and llm.tags in central config). Skipping registration."
+            "default_hypothalamus: no LLM resolved for purpose 'translator' "
+            "(check workspace/plugins/default_hypothalamus/config.yaml's "
+            "llm_purposes.translator and llm.tags in central config). "
+            "Skipping registration."
         )
         return None
     return DefaultHypothalamusReflect(llm)

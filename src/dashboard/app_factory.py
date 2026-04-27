@@ -63,6 +63,7 @@ def create_app(
     event_broadcaster: EventBroadcasterService | None = None,
     config_path: Path | None = None,
     on_restart: Callable[[], None] | None = None,
+    plugin_configs_root: Path | str = "workspace/plugins",
     # --- overrides for unit tests (pass a fake instead of a real service) ---
     memory_service: MemoryService | None = None,
     prompts_service: PromptsService | None = None,
@@ -101,7 +102,9 @@ def create_app(
     # --- services + routes that need them ---
     memory = memory_service or RuntimeMemoryService(runtime)
     prompts = prompts_service or RuntimePromptsService(runtime)
-    plugins = plugins_service or RuntimePluginsService(runtime)
+    plugins = plugins_service or RuntimePluginsService(
+        runtime, plugin_configs_root=plugin_configs_root,
+    )
     config = config_service or FileConfigService(config_path, on_restart)
 
     _memory.register(app, memory=memory)

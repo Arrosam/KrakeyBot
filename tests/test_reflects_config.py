@@ -42,9 +42,14 @@ def _minimal_deps_for_runtime(runtime):
     """Re-derive a deps-shaped namespace from a runtime built by the
     helper, so tests can re-invoke ``_register_reflects_from_config``
     with the same plugin-isolation setup the helper provisioned.
+
+    Includes ``config`` because plugin factories now resolve their own
+    LLMs via ``ctx.get_llm_for_tag`` → ``resolve_llm_for_tag(deps.config,
+    tag, deps.llm_clients_by_tag)``.
     """
     from types import SimpleNamespace
     return SimpleNamespace(
+        config=runtime.config,
         plugin_configs_root=runtime._test_reflect_configs_root,
         llm_clients_by_tag=runtime._test_llm_clients_by_tag,
         hypo_llm=ScriptedLLM([]),
@@ -144,15 +149,27 @@ def test_discover_does_not_import_plugin_modules():
 
 def test_load_component_imports_and_calls_factory():
     """load_component is the only path that imports plugin modules.
-    Builds a fake PluginContext binding the `translator` purpose to
-    a stand-in LLMClient → factory returns a Reflect."""
+    Plugins now resolve LLMs themselves: the factory reads its own
+    ``llm_purposes.translator`` from ``ctx.config`` and calls
+    ``ctx.get_llm_for_tag``. We stub the latter on a SimpleNamespace
+    so no Runtime is needed."""
+    from types import SimpleNamespace
+
     from src.interfaces.plugin_context import PluginContext
     metas = discover_plugins()
     refl_comp = next(c for c in metas["default_hypothalamus"].components
                      if c.kind == "reflect")
     fake_llm = ScriptedLLM([])
-    ctx = PluginContext(deps=None, plugin_name="default_hypothalamus",
-                          config={}, llms={"translator": fake_llm})
+    ctx = PluginContext(
+        deps=SimpleNamespace(config=None, llm_clients_by_tag={}),
+        plugin_name="default_hypothalamus",
+        config={"llm_purposes": {"translator": "_fake_tag"}},
+    )
+    # Bypass the runtime resolver — return our scripted LLM whenever
+    # the factory asks for the bound tag.
+    ctx.get_llm_for_tag = lambda tag: (  # type: ignore[assignment]
+        fake_llm if tag == "_fake_tag" else None
+    )
     r = load_component(refl_comp, ctx)
     assert r is not None
     assert r.kind == "hypothalamus"
