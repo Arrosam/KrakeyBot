@@ -28,10 +28,13 @@ class SandboxAgentSection:
 
 @dataclass
 class SandboxSection:
-    """Sandbox VM configuration. Required when any sandboxed tentacle is
-    enabled (coding / gui_control / cli / file_read / file_write / browser).
-    Runtime refuses to start if any of those has sandbox=true but the
-    required fields here are missing or the agent is unreachable.
+    """Sandbox VM configuration. Required when any plugin that declares
+    ``requires_sandbox: true`` in its meta.yaml AND has its own
+    ``sandbox: true`` config is enabled. Runtime refuses to start in
+    that case if the required fields here are missing or the agent is
+    unreachable. (No in-tree plugin currently declares this — the
+    sandbox infrastructure is dormant pending the code-execution
+    redesign.)
     """
     guest_os: str = ""         # "linux" | "macos" | "windows" — REQUIRED
     provider: str = "qemu"     # qemu | virtualbox | utm
