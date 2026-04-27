@@ -22,9 +22,7 @@ from src.interfaces.reflect import (
 from src.plugins.default_hypothalamus.reflect import (
     DefaultHypothalamusReflect,
 )
-from src.plugins.default_recall_anchor.reflect import (
-    DefaultRecallAnchorReflect,
-)
+from src.plugins.recall_anchor.reflect import RecallAnchorReflectImpl
 from tests._runtime_helpers import (
     NullEmbedder, ScriptedLLM, build_runtime_with_fakes,
 )
@@ -33,11 +31,11 @@ from tests._runtime_helpers import (
 # ---- protocol compliance ----------------------------------------------
 
 
-def _stub_recall_anchor() -> DefaultRecallAnchorReflect:
-    """Build a DefaultRecallAnchorReflect with placeholder state for
+def _stub_recall_anchor() -> RecallAnchorReflectImpl:
+    """Build a RecallAnchorReflectImpl with placeholder state for
     tests that only inspect protocol attributes (role/name/registry
     behavior). make_recall is never invoked on these stubs."""
-    return DefaultRecallAnchorReflect(
+    return RecallAnchorReflectImpl(
         gm=None, embedder=None, reranker=None,  # type: ignore[arg-type]
         per_stimulus_k=0, neighbor_depth=0, recall_token_budget=0,
     )
@@ -51,12 +49,12 @@ def test_default_hypothalamus_satisfies_protocol():
     assert r.name == "default_hypothalamus"
 
 
-def test_default_recall_anchor_satisfies_protocol():
+def test_recall_anchor_satisfies_protocol():
     r = _stub_recall_anchor()
     assert isinstance(r, Reflect)
     assert isinstance(r, RecallAnchorReflect)
     assert r.role == "recall_anchor"
-    assert r.name == "default_recall_anchor"
+    assert r.name == "recall_anchor"
 
 
 # ---- registry --------------------------------------------------------
@@ -117,7 +115,7 @@ def test_registry_iteration_in_registration_order():
     reg.register(h)
     assert reg.roles() == ["recall_anchor", "hypothalamus"]
     assert reg.all() == [r, h]
-    assert reg.names() == ["default_recall_anchor", "default_hypothalamus"]
+    assert reg.names() == ["recall_anchor", "default_hypothalamus"]
 
 
 # ---- runtime integration --------------------------------------------
@@ -129,7 +127,7 @@ async def test_runtime_registers_default_reflects(tmp_path):
         gm_path=str(tmp_path / "gm.sqlite"),
     )
     assert "default_hypothalamus" in runtime.reflects.names()
-    assert "default_recall_anchor" in runtime.reflects.names()
+    assert "recall_anchor" in runtime.reflects.names()
     # Roles registered:
     assert runtime.reflects.has_role("hypothalamus")
     assert runtime.reflects.has_role("recall_anchor")

@@ -1,4 +1,4 @@
-name: default_recall_anchor
+name: recall_anchor
 description: >
   Scripted vec_search + weighted-merge recall. Produces the per-beat
   IncrementalRecall instance that drives the [GRAPH MEMORY] prompt
@@ -13,5 +13,5 @@ config_schema: []
 components:
   - kind: reflect
     role: recall_anchor
-    factory_module: src.plugins.default_recall_anchor.reflect
+    factory_module: src.plugins.recall_anchor.reflect
     factory_attr: build_reflect

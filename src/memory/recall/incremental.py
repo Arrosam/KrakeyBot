@@ -11,14 +11,14 @@ What lives here:
                          that implements this Protocol can claim the
                          ``recall_anchor`` Reflect role.
   * ``NoopRecall``     — concrete null-object used when no
-                         ``recall_anchor`` Reflect is registered.
+                         Reflect claims the ``recall_anchor`` role.
                          Honors the additive-plugin invariant
                          (CLAUDE.md): disabling the recall plugin
                          must not break the heartbeat.
 
 What does NOT live here (intentionally):
   * The real ``IncrementalRecall`` driver — it ships with the
-    ``default_recall_anchor`` plugin (``src/plugins/default_recall_anchor/
+    ``recall_anchor`` plugin (``src/plugins/recall_anchor/
     incremental.py``). Core has zero references to it; disabling the
     plugin removes it entirely from the import graph.
 
@@ -48,7 +48,7 @@ class RecallResult:
 class RecallLike(Protocol):
     """Duck-typed surface the runtime depends on. Implementations:
     ``NoopRecall`` (in core) and ``IncrementalRecall`` (in the
-    default_recall_anchor plugin).
+    ``recall_anchor`` plugin).
 
     A read-only ``processed_stimuli`` list is exposed because the
     heartbeat's drain phase uses it to dedup stimuli already fed

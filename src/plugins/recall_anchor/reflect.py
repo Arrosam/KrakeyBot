@@ -1,23 +1,23 @@
-"""Default recall-anchor Reflect — wraps the ``IncrementalRecall``
-factory.
+"""Recall-anchor Reflect — wraps the ``IncrementalRecall`` factory.
 
 Imported lazily by ``src.plugin_system.load_component`` only when
-the user enables ``default_recall_anchor`` in ``config.yaml``'s
-``plugins:`` list.
+the user enables ``recall_anchor`` in ``config.yaml``'s ``plugins:``
+list.
 
 The Reflect captures everything it needs (GraphMemory, embedder,
 reranker, config knobs) from ``PluginContext`` at construction time.
 ``make_recall(runtime)`` then ignores its ``runtime`` argument —
 captured state is sufficient. The runtime parameter is part of the
-``RecallAnchorReflect`` Protocol so other plugins can choose to read
-from runtime if they prefer; this implementation does not.
+``RecallAnchorReflect`` Protocol (in ``src.interfaces.reflect``) so
+other plugins can choose to read from runtime if they prefer; this
+implementation does not.
 """
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
 from src.models.config import LLMParams
-from src.plugins.default_recall_anchor.incremental import IncrementalRecall
+from src.plugins.recall_anchor.incremental import IncrementalRecall
 
 if TYPE_CHECKING:
     from src.interfaces.plugin_context import PluginContext
@@ -25,10 +25,10 @@ if TYPE_CHECKING:
     from src.memory.recall import AsyncEmbedder, RecallLike, Reranker
 
 
-class DefaultRecallAnchorReflect:
+class RecallAnchorReflectImpl:
     """Per-beat ``IncrementalRecall`` factory using captured state."""
 
-    name = "default_recall_anchor"
+    name = "recall_anchor"
     role = "recall_anchor"
 
     def __init__(
@@ -59,7 +59,7 @@ class DefaultRecallAnchorReflect:
         )
 
 
-def build_reflect(ctx: "PluginContext") -> DefaultRecallAnchorReflect:
+def build_reflect(ctx: "PluginContext") -> RecallAnchorReflectImpl:
     """Factory invoked by ``load_component``. Pulls GM + embedder +
     reranker from ``ctx.services`` and recall config knobs from
     ``ctx.deps.config`` so ``make_recall`` does not need a runtime
@@ -67,7 +67,7 @@ def build_reflect(ctx: "PluginContext") -> DefaultRecallAnchorReflect:
     is never needed."""
     cfg = ctx.deps.config
     self_params = cfg.llm.core_params("self_thinking") or LLMParams()
-    return DefaultRecallAnchorReflect(
+    return RecallAnchorReflectImpl(
         gm=ctx.services["gm"],
         embedder=ctx.services["embedder"],
         reranker=ctx.services.get("reranker"),

@@ -16,7 +16,7 @@ Public API re-exported at this package root so
 RecallResult, Reranker`` keeps working unchanged.
 
 Note: the concrete ``IncrementalRecall`` driver lives in the
-``default_recall_anchor`` plugin and is NOT re-exported from core.
+``recall_anchor`` plugin and is NOT re-exported from core.
 Disabling that plugin removes the class from the import graph
 entirely.
 """
