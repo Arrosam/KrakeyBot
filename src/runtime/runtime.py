@@ -10,17 +10,16 @@ live in ``src/main.py``; per-beat algorithm lives in
 from __future__ import annotations
 
 import asyncio
-import sys
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 from src.bootstrap import load_self_model_or_default
 from src.models.self_model import SelfModelStore
 from src.interfaces.tentacle import TentacleRegistry
-from src.llm.client import LLMClient
+from src.llm.resolve import AsyncEmbedder, ChatLike, resolve_llm_for_tag
 from src.memory.graph_memory import GraphMemory
 from src.memory.knowledge_base import KBRegistry
 from src.memory.recall import IncrementalRecall, Reranker
@@ -33,14 +32,6 @@ from src.runtime.console.heartbeat_logger import HeartbeatLogger
 from src.runtime.heartbeat.sliding_window import SlidingWindow
 from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 from src.sandbox.policy import build_code_runner, preflight_if_required
-
-
-class ChatLike(Protocol):
-    async def chat(self, messages, **kwargs) -> str: ...
-
-
-class AsyncEmbedder(Protocol):
-    async def __call__(self, text: str) -> list[float]: ...
 
 
 @dataclass
@@ -73,52 +64,6 @@ class RuntimeDeps:
     # map to the same tag share one client (saves connections + keeps
     # rate-limit accounting consistent).
     llm_clients_by_tag: dict[str, Any] = field(default_factory=dict)
-
-
-def resolve_llm_for_tag(
-    cfg: Config, tag_name: str | None,
-    cache: dict[str, "LLMClient"],
-) -> "LLMClient | None":
-    """Build (or fetch from cache) the LLMClient for a tag name.
-
-    Shared between the core-purpose loader (build_runtime_from_config
-    in src/main.py) and the per-plugin loader
-    (Runtime._register_plugins_from_config) so two purposes pointing
-    at the same tag share one client instance — keeps connection
-    state + future rate-limit accounting consistent.
-
-    Returns None for: empty tag_name, missing tag in cfg.llm.tags,
-    malformed provider field, or provider name not in cfg.llm.providers.
-    Each failure mode logs a single stderr warning so the user can
-    see what to fix; the runtime continues without that LLM (strictly
-    additive plugin model — bad config doesn't crash startup).
-    """
-    if not tag_name:
-        return None
-    cached = cache.get(tag_name)
-    if cached is not None:
-        return cached
-    tag = cfg.llm.tags.get(tag_name)
-    if tag is None:
-        print(f"warning: tag {tag_name!r} not defined in llm.tags",
-              file=sys.stderr)
-        return None
-    try:
-        provider_name, model_name = tag.split_provider()
-    except ValueError as e:
-        print(f"warning: tag {tag_name!r} has bad provider field: {e}",
-              file=sys.stderr)
-        return None
-    provider = cfg.llm.providers.get(provider_name)
-    if provider is None:
-        print(
-            f"warning: tag {tag_name!r} references unknown provider "
-            f"{provider_name!r}", file=sys.stderr,
-        )
-        return None
-    client = LLMClient(provider, model_name, params=tag.params)
-    cache[tag_name] = client
-    return client
 
 
 class Runtime:

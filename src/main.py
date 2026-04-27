@@ -24,9 +24,10 @@ from src.models.config import load_config
 # Public re-exports — callers used to do ``from src.main import Runtime``
 # and we don't want to chase down every test importer just because the
 # class lives in a tidier file now.
-from src.runtime.runtime import (  # noqa: F401
-    AsyncEmbedder, ChatLike, Runtime, RuntimeDeps, resolve_llm_for_tag,
+from src.llm.resolve import (  # noqa: F401
+    AsyncEmbedder, ChatLike, resolve_llm_for_tag,
 )
+from src.runtime.runtime import Runtime, RuntimeDeps  # noqa: F401
 from src.runtime.heartbeat.heartbeat_orchestrator import (  # noqa: F401
     _summarize_stimuli,
 )

@@ -75,11 +75,7 @@ class PluginContext:
         """
         if not tag_name:
             return None
-        # Lazy import — runtime depends on interfaces, not the other
-        # way; the runtime symbol is fetched only when a plugin
-        # actually asks to resolve a tag (i.e. always at call-time,
-        # never at import-time).
-        from src.runtime.runtime import resolve_llm_for_tag
+        from src.llm.resolve import resolve_llm_for_tag
         return resolve_llm_for_tag(
             self.deps.config, tag_name, self.deps.llm_clients_by_tag,
         )
