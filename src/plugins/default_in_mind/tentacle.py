@@ -29,15 +29,13 @@ from datetime import datetime
 
 from src.interfaces.tentacle import Tentacle
 from src.models.stimulus import Stimulus
+from src.plugins.default_in_mind import _CACHE_KEY
 
 if TYPE_CHECKING:
     from src.interfaces.plugin_context import PluginContext
     from src.plugins.default_in_mind.reflect import (
         InMindReflectImpl,
     )
-
-
-_CACHE_KEY = "in_mind_reflect"
 
 
 def build_tentacle(ctx: "PluginContext") -> "UpdateInMindTentacle | None":

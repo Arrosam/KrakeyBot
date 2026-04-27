@@ -13,9 +13,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.plugins.default_in_mind import state as state_mod
+from src.plugins.default_in_mind import _CACHE_KEY, state as state_mod
 from src.plugins.default_in_mind.state import InMindState  # noqa: F401
-from src.plugins.default_in_mind.tentacle import _CACHE_KEY
 
 if TYPE_CHECKING:
     from src.interfaces.plugin_context import PluginContext
