@@ -90,6 +90,38 @@ class KnowledgeBase:
         await db.commit()
         return cur.lastrowid
 
+    async def merge_entry(self, entry_id: int, *,
+                            new_content: str,
+                            new_embedding: list[float] | None,
+                            new_importance: float,
+                            new_tags: list[str] | None) -> None:
+        """Replace ``entry_id``'s content/embedding/tags; **sum** the
+        importance with the existing row's. Used by the sleep-migration
+        dedup pass when an LLM judge confirms a GM node describes the
+        same thing as an existing KB entry. Tags are union-deduped so
+        each merge preserves provenance (category + source-name tag from
+        every contributing GM node).
+        """
+        db = self._require()
+        async with db.execute(
+            "SELECT importance, tags FROM kb_entries WHERE id=?", (entry_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            raise KeyError(f"entry {entry_id} not found in KB '{self.kb_id}'")
+        existing_imp = float(row["importance"])
+        existing_tags = json.loads(row["tags"]) if row["tags"] else []
+        merged_tags = sorted(set(existing_tags) | set(new_tags or []))
+        summed_imp = existing_imp + new_importance
+        await db.execute(
+            "UPDATE kb_entries SET content=?, embedding=?, tags=?, "
+            "importance=? WHERE id=?",
+            (new_content, encode_embedding(new_embedding),
+             json.dumps(merged_tags) if merged_tags else None,
+             summed_imp, entry_id),
+        )
+        await db.commit()
+
     async def get_entry(self, entry_id: int) -> dict[str, Any] | None:
         db = self._require()
         async with db.execute(
@@ -153,26 +185,33 @@ class KnowledgeBase:
         returns nothing matching threshold."""
         try:
             vec = await self._embedder(query)
-            results = await self._vec_search(
+            scored = await self.vec_search(
                 vec, top_k=top_k, min_similarity=min_similarity,
             )
+            results = [e for (e, _s) in scored]
         except Exception:  # noqa: BLE001
             results = []
         if results:
             return results
         return await self.fts_search(query, top_k=top_k)
 
-    async def _vec_search(self, query_vec: list[float], *,
-                            top_k: int,
-                            min_similarity: float) -> list[dict[str, Any]]:
+    async def vec_search(self, query_vec: list[float], *,
+                           top_k: int = 5,
+                           min_similarity: float = 0.5
+                           ) -> list[tuple[dict[str, Any], float]]:
+        """Brute-force python-side cosine over active entries. Same
+        contract as ``gm.vec_search``: returns ``(entry, similarity)``
+        pairs sorted descending. Used by ``KnowledgeBase.search`` (the
+        string-query path) and by the sleep-migration dedup pass
+        (which already has a pre-computed embedding).
+        """
         from krakey.memory.tools.vec_search import vec_scan
-        scored = await vec_scan(
+        return await vec_scan(
             self._require(), table="kb_entries",
             query_vec=query_vec, row_decoder=_row_to_entry,
             top_k=top_k, min_similarity=min_similarity,
             extra_where="is_active = 1",
         )
-        return [e for (e, _s) in scored]
 
     async def fts_search(self, query: str, *,
                            top_k: int = 5) -> list[dict[str, Any]]:

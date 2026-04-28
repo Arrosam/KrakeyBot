@@ -594,6 +594,7 @@ class HeartbeatOrchestrator:
             stats = await enter_sleep_mode(
                 rt.gm, rt.kb_registry, rt.buffer,
                 llm=rt.compact_llm, embedder=rt.embedder,
+                reranker=rt.reranker,
                 log_dir=rt.sleep_log_dir,
                 min_community_size=sl.min_community_size,
                 kb_consolidation_threshold=sl.kb_consolidation_threshold,

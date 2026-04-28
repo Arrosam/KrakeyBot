@@ -20,23 +20,34 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from typing import Protocol
+
 from krakey.memory._db import decode_embedding
 from krakey.memory.graph_memory import GraphMemory
 from krakey.memory.knowledge_base import KBRegistry, KnowledgeBase
+from krakey.memory.recall import Reranker, rerank
 from krakey.memory.sleep.kb_lifecycle import find_revive_target, revive_kb
+
+
+class AsyncChatLLM(Protocol):
+    async def chat(self, messages, **kwargs) -> str: ...
 
 
 _MIGRATABLE = ("FACT", "RELATION", "KNOWLEDGE")
 
 
 async def migrate_gm_to_kb(gm: GraphMemory, reg: KBRegistry, *,
+                              llm: AsyncChatLLM,
+                              reranker: Reranker | None = None,
+                              dedup_top_k: int = 5,
                               min_community_size: int = 1,
                               revive_threshold: float = 0.80,
                               ) -> dict[str, int]:
     """Run the migration pass. Returns counters."""
     db = gm._require()  # noqa: SLF001
     counters = {
-        "migrated_nodes": 0, "migrated_edges": 0,
+        "migrated_nodes": 0, "merged_entries": 0,
+        "migrated_edges": 0,
         "skipped_no_community": 0, "skipped_small_community": 0,
         "kbs_created": 0, "kbs_revived": 0,
     }
@@ -76,15 +87,15 @@ async def migrate_gm_to_kb(gm: GraphMemory, reg: KBRegistry, *,
             elif status == "revived":
                 counters["kbs_revived"] += 1
 
-        entry_id = await kb.write_entry(
-            node.get("description") or node["name"],
-            tags=[node["category"], node["name"]],
-            embedding=node.get("embedding"),
-            source=f"gm_node:{node['id']}",
-            importance=node.get("importance", 1.0),
+        entry_id, merged = await _dedup_or_write(
+            kb, node,
+            judge_llm=llm, reranker=reranker,
+            top_k=dedup_top_k,
         )
         gm_to_kb_entry[node["id"]] = (community_id, entry_id)
         counters["migrated_nodes"] += 1
+        if merged:
+            counters["merged_entries"] += 1
 
     # Second pass: migrate intra-community edges
     counters["migrated_edges"] = await _migrate_edges(
@@ -192,8 +203,102 @@ async def _migrate_edges(db, gm_to_kb_entry: dict[int, tuple[int, int]],
         cb, eb = gm_to_kb_entry[b]
         if ca != cb:
             continue  # cross-community → leave for index_rebuild
+        if ea == eb:
+            # Both endpoints collapsed into the same KB entry by the
+            # dedup pass. The relationship is now self-referential — KB
+            # rejects self-loops, and there's nothing useful to record
+            # anyway (an entry can't relate to itself in the KB graph).
+            continue
         kb = community_kbs[ca]
         info = await kb.write_edge(ea, eb, pred)
         if info["written"]:
             migrated += 1
     return migrated
+
+
+# --------------------------------------------------------------------
+# Semantic dedup: before writing a fresh entry, ask the LLM whether the
+# incoming GM node is the same thing as an existing nearby KB entry.
+# On match → merge (sum importance, union tags); otherwise → fresh write.
+# Every external call (reranker, LLM judge) is fail-soft so a flaky
+# service can never crash sleep — the worst case is fresh-write, which
+# matches the pre-feature behavior.
+# --------------------------------------------------------------------
+
+
+async def _dedup_or_write(
+    kb: KnowledgeBase, node: dict[str, Any], *,
+    judge_llm: AsyncChatLLM,
+    reranker: Reranker | None,
+    top_k: int = 5,
+) -> tuple[int, bool]:
+    """Returns ``(entry_id, merged)``. ``merged=True`` iff the GM node
+    was folded into an existing KB entry instead of inserted fresh."""
+    new_content = node.get("description") or node["name"]
+    new_imp = node.get("importance", 1.0)
+    new_tags = [node["category"], node["name"]]
+    embedding = node.get("embedding")
+
+    candidates: list[tuple[dict[str, Any], float]] = []
+    if embedding is not None:
+        candidates = await kb.vec_search(embedding, top_k=top_k)
+
+    # Reranker first; cosine fallback when rerank() reports None.
+    ranked = await rerank(candidates, query=new_content, reranker=reranker)
+    ordered: list[dict[str, Any]]
+    if ranked is None:
+        ordered = [n for (n, _sim) in candidates]
+    else:
+        ordered = [n for (n, _score) in ranked]
+
+    if ordered:
+        match_idx = await _llm_pick_same(judge_llm, new_content, ordered)
+        if match_idx is not None:
+            cand = ordered[match_idx]
+            await kb.merge_entry(
+                cand["id"],
+                new_content=new_content,
+                new_embedding=embedding,
+                new_importance=new_imp,
+                new_tags=new_tags,
+            )
+            return cand["id"], True
+
+    entry_id = await kb.write_entry(
+        new_content,
+        tags=new_tags,
+        embedding=embedding,
+        source=f"gm_node:{node['id']}",
+        importance=new_imp,
+    )
+    return entry_id, False
+
+
+async def _llm_pick_same(llm: AsyncChatLLM, new_content: str,
+                            candidates: list[dict[str, Any]]) -> int | None:
+    """One LLM call. Returns 0-based index of the matching candidate
+    or ``None`` on no-match / parse failure / exception."""
+    listing = "\n\n".join(
+        f"[{i + 1}] {c['content']}" for i, c in enumerate(candidates)
+    )
+    prompt = (
+        "Decide whether the NEW text describes the same fact, "
+        "concept, or event as any of the EXISTING entries.\n\n"
+        "Reply with strictly one of: a single integer (1-based) "
+        "naming the matching entry, or the word NONE. First line only.\n\n"
+        f"NEW:\n{new_content}\n\nEXISTING:\n{listing}"
+    )
+    try:
+        raw = await llm.chat([{"role": "user", "content": prompt}])
+    except Exception:  # noqa: BLE001
+        return None
+    first = raw.strip().split("\n", 1)[0].strip().upper()
+    if first.startswith("NONE"):
+        return None
+    try:
+        idx = int(first.split()[0]) - 1
+    except (ValueError, IndexError):
+        return None
+    if 0 <= idx < len(candidates):
+        return idx
+    return None

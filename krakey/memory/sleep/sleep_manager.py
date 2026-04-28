@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from krakey.memory.graph_memory import GraphMemory
 from krakey.memory.knowledge_base import KBRegistry
+from krakey.memory.recall import Reranker
 from krakey.memory.sleep.clustering import run_leiden_clustering
 from krakey.memory.sleep.index_rebuild import rebuild_index_graph
 from krakey.memory.sleep.kb_lifecycle import archive_excess_kbs, consolidate_kbs
@@ -34,12 +35,14 @@ class AsyncEmbedder(Protocol):
 async def enter_sleep_mode(
     gm: GraphMemory, reg: KBRegistry, channels: "StimulusBuffer",
     *, llm: AsyncChatLLM, embedder: AsyncEmbedder,
+    reranker: Reranker | None = None,
     log_dir: str | Path = "workspace/logs",
     min_community_size: int = 1,
     kb_consolidation_threshold: float = 0.85,
     kb_index_max: int = 30,
     kb_archive_pct: int = 10,
     kb_revive_threshold: float = 0.80,
+    kb_dedup_top_k: int = 5,
 ) -> dict[str, Any]:
     """Run all 7 phases. Returns summary stats."""
 
@@ -60,6 +63,8 @@ async def enter_sleep_mode(
         before_targets = await gm.count_by_category("TARGET")
         migrate_stats = await migrate_gm_to_kb(
             gm, reg,
+            llm=llm, reranker=reranker,
+            dedup_top_k=kb_dedup_top_k,
             min_community_size=min_community_size,
             revive_threshold=kb_revive_threshold,
         )
