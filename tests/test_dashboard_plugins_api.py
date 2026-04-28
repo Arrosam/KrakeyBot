@@ -67,7 +67,7 @@ async def test_report_returns_schema_and_values(tmp_path):
                 "loaded": True, "error": None,
             },
         ],
-        "sensories": [],
+        "channels": [],
     }
     svc = _FakePluginsService(report, tmp_path / "cfgs")
     async with _client(svc) as c:
@@ -89,7 +89,7 @@ async def test_report_503_when_no_runtime():
 
 
 async def test_update_config_persists_to_file(tmp_path):
-    svc = _FakePluginsService({"tools": [], "sensories": []},
+    svc = _FakePluginsService({"tools": [], "channels": []},
                                   tmp_path / "cfgs")
     async with _client(svc) as c:
         r = await c.post("/api/plugins/search/config",
@@ -105,7 +105,7 @@ async def test_update_config_persists_to_file(tmp_path):
 async def test_update_config_strips_enabled_from_values(tmp_path):
     """Loader owns `enabled`; clients mustn't double-write it inside
     values."""
-    svc = _FakePluginsService({"tools": [], "sensories": []},
+    svc = _FakePluginsService({"tools": [], "channels": []},
                                   tmp_path / "cfgs")
     async with _client(svc) as c:
         r = await c.post(

@@ -5,7 +5,7 @@ enabled-plugin list once at runtime startup, opens each plugin's
 ``meta.yaml`` (no scan), reads its per-plugin config, builds a
 ``PluginContext`` per declared component, invokes the factory, and
 routes the returned instance to the right registry (reflect / tool
-/ sensory).
+/ channel).
 
 Failure modes are isolated per-plugin AND per-component (broken
 metadata, factory exception, registry conflict): each writes one line
@@ -50,13 +50,13 @@ class PluginLoader:
         config: "Config",
         reflects: "ReflectRegistry",
         tools: "ToolRegistry",
-        sensories: "StimulusBuffer",
+        channels: "StimulusBuffer",
         services: dict[str, Any],
     ):
         self._config = config
         self._reflects = reflects
         self._tools = tools
-        self._sensories = sensories
+        self._channels = channels
         self._services = services
         self.registered: set[tuple[str, str]] = set()
 
@@ -147,8 +147,8 @@ class PluginLoader:
                 self._reflects.register(instance)
             elif kind == "tool":
                 self._tools.register(instance)
-            elif kind == "sensory":
-                self._sensories.register(instance)
+            elif kind == "channel":
+                self._channels.register(instance)
             else:
                 print(
                     f"config: plugin {plugin_name!r} produced unknown "

@@ -3,12 +3,12 @@ from datetime import datetime
 
 import pytest
 
-from krakey.interfaces.sensory import PushCallback, Sensory
+from krakey.interfaces.channel import PushCallback, Channel
 from krakey.models.stimulus import Stimulus
 from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
-class MockSensory(Sensory):
+class MockChannel(Channel):
     def __init__(self, name: str, adrenalin: bool, content: str = "tick"):
         self._name = name
         self._adr = adrenalin
@@ -29,7 +29,7 @@ class MockSensory(Sensory):
         self.started += 1
         self._push = push
         await push(Stimulus(
-            type="system_event", source=f"sensory:{self._name}",
+            type="system_event", source=f"channel:{self._name}",
             content=self._content, timestamp=datetime.now(),
             adrenalin=self._adr,
         ))
@@ -40,7 +40,7 @@ class MockSensory(Sensory):
 
 async def test_register_and_start_all_pushes_stimulus():
     buf = StimulusBuffer()
-    m = MockSensory("mock", adrenalin=False, content="hello")
+    m = MockChannel("mock", adrenalin=False, content="hello")
     buf.register(m)
     await buf.start_all()
 
@@ -49,10 +49,10 @@ async def test_register_and_start_all_pushes_stimulus():
     assert m.started == 1
 
 
-async def test_pause_non_urgent_stops_only_calm_sensories():
+async def test_pause_non_urgent_stops_only_calm_channels():
     buf = StimulusBuffer()
-    calm = MockSensory("calm", adrenalin=False)
-    urgent = MockSensory("urgent", adrenalin=True)
+    calm = MockChannel("calm", adrenalin=False)
+    urgent = MockChannel("urgent", adrenalin=True)
     buf.register(calm)
     buf.register(urgent)
     await buf.start_all()
@@ -65,7 +65,7 @@ async def test_pause_non_urgent_stops_only_calm_sensories():
 
 async def test_resume_all_restarts_paused():
     buf = StimulusBuffer()
-    calm = MockSensory("calm", adrenalin=False)
+    calm = MockChannel("calm", adrenalin=False)
     buf.register(calm)
     await buf.start_all()
     buf.drain()
@@ -77,15 +77,15 @@ async def test_resume_all_restarts_paused():
 
 def test_register_duplicate_raises():
     buf = StimulusBuffer()
-    buf.register(MockSensory("x", False))
+    buf.register(MockChannel("x", False))
     with pytest.raises(ValueError):
-        buf.register(MockSensory("x", False))
+        buf.register(MockChannel("x", False))
 
 
-def test_get_sensory_returns_none_for_unknown():
+def test_get_channel_returns_none_for_unknown():
     buf = StimulusBuffer()
-    buf.register(MockSensory("known", False))
-    assert buf.get_sensory("known") is not None
-    assert buf.get_sensory("nope") is None
+    buf.register(MockChannel("known", False))
+    assert buf.get_channel("known") is not None
+    assert buf.get_channel("nope") is None
     assert "known" in buf
     assert "nope" not in buf

@@ -9,7 +9,7 @@ from typing import Any
 @dataclass
 class Stimulus:
     type: str                # user_message | tool_feedback | batch_complete | system_event
-    source: str              # sensory:cli | tool:web_chat_reply | sensory:batch_tracker
+    source: str              # channel:cli | tool:web_chat_reply | channel:batch_tracker
     content: str
     timestamp: datetime
     adrenalin: bool = False

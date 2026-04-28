@@ -6,7 +6,7 @@ Plugins extend Krakey by contributing one or more **components**:
 |---|---|---|
 | `reflect` | Heartbeat hook — claims a role string the runtime queries by | hypothalamus, recall_anchor, in_mind |
 | `tool` | Outbound action Self can dispatch | search, telegram_reply, update_in_mind |
-| `sensory`  | Inbound stimulus producer | telegram, dashboard web chat |
+| `channel`  | Inbound stimulus producer | telegram, dashboard web chat |
 
 Plugins are **strictly additive**: disabling or removing any plugin must
 not break the runtime's core loop. Every plugin call site has a
@@ -26,7 +26,7 @@ Each folder contains:
 
 - `meta.yaml` (required) — manifest read by both the runtime loader and
   the dashboard catalogue scanner without importing plugin code.
-- Component code (`reflect.py`, `tool.py`, `sensory.py`, or a flat
+- Component code (`reflect.py`, `tool.py`, `channel.py`, or a flat
   `__init__.py`) exposing one factory per component.
 
 User-editable per-plugin config goes in `workspace/plugins/<name>/config.yaml`
@@ -57,9 +57,9 @@ components:
     factory_module: src.plugins.my_plugin.tool
     factory_attr: build_tool
 
-  - kind: sensory
-    factory_module: src.plugins.my_plugin.sensory
-    factory_attr: build_sensory
+  - kind: channel
+    factory_module: src.plugins.my_plugin.channel
+    factory_attr: build_channel
 ```
 
 A plugin can ship any combination of components. Enabling a plugin in
@@ -100,7 +100,7 @@ same registry.
 - **Single-component tool**: [`src/plugins/duckduckgo_search/`](src/plugins/duckduckgo_search/)
   — flat `__init__.py` with backend Protocol, tool, factory.
 - **Multi-component sharing a client**: [`src/plugins/telegram/`](src/plugins/telegram/)
-  — sensory + tool share an `HttpTelegramClient` via `ctx.plugin_cache`.
+  — channel + tool share an `HttpTelegramClient` via `ctx.plugin_cache`.
 - **Multi-component sharing a reflect**: [`src/plugins/in_mind_note/`](src/plugins/in_mind_note/)
   — reflect owns state, tool mutates it; both wired through
   `ctx.plugin_cache`.

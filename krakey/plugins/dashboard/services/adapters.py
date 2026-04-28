@@ -129,9 +129,9 @@ class RuntimePluginsService:
         if self._rt is None:
             raise RuntimeError("runtime not available")
         if not hasattr(self._rt, "loaded_plugin_report"):
-            return {"tools": [], "sensories": []}
+            return {"tools": [], "channels": []}
         report = self._rt.loaded_plugin_report()
-        for kind in ("tools", "sensories"):
+        for kind in ("tools", "channels"):
             for entry in report.get(kind, []):
                 project = entry.get("project") or ""
                 entry["values"] = (

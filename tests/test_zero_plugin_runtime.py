@@ -2,7 +2,7 @@
 disabled.
 
 Set 2026-04-25 as a load-bearing design rule: disabling or removing
-any plugin (Reflects, tools, sensories) must NOT break the
+any plugin (Reflects, tools, channels) must NOT break the
 runtime's core loop.
 
 Specific paths exercised:

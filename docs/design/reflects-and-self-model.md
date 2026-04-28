@@ -8,7 +8,7 @@
 
 ## 🔒 核心设计原则（载重不变量, 2026-04-25 / 2026-04-26）
 
-> **删除 / 关闭任何插件 (Reflects, tools, sensories) 都不应该
+> **删除 / 关闭任何插件 (Reflects, tools, channels) 都不应该
 > 影响本体 (runtime) 的运行。**
 
 > **插件代码在用户启用前不会被加载。** 启用前唯一允许的影响是
@@ -150,7 +150,7 @@ def build_reflect(ctx: PluginContext) -> Reflect | None:
 与此同时，Samuel 提出了三个更激进的想法：
 
 - **回忆层 LLM（recall-layer LLM）**：在处理 stimulus 前加一层专门的 LLM，从 stimulus + 历史提取"回忆特征点"，用这些特征去驱动 GM 召回。比现在"stimulus 原文向量搜索"精确得多，尤其能主动召回发言人印象、相关情景等。
-- **Reflect 插件类型**：比 tool / sensory 更深的扩展点，监听心跳开始/结束事件，可以接管或替换 runtime 核心机制。
+- **Reflect 插件类型**：比 tool / channel 更深的扩展点，监听心跳开始/结束事件，可以接管或替换 runtime 核心机制。
 - **默认机制 = 默认 Reflect**：现有 Hypothalamus 和 auto-recall 都改写成内置 Reflect，用户可选择替换或关闭。
 
 ---
@@ -256,7 +256,7 @@ LLM 的 prompt 模板（finalized 2026-04-25）：
 
 示例 1
 [CURRENT_STIMULI]
-[1] user_message from sensory:chat:
+[1] user_message from channel:chat:
     "Alex: 那个优化方案最后跑出来速度怎么样？"
 [RECENT_HISTORY]
 Heartbeat #N-1: Decision: "用 Cython 重写 hot loop"
@@ -264,7 +264,7 @@ Heartbeat #N-1: Decision: "用 Cython 重写 hot loop"
 
 示例 2
 [CURRENT_STIMULI]
-[1] user_message from sensory:chat: "Bob: 哦。"
+[1] user_message from channel:chat: "Bob: 哦。"
 [RECENT_HISTORY]
 (空)
 预期输出: {"anchors": []}
@@ -272,7 +272,7 @@ Heartbeat #N-1: Decision: "用 Cython 重写 hot loop"
 示例 3
 [CURRENT_STIMULI]
 [1] tool_feedback from tool:weather_check: "Sunny, 22°C"
-[2] batch_complete from sensory:batch_tracker: "All dispatched."
+[2] batch_complete from channel:batch_tracker: "All dispatched."
 [RECENT_HISTORY]
 Heartbeat #N-1: Decision: "Check the weather to plan tomorrow's hike"
 预期输出: {"anchors": ["weather check", "hiking plan"]}
@@ -313,7 +313,7 @@ Heartbeat #N-1: Decision: "Check the weather to plan tomorrow's hike"
 
 ### 定位
 
-Reflect 是**深度插件** —— 不同于 tool（outbound 肢体）和 sensory（inbound 感官），它听取 **每个心跳的开始 / 结束** 事件，可以替换或拦截 runtime 核心机制。
+Reflect 是**深度插件** —— 不同于 tool（outbound 肢体）和 channel（inbound 感官），它听取 **每个心跳的开始 / 结束** 事件，可以替换或拦截 runtime 核心机制。
 
 **核心约束**：Reflect 不是任意 monkey-patching，而是在 runtime 明确的 hook 点上插入。所有 hook 点都应该能被 grep 找到。
 

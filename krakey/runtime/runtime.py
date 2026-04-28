@@ -26,7 +26,7 @@ from krakey.memory.recall import RecallLike, Reranker
 from krakey.models.config import Config, LLMParams
 from krakey.models.config_backup import backup_config
 from krakey.prompt.builder import PromptBuilder
-from krakey.runtime.stimuli.batch_tracker import BatchTrackerSensory
+from krakey.runtime.stimuli.batch_tracker import BatchTrackerChannel
 from krakey.runtime.events.event_bus import EventBus
 from krakey.runtime.console.heartbeat_logger import HeartbeatLogger
 from krakey.runtime.heartbeat.sliding_window import SlidingWindow
@@ -79,7 +79,7 @@ class Runtime:
         self.reranker = deps.reranker
         # Reflect registry — role-keyed (one Reflect per role; second
         # registration claiming the same role raises). Plugin loader
-        # runs LATER (after tools + sensories registries exist)
+        # runs LATER (after tools + channels registries exist)
         # since a single plugin can contribute components of all three
         # kinds; loading them before all three registries are built
         # would crash.
@@ -127,22 +127,22 @@ class Runtime:
         self._plugin_configs_root = plugin_root
 
         # ``self.buffer`` is both the live stimulus queue AND the live
-        # sensory set (see krakey/runtime/stimuli/stimulus_buffer.py).
+        # channel set (see krakey/runtime/stimuli/stimulus_buffer.py).
         # BatchTracker is core runtime infrastructure (dispatch wake-up
         # mechanism) — kept out of the plugin system so it can't be
         # disabled by accident.
-        self.batch_tracker = BatchTrackerSensory()
+        self.batch_tracker = BatchTrackerChannel()
         self.buffer.register(self.batch_tracker)
 
         # Plugin registration. Each plugin can contribute reflect /
-        # tool / sensory components in any combination via its
+        # tool / channel components in any combination via its
         # meta.yaml. Has to run AFTER the three registries exist
         # (above) because one plugin may register into any of them.
         #
         # Bring up log + events + config paths BEFORE plugin registration
         # so the dashboard plugin (which pulls a runtime ref via
         # ctx.services["runtime"]) sees a runtime with the fields it
-        # needs at sensory.start() time.
+        # needs at channel.start() time.
         self.log = logger or HeartbeatLogger()
         self.sleep_log_dir = "workspace/logs"
         self.events = event_bus or EventBus()
@@ -159,7 +159,7 @@ class Runtime:
             config=self.config,
             reflects=self.reflects,
             tools=self.tools,
-            sensories=self.buffer,
+            channels=self.buffer,
             services={
                 "runtime": self,
                 "gm": self.gm,
@@ -271,7 +271,7 @@ class Runtime:
         self._plugin_observer = PluginObserver(
             reflects=self.reflects,
             tools=self.tools,
-            sensories=self.buffer,
+            channels=self.buffer,
             loader=self._plugin_loader,
         )
 
@@ -302,10 +302,10 @@ class Runtime:
         await self.gm.initialize()
         await self._preflight_sandbox()
         await self._refine_bootstrap_from_data()
-        # buffer.start_all() walks every registered sensory and calls its
-        # start(); the dashboard plugin's sensory uses that hook to spin
+        # buffer.start_all() walks every registered channel and calls its
+        # start(); the dashboard plugin's channel uses that hook to spin
         # up the Web UI server. No special-case "start dashboard" path —
-        # dashboard is just a sensory like any other.
+        # dashboard is just a channel like any other.
         await self.buffer.start_all()
 
         self._recall = self._new_recall()
@@ -331,7 +331,7 @@ class Runtime:
         return self._plugin_observer.collect_infos()
 
     def loaded_plugin_report(self) -> dict[str, Any]:
-        """Pure runtime observation of which tools + sensories are
+        """Pure runtime observation of which tools + channels are
         live (no plugin-config file reads). The dashboard adapter
         combines this with its own ``FilePluginConfigStore`` reads to
         build the ``/api/plugins`` payload."""
@@ -378,7 +378,7 @@ class Runtime:
             self.log.hb("bootstrap mode: empty GM + KBs → injecting GENESIS")
 
     async def close(self) -> None:
-        """Shut down persistent resources (GM + open KBs). Sensories
+        """Shut down persistent resources (GM + open KBs). Channels
         — including the dashboard plugin's server — are stopped via
         ``buffer.stop_all()`` in ``run()``'s finally block."""
         await self.kb_registry.close_all()

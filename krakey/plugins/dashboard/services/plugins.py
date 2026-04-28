@@ -5,7 +5,7 @@ from typing import Any, Protocol
 
 
 class PluginsService(Protocol):
-    """Unified tool + sensory + plugin report.
+    """Unified tool + channel + plugin report.
 
     Routes depend on this Protocol so a fake (or a non-Runtime backing
     store) can substitute in tests. The default adapter combines two

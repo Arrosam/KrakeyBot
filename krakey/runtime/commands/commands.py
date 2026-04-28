@@ -1,6 +1,6 @@
 """CLI / chat slash-commands (DevSpec §19).
 
-Any sensory that surfaces user text (CLI, web chat, telegram, ...)
+Any channel that surfaces user text (CLI, web chat, telegram, ...)
 pushes it as a ``user_message`` stimulus. The runtime's command phase
 scans drained stimuli for a leading ``/<cmd>``; when matched the
 stimulus is consumed (Self never sees it) and the action runs

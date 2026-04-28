@@ -43,7 +43,7 @@ async def test_single_iteration_user_message_triggers_tool_dispatch():
     runtime = build_runtime_with_fakes(self_llm=self_llm, hypo_llm=hypo_llm)
 
     await runtime.buffer.push(Stimulus(
-        type="user_message", source="sensory:cli_input",
+        type="user_message", source="channel:cli_input",
         content="hello", timestamp=datetime.now(), adrenalin=True,
     ))
 
@@ -156,7 +156,7 @@ async def test_heartbeat_with_connected_recall_nodes_does_not_crash():
     # Seed a user stimulus that embeds close to apple → recall finds both,
     # plus the edge between them, exercising the builder's edge rendering.
     await runtime.buffer.push(Stimulus(
-        type="user_message", source="sensory:cli_input",
+        type="user_message", source="channel:cli_input",
         content="tell me about apple", timestamp=datetime.now(),
         adrenalin=True,
     ))
@@ -307,7 +307,7 @@ async def test_command_kill_stops_runtime():
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
     )
     await runtime.buffer.push(Stimulus(
-        type="user_message", source="sensory:cli_input",
+        type="user_message", source="channel:cli_input",
         content="/kill", timestamp=datetime.now(), adrenalin=True,
     ))
     await runtime.run(iterations=5)  # should exit before this many iterations
@@ -326,7 +326,7 @@ async def test_command_status_pushes_system_event_for_self(tmp_path):
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
     )
     await runtime.buffer.push(Stimulus(
-        type="user_message", source="sensory:cli_input",
+        type="user_message", source="channel:cli_input",
         content="/status", timestamp=datetime.now(), adrenalin=True,
     ))
     await runtime.run(iterations=2)
@@ -352,7 +352,7 @@ async def test_command_sleep_triggers_full_sleep(tmp_path):
         embedding=[1.0, 0.0],
     )
     await runtime.buffer.push(Stimulus(
-        type="user_message", source="sensory:cli_input",
+        type="user_message", source="channel:cli_input",
         content="/sleep", timestamp=datetime.now(), adrenalin=True,
     ))
     await runtime.run(iterations=1)
@@ -372,7 +372,7 @@ async def test_normal_text_passes_through_to_self():
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
     )
     await runtime.buffer.push(Stimulus(
-        type="user_message", source="sensory:cli_input",
+        type="user_message", source="channel:cli_input",
         content="hello there", timestamp=datetime.now(), adrenalin=True,
     ))
     await runtime.run(iterations=1)
@@ -444,7 +444,7 @@ async def test_uncovered_stimulus_push_back_capped_at_one_retry():
 
     # Seed one user stimulus that will never match (GM empty).
     orig = Stimulus(
-        type="user_message", source="sensory:cli_input",
+        type="user_message", source="channel:cli_input",
         content="hello", timestamp=datetime.now(), adrenalin=True,
     )
     await runtime.buffer.push(orig)
@@ -482,7 +482,7 @@ async def test_tool_feedback_auto_ingested_to_gm():
     )
 
     await runtime.buffer.push(Stimulus(
-        type="user_message", source="sensory:cli_input",
+        type="user_message", source="channel:cli_input",
         content="hi", timestamp=datetime.now(), adrenalin=True,
     ))
     await runtime.run(iterations=2)

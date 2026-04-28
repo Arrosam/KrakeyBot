@@ -68,7 +68,7 @@ async def test_web_chat_reply_writes_to_tmpdir_not_prod(tmp_path):
 
     Web chat is owned by the dashboard plugin now; we reach into the
     registered tool's history (the same object the dashboard
-    sensory's chat-WS handler would push to) instead of touching a
+    channel's chat-WS handler would push to) instead of touching a
     runtime field that no longer exists.
     """
     before = _baseline_sizes()

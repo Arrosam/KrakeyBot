@@ -32,7 +32,7 @@ class AsyncEmbedder(Protocol):
 
 
 async def enter_sleep_mode(
-    gm: GraphMemory, reg: KBRegistry, sensories: "StimulusBuffer",
+    gm: GraphMemory, reg: KBRegistry, channels: "StimulusBuffer",
     *, llm: AsyncChatLLM, embedder: AsyncEmbedder,
     log_dir: str | Path = "workspace/logs",
     min_community_size: int = 1,
@@ -45,8 +45,8 @@ async def enter_sleep_mode(
 
     started_at = datetime.now()
 
-    # Phase 1: pause non-urgent sensories
-    await sensories.pause_non_urgent()
+    # Phase 1: pause non-urgent channels
+    await channels.pause_non_urgent()
 
     try:
         # Phase 2: cluster + summarize
@@ -111,11 +111,11 @@ async def enter_sleep_mode(
         await _write_daily_log(log_dir, result)
         return result
     finally:
-        # The buffer owns the sensories AND the queue, so resume_all
-        # needs no arg — it just hands each paused sensory its push
+        # The buffer owns the channels AND the queue, so resume_all
+        # needs no arg — it just hands each paused channel its push
         # callback again. The legacy ``active_buffer()`` workaround
-        # disappeared with the SensoryRegistry merge.
-        await sensories.resume_all()
+        # disappeared with the ChannelRegistry merge.
+        await channels.resume_all()
 
 
 # ---------------- helpers ----------------

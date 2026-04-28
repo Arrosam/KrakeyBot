@@ -84,7 +84,7 @@ def test_builder_assembles_all_layers():
                                   stimulus_summary="hi",
                                   decision_text="reply",
                                   note_text="")]
-    stimuli = [Stimulus(type="user_message", source="sensory:cli_input",
+    stimuli = [Stimulus(type="user_message", source="channel:cli_input",
                          content="hello", timestamp=datetime(2026, 4, 18))]
 
     prompt = PromptBuilder().build(
@@ -137,7 +137,7 @@ def test_builder_stimulus_has_no_per_stim_timestamps():
     the single trailer '当前时间' survives in [STIMULUS]."""
     stim_ts = datetime(2026, 4, 24, 12, 34, 56)
     stimuli = [
-        Stimulus(type="user_message", source="sensory:cli", content="hi",
+        Stimulus(type="user_message", source="channel:cli", content="hi",
                   timestamp=stim_ts),
         Stimulus(type="tool_feedback", source="tool:action",
                   content="done", timestamp=stim_ts),
@@ -202,11 +202,11 @@ def test_builder_splits_stimulus_by_source_type():
     """Phase 1.7 fix: STIMULUS must group by type so Self does not confuse
     its own tool outputs with user input."""
     stimuli = [
-        Stimulus(type="user_message", source="sensory:cli_input",
+        Stimulus(type="user_message", source="channel:cli_input",
                   content="hello bot", timestamp=datetime(2026, 4, 19)),
         Stimulus(type="tool_feedback", source="tool:action",
                   content="hi user!", timestamp=datetime(2026, 4, 19)),
-        Stimulus(type="batch_complete", source="sensory:batch_tracker",
+        Stimulus(type="batch_complete", source="channel:batch_tracker",
                   content="batch done", timestamp=datetime(2026, 4, 19)),
     ]
     p = PromptBuilder().build(
@@ -242,12 +242,12 @@ def test_builder_marks_recall_retry_stimuli():
     surface that flag so Self knows the [GRAPH MEMORY] layer has no
     related context for that signal."""
     fresh = Stimulus(
-        type="user_message", source="sensory:cli",
+        type="user_message", source="channel:cli",
         content="brand new question",
         timestamp=datetime(2026, 4, 19),
     )
     retried = Stimulus(
-        type="user_message", source="sensory:cli",
+        type="user_message", source="channel:cli",
         content="lonely message",
         timestamp=datetime(2026, 4, 19),
         metadata={"recall_retries": 1},

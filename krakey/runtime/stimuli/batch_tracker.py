@@ -1,4 +1,4 @@
-"""Batch Tracker Sensory (DevSpec §5.5).
+"""Batch Tracker Channel (DevSpec §5.5).
 
 Tracks call_ids dispatched during a heartbeat. When every pending id has
 been marked completed, pushes an adrenalin `batch_complete` stimulus so
@@ -9,11 +9,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from krakey.interfaces.sensory import PushCallback, Sensory
+from krakey.interfaces.channel import PushCallback, Channel
 from krakey.models.stimulus import Stimulus
 
 
-class BatchTrackerSensory(Sensory):
+class BatchTrackerChannel(Channel):
     def __init__(self):
         self._pending: set[str] = set()
         self._push: PushCallback | None = None
@@ -49,7 +49,7 @@ class BatchTrackerSensory(Sensory):
             return
         await self._push(Stimulus(
             type="batch_complete",
-            source=f"sensory:{self.name}",
+            source=f"channel:{self.name}",
             content="All dispatched tools completed.",
             timestamp=datetime.now(),
             adrenalin=True,

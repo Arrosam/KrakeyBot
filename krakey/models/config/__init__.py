@@ -92,7 +92,7 @@ class Config:
     )
     # Ordered list of unified-format plugin names to enable at
     # startup. A plugin can declare any mix of reflect / tool /
-    # sensory components in its meta.yaml (Samuel 2026-04-26
+    # channel components in its meta.yaml (Samuel 2026-04-26
     # unification). Order = chain execution order for same-kind
     # reflect components.
     #

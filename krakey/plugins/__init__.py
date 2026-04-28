@@ -4,7 +4,7 @@ Each subfolder is one plugin (sibling shape to ``workspace/plugins/<name>/``).
 A plugin folder contains:
 
   * ``meta.yaml``   — manifest (name, description, components, schema)
-  * Component code (``reflect.py``, ``tool.py``, ``sensory.py``,
+  * Component code (``reflect.py``, ``tool.py``, ``channel.py``,
     ``__init__.py`` factories)
 
 User-editable plugin config lives at ``workspace/plugins/<name>/config.yaml``

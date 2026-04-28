@@ -1,11 +1,11 @@
-"""Phase 3 / D: Telegram inbound (Sensory) + outbound (Reply Tool)."""
+"""Phase 3 / D: Telegram inbound (Channel) + outbound (Reply Tool)."""
 import asyncio
 from datetime import datetime
 
 import pytest
 
 from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
-from krakey.plugins.telegram.sensory import TelegramSensory
+from krakey.plugins.telegram.channel import TelegramChannel
 from krakey.plugins.telegram.tool import TelegramReplyTool
 
 
@@ -39,17 +39,17 @@ def _msg(update_id, chat_id, text):
     }
 
 
-# ---------------- TelegramSensory ----------------
+# ---------------- TelegramChannel ----------------
 
-async def test_sensory_pushes_incoming_message_as_user_stimulus():
+async def test_channel_pushes_incoming_message_as_user_stimulus():
     client = FakeClient(updates_batches=[
         [_msg(10, 123, "hello bot")],
     ])
     buf = StimulusBuffer()
-    sensory = TelegramSensory(client=client)
-    await sensory.start(buf.push)
+    channel = TelegramChannel(client=client)
+    await channel.start(buf.push)
     await asyncio.sleep(0.1)
-    await sensory.stop()
+    await channel.stop()
 
     drained = buf.drain()
     assert any(s.content == "hello bot" for s in drained)
@@ -58,32 +58,32 @@ async def test_sensory_pushes_incoming_message_as_user_stimulus():
     assert any(s.metadata.get("chat_id") == 123 for s in drained)
 
 
-async def test_sensory_advances_offset_so_old_msgs_not_replayed():
+async def test_channel_advances_offset_so_old_msgs_not_replayed():
     client = FakeClient(updates_batches=[
         [_msg(5, 1, "first")],
         [_msg(6, 1, "second")],
     ])
     buf = StimulusBuffer()
-    sensory = TelegramSensory(client=client)
-    await sensory.start(buf.push)
+    channel = TelegramChannel(client=client)
+    await channel.start(buf.push)
     await asyncio.sleep(0.15)
-    await sensory.stop()
+    await channel.stop()
 
     # Offset 0 → 6 → 7 (first call uses 0, second uses 6, third uses 7)
     assert client.update_calls[0] == 0
     assert 6 in client.update_calls or 7 in client.update_calls
 
 
-async def test_sensory_allowed_chat_filter():
+async def test_channel_allowed_chat_filter():
     client = FakeClient(updates_batches=[
         [_msg(1, 999, "from stranger"),
          _msg(2, 42, "from friend")],
     ])
     buf = StimulusBuffer()
-    sensory = TelegramSensory(client=client, allowed_chat_ids={42})
-    await sensory.start(buf.push)
+    channel = TelegramChannel(client=client, allowed_chat_ids={42})
+    await channel.start(buf.push)
     await asyncio.sleep(0.1)
-    await sensory.stop()
+    await channel.stop()
 
     drained = buf.drain()
     contents = [s.content for s in drained]
@@ -91,38 +91,38 @@ async def test_sensory_allowed_chat_filter():
     assert "from stranger" not in contents
 
 
-async def test_sensory_handles_get_updates_exception_and_continues():
+async def test_channel_handles_get_updates_exception_and_continues():
     client = FakeClient(updates_batches=[
         RuntimeError("net flap"),
         [_msg(1, 1, "after recovery")],
     ])
     buf = StimulusBuffer()
-    sensory = TelegramSensory(client=client, error_backoff=0.01)
-    await sensory.start(buf.push)
+    channel = TelegramChannel(client=client, error_backoff=0.01)
+    await channel.start(buf.push)
     await asyncio.sleep(0.15)
-    await sensory.stop()
+    await channel.stop()
     drained = buf.drain()
     assert any(s.content == "after recovery" for s in drained)
 
 
-async def test_sensory_skips_messages_without_text():
+async def test_channel_skips_messages_without_text():
     client = FakeClient(updates_batches=[
         [{"update_id": 1, "message": {"chat": {"id": 1}}},  # no text
          _msg(2, 1, "real")],
     ])
     buf = StimulusBuffer()
-    sensory = TelegramSensory(client=client)
-    await sensory.start(buf.push)
+    channel = TelegramChannel(client=client)
+    await channel.start(buf.push)
     await asyncio.sleep(0.1)
-    await sensory.stop()
+    await channel.stop()
     drained = buf.drain()
     assert [s.content for s in drained] == ["real"]
 
 
-def test_sensory_metadata():
-    sensory = TelegramSensory(client=FakeClient())
-    assert sensory.name == "telegram"
-    assert sensory.default_adrenalin is True
+def test_channel_metadata():
+    channel = TelegramChannel(client=FakeClient())
+    assert channel.name == "telegram"
+    assert channel.default_adrenalin is True
 
 
 # ---------------- TelegramReplyTool ----------------

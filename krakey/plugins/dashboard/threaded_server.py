@@ -1,6 +1,6 @@
 """ThreadedDashboardServer — uvicorn in its own daemon thread.
 
-Used by the dashboard plugin's ``build_sensory`` factory so the
+Used by the dashboard plugin's ``build_channel`` factory so the
 server can start at plugin-registration time. Plugin factories are
 called synchronously during ``Runtime.__init__``, before any
 asyncio loop is running, so the server can't share the runtime's
@@ -11,11 +11,11 @@ Lifecycle: the daemon flag means the thread dies at process exit
 *if* nobody stopped it explicitly. ``stop()`` is the graceful path
 — sets uvicorn's ``should_exit`` and joins the thread so WS clients
 get clean close frames and in-flight HTTP requests finish. The
-plugin's ``WebChatSensory.stop()`` calls it during runtime shutdown
+plugin's ``WebChatChannel.stop()`` calls it during runtime shutdown
 (``buffer.stop_all()`` in ``Runtime.run()``'s ``finally``).
 
 Cross-thread concerns:
-  * ``WebChatSensory.push_user_message`` (called from the chat WS
+  * ``WebChatChannel.push_user_message`` (called from the chat WS
     handler in this thread) is responsible for shipping stimuli to
     runtime's queue on runtime's loop. It captures runtime's loop
     in its ``start()`` and uses ``run_coroutine_threadsafe`` for the
@@ -104,7 +104,7 @@ class ThreadedDashboardServer:
 
         Synchronous (no asyncio dependency) so callers from any context
         can wait for the server to actually be down. The plugin's
-        ``WebChatSensory.stop()`` wraps this in ``asyncio.to_thread``
+        ``WebChatChannel.stop()`` wraps this in ``asyncio.to_thread``
         so the runtime loop isn't blocked while uvicorn finishes its
         WS close frames + in-flight requests.
 

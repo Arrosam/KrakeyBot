@@ -12,7 +12,7 @@ any combination of components, each one of:
   * ``reflect``  — heartbeat hook (hypothalamus / recall_anchor /
                    in_mind / future kinds)
   * ``tool`` — outbound action
-  * ``sensory``  — inbound stimulus producer
+  * ``channel``  — inbound stimulus producer
 
 ## Architectural rules (Samuel 2026-04-26)
 
@@ -46,9 +46,9 @@ components:
     factory_module: src.plugins.my_plugin.tool
     factory_attr: build_tool
 
-  - kind: sensory
-    factory_module: src.plugins.my_plugin.sensory
-    factory_attr: build_sensory
+  - kind: channel
+    factory_module: src.plugins.my_plugin.channel
+    factory_attr: build_channel
 ```
 """
 from __future__ import annotations
@@ -80,7 +80,7 @@ WORKSPACE_ROOT = Path("workspace") / "plugins"
 @dataclass
 class ComponentMetadata:
     """One entry in a plugin's ``components:`` list."""
-    kind: str  # "reflect" | "tool" | "sensory"
+    kind: str  # "reflect" | "tool" | "channel"
     factory_module: str
     factory_attr: str
     role: str | None = None  # for kind="reflect": role string the
@@ -169,7 +169,7 @@ def parse_meta(path: Path) -> PluginMetadata:
     )
 
 
-_KNOWN_COMPONENT_KINDS = {"reflect", "tool", "sensory"}
+_KNOWN_COMPONENT_KINDS = {"reflect", "tool", "channel"}
 
 
 def _parse_component(c: Any) -> ComponentMetadata:

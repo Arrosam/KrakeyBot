@@ -5,7 +5,7 @@ Single source of truth for the web chat:
   - holds an in-memory cache for fast initial-load on WS connect
   - broadcasts every appended message to subscribed callbacks (the WS
     endpoints push to connected browsers; the WebChatTool and
-    WebChatSensory both use the same store)
+    WebChatChannel both use the same store)
 """
 from __future__ import annotations
 

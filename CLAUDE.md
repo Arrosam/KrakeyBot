@@ -2,7 +2,7 @@
 
 ## 🔒 Core architectural invariant — plugins are strictly additive
 
-**Disabling or removing ANY plugin (Reflects, tools, sensories)
+**Disabling or removing ANY plugin (Reflects, tools, channels)
 must NOT break the runtime's core loop.** Set 2026-04-25 by Samuel.
 
 This is load-bearing. Every plugin call site in `src/` must have a
@@ -12,7 +12,7 @@ Self instead of raising), or a phase skip. **No `raise RuntimeError`
 when a plugin is missing.**
 
 Test the invariant: `tests/test_zero_plugin_runtime.py` runs Runtime
-with all Reflects unregistered + zero tools + zero sensories and
+with all Reflects unregistered + zero tools + zero channels and
 asserts it completes a heartbeat. New code that requires a plugin
 to function will break that test — fix the missing-plugin path
 before merging.

@@ -85,38 +85,38 @@ async def test_unsubscribe_stops_delivery(tmp_path):
     assert len(seen) == 1
 
 
-# ---------------- WebChatSensory ----------------
+# ---------------- WebChatChannel ----------------
 
 
-async def test_sensory_push_creates_user_message_stimulus(tmp_path):
-    from krakey.plugins.dashboard.sensory import WebChatSensory
+async def test_channel_push_creates_user_message_stimulus(tmp_path):
+    from krakey.plugins.dashboard.channel import WebChatChannel
 
     pushed = []
 
     class _Buf:
         async def push(self, s): pushed.append(s)
 
-    sens = WebChatSensory()
+    sens = WebChatChannel()
     await sens.start(_Buf().push)
     await sens.push_user_message("hello krakey")
     assert len(pushed) == 1
     s = pushed[0]
     assert s.type == "user_message"
-    assert s.source == "sensory:web_chat"
+    assert s.source == "channel:web_chat"
     assert s.content == "hello krakey"
     assert s.adrenalin is True
     assert s.metadata["channel"] == "web_chat"
 
 
-async def test_sensory_push_appends_attachment_notices(tmp_path):
-    from krakey.plugins.dashboard.sensory import WebChatSensory
+async def test_channel_push_appends_attachment_notices(tmp_path):
+    from krakey.plugins.dashboard.channel import WebChatChannel
 
     pushed = []
 
     class _Buf:
         async def push(self, s): pushed.append(s)
 
-    sens = WebChatSensory()
+    sens = WebChatChannel()
     await sens.start(_Buf().push)
     await sens.push_user_message(
         "see file",
@@ -129,23 +129,23 @@ async def test_sensory_push_appends_attachment_notices(tmp_path):
     assert s.metadata["attachments"][0]["name"] == "a.png"
 
 
-async def test_sensory_push_before_start_silently_drops():
-    from krakey.plugins.dashboard.sensory import WebChatSensory
+async def test_channel_push_before_start_silently_drops():
+    from krakey.plugins.dashboard.channel import WebChatChannel
 
-    sens = WebChatSensory()
+    sens = WebChatChannel()
     # No start() — buffer is None. Must not raise.
     await sens.push_user_message("dropped")
 
 
-async def test_sensory_push_after_stop_silently_drops():
-    from krakey.plugins.dashboard.sensory import WebChatSensory
+async def test_channel_push_after_stop_silently_drops():
+    from krakey.plugins.dashboard.channel import WebChatChannel
 
     pushed = []
 
     class _Buf:
         async def push(self, s): pushed.append(s)
 
-    sens = WebChatSensory()
+    sens = WebChatChannel()
     await sens.start(_Buf().push)
     await sens.stop()
     await sens.push_user_message("dropped")

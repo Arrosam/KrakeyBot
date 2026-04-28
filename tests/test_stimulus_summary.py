@@ -22,7 +22,7 @@ from krakey.models.stimulus import Stimulus
 
 def _stim(content: str) -> Stimulus:
     return Stimulus(
-        type="user_message", source="sensory:web_chat",
+        type="user_message", source="channel:web_chat",
         content=content, timestamp=datetime(2026, 4, 25), adrenalin=False,
     )
 
@@ -40,7 +40,7 @@ def test_long_content_is_not_truncated():
     out = _summarize_stimuli([_stim(long)])
     assert long in out, "stimulus content was truncated"
     # Sanity: the source prefix is still there
-    assert "sensory:web_chat: " in out
+    assert "channel:web_chat: " in out
 
 
 def test_multiple_stimuli_concatenated_with_separator():

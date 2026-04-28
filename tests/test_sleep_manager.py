@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from krakey.interfaces.sensory import PushCallback, Sensory
+from krakey.interfaces.channel import PushCallback, Channel
 from krakey.memory.graph_memory import GraphMemory
 from krakey.memory.knowledge_base import KBRegistry
 from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
@@ -33,7 +33,7 @@ class CountingLLM:
         return f"summary #{self.responses_idx}"
 
 
-class _SpySensory(Sensory):
+class _SpyChannel(Channel):
     def __init__(self, name, urgent):
         self._name = name
         self._urgent = urgent
@@ -53,29 +53,29 @@ class _SpySensory(Sensory):
         self.paused += 1
 
 
-async def _setup(tmp_path, with_sensory=False):
+async def _setup(tmp_path, with_channel=False):
     embed = FixedEmbed()
     gm = GraphMemory(tmp_path / "gm.sqlite", embedder=embed)
     await gm.initialize()
     reg = KBRegistry(gm, kb_dir=tmp_path / "kbs", embedder=embed)
-    # The buffer now also owns the sensory set (SensoryRegistry merged
+    # The buffer now also owns the channel set (ChannelRegistry merged
     # into StimulusBuffer). Pass the buffer to enter_sleep_mode.
-    sensories = StimulusBuffer()
+    channels = StimulusBuffer()
     spies = []
-    if with_sensory:
-        calm = _SpySensory("calm", urgent=False)
-        urgent = _SpySensory("urgent", urgent=True)
-        sensories.register(calm)
-        sensories.register(urgent)
-        await sensories.start_all()
+    if with_channel:
+        calm = _SpyChannel("calm", urgent=False)
+        urgent = _SpyChannel("urgent", urgent=True)
+        channels.register(calm)
+        channels.register(urgent)
+        await channels.start_all()
         spies = [calm, urgent]
-    return gm, reg, sensories, spies
+    return gm, reg, channels, spies
 
 
 # ---------------- end-to-end ----------------
 
 async def test_full_sleep_migrates_facts_clears_focus_keeps_target(tmp_path):
-    gm, reg, sensories, _ = await _setup(tmp_path)
+    gm, reg, channels, _ = await _setup(tmp_path)
     fa = await gm.insert_node(name="apple", category="FACT", description="",
                                  embedding=[1.0, 0.0])
     fb = await gm.insert_node(name="banana", category="FACT", description="",
@@ -88,7 +88,7 @@ async def test_full_sleep_migrates_facts_clears_focus_keeps_target(tmp_path):
 
     log_dir = tmp_path / "logs"
     result = await enter_sleep_mode(
-        gm, reg, sensories, llm=CountingLLM(), embedder=FixedEmbed(),
+        gm, reg, channels, llm=CountingLLM(), embedder=FixedEmbed(),
         log_dir=log_dir,
     )
 
@@ -124,12 +124,12 @@ async def test_full_sleep_migrates_facts_clears_focus_keeps_target(tmp_path):
     await gm.close()
 
 
-async def test_sleep_pauses_then_resumes_sensories(tmp_path):
-    gm, reg, sensories, spies = await _setup(tmp_path, with_sensory=True)
+async def test_sleep_pauses_then_resumes_channels(tmp_path):
+    gm, reg, channels, spies = await _setup(tmp_path, with_channel=True)
     await gm.insert_node(name="x", category="FACT", description="",
                             embedding=[1.0, 0.0])
 
-    await enter_sleep_mode(gm, reg, sensories, llm=CountingLLM(),
+    await enter_sleep_mode(gm, reg, channels, llm=CountingLLM(),
                               embedder=FixedEmbed(), log_dir=tmp_path / "logs")
 
     calm, urgent = spies
@@ -137,16 +137,16 @@ async def test_sleep_pauses_then_resumes_sensories(tmp_path):
     assert calm.paused == 1
     # urgent kept running through sleep (default_adrenalin=True)
     assert urgent.paused == 0
-    # After resume_all, only previously-paused sensories restart
+    # After resume_all, only previously-paused channels restart
     assert calm.resumed >= 2  # initial start + resume
     await reg.close_all()
     await gm.close()
 
 
 async def test_empty_gm_sleep_is_no_op_but_logs(tmp_path):
-    gm, reg, sensories, _ = await _setup(tmp_path)
+    gm, reg, channels, _ = await _setup(tmp_path)
     log_dir = tmp_path / "logs"
-    result = await enter_sleep_mode(gm, reg, sensories, llm=CountingLLM(),
+    result = await enter_sleep_mode(gm, reg, channels, llm=CountingLLM(),
                                        embedder=FixedEmbed(), log_dir=log_dir)
     assert result["facts_migrated"] == 0
     assert result["focus_cleared"] == 0
@@ -160,12 +160,12 @@ async def test_empty_gm_sleep_is_no_op_but_logs(tmp_path):
 async def test_completed_target_via_hypothalamus_migration_path(tmp_path):
     """A TARGET that's been re-categorized to FACT (Hypothalamus 'task done')
     should migrate into the KB like any FACT — Phase 4 is implicit."""
-    gm, reg, sensories, _ = await _setup(tmp_path)
+    gm, reg, channels, _ = await _setup(tmp_path)
     nid = await gm.insert_node(name="finished_task", category="TARGET",
                                   description="done", embedding=[1.0, 0.0])
     await gm.update_node_category("finished_task", "FACT")
 
-    await enter_sleep_mode(gm, reg, sensories, llm=CountingLLM(),
+    await enter_sleep_mode(gm, reg, channels, llm=CountingLLM(),
                               embedder=FixedEmbed(),
                               log_dir=tmp_path / "logs")
     # Target-turned-FACT migrated → no longer in GM

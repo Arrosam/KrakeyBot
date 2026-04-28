@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from krakey.interfaces.reflect import DecisionResult, ToolCall
     from krakey.interfaces.tool import ToolRegistry
     from krakey.memory.graph_memory import GraphMemory
-    from krakey.runtime.stimuli.batch_tracker import BatchTrackerSensory
+    from krakey.runtime.stimuli.batch_tracker import BatchTrackerChannel
     from krakey.runtime.events.event_bus import EventBus
     from krakey.runtime.console.heartbeat_logger import HeartbeatLogger
     from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
@@ -47,7 +47,7 @@ class DecisionDispatcher:
         self,
         *,
         tools: "ToolRegistry",
-        batch_tracker: "BatchTrackerSensory",
+        batch_tracker: "BatchTrackerChannel",
         buffer: "StimulusBuffer",
         gm: "GraphMemory",
         log: "HeartbeatLogger",

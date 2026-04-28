@@ -1,6 +1,6 @@
 """Telegram outbound reply tool.
 
-Takes the same `TelegramClient` instance the sensory polls with;
+Takes the same `TelegramClient` instance the channel polls with;
 sending the message IS Krakey's real outward chat to a human (the
 tool_feedback returned to Self is just a delivery receipt).
 """

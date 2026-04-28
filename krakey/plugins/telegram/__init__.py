@@ -1,21 +1,21 @@
-"""Built-in Telegram plugin — sensory + outbound reply tool.
+"""Built-in Telegram plugin — channel + outbound reply tool.
 
-Multi-component plugin: the sensory polls incoming messages, the
+Multi-component plugin: the channel polls incoming messages, the
 tool sends replies, and both share one HttpTelegramClient instance.
-``build_sensory`` and ``build_tool`` cooperate via ``ctx.plugin_cache``
+``build_channel`` and ``build_tool`` cooperate via ``ctx.plugin_cache``
 so the first factory call constructs the client and the second reuses
 it — a factory-per-component would otherwise build two clients and lose
 rate-limit / connection coordination.
 
 Layout within this package:
   - client.py   — HttpTelegramClient + TelegramClient Protocol
-  - sensory.py  — TelegramSensory (inbound polling)
+  - channel.py  — TelegramChannel (inbound polling)
   - tool.py — TelegramReplyTool (outbound send)
 """
 from __future__ import annotations
 
 from .client import HttpTelegramClient
-from .sensory import TelegramSensory
+from .channel import TelegramChannel
 from .tool import TelegramReplyTool
 
 
@@ -32,8 +32,8 @@ def _parse_allowed(raw) -> set[int] | None:
 
 def _shared_client(ctx) -> HttpTelegramClient:
     """Build (or fetch from plugin_cache) the shared HTTP client.
-    Both build_sensory and build_tool call this; first call
-    constructs, subsequent calls hit the cache so the sensory and
+    Both build_channel and build_tool call this; first call
+    constructs, subsequent calls hit the cache so the channel and
     the tool both talk through the same connection."""
     if "client" not in ctx.plugin_cache:
         token = str(ctx.config.get("bot_token") or "").strip()
@@ -46,11 +46,11 @@ def _shared_client(ctx) -> HttpTelegramClient:
     return ctx.plugin_cache["client"]
 
 
-def build_sensory(ctx):
+def build_channel(ctx):
     """Unified-format factory (Phase 2). Inbound polling channel."""
     client = _shared_client(ctx)
     allowed = _parse_allowed(ctx.config.get("allowed_chat_ids"))
-    return TelegramSensory(client=client, allowed_chat_ids=allowed)
+    return TelegramChannel(client=client, allowed_chat_ids=allowed)
 
 
 def build_tool(ctx):

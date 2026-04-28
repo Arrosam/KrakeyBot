@@ -1,12 +1,12 @@
-"""Web chat sensory — converts inbound chat messages to stimuli.
+"""Web chat channel — converts inbound chat messages to stimuli.
 
-This sensory is *just* a sensory: ``start(push)`` captures the runtime
+This channel is *just* a channel: ``start(push)`` captures the runtime
 push callback, ``push_user_message(text, attachments)`` builds a
 ``user_message`` Stimulus and ships it. The dashboard server itself is
 started by the plugin's factory at registration time (see
-``__init__.py``); the sensory only carries a reference to it so its
+``__init__.py``); the channel only carries a reference to it so its
 ``stop()`` can shut the server down on the same hook the runtime uses
-to stop sensories.
+to stop channels.
 
 Cross-thread note: the chat WS handler runs in the dashboard server's
 own asyncio loop (a daemon thread; see ``threaded_server.py``), but
@@ -20,18 +20,18 @@ import asyncio
 from datetime import datetime
 from typing import Any, Protocol
 
-from krakey.interfaces.sensory import PushCallback, Sensory
+from krakey.interfaces.channel import PushCallback, Channel
 from krakey.models.stimulus import Stimulus
 
 
 class _StoppableServer(Protocol):
-    """Minimal shape the sensory needs from the dashboard server —
+    """Minimal shape the channel needs from the dashboard server —
     a synchronous stop() it can run via ``asyncio.to_thread``."""
 
     def stop(self, timeout: float = ...) -> None: ...
 
 
-class WebChatSensory(Sensory):
+class WebChatChannel(Channel):
     """Pure inbound chat: capture push at start(), expose
     ``push_user_message`` for the chat WS handler."""
 
@@ -97,7 +97,7 @@ class WebChatSensory(Sensory):
             md["attachments"] = attachments
         stim = Stimulus(
             type="user_message",
-            source=f"sensory:{self.name}",
+            source=f"channel:{self.name}",
             content=content,
             timestamp=datetime.now(),
             adrenalin=True,

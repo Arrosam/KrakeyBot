@@ -1,4 +1,4 @@
-"""Telegram inbound sensory — polls getUpdates in a background task.
+"""Telegram inbound channel — polls getUpdates in a background task.
 
 Pushes each incoming text message as a `user_message` Stimulus with
 `adrenalin=True` (a real human contacted Krakey; that's worth waking
@@ -9,13 +9,13 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 
-from krakey.interfaces.sensory import PushCallback, Sensory
+from krakey.interfaces.channel import PushCallback, Channel
 from krakey.models.stimulus import Stimulus
 
 from .client import TelegramClient
 
 
-class TelegramSensory(Sensory):
+class TelegramChannel(Channel):
     def __init__(self, client: TelegramClient, *,
                   allowed_chat_ids: set[int] | None = None,
                   error_backoff: float = 2.0):
@@ -72,7 +72,7 @@ class TelegramSensory(Sensory):
                     continue
                 await self._push(Stimulus(
                     type="user_message",
-                    source=f"sensory:telegram:{chat_id}",
+                    source=f"channel:telegram:{chat_id}",
                     content=text,
                     timestamp=datetime.now(),
                     adrenalin=True,

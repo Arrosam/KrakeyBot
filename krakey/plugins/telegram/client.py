@@ -1,4 +1,4 @@
-"""Telegram HTTP client — shared by the sensory + reply tool.
+"""Telegram HTTP client — shared by the channel + reply tool.
 
 One `HttpTelegramClient` instance is built by the plugin factory and
 handed to both components so a single bot connection serves both

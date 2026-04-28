@@ -47,7 +47,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
                               kb_dir: str | None = None,
                               skip_bootstrap: bool = True,
                               reflects: list[str] | None = None) -> Runtime:
-    """In-memory Runtime with injectable doubles. CLI sensory disabled.
+    """In-memory Runtime with injectable doubles. CLI channel disabled.
 
     `kb_dir` defaults to a fresh `tempfile.mkdtemp()` so KB files written
     during sleep migration never touch the production workspace.
@@ -119,7 +119,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         # The dashboard plugin is included so the web_chat_reply
         # tool is registered (existing tests dispatch to it). Its
         # per-plugin config (planted below) sets port=0 so the Web UI
-        # server never binds — only the sensory + tool live.
+        # server never binds — only the channel + tool live.
         plugins=(
             list(reflects)
             if reflects is not None
@@ -162,7 +162,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     # config that:
     #   * points history at a tmpdir so tests don't pollute
     #     workspace/data/web_chat.jsonl
-    #   * sets port=0 so the dashboard's sensory.start() short-circuits
+    #   * sets port=0 so the dashboard's channel.start() short-circuits
     #     before binding a port (no flaky port conflicts in tests)
     Path(plugin_configs_dir, "dashboard").mkdir(
         parents=True, exist_ok=True,

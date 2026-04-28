@@ -1,6 +1,6 @@
 """PluginObserver — read-only snapshot of what's currently registered.
 
-Walks the three registries (reflects / tools / sensories) to
+Walks the three registries (reflects / tools / channels) to
 produce a ``PluginInfo`` list and a dashboard-friendly dict. Pure
 read; observer holds no state of its own beyond a back-reference to
 the loader (used to label each component's ``source`` as either
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 @dataclass
 class PluginInfo:
     """Descriptor for one registered runtime component (reflect /
-    tool / sensory). Consumed by the dashboard's /api/plugins
+    tool / channel). Consumed by the dashboard's /api/plugins
     endpoint.
 
     ``path`` / ``source`` are kept for dashboard-JS compatibility:
@@ -36,7 +36,7 @@ class PluginInfo:
     missing keys.
     """
     name: str                           # component name
-    kind: str                           # "reflect" | "tool" | "sensory"
+    kind: str                           # "reflect" | "tool" | "channel"
     source: str                         # "builtin" | "core"
     path: str                           # module path on disk, "" today
     project: str = ""                   # containing plugin folder name
@@ -52,12 +52,12 @@ class PluginObserver:
         *,
         reflects: "ReflectRegistry",
         tools: "ToolRegistry",
-        sensories: "StimulusBuffer",
+        channels: "StimulusBuffer",
         loader: "PluginLoader",
     ):
         self._reflects = reflects
         self._tools = tools
-        self._sensories = sensories
+        self._channels = channels
         self._loader = loader
 
     def collect_infos(self) -> list[PluginInfo]:
@@ -73,21 +73,21 @@ class PluginObserver:
             infos.append(self._info("reflect", r.name))
         for t in self._tools.all():
             infos.append(self._info("tool", t.name))
-        for sname in self._sensories.sensory_names():
-            infos.append(self._info("sensory", sname))
+        for sname in self._channels.channel_names():
+            infos.append(self._info("channel", sname))
         return infos
 
     def loaded_report(self) -> dict[str, Any]:
-        """Dashboard /api/plugins payload: tools + sensories with
+        """Dashboard /api/plugins payload: tools + channels with
         a ``loaded`` flag (always True for items in the registry).
 
         Reflects are not included in the report because the dashboard's
-        plugins panel only renders tools + sensories — reflects
+        plugins panel only renders tools + channels — reflects
         live in their own panel that uses the catalogue scan, not this
         snapshot."""
         infos = self.collect_infos()
         loaded_t = set(self._tools.names())
-        loaded_s = set(self._sensories.sensory_names())
+        loaded_s = set(self._channels.channel_names())
 
         def _flatten(infos_subset, loaded_names):
             return [{
@@ -103,8 +103,8 @@ class PluginObserver:
             "tools": _flatten(
                 [i for i in infos if i.kind == "tool"], loaded_t,
             ),
-            "sensories": _flatten(
-                [i for i in infos if i.kind == "sensory"], loaded_s,
+            "channels": _flatten(
+                [i for i in infos if i.kind == "channel"], loaded_s,
             ),
         }
 

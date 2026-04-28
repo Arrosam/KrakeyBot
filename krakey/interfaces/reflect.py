@@ -1,6 +1,6 @@
 """Reflect plugin interface — protocols + registry.
 
-Sibling to ``sensory.py`` and ``tool.py``: defines the contract
+Sibling to ``channel.py`` and ``tool.py``: defines the contract
 the runtime depends on and the registry it stores instances in.
 Concrete Reflects live under ``krakey/plugins/<plugin>/``.
 

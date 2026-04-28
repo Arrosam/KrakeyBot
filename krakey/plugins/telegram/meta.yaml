@@ -1,7 +1,7 @@
 name: telegram
 description: >
   Telegram bidirectional channel: incoming messages arrive as
-  user_message stimuli; Krakey replies via telegram_reply. Sensory +
+  user_message stimuli; Krakey replies via telegram_reply. Channel +
   tool share one HttpTelegramClient instance via
   ``ctx.plugin_cache``.
 config_schema:
@@ -15,7 +15,7 @@ config_schema:
     type: text
     default: ""
     help: >
-      Comma-separated chat IDs the sensory will accept. Empty = allow
+      Comma-separated chat IDs the channel will accept. Empty = allow
       any.
   - field: default_chat_id
     type: text
@@ -24,9 +24,9 @@ config_schema:
       Chat ID the reply tool sends to when no chat_id is specified
       in the tool call.
 components:
-  - kind: sensory
+  - kind: channel
     factory_module: krakey.plugins.telegram
-    factory_attr: build_sensory
+    factory_attr: build_channel
   - kind: tool
     factory_module: krakey.plugins.telegram
     factory_attr: build_tool

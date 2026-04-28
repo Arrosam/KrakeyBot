@@ -2,7 +2,7 @@
 
 > 以持续心跳维持"存在"的自主认知 Agent。
 > 沙盒 VM 配置见 [`SANDBOX.md`](SANDBOX.md)（启用 coding/GUI/file/browser 任一 tool 前必读）。
-> 自定义 tool / sensory 见 [`PLUGINS.md`](PLUGINS.md)（把插件项目丢进 `workspace/plugins/<project>/` 自动加载）。
+> 自定义 tool / channel 见 [`PLUGINS.md`](PLUGINS.md)（把插件项目丢进 `workspace/plugins/<project>/` 自动加载）。
 
 ---
 
@@ -252,7 +252,7 @@ KrakeyBot/
 │   ├── sleep/              # 7 阶段 Sleep 管线
 │   ├── dashboard/          # FastAPI + WS + web chat history
 │   ├── sandbox/            # SubprocessRunner + guest VM backend
-│   ├── interfaces/         # Tool / Sensory ABC + Registry
+│   ├── interfaces/         # Tool / Channel ABC + Registry
 │   └── plugins/
 │       ├── loader.py       # 插件发现 + 安全 import
 │       └── builtin/        # 内置插件项目（search / coding / ...）

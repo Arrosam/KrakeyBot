@@ -1,7 +1,7 @@
 """``PluginContext`` — what every plugin's factory sees.
 
 Passed to ``build_<component>(ctx)`` for every plugin kind
-(reflect / tool / sensory). Carries:
+(reflect / tool / channel). Carries:
 
   * ``ctx.config`` — the parsed contents of the plugin's own
     ``workspace/plugins/<plugin>/config.yaml``. Plugin code reads
@@ -18,7 +18,7 @@ Passed to ``build_<component>(ctx)`` for every plugin kind
     plugin use (gm, kb_registry, embedder, runtime, ...).
   * ``ctx.plugin_cache`` — per-plugin scratch dict for sharing
     instances across multi-component plugins (e.g. telegram's
-    sensory + tool share an HttpTelegramClient via this).
+    channel + tool share an HttpTelegramClient via this).
   * ``ctx.deps`` — escape hatch to ``RuntimeDeps`` for plugins that
     truly need it. Reading ``deps.config.llm.providers`` from a
     plugin breaks API-key isolation; don't.
@@ -54,7 +54,7 @@ class PluginContext:
     services: dict[str, Any] = field(default_factory=dict)
     # Shared mutable storage scoped to a single plugin (NOT across
     # plugins). Components of the same plugin (e.g. telegram's
-    # sensory + tool that share an HttpTelegramClient) can stash
+    # channel + tool that share an HttpTelegramClient) can stash
     # an instance here in the first factory call and read it in the
     # next, so multi-component plugins don't need module-level
     # singletons. Reset per-plugin during registration.

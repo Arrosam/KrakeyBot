@@ -2,17 +2,17 @@
 embedded chat).
 
 Two component factories:
-  * ``build_sensory``: returns the chat sensory AND, as a side effect,
+  * ``build_channel``: returns the chat channel AND, as a side effect,
     starts the dashboard's uvicorn server in a daemon thread (see
     ``threaded_server.py``). The server start happens at plugin
-    registration time so it doesn't pollute the Sensory ABC's
-    ``start()/stop()`` hooks with non-sensory work.
+    registration time so it doesn't pollute the Channel ABC's
+    ``start()/stop()`` hooks with non-channel work.
   * ``build_tool``: returns the ``web_chat_reply`` outbound
-    tool. Shares the ``WebChatHistory`` instance with the sensory
+    tool. Shares the ``WebChatHistory`` instance with the channel
     via ``ctx.plugin_cache``.
 
 ``port=0`` in the per-plugin config short-circuits the server start
-(used by tests so the sensory + tool register without binding
+(used by tests so the channel + tool register without binding
 a port).
 """
 from __future__ import annotations
@@ -29,10 +29,10 @@ if TYPE_CHECKING:
 _HISTORY_CACHE_KEY = "web_chat_history"
 
 
-def build_sensory(ctx: "PluginContext"):
-    """Create the chat sensory; start the dashboard server in a
+def build_channel(ctx: "PluginContext"):
+    """Create the chat channel; start the dashboard server in a
     background thread (skipped when port=0)."""
-    from krakey.plugins.dashboard.sensory import WebChatSensory
+    from krakey.plugins.dashboard.channel import WebChatChannel
     from krakey.plugins.dashboard.web_chat.history import WebChatHistory
 
     cfg = ctx.config or {}
@@ -45,14 +45,14 @@ def build_sensory(ctx: "PluginContext"):
     history = WebChatHistory(history_path)
     ctx.plugin_cache[_HISTORY_CACHE_KEY] = history
 
-    sensory = WebChatSensory()
+    channel = WebChatChannel()
     if port != 0:
-        _start_dashboard_server(ctx, sensory, history, host, port)
-    return sensory
+        _start_dashboard_server(ctx, channel, history, host, port)
+    return channel
 
 
 def build_tool(ctx: "PluginContext"):
-    """Reply tool — shares the WebChatHistory the sibling sensory
+    """Reply tool — shares the WebChatHistory the sibling channel
     factory built."""
     from krakey.plugins.dashboard.tool import WebChatReplyTool
 
@@ -60,12 +60,12 @@ def build_tool(ctx: "PluginContext"):
     if history is None:
         raise RuntimeError(
             "dashboard.build_tool: WebChatHistory not in plugin_cache. "
-            "build_sensory must run first (meta.yaml component order)."
+            "build_channel must run first (meta.yaml component order)."
         )
     return WebChatReplyTool(history=history)
 
 
-def _start_dashboard_server(ctx, sensory, history, host: str, port: int) -> None:
+def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None:
     """Build the dashboard FastAPI app + start uvicorn in a daemon
     thread. Failures (port in use, etc.) log + leave the server
     absent — runtime continues without dashboard."""
@@ -96,7 +96,7 @@ def _start_dashboard_server(ctx, sensory, history, host: str, port: int) -> None
         app = create_dashboard_app(
             runtime=runtime,
             web_chat_history=history,
-            on_user_message=sensory.push_user_message,
+            on_user_message=channel.push_user_message,
             event_broadcaster=broadcaster,
             config_path=Path(config_path) if config_path else None,
             on_restart=on_restart,
@@ -104,11 +104,11 @@ def _start_dashboard_server(ctx, sensory, history, host: str, port: int) -> None
         )
         server = ThreadedDashboardServer(app, host=host, port=port)
         server.start()
-        # Hand the server to the sensory so sensory.stop() (called by
+        # Hand the server to the channel so channel.stop() (called by
         # buffer.stop_all() in Runtime.run()'s finally) can also stop
         # the server — closes WS frames cleanly + finishes in-flight
         # HTTP before the runtime loop tears down.
-        sensory.attach_server(server)
+        channel.attach_server(server)
         runtime.log.hb(
             f"dashboard listening on http://{host}:{server.port}"
         )
