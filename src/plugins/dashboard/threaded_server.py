@@ -5,8 +5,14 @@ server can start at plugin-registration time. Plugin factories are
 called synchronously during ``Runtime.__init__``, before any
 asyncio loop is running, so the server can't share the runtime's
 loop the way the regular ``DashboardServer`` does. Solution: run
-uvicorn in a daemon background thread with its own asyncio loop;
-the thread dies at process exit (no explicit cleanup needed).
+uvicorn in a daemon background thread with its own asyncio loop.
+
+Lifecycle: the daemon flag means the thread dies at process exit
+*if* nobody stopped it explicitly. ``stop()`` is the graceful path
+— sets uvicorn's ``should_exit`` and joins the thread so WS clients
+get clean close frames and in-flight HTTP requests finish. The
+plugin's ``WebChatSensory.stop()`` calls it during runtime shutdown
+(``buffer.stop_all()`` in ``Runtime.run()``'s ``finally``).
 
 Cross-thread concerns:
   * ``WebChatSensory.push_user_message`` (called from the chat WS
@@ -92,3 +98,24 @@ class ThreadedDashboardServer:
             "dashboard server failed to start within 2s "
             f"(host={self._host}, port={self.port})"
         )
+
+    def stop(self, timeout: float = 5.0) -> None:
+        """Signal uvicorn to exit gracefully and join the daemon thread.
+
+        Synchronous (no asyncio dependency) so callers from any context
+        can wait for the server to actually be down. The plugin's
+        ``WebChatSensory.stop()`` wraps this in ``asyncio.to_thread``
+        so the runtime loop isn't blocked while uvicorn finishes its
+        WS close frames + in-flight requests.
+
+        Idempotent: safe to call when never started or already stopped.
+        Past the timeout, the daemon flag still ensures the thread
+        eventually dies with the process — this method just gives
+        uvicorn a clean exit path when shutdown is orderly.
+        """
+        if self._server is not None:
+            self._server.should_exit = True
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=timeout)
+        self._thread = None
+        self._server = None

@@ -2,9 +2,11 @@
 
 This sensory is *just* a sensory: ``start(push)`` captures the runtime
 push callback, ``push_user_message(text, attachments)`` builds a
-``user_message`` Stimulus and ships it. No server lifecycle, no port
-binding — the dashboard server is started by the plugin's factory at
-registration time (see ``__init__.py``).
+``user_message`` Stimulus and ships it. The dashboard server itself is
+started by the plugin's factory at registration time (see
+``__init__.py``); the sensory only carries a reference to it so its
+``stop()`` can shut the server down on the same hook the runtime uses
+to stop sensories.
 
 Cross-thread note: the chat WS handler runs in the dashboard server's
 own asyncio loop (a daemon thread; see ``threaded_server.py``), but
@@ -16,10 +18,17 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 from src.interfaces.sensory import PushCallback, Sensory
 from src.models.stimulus import Stimulus
+
+
+class _StoppableServer(Protocol):
+    """Minimal shape the sensory needs from the dashboard server —
+    a synchronous stop() it can run via ``asyncio.to_thread``."""
+
+    def stop(self, timeout: float = ...) -> None: ...
 
 
 class WebChatSensory(Sensory):
@@ -29,10 +38,20 @@ class WebChatSensory(Sensory):
     def __init__(self) -> None:
         self._push: PushCallback | None = None
         self._runtime_loop: asyncio.AbstractEventLoop | None = None
+        self._server: _StoppableServer | None = None
 
     @property
     def name(self) -> str:
         return "web_chat"
+
+    def attach_server(self, server: _StoppableServer) -> None:
+        """Attach the dashboard server so ``stop()`` shuts it down too.
+
+        The plugin factory calls this after starting the server in the
+        port>0 mode. In port=0 mode (tests) no server runs and this is
+        never called; ``stop()`` then degrades to clearing references.
+        """
+        self._server = server
 
     async def start(self, push: PushCallback) -> None:
         self._push = push
@@ -44,6 +63,13 @@ class WebChatSensory(Sensory):
     async def stop(self) -> None:
         self._push = None
         self._runtime_loop = None
+        if self._server is not None:
+            # server.stop() is synchronous (joins a daemon thread).
+            # to_thread offloads it so the runtime loop isn't blocked
+            # while uvicorn finishes WS close frames + in-flight HTTP.
+            server = self._server
+            self._server = None
+            await asyncio.to_thread(server.stop)
 
     async def push_user_message(
         self, text: str,

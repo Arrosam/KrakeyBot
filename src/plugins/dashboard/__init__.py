@@ -104,7 +104,11 @@ def _start_dashboard_server(ctx, sensory, history, host: str, port: int) -> None
         )
         server = ThreadedDashboardServer(app, host=host, port=port)
         server.start()
-        ctx.plugin_cache["server"] = server
+        # Hand the server to the sensory so sensory.stop() (called by
+        # buffer.stop_all() in Runtime.run()'s finally) can also stop
+        # the server — closes WS frames cleanly + finishes in-flight
+        # HTTP before the runtime loop tears down.
+        sensory.attach_server(server)
         runtime.log.hb(
             f"dashboard listening on http://{host}:{server.port}"
         )
