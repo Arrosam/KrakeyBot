@@ -53,7 +53,9 @@ def test_wizard_writes_minimal_config(tmp_path):
         "gpt-4o-mini",                   # model
         # Step 2: skip embedding
         "n",
-        # Step 3: accept default plugin selection (dashboard preselected)
+        # Step 3: skip reranker
+        "n",
+        # Step 4: accept default plugin selection (dashboard preselected)
         "done",
         # Confirm save
         "y",
@@ -83,6 +85,7 @@ def test_wizard_dashboard_default_recommended_and_first(tmp_path):
     answers = [
         "P", "http://x", "k", "m",   # provider
         "n",                          # skip embedding
+        "n",                          # skip reranker
         "done",                       # accept default
         "y",                          # save
     ]
@@ -119,6 +122,7 @@ def test_wizard_toggle_plugin_selection(tmp_path):
     answers = [
         "P", "http://x", "k", "m",   # provider
         "n",                          # skip embedding
+        "n",                          # skip reranker
         "1",                          # toggle dashboard OFF
         "3",                          # toggle telegram ON
         "done",
@@ -145,6 +149,7 @@ def test_wizard_embedding_same_provider_as_chat(tmp_path):
     answers = [
         "ChatCo", "http://x", "k", "chat-model",
         "y", "y", "embed-model",   # embed: yes, same provider, model
+        "n",                       # skip reranker
         "done", "y",
     ]
     _, out = _capture_output()
@@ -167,7 +172,7 @@ def test_wizard_backs_up_existing_config(tmp_path):
     cfg_path.write_text("existing: 1\n", encoding="utf-8")
     backup_dir = tmp_path / "backups"
     answers = [
-        "P", "http://x", "k", "m", "n", "done", "y",
+        "P", "http://x", "k", "m", "n", "n", "done", "y",
     ]
     catalogue = _fake_catalogue("dashboard")
     lines, out = _capture_output()
@@ -188,7 +193,7 @@ def test_wizard_abort_at_confirm_does_not_write(tmp_path):
     cfg_path = tmp_path / "config.yaml"
     catalogue = _fake_catalogue("dashboard")
     answers = [
-        "P", "http://x", "k", "m", "n", "done",
+        "P", "http://x", "k", "m", "n", "n", "done",
         "n",  # confirm: no
     ]
     lines, out = _capture_output()
@@ -203,6 +208,57 @@ def test_wizard_abort_at_confirm_does_not_write(tmp_path):
     assert any("aborted" in line for line in lines)
 
 
+def test_wizard_reranker_reuses_embedding_provider(tmp_path):
+    """Configuring a reranker after embedding reuses the embedding
+    provider by default — rerankers commonly co-locate with embedders."""
+    cfg_path = tmp_path / "config.yaml"
+    catalogue = _fake_catalogue("dashboard")
+    answers = [
+        "ChatCo", "http://x", "k", "chat-model",
+        # embed: yes, separate provider, model
+        "y", "n", "EmbedCo", "http://e", "ek", "embed-model",
+        # reranker: yes, reuse embedding provider, model
+        "y", "y", "rerank-model",
+        "done", "y",
+    ]
+    _, out = _capture_output()
+    run_wizard(
+        config_path=cfg_path,
+        backup_dir=str(tmp_path / "backups"),
+        input_fn=_stub_inputs(answers),
+        output_fn=out,
+        list_plugins_fn=lambda: catalogue,
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.llm.reranker == "rerank"
+    assert cfg.llm.tags["rerank"].provider == "EmbedCo/rerank-model"
+    # No duplicate provider entry — EmbedCo is reused.
+    assert sorted(cfg.llm.providers.keys()) == ["ChatCo", "EmbedCo"]
+
+
+def test_wizard_skip_reranker_leaves_field_unset(tmp_path):
+    """When the user declines reranker config, llm.reranker stays None."""
+    cfg_path = tmp_path / "config.yaml"
+    catalogue = _fake_catalogue("dashboard")
+    answers = [
+        "P", "http://x", "k", "m",
+        "n",         # skip embedding
+        "n",         # skip reranker
+        "done", "y",
+    ]
+    _, out = _capture_output()
+    run_wizard(
+        config_path=cfg_path,
+        backup_dir=str(tmp_path / "backups"),
+        input_fn=_stub_inputs(answers),
+        output_fn=out,
+        list_plugins_fn=lambda: catalogue,
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.llm.reranker is None
+    assert "rerank" not in cfg.llm.tags
+
+
 def test_module_exports_run_wizard():
     """`from krakey.onboarding import run_wizard` works (entry point relies on it)."""
     from krakey.onboarding import run_wizard as imported
@@ -214,7 +270,7 @@ def test_wizard_handles_unknown_command(tmp_path):
     cfg_path = tmp_path / "config.yaml"
     catalogue = _fake_catalogue("dashboard")
     answers = [
-        "P", "http://x", "k", "m", "n",
+        "P", "http://x", "k", "m", "n", "n",
         "??",       # unknown command
         "999",      # out of range
         "done",

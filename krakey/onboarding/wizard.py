@@ -1,4 +1,4 @@
-"""Onboarding wizard — three steps, then write config.yaml.
+"""Onboarding wizard — four steps, then write config.yaml.
 
 Walks the user through:
   1. one chat LLM provider (name, base URL, API key, model name) →
@@ -7,7 +7,10 @@ Walks the user through:
   2. an optional embedding provider/model (same provider as chat or
      separate). Skippable, but the user is told recall + KB indexing
      need it.
-  3. plugin selection. The catalogue is sorted recommended-first,
+  3. an optional reranker provider/model (same provider as embedding
+     or separate). Skippable; the runtime falls back to scripted
+     scoring when a reranker isn't available.
+  4. plugin selection. The catalogue is sorted recommended-first,
      dashboard is default-checked and starred — there is no other
      way to inspect Krakey's state without re-running the wizard
      or hand-editing YAML.
@@ -96,9 +99,10 @@ def run_wizard(
 
     chat = _ask_chat_provider(input_fn, output_fn)
     embed = _ask_embedding(input_fn, output_fn, chat)
+    rerank_cfg = _ask_reranker(input_fn, output_fn, chat, embed)
     plugins = _ask_plugins(input_fn, output_fn, list_plugins_fn())
 
-    cfg = _build_config(chat, embed, plugins)
+    cfg = _build_config(chat, embed, rerank_cfg, plugins)
 
     if not _confirm_save(input_fn, output_fn, cfg, cfg_path):
         output_fn("aborted; nothing written.")
@@ -127,7 +131,7 @@ def run_wizard(
 def _ask_chat_provider(
     input_fn: InputFn, output_fn: OutputFn,
 ) -> tuple[str, Provider, str]:
-    output_fn("\n--- Step 1/3: chat LLM provider ---")
+    output_fn("\n--- Step 1/4: chat LLM provider ---")
     name = _prompt(input_fn, "Provider label (e.g. 'OpenAI')",
                    default="OpenAI")
     base_url = _prompt(
@@ -152,7 +156,7 @@ def _ask_embedding(
     input_fn: InputFn, output_fn: OutputFn,
     chat: tuple[str, Provider, str],
 ) -> tuple[str, Provider, str] | None:
-    output_fn("\n--- Step 2/3: embedding model (optional) ---")
+    output_fn("\n--- Step 2/4: embedding model (optional) ---")
     output_fn(
         "Embeddings power memory recall and KB indexing. "
         "You can skip and configure later by editing config.yaml.",
@@ -184,13 +188,71 @@ def _ask_embedding(
     return emb_name, emb_provider, emb_model
 
 
-# ---- Step 3: plugins --------------------------------------------
+# ---- Step 3: reranker (optional) --------------------------------
+
+def _ask_reranker(
+    input_fn: InputFn, output_fn: OutputFn,
+    chat: tuple[str, Provider, str],
+    embed: tuple[str, Provider, str] | None,
+) -> tuple[str, Provider, str] | None:
+    """Ask for an optional reranker. Defaults to reusing the embedding
+    provider when one is configured (rerankers are commonly served
+    alongside embeddings); falls back to chat provider otherwise.
+
+    Skipping is fine: the runtime degrades gracefully — auto-recall
+    falls back to scripted multi-axis scoring, and KB sleep dedup
+    falls back to raw cosine ordering.
+    """
+    output_fn("\n--- Step 3/4: reranker model (optional) ---")
+    output_fn(
+        "A reranker improves recall ordering and is also used by "
+        "the sleep-time KB dedup pass. Skip to use scripted scoring "
+        "+ raw cosine fallback paths instead.",
+    )
+    if not _prompt_yes_no(
+        input_fn, output_fn, "Configure a reranker model now?",
+        default=False,
+    ):
+        return None
+
+    # Default reuse: embedding provider if any, else chat provider.
+    if embed is not None:
+        reuse_label = "embedding"
+        reuse_provider = (embed[0], embed[1])
+    else:
+        reuse_label = "chat"
+        reuse_provider = (chat[0], chat[1])
+
+    same = _prompt_yes_no(
+        input_fn, output_fn,
+        f"Use the same provider as {reuse_label}?",
+        default=True,
+    )
+    if same:
+        rer_name, rer_provider = reuse_provider
+    else:
+        rer_name = _prompt(input_fn, "Reranker provider label",
+                            default="SiliconFlow")
+        rer_base = _prompt(
+            input_fn, "Reranker base URL",
+            default="https://api.siliconflow.cn",
+        )
+        rer_key = _prompt(input_fn, "Reranker API key", default="")
+        rer_provider = Provider(
+            type="openai_compatible", base_url=rer_base, api_key=rer_key,
+        )
+    rer_model = _prompt(input_fn, "Reranker model name",
+                         default="BAAI/bge-reranker-v2-m3")
+    return rer_name, rer_provider, rer_model
+
+
+# ---- Step 4: plugins --------------------------------------------
 
 def _ask_plugins(
     input_fn: InputFn, output_fn: OutputFn,
     available: dict[str, PluginMetadata],
 ) -> list[str]:
-    output_fn("\n--- Step 3/3: plugins ---")
+    output_fn("\n--- Step 4/4: plugins ---")
     if not available:
         output_fn("(no plugins discovered)")
         return []
@@ -255,6 +317,7 @@ def _print_plugin_list(
 def _build_config(
     chat: tuple[str, Provider, str],
     embed: tuple[str, Provider, str] | None,
+    rerank_cfg: tuple[str, Provider, str] | None,
     plugin_names: list[str],
 ) -> Config:
     chat_name, chat_provider, chat_model = chat
@@ -280,9 +343,20 @@ def _build_config(
             params=LLMParams(),
         )
         embedding_tag = "embed"
+    reranker_tag: str | None = None
+    if rerank_cfg is not None:
+        rer_name, rer_provider, rer_model = rerank_cfg
+        if rer_name not in providers:
+            providers[rer_name] = rer_provider
+        tags["rerank"] = TagBinding(
+            provider=f"{rer_name}/{rer_model}",
+            params=LLMParams(),
+        )
+        reranker_tag = "rerank"
     llm = LLMSection(
         providers=providers, tags=tags,
-        core_purposes=core_purposes, embedding=embedding_tag,
+        core_purposes=core_purposes,
+        embedding=embedding_tag, reranker=reranker_tag,
     )
     return Config(llm=llm, plugins=(plugin_names or None))
 
