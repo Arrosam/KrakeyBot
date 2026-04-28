@@ -1,7 +1,7 @@
 """Standalone onboarding wizard — generates config.yaml on first run.
 
 Importable: ``from krakey.onboarding import run_wizard``
-Runnable:   ``python -m src.onboarding``
+Runnable:   ``krakey onboard``  (or ``python -m krakey.onboarding``)
 
 Decoupled from the runtime: the wizard never imports Runtime or any
 plugin code beyond meta.yaml parsing (via ``plugin_catalogue``).

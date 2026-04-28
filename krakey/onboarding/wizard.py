@@ -53,7 +53,7 @@ _BANNER = (
     "  Krakey onboarding\n"
     "=========================================\n"
     "Walks you through creating config.yaml.\n"
-    "Re-run this any time: python -m src.onboarding\n"
+    "Re-run this any time: krakey onboard\n"
 )
 
 
@@ -95,7 +95,7 @@ def run_wizard(
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     cfg_path.write_text(dump_config(cfg), encoding="utf-8")
     output_fn(
-        f"wrote {cfg_path}. start Krakey with: python -m src.main"
+        f"wrote {cfg_path}. start Krakey with: krakey run"
     )
     return cfg_path
 

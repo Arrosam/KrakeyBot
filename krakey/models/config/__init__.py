@@ -172,14 +172,15 @@ class _ConfigBootstrapExit(SystemExit):
 def load_config(path: str | Path = "config.yaml") -> Config:
     """Load + parse ``config.yaml``.
 
-    Raises ``FileNotFoundError`` if the file is missing — fresh
-    installs are expected to run ``python -m src.onboarding`` first.
+    Raises ``FileNotFoundError`` if the file is missing. The CLI's
+    ``run`` / ``start`` commands catch this and auto-launch the
+    onboarding wizard rather than surfacing the error to the user.
     """
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(
-            f"config not found at {p} — run `python -m src.onboarding` "
-            "to generate one (the wizard walks you through providers, "
+            f"config not found at {p} — run `krakey onboard` to "
+            "generate one (the wizard walks you through providers, "
             "tags, and plugin selection)."
         )
 

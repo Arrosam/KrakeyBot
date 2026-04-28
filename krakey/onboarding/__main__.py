@@ -1,4 +1,9 @@
-"""``python -m src.onboarding`` — entry point for the wizard."""
+"""``python -m krakey.onboarding`` — entry point for the wizard.
+
+Prefer ``krakey onboard`` from the CLI; this module entry exists for
+explicit ``python -m`` invocation and for the shipped subprocess
+fallback.
+"""
 from __future__ import annotations
 
 import sys

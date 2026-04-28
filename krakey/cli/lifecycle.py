@@ -97,8 +97,39 @@ def _exec_runtime(repo: Path) -> int:
 
 # -------- public ops --------
 
+def _ensure_config(repo: Path) -> int | None:
+    """If config.yaml is missing, auto-launch onboarding and let the
+    user generate one. Returns an exit code on early exit (wizard
+    aborted, still no config) or ``None`` to proceed with run/start.
+    """
+    cfg = repo / "config.yaml"
+    if cfg.exists():
+        return None
+    print("krakey: no config.yaml found — launching onboarding wizard.\n",
+          file=sys.stderr)
+    from krakey.onboarding import run_wizard
+    try:
+        run_wizard(config_path=cfg)
+    except KeyboardInterrupt:
+        print("\nkrakey: onboarding cancelled.", file=sys.stderr)
+        return 130
+    except EOFError:
+        print("\nkrakey: onboarding ended (stdin closed).", file=sys.stderr)
+        return 1
+    if not cfg.exists():
+        print("krakey: onboarding finished but no config was written; "
+              "re-run `krakey onboard` when ready.", file=sys.stderr)
+        return 1
+    print()
+    return None
+
+
 def run_foreground() -> int:
     repo, pidfile, _log = _paths()
+    rc = _ensure_config(repo)
+    if rc is not None:
+        return rc
+
     existing = _read_pid(pidfile)
     if existing and _is_alive(existing):
         print(f"krakey already running (pid {existing}); use `krakey stop` first",
@@ -114,6 +145,10 @@ def run_foreground() -> int:
 
 def start_daemon() -> int:
     repo, pidfile, logfile = _paths()
+    rc = _ensure_config(repo)
+    if rc is not None:
+        return rc
+
     existing = _read_pid(pidfile)
     if existing and _is_alive(existing):
         print(f"krakey already running (pid {existing})")
