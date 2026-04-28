@@ -5,7 +5,8 @@ import argparse
 
 
 def run(args: argparse.Namespace) -> int:
-    from . import lifecycle
+    from . import _banner, lifecycle
+    _banner.print_banner()
     return lifecycle.run_foreground()
 
 
@@ -25,11 +26,11 @@ def status(args: argparse.Namespace) -> int:
 
 
 def onboard(args: argparse.Namespace) -> int:
-    from . import _meta
-    import os
+    from . import _banner, _meta
     import sys
     import subprocess
 
+    _banner.print_banner()
     repo = _meta.repo_root()
     return subprocess.call(
         [sys.executable, "-m", "krakey.onboarding"],

@@ -80,3 +80,22 @@ def test_repair_falls_back_when_non_editable(monkeypatch, capsys) -> None:
     assert rc == 2
     out = capsys.readouterr().out
     assert "pip install -U krakey" in out
+
+
+def test_banner_renders_with_version_and_tagline(capsys) -> None:
+    from krakey.cli import _banner
+
+    _banner.print_banner()
+    out = capsys.readouterr().out
+    # logo, tagline, and version line are all present
+    assert "██╗" in out
+    assert "ultimate" in out.replace(" ", "").lower() or "u l t i m a t e" in out
+    assert _meta.version() in out
+
+
+def test_no_args_prints_banner(capsys) -> None:
+    rc = main([])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "██╗" in out             # logo
+    assert "usage: krakey" in out   # argparse help follows banner

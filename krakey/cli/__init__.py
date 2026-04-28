@@ -8,8 +8,18 @@ from typing import Sequence
 from . import _meta
 
 
+class _BannerArgumentParser(argparse.ArgumentParser):
+    """Argparse parser that prints the KRAKEY banner above the help text."""
+
+    def print_help(self, file=None) -> None:
+        from . import _banner
+        _banner.print_banner(file=file)
+        print(file=file)
+        super().print_help(file)
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
+    p = _BannerArgumentParser(
         prog="krakey",
         description="KrakeyBot CLI — manage the heartbeat agent.",
     )
