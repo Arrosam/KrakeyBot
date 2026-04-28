@@ -78,6 +78,9 @@ def _print_intro(output_fn: OutputFn) -> None:
 InputFn = Callable[[str], str]
 OutputFn = Callable[[str], None]
 ListPluginsFn = Callable[[], dict[str, PluginMetadata]]
+# verify_fn(kind, provider, model) -> (ok, message)
+#   kind in {"chat", "embedding", "reranker"}
+VerifyFn = Callable[[str, "Provider", str], tuple[bool, str]]
 
 
 def run_wizard(
@@ -87,6 +90,7 @@ def run_wizard(
     input_fn: InputFn = input,
     output_fn: OutputFn = print,
     list_plugins_fn: ListPluginsFn = list_available_plugins,
+    verify_fn: VerifyFn | None = None,
 ) -> Path:
     """Run the wizard and return the path of the (possibly) written config.
 
@@ -94,12 +98,13 @@ def run_wizard(
     written and the existing config.yaml (if any) is left untouched.
     """
     cfg_path = Path(config_path)
+    verify = verify_fn or _default_verify
 
     _print_intro(output_fn)
 
-    chat = _ask_chat_provider(input_fn, output_fn)
-    embed = _ask_embedding(input_fn, output_fn, chat)
-    rerank_cfg = _ask_reranker(input_fn, output_fn, chat, embed)
+    chat = _ask_chat_provider(input_fn, output_fn, verify)
+    embed = _ask_embedding(input_fn, output_fn, chat, verify)
+    rerank_cfg = _ask_reranker(input_fn, output_fn, chat, embed, verify)
     plugins = _ask_plugins(input_fn, output_fn, list_plugins_fn())
 
     cfg = _build_config(chat, embed, rerank_cfg, plugins)
@@ -129,7 +134,7 @@ def run_wizard(
 # ---- Step 1: chat provider --------------------------------------
 
 def _ask_chat_provider(
-    input_fn: InputFn, output_fn: OutputFn,
+    input_fn: InputFn, output_fn: OutputFn, verify: VerifyFn,
 ) -> tuple[str, Provider, str]:
     output_fn("\n--- Step 1/4: chat LLM provider ---")
     name = _prompt(input_fn, "Provider label (e.g. 'OpenAI')",
@@ -147,6 +152,7 @@ def _ask_chat_provider(
     provider = Provider(
         type="openai_compatible", base_url=base_url, api_key=api_key,
     )
+    _report_verify(output_fn, "chat", verify("chat", provider, model))
     return name, provider, model
 
 
@@ -155,6 +161,7 @@ def _ask_chat_provider(
 def _ask_embedding(
     input_fn: InputFn, output_fn: OutputFn,
     chat: tuple[str, Provider, str],
+    verify: VerifyFn,
 ) -> tuple[str, Provider, str] | None:
     output_fn("\n--- Step 2/4: embedding model (optional) ---")
     output_fn(
@@ -185,6 +192,8 @@ def _ask_embedding(
         )
     emb_model = _prompt(input_fn, "Embedding model name",
                          default="BAAI/bge-m3")
+    _report_verify(output_fn, "embedding",
+                    verify("embedding", emb_provider, emb_model))
     return emb_name, emb_provider, emb_model
 
 
@@ -194,6 +203,7 @@ def _ask_reranker(
     input_fn: InputFn, output_fn: OutputFn,
     chat: tuple[str, Provider, str],
     embed: tuple[str, Provider, str] | None,
+    verify: VerifyFn,
 ) -> tuple[str, Provider, str] | None:
     """Ask for an optional reranker. Defaults to reusing the embedding
     provider when one is configured (rerankers are commonly served
@@ -243,6 +253,8 @@ def _ask_reranker(
         )
     rer_model = _prompt(input_fn, "Reranker model name",
                          default="BAAI/bge-reranker-v2-m3")
+    _report_verify(output_fn, "reranker",
+                    verify("reranker", rer_provider, rer_model))
     return rer_name, rer_provider, rer_model
 
 
@@ -396,3 +408,77 @@ def _prompt_yes_no(
         if raw in ("n", "no"):
             return False
         output_fn(f"  ? please answer y or n (got {raw!r})")
+
+
+# ---- Connectivity verification ----------------------------------
+
+def _report_verify(output_fn: OutputFn, kind: str,
+                     result: tuple[bool, str]) -> None:
+    """Print verification outcome. Failures are warnings (not aborts)
+    so the user can finish the wizard and fix config.yaml manually
+    later if a typo only becomes obvious from a real LLM call."""
+    ok, msg = result
+    if ok:
+        output_fn(f"  [check] {kind} endpoint reachable ({msg})")
+    else:
+        output_fn(f"  [warn]  {kind} verification failed: {msg}")
+        output_fn("           continuing — you can fix the config later.")
+
+
+def _default_verify(kind: str, provider: Provider,
+                       model: str) -> tuple[bool, str]:
+    """Real ping against the provider endpoint. Stdlib only —
+    `urllib.request` so onboarding stays sync and dependency-light.
+
+    Sends a minimal real request that exercises base URL + auth +
+    model name in one shot:
+      * chat       → POST /chat/completions, max_tokens=1
+      * embedding  → POST /embeddings, single input
+      * reranker   → POST /rerank, one query + one doc
+    """
+    import json
+    import socket
+    import urllib.error
+    import urllib.request
+
+    base = (provider.base_url or "").rstrip("/")
+    if not base:
+        return False, "no base URL configured"
+
+    if kind == "chat":
+        url = f"{base}/chat/completions"
+        body = {
+            "model": model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+        }
+    elif kind == "embedding":
+        url = f"{base}/embeddings"
+        body = {"model": model, "input": "ping"}
+    elif kind == "reranker":
+        url = f"{base}/rerank"
+        body = {
+            "model": model, "query": "ping", "documents": ["test"],
+        }
+    else:
+        return False, f"unknown verify kind {kind!r}"
+
+    headers = {"Content-Type": "application/json"}
+    if provider.api_key:
+        headers["Authorization"] = f"Bearer {provider.api_key}"
+
+    req = urllib.request.Request(
+        url, data=json.dumps(body).encode("utf-8"),
+        headers=headers, method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if 200 <= resp.status < 300:
+                return True, f"HTTP {resp.status}"
+            return False, f"HTTP {resp.status}"
+    except urllib.error.HTTPError as e:
+        return False, f"HTTP {e.code} {e.reason}"
+    except (urllib.error.URLError, socket.timeout, OSError) as e:
+        return False, f"unreachable: {e}"
+    except Exception as e:  # noqa: BLE001
+        return False, f"error: {e}"

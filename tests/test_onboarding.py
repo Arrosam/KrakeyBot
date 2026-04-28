@@ -41,6 +41,12 @@ def _fake_catalogue(*names: str) -> dict[str, PluginMetadata]:
     return {n: PluginMetadata(name=n, description=f"{n} plugin") for n in names}
 
 
+def _skip_verify(kind, provider, model):
+    """Tests don't hit the network — stub the connectivity check
+    so the wizard treats every endpoint as reachable."""
+    return True, "stubbed"
+
+
 def test_wizard_writes_minimal_config(tmp_path):
     """Happy path: chat provider + skip embedding + accept defaults
     in plugin picker. Resulting file round-trips through load_config."""
@@ -68,6 +74,7 @@ def test_wizard_writes_minimal_config(tmp_path):
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
     )
     assert written == cfg_path
     assert cfg_path.exists()
@@ -99,6 +106,7 @@ def test_wizard_dashboard_default_recommended_and_first(tmp_path):
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
     )
     cfg = load_config(cfg_path)
     assert cfg.plugins == ["dashboard"]
@@ -135,6 +143,7 @@ def test_wizard_toggle_plugin_selection(tmp_path):
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
     )
     cfg = load_config(cfg_path)
     assert cfg.plugins is not None
@@ -159,6 +168,7 @@ def test_wizard_embedding_same_provider_as_chat(tmp_path):
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
     )
     cfg = load_config(cfg_path)
     assert list(cfg.llm.providers.keys()) == ["ChatCo"]
@@ -182,6 +192,7 @@ def test_wizard_backs_up_existing_config(tmp_path):
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
     )
     backups = list(backup_dir.iterdir())
     assert backups, "expected a backup file in backup_dir"
@@ -203,6 +214,7 @@ def test_wizard_abort_at_confirm_does_not_write(tmp_path):
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
     )
     assert not cfg_path.exists()
     assert any("aborted" in line for line in lines)
@@ -228,6 +240,7 @@ def test_wizard_reranker_reuses_embedding_provider(tmp_path):
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
     )
     cfg = load_config(cfg_path)
     assert cfg.llm.reranker == "rerank"
@@ -253,10 +266,74 @@ def test_wizard_skip_reranker_leaves_field_unset(tmp_path):
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
     )
     cfg = load_config(cfg_path)
     assert cfg.llm.reranker is None
     assert "rerank" not in cfg.llm.tags
+
+
+def test_wizard_verify_called_for_each_endpoint(tmp_path):
+    """verify_fn fires once per provider step the user actually enables."""
+    cfg_path = tmp_path / "config.yaml"
+    catalogue = _fake_catalogue("dashboard")
+    calls: list[tuple[str, str, str]] = []
+
+    def _record(kind, provider, model):
+        calls.append((kind, provider.base_url, model))
+        return True, "ok"
+
+    answers = [
+        "ChatCo", "http://chat", "k1", "chat-model",
+        "y", "n", "EmbedCo", "http://embed", "k2", "embed-model",
+        "y", "n", "RerankCo", "http://rerank", "k3", "rerank-model",
+        "done", "y",
+    ]
+    _, out = _capture_output()
+    run_wizard(
+        config_path=cfg_path,
+        backup_dir=str(tmp_path / "backups"),
+        input_fn=_stub_inputs(answers),
+        output_fn=out,
+        list_plugins_fn=lambda: catalogue,
+        verify_fn=_record,
+    )
+    kinds = [c[0] for c in calls]
+    assert kinds == ["chat", "embedding", "reranker"]
+    assert calls[0] == ("chat", "http://chat", "chat-model")
+    assert calls[1] == ("embedding", "http://embed", "embed-model")
+    assert calls[2] == ("reranker", "http://rerank", "rerank-model")
+
+
+def test_wizard_verify_failure_warns_but_does_not_abort(tmp_path):
+    """A failing verify is reported as a warning; the wizard still
+    writes the config so the user can fix the typo offline."""
+    cfg_path = tmp_path / "config.yaml"
+    catalogue = _fake_catalogue("dashboard")
+
+    def _failing(kind, provider, model):
+        return False, "HTTP 401 Unauthorized"
+
+    answers = [
+        "P", "http://x", "k", "m",
+        "n",         # skip embedding
+        "n",         # skip reranker
+        "done", "y",
+    ]
+    lines, out = _capture_output()
+    run_wizard(
+        config_path=cfg_path,
+        backup_dir=str(tmp_path / "backups"),
+        input_fn=_stub_inputs(answers),
+        output_fn=out,
+        list_plugins_fn=lambda: catalogue,
+        verify_fn=_failing,
+    )
+    # Config still written.
+    assert cfg_path.exists()
+    block = "\n".join(lines)
+    assert "warn" in block.lower()
+    assert "401" in block
 
 
 def test_module_exports_run_wizard():
@@ -283,6 +360,7 @@ def test_wizard_handles_unknown_command(tmp_path):
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
     )
     assert any("unknown command" in line for line in lines)
     assert any("out of range" in line for line in lines)
