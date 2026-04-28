@@ -4,9 +4,9 @@ from datetime import datetime
 
 import pytest
 
-from src.runtime.stimulus_buffer import StimulusBuffer
-from src.plugins.builtin.telegram.sensory import TelegramSensory
-from src.plugins.builtin.telegram.tentacle import TelegramReplyTentacle
+from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
+from src.plugins.telegram.sensory import TelegramSensory
+from src.plugins.telegram.tentacle import TelegramReplyTentacle
 
 
 class FakeClient:
@@ -47,7 +47,7 @@ async def test_sensory_pushes_incoming_message_as_user_stimulus():
     ])
     buf = StimulusBuffer()
     sensory = TelegramSensory(client=client)
-    await sensory.start(buf)
+    await sensory.start(buf.push)
     await asyncio.sleep(0.1)
     await sensory.stop()
 
@@ -65,7 +65,7 @@ async def test_sensory_advances_offset_so_old_msgs_not_replayed():
     ])
     buf = StimulusBuffer()
     sensory = TelegramSensory(client=client)
-    await sensory.start(buf)
+    await sensory.start(buf.push)
     await asyncio.sleep(0.15)
     await sensory.stop()
 
@@ -81,7 +81,7 @@ async def test_sensory_allowed_chat_filter():
     ])
     buf = StimulusBuffer()
     sensory = TelegramSensory(client=client, allowed_chat_ids={42})
-    await sensory.start(buf)
+    await sensory.start(buf.push)
     await asyncio.sleep(0.1)
     await sensory.stop()
 
@@ -98,7 +98,7 @@ async def test_sensory_handles_get_updates_exception_and_continues():
     ])
     buf = StimulusBuffer()
     sensory = TelegramSensory(client=client, error_backoff=0.01)
-    await sensory.start(buf)
+    await sensory.start(buf.push)
     await asyncio.sleep(0.15)
     await sensory.stop()
     drained = buf.drain()
@@ -112,7 +112,7 @@ async def test_sensory_skips_messages_without_text():
     ])
     buf = StimulusBuffer()
     sensory = TelegramSensory(client=client)
-    await sensory.start(buf)
+    await sensory.start(buf.push)
     await asyncio.sleep(0.1)
     await sensory.stop()
     drained = buf.drain()
@@ -130,7 +130,6 @@ def test_sensory_metadata():
 def test_tentacle_metadata():
     t = TelegramReplyTentacle(client=FakeClient())
     assert t.name == "telegram_reply"
-    assert t.is_internal is False  # this IS outward chat
 
 
 async def test_tentacle_sends_via_client_with_explicit_chat_id():

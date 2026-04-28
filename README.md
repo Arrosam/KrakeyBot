@@ -46,43 +46,35 @@ python main.py
 
 ## 配置
 
-编辑 [`config.yaml`](config.yaml)：
+**首次安装：跑一遍 onboarding 向导**，自动生成 `config.yaml`：
 
-1. **指向你的 LLM 服务**
-   ```yaml
-   llm:
-     providers:
-       local_main:
-         type: "openai_compatible"
-         base_url: "http://localhost:8080"    # 改成你的 llama-server 地址
-         api_key: null
-         models:
-           - name: "your-model-name"
-             capabilities: ["chat"]
-     roles:
-       self:             { provider: "local_main", model: "your-model-name" }
-       hypothalamus:     { provider: "local_main", model: "your-model-name" }
-       tentacle_default: { provider: "local_main", model: "your-model-name" }
-   ```
+```bash
+python -m src.onboarding
+```
 
-2. **使用云端 API**（可选）——在环境变量中提供 key：
-   ```bash
-   # Windows (PowerShell)
-   $env:DASHSCOPE_API_KEY = "sk-..."
-   $env:ANTHROPIC_API_KEY = "sk-ant-..."
-   # Linux/macOS
-   export DASHSCOPE_API_KEY=sk-...
-   export ANTHROPIC_API_KEY=sk-ant-...
-   ```
-   `config.yaml` 中的 `${DASHSCOPE_API_KEY}` / `${ANTHROPIC_API_KEY}` 会在启动时替换。
+向导会引导你三步走：
+1. 选一个 chat LLM provider（label / base URL / API key / 模型名），自动绑到 `self_thinking` + `compact` + `classifier` 核心用途
+2. 可选：再配一个 embedding provider/模型（recall + KB 索引需要它）
+3. 勾选要启用的插件（**dashboard 默认勾选并强烈推荐**——不然没有任何 in-app 方式查看 Krakey 的状态）
 
-3. **心跳与疲惫度参数**（可选微调，默认值基本够用）：
-   ```yaml
-   hibernate:
-     default_interval: 30   # 无输入时默认睡多久（秒）
-     min_interval: 2
-     max_interval: 300
-   ```
+向导可以反复跑：已存在的 `config.yaml` 会先备份到 `workspace/backups/` 再覆盖。
+
+**云端 API**：把 key 写进环境变量，然后在 `config.yaml` 里用 `${ENV_VAR}` 占位符引用。例：
+```bash
+# Windows (PowerShell)
+$env:DASHSCOPE_API_KEY = "sk-..."
+# Linux/macOS
+export DASHSCOPE_API_KEY=sk-...
+```
+`config.yaml` 里写 `api_key: ${DASHSCOPE_API_KEY}`，加载时自动替换。
+
+**心跳 / 疲惫度参数**（可选微调，默认值基本够用）：
+```yaml
+hibernate:
+  default_interval: 30   # 无输入时默认睡多久（秒）
+  min_interval: 2
+  max_interval: 300
+```
 
 ---
 

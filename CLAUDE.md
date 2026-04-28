@@ -22,25 +22,28 @@ in-tree) are a separate concern from this invariant. Default-on
 plugins exist for convenience; the architecture must work with
 ALL of them disabled.
 
-## Source documentation — regenerate after edits
+## Architecture documentation
 
-`docs/architecture.html` is an auto-generated per-file / per-class /
-per-method reference, built by AST-walking `src/`. After **any** edit
-under `src/` (adding a file, renaming a class, changing a docstring,
-etc.), regenerate and commit alongside the code change:
+The codebase has one always-fresh, interactive view, served live:
 
 ```
-python scripts/build_docs.py
-git add docs/architecture.html
+python docs/scripts/serve_arch_graph.py
+# → http://127.0.0.1:8979/
 ```
 
-If the edit was purely internal to a function body and no
-signatures / docstrings / file layout changed, regeneration is still
-cheap (~1 second) and harmless — just run it. The HTML only changes
-when something user-visible changes, so diffs stay small.
+The server walks `src/`, builds a Cytoscape.js dependency graph
+(folders → files → classes → methods, with import + reference edges)
+in-memory, and pushes updates over Server-Sent Events whenever any
+file under `src/` changes. The page hot-swaps elements in place, so
+expand/collapse, right-click hide, pan, and zoom state survive
+across rebuilds.
 
-Do not hand-edit `docs/architecture.html`. Edit the corresponding
-docstring in `src/` and re-run the generator.
+Interactions: double-click a compound to expand/collapse, single-click
+to inspect (panel + neighborhood highlight), right-click to hide a
+subtree at 20% opacity, hover for the docstring.
+
+The implementation lives in `docs/scripts/`
+(`serve_arch_graph.py` + the `build_arch_graph.py` library it imports).
 
 ## Commit messages
 

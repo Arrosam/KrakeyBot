@@ -20,18 +20,6 @@ class Tentacle(ABC):
     @abstractmethod
     def parameters_schema(self) -> dict[str, Any]: ...
 
-    @property
-    def sandboxed(self) -> bool:
-        return True
-
-    @property
-    def is_internal(self) -> bool:
-        """When True, the tentacle's output is for Self's inner consumption
-        only (e.g. memory_recall) and should NOT be rendered to the human
-        as Krakey's outward chat. Defaults to False — most tentacles
-        (action, …) speak on Krakey's behalf."""
-        return False
-
     @abstractmethod
     async def execute(self, intent: str, params: dict[str, Any]) -> Stimulus: ...
 
@@ -59,6 +47,14 @@ class TentacleRegistry:
             }
             for t in self._tentacles.values()
         ]
+
+    def names(self) -> list[str]:
+        """Sorted snapshot of all registered tentacle names."""
+        return sorted(self._tentacles.keys())
+
+    def all(self) -> list[Tentacle]:
+        """Snapshot of every registered tentacle (insertion order)."""
+        return list(self._tentacles.values())
 
     def __contains__(self, name: str) -> bool:
         return name in self._tentacles

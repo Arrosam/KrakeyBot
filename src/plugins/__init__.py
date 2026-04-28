@@ -1,10 +1,20 @@
-"""Plugin loader — dynamic tentacle/sensory discovery from workspace.
+"""Built-in plugin directory.
 
-At boot Runtime scans `src/plugins/builtin/` (ships with Krakey) and
-`workspace/plugins/` (user-dropped), imports each plugin project in
-isolation (no sys.path pollution), and registers the produced
-tentacles + sensories alongside the core ones.
+Each subfolder is one plugin (sibling shape to ``workspace/plugins/<name>/``).
+A plugin folder contains:
 
-Plugin contract lives in PLUGINS.md at repo root.
+  * ``meta.yaml``   — manifest (name, description, components, schema)
+  * Component code (``reflect.py``, ``tentacle.py``, ``sensory.py``,
+    ``__init__.py`` factories)
+
+User-editable plugin config lives at ``workspace/plugins/<name>/config.yaml``
+regardless of whether the plugin code is built-in (here) or user-installed
+(``workspace/plugins/<name>/``). Built-in plugins NEVER have ``config.yaml``
+in this src/ directory — that would dirty the repo on user edits.
+
+The infrastructure that *discovers* + *loads* these plugins lives in
+``src.plugin_system``, NOT in this package. From the runtime's
+perspective built-in and workspace plugins are identical — same
+manifest format, same loader. The only difference is "ships with the
+code" vs "user dropped it in".
 """
-from src.plugins.loader import PluginInfo, discover_plugins  # noqa: F401

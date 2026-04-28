@@ -68,29 +68,23 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     # main.py falls back to "workspace/data/web_chat.jsonl" — the production
     # path — and pytest writes test fixture messages into the real chat log.
     chat_dir = tempfile.mkdtemp(prefix="krakey_test_chat_")
-    # Per-plugin config YAMLs under workspace/plugin-configs/ shadow
-    # the legacy dict below when a file exists. Point the store at a
-    # fresh empty tmpdir so the helper's plugin overrides actually
-    # take effect (otherwise prod's web_chat.yaml wins → test
-    # messages like "Hi there!" leak into the real user chat log).
+    # ONE tmpdir holds every per-plugin config.yaml for this test.
+    # Same shape as the production workspace/plugins/ root: each
+    # plugin gets its own subfolder with a config.yaml inside.
     plugin_configs_dir = tempfile.mkdtemp(prefix="krakey_test_plugcfg_")
     # Ditto for self_model: it's a mutable file, and bootstrap tests
     # rewrite it. Without an override, concurrent test writes trample
     # the production workspace/self_model.yaml.
     self_model_path = f"{tempfile.mkdtemp(prefix='krakey_test_sm_')}/self_model.yaml"
     # And the in_mind Reflect's state file. Tests that enable
-    # default_in_mind would otherwise dispatch update_in_mind into
+    # in_mind_note would otherwise dispatch update_in_mind into
     # the production workspace/data/in_mind.json — same class of
     # leak as the web_chat history bug.
     in_mind_state_path = (
         f"{tempfile.mkdtemp(prefix='krakey_test_im_')}/in_mind.json"
     )
-    # Per-Reflect config files. Tag bindings go here under
-    # `<reflect_name>/config.yaml` (separate from per-tentacle/sensory
-    # config in plugin_configs_dir).
-    reflect_configs_dir = tempfile.mkdtemp(prefix="krakey_test_refcfg_")
     from src.models.config import (
-        Config, DashboardSection, FatigueSection, GraphMemorySection,
+        Config, FatigueSection, GraphMemorySection,
         HibernateSection, KnowledgeBaseSection, LLMParams, LLMSection,
         Provider, SafetySection, SleepSection, TagBinding,
     )
@@ -118,24 +112,21 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         fatigue=FatigueSection(gm_node_soft_limit=200,
                                 force_sleep_threshold=120,
                                 thresholds={}),
-        # Test convenience: opt into both built-in Reflect plugins
-        # when the caller didn't say otherwise. Stored under
-        # `Config.plugins` (the unified field, post Samuel
-        # 2026-04-26). Tests on the zero-plugin path pass
-        # ``reflects=[]`` to opt out explicitly.
-        # All plugins go through `Config.plugins` post Phase 2.
-        # Default helper turns on the historical convenience set:
-        # both default Reflects + the web_chat (sensory + tentacle)
-        # and memory_recall (tentacle) plugins. Tests on the
-        # zero-plugin path pass `reflects=[]` to opt out.
+        # Test convenience: opt into the historical default plugin set
+        # when the caller didn't say otherwise. Tests on the zero-plugin
+        # path pass ``reflects=[]`` to opt out explicitly.
+        #
+        # The dashboard plugin is included so the web_chat_reply
+        # tentacle is registered (existing tests dispatch to it). Its
+        # per-plugin config (planted below) sets port=0 so the Web UI
+        # server never binds — only the sensory + tentacle live.
         plugins=(
             list(reflects)
             if reflects is not None
             else [
-                "default_hypothalamus",
-                "default_recall_anchor",
-                "web_chat",
-                "memory_recall",
+                "hypothalamus",
+                "recall",
+                "dashboard",
             ]
         ),
         graph_memory=GraphMemorySection(
@@ -143,52 +134,42 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
             recall_per_stimulus_k=5, neighbor_expand_depth=1,
         ),
         knowledge_base=KnowledgeBaseSection(dir=kb_dir),
-        legacy_plugin_configs={
-            # Legacy MANIFEST plugin per-project config (deprecated;
-            # replaced by workspace/plugin-configs/<name>.yaml). Tests
-            # still use this to pre-enable web_chat / memory_recall
-            # under the old loader.
-            "web_chat": {
-                "enabled": True,
-                # Keep web chat history inside the test tmpdir so it
-                # doesn't bleed into workspace/data/web_chat.jsonl.
-                "history_path": f"{chat_dir}/chat.jsonl",
-            },
-            "memory_recall": {"enabled": True},
-            # `search` stays OFF in the helper: it hits the real network
-            # (DuckDuckGo) and tests should opt in deliberately.
-        },
         sleep=SleepSection(max_duration_seconds=7200,
                               min_community_size=1),
         safety=SafetySection(gm_node_hard_limit=500,
                                max_consecutive_no_action=50),
-        dashboard=DashboardSection(enabled=False),
     )
     # Pre-cache the LLMClient slots that plugins will resolve through
-    # ctx.get_llm. We point the helper's "_test_default" tag at the
-    # caller's hypo_llm (ScriptedLLM in most tests) so the
-    # default_hypothalamus Reflect's `translator` purpose lands on the
+    # ctx.get_llm_for_tag. We point the helper's "_test_default" tag at
+    # the caller's hypo_llm (ScriptedLLM in most tests) so the
+    # hypothalamus Reflect's `translator` purpose lands on the
     # scripted fake instead of trying to make a real HTTP call.
     llm_clients_by_tag: dict = {"_test_default": hypo_llm}
 
-    # Plant a per-plugin config for default_hypothalamus that binds
-    # its `translator` purpose to "_test_default" — without this,
-    # ctx.get_llm("translator") returns None and the factory skips
+    # Plant a per-plugin config for hypothalamus that binds
+    # its `translator` purpose to "_test_default" — without this, the
+    # plugin's factory reads no purposes from ctx.config,
+    # ctx.get_llm_for_tag(None) returns None, and the factory skips
     # registration (correct behavior, but would break tests that
     # expect the Reflect to be registered).
-    Path(reflect_configs_dir, "default_hypothalamus").mkdir(
+    Path(plugin_configs_dir, "hypothalamus").mkdir(
         parents=True, exist_ok=True,
     )
-    Path(reflect_configs_dir, "default_hypothalamus", "config.yaml").write_text(
+    Path(plugin_configs_dir, "hypothalamus", "config.yaml").write_text(
         "llm_purposes:\n  translator: _test_default\n", encoding="utf-8",
     )
-    # web_chat plugin's per-plugin config (history path → tmpdir so
-    # tests don't write to workspace/data/web_chat.jsonl).
-    Path(reflect_configs_dir, "web_chat").mkdir(
+    # Dashboard plugin (which now owns the embedded web chat). Plant
+    # config that:
+    #   * points history at a tmpdir so tests don't pollute
+    #     workspace/data/web_chat.jsonl
+    #   * sets port=0 so the dashboard's sensory.start() short-circuits
+    #     before binding a port (no flaky port conflicts in tests)
+    Path(plugin_configs_dir, "dashboard").mkdir(
         parents=True, exist_ok=True,
     )
-    Path(reflect_configs_dir, "web_chat", "config.yaml").write_text(
-        f"history_path: {chat_dir}/chat.jsonl\n", encoding="utf-8",
+    Path(plugin_configs_dir, "dashboard", "config.yaml").write_text(
+        f"port: 0\nhistory_path: {chat_dir}/chat.jsonl\n",
+        encoding="utf-8",
     )
 
     deps = RuntimeDeps(
@@ -200,7 +181,6 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         plugin_configs_root=plugin_configs_dir,
         self_model_path=self_model_path,
         in_mind_state_path=in_mind_state_path,
-        reflect_configs_root=reflect_configs_dir,
         llm_clients_by_tag=llm_clients_by_tag,
     )
     runtime = Runtime(
@@ -210,6 +190,6 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     # Stash a copy of the resolved test paths + LLM cache so test
     # helpers (e.g. _minimal_deps_for_runtime) can reconstruct an
     # equivalent deps when re-invoking _register_reflects_from_config.
-    runtime._test_reflect_configs_root = reflect_configs_dir
+    runtime._test_reflect_configs_root = plugin_configs_dir
     runtime._test_llm_clients_by_tag = llm_clients_by_tag
     return runtime

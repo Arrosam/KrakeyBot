@@ -1,6 +1,6 @@
 import pytest
 
-from src.runtime.fatigue import calculate_fatigue, fatigue_hint
+from src.runtime.heartbeat.fatigue import calculate_fatigue, fatigue_hint
 
 
 THRESHOLDS = {

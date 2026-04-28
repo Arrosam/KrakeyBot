@@ -2,7 +2,7 @@
 import pytest
 
 from src.memory.graph_memory import GraphMemory
-from src.sleep.clustering import run_leiden_clustering
+from src.memory.sleep.clustering import run_leiden_clustering
 
 
 class FixedEmbed:

@@ -3,9 +3,9 @@ from datetime import datetime
 
 import pytest
 
-from src.interfaces.sensory import Sensory, SensoryRegistry
+from src.interfaces.sensory import PushCallback, Sensory
 from src.models.stimulus import Stimulus
-from src.runtime.stimulus_buffer import StimulusBuffer
+from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
 class MockSensory(Sensory):
@@ -15,7 +15,7 @@ class MockSensory(Sensory):
         self._content = content
         self.started = 0
         self.stopped = 0
-        self._buffer = None
+        self._push: PushCallback | None = None
 
     @property
     def name(self) -> str:
@@ -25,10 +25,10 @@ class MockSensory(Sensory):
     def default_adrenalin(self) -> bool:
         return self._adr
 
-    async def start(self, buffer: StimulusBuffer) -> None:
+    async def start(self, push: PushCallback) -> None:
         self.started += 1
-        self._buffer = buffer
-        await buffer.push(Stimulus(
+        self._push = push
+        await push(Stimulus(
             type="system_event", source=f"sensory:{self._name}",
             content=self._content, timestamp=datetime.now(),
             adrenalin=self._adr,
@@ -39,11 +39,10 @@ class MockSensory(Sensory):
 
 
 async def test_register_and_start_all_pushes_stimulus():
-    reg = SensoryRegistry()
     buf = StimulusBuffer()
     m = MockSensory("mock", adrenalin=False, content="hello")
-    reg.register(m)
-    await reg.start_all(buf)
+    buf.register(m)
+    await buf.start_all()
 
     drained = buf.drain()
     assert [s.content for s in drained] == ["hello"]
@@ -51,35 +50,42 @@ async def test_register_and_start_all_pushes_stimulus():
 
 
 async def test_pause_non_urgent_stops_only_calm_sensories():
-    reg = SensoryRegistry()
     buf = StimulusBuffer()
     calm = MockSensory("calm", adrenalin=False)
     urgent = MockSensory("urgent", adrenalin=True)
-    reg.register(calm)
-    reg.register(urgent)
-    await reg.start_all(buf)
+    buf.register(calm)
+    buf.register(urgent)
+    await buf.start_all()
     buf.drain()
 
-    await reg.pause_non_urgent()
+    await buf.pause_non_urgent()
     assert calm.stopped == 1
     assert urgent.stopped == 0
 
 
 async def test_resume_all_restarts_paused():
-    reg = SensoryRegistry()
     buf = StimulusBuffer()
     calm = MockSensory("calm", adrenalin=False)
-    reg.register(calm)
-    await reg.start_all(buf)
+    buf.register(calm)
+    await buf.start_all()
     buf.drain()
 
-    await reg.pause_non_urgent()
-    await reg.resume_all(buf)
+    await buf.pause_non_urgent()
+    await buf.resume_all()
     assert calm.started == 2
 
 
 def test_register_duplicate_raises():
-    reg = SensoryRegistry()
-    reg.register(MockSensory("x", False))
+    buf = StimulusBuffer()
+    buf.register(MockSensory("x", False))
     with pytest.raises(ValueError):
-        reg.register(MockSensory("x", False))
+        buf.register(MockSensory("x", False))
+
+
+def test_get_sensory_returns_none_for_unknown():
+    buf = StimulusBuffer()
+    buf.register(MockSensory("known", False))
+    assert buf.get_sensory("known") is not None
+    assert buf.get_sensory("nope") is None
+    assert "known" in buf
+    assert "nope" not in buf

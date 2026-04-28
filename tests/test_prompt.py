@@ -2,9 +2,11 @@ from datetime import datetime
 
 import pytest
 
+from src.memory.recall import RecallResult
 from src.models.stimulus import Stimulus
-from src.prompt.builder import PromptBuilder, SlidingWindowRound
+from src.prompt.builder import PromptBuilder
 from src.prompt.dna import DNA
+from src.prompt.views import CapabilityView, SlidingWindowRound, StatusSnapshot
 
 
 def test_dna_has_all_sections():
@@ -26,12 +28,18 @@ def test_dna_disambiguates_sleep_and_hibernate():
 
 
 def test_dna_mentions_active_memory_recall():
-    """Self must know it can dispatch memory_recall to actively explore GM,
-    not just receive passive auto-recall."""
-    assert "memory_recall" in DNA
+    """Self must know it can dispatch a recall tentacle to actively
+    explore GM, not just receive passive auto-recall. DNA does not
+    name a specific tentacle (the live name lives in [CAPABILITIES]
+    — naming it in DNA would couple the always-on prompt prefix to a
+    swappable plugin), but it must teach the *concept* of proactive
+    recall and point Self at [CAPABILITIES] to find the actual name.
+    """
     d = DNA.lower()
     assert "proactive" in d or "主动" in DNA or "explicit" in d
+    assert "recall" in d
     assert "reflect" in d or "反思" in DNA
+    assert "[capabilities]" in d
 
 
 def test_dna_warns_about_self_vs_external_signals():
@@ -55,29 +63,23 @@ def test_dna_points_tentacle_lookup_at_capabilities_not_status():
     assert "name not in `[STATUS]`" not in DNA
 
 
-def _basic_status():
-    return {
-        "gm_node_count": 0,
-        "gm_edge_count": 0,
-        "fatigue_pct": 0,
-        "fatigue_hint": "",
-        "last_sleep_time": "",
-        "heartbeats_since_sleep": 0,
-    }
+def _basic_status() -> StatusSnapshot:
+    return StatusSnapshot(
+        gm_node_count=0, gm_edge_count=0,
+        fatigue_pct=0, fatigue_hint="",
+        last_sleep_time="", heartbeats_since_sleep=0,
+    )
 
 
 def test_builder_assembles_all_layers():
     self_model = {"identity": {"name": "Krakey", "persona": "curious bot"}}
-    status = {
-        "gm_node_count": 12,
-        "gm_edge_count": 5,
-        "fatigue_pct": 25,
-        "fatigue_hint": "",
-        "last_sleep_time": "never",
-        "heartbeats_since_sleep": 7,
-    }
-    capabilities = [{"name": "action", "description": "general"}]
-    recall = {"nodes": [], "edges": []}
+    status = StatusSnapshot(
+        gm_node_count=12, gm_edge_count=5,
+        fatigue_pct=25, fatigue_hint="",
+        last_sleep_time="never", heartbeats_since_sleep=7,
+    )
+    capabilities = [CapabilityView(name="action", description="general")]
+    recall = RecallResult()
     window = [SlidingWindowRound(heartbeat_id=1,
                                   stimulus_summary="hi",
                                   decision_text="reply",
@@ -109,9 +111,9 @@ def test_builder_layer_order_is_cache_optimal():
     HISTORY → STATUS → HEARTBEAT."""
     p = PromptBuilder().build(
         self_model={"identity": {"name": "K"}},
-        capabilities=[{"name": "t", "description": "d"}],
+        capabilities=[CapabilityView(name="t", description="d")],
         status=_basic_status(),
-        recall={"nodes": [], "edges": []},
+        recall=RecallResult(),
         window=[],
         stimuli=[],
         current_time=datetime(2026, 4, 24),
@@ -142,7 +144,7 @@ def test_builder_stimulus_has_no_per_stim_timestamps():
     ]
     p = PromptBuilder().build(
         self_model={}, capabilities=[], status=_basic_status(),
-        recall={"nodes": [], "edges": []}, window=[], stimuli=stimuli,
+        recall=RecallResult(), window=[], stimuli=stimuli,
         current_time=datetime(2026, 4, 24, 13, 0, 0),
     )
     stim_block = p[p.rindex("# [STIMULUS]"):p.index("# [GRAPH MEMORY]")]
@@ -158,7 +160,7 @@ def test_builder_current_time_present_even_on_empty_stimulus():
     trailer must still appear so Self always has a 'now' anchor."""
     p = PromptBuilder().build(
         self_model={}, capabilities=[], status=_basic_status(),
-        recall={"nodes": [], "edges": []}, window=[], stimuli=[],
+        recall=RecallResult(), window=[], stimuli=[],
         current_time=datetime(2026, 4, 24, 9, 15, 3),
     )
     assert "(no new signals)" in p
@@ -169,11 +171,11 @@ def test_builder_capabilities_layer_renders_tentacles():
     p = PromptBuilder().build(
         self_model={},
         capabilities=[
-            {"name": "search", "description": "web search"},
-            {"name": "memory_recall", "description": "GM recall"},
+            CapabilityView(name="search", description="web search"),
+            CapabilityView(name="memory_recall", description="GM recall"),
         ],
         status=_basic_status(),
-        recall={"nodes": [], "edges": []}, window=[], stimuli=[],
+        recall=RecallResult(), window=[], stimuli=[],
         current_time=datetime(2026, 4, 24),
     )
     cap_block = p[p.index("# [CAPABILITIES]"):p.index("# [STIMULUS]")]
@@ -186,9 +188,9 @@ def test_builder_status_has_no_tentacle_info():
     hygiene — status changes every beat, capabilities shouldn't)."""
     p = PromptBuilder().build(
         self_model={},
-        capabilities=[{"name": "search", "description": "web search"}],
+        capabilities=[CapabilityView(name="search", description="web search")],
         status=_basic_status(),
-        recall={"nodes": [], "edges": []}, window=[], stimuli=[],
+        recall=RecallResult(), window=[], stimuli=[],
         current_time=datetime(2026, 4, 24),
     )
     status_block = p[p.rindex("# [STATUS]"):p.index("# [HEARTBEAT]")]
@@ -209,7 +211,7 @@ def test_builder_splits_stimulus_by_source_type():
     ]
     p = PromptBuilder().build(
         self_model={}, capabilities=[], status=_basic_status(),
-        recall={"nodes": [], "edges": []}, window=[], stimuli=stimuli,
+        recall=RecallResult(), window=[], stimuli=stimuli,
         current_time=datetime(2026, 4, 24),
     )
 
@@ -233,6 +235,47 @@ def test_builder_splits_stimulus_by_source_type():
         "tentacle_feedback must land under YOUR RECENT ACTIONS"
 
 
+def test_builder_marks_recall_retry_stimuli():
+    """When the recall_anchor plugin couldn't find any GraphMemory
+    context for a stimulus on the prior beat, the orchestrator
+    re-pushes it with `recall_retries` incremented. The prompt must
+    surface that flag so Self knows the [GRAPH MEMORY] layer has no
+    related context for that signal."""
+    fresh = Stimulus(
+        type="user_message", source="sensory:cli",
+        content="brand new question",
+        timestamp=datetime(2026, 4, 19),
+    )
+    retried = Stimulus(
+        type="user_message", source="sensory:cli",
+        content="lonely message",
+        timestamp=datetime(2026, 4, 19),
+        metadata={"recall_retries": 1},
+    )
+    p = PromptBuilder().build(
+        self_model={}, capabilities=[], status=_basic_status(),
+        recall=RecallResult(), window=[], stimuli=[fresh, retried],
+        current_time=datetime(2026, 4, 24),
+    )
+    stim_block = p[p.rindex("# [STIMULUS]"):p.index("# [GRAPH MEMORY]")]
+
+    # Fresh stimulus has NO retry marker
+    fresh_idx = stim_block.find("brand new question")
+    assert fresh_idx >= 0
+    next_sep = stim_block.find("---", fresh_idx)
+    fresh_chunk = (
+        stim_block[fresh_idx:next_sep] if next_sep != -1
+        else stim_block[fresh_idx:]
+    )
+    assert "未召回" not in fresh_chunk
+
+    # Retried stimulus has the marker (with retry count)
+    retried_idx = stim_block.find("lonely message")
+    assert retried_idx >= 0
+    assert "未召回到与本条相关的图记忆" in stim_block[retried_idx:]
+    assert "重试第 1 次" in stim_block[retried_idx:]
+
+
 def test_builder_omits_empty_subsections():
     """If no incoming, that subsection header should not appear."""
     stimuli = [
@@ -241,7 +284,7 @@ def test_builder_omits_empty_subsections():
     ]
     p = PromptBuilder().build(
         self_model={}, capabilities=[], status=_basic_status(),
-        recall={"nodes": [], "edges": []}, window=[], stimuli=stimuli,
+        recall=RecallResult(), window=[], stimuli=stimuli,
         current_time=datetime(2026, 4, 24),
     )
     stim_block = p[p.rindex("# [STIMULUS]"):p.index("# [GRAPH MEMORY]")]
@@ -253,7 +296,7 @@ def test_builder_omits_empty_subsections():
 def test_builder_handles_empty_recall_and_window():
     prompt = PromptBuilder().build(
         self_model={}, capabilities=[], status=_basic_status(),
-        recall={"nodes": [], "edges": []}, window=[], stimuli=[],
+        recall=RecallResult(), window=[], stimuli=[],
         current_time=datetime(2026, 4, 24),
     )
     assert "[STIMULUS]" in prompt
@@ -262,11 +305,13 @@ def test_builder_handles_empty_recall_and_window():
 
 
 def test_builder_injects_recall_nodes_and_edges():
-    recall = {
-        "nodes": [{"name": "Apple", "category": "FACT",
-                   "description": "a fruit", "neighbor_keywords": ["fruit", "tree"]}],
-        "edges": [{"source": "Apple", "predicate": "RELATED_TO", "target": "Banana"}],
-    }
+    recall = RecallResult(
+        nodes=[{"name": "Apple", "category": "FACT",
+                 "description": "a fruit",
+                 "neighbor_keywords": ["fruit", "tree"]}],
+        edges=[{"source": "Apple", "predicate": "RELATED_TO",
+                 "target": "Banana"}],
+    )
     p = PromptBuilder().build(
         self_model={}, capabilities=[], status=_basic_status(),
         recall=recall, window=[], stimuli=[],
@@ -277,3 +322,28 @@ def test_builder_injects_recall_nodes_and_edges():
     assert "RELATED_TO" in p
     assert "Banana" in p
     assert "fruit" in p
+
+
+def test_builder_status_field_values_render_through():
+    """Producer-side typo guard: every StatusSnapshot field must surface
+    in the rendered prompt with its actual value. If a producer typoes
+    a field name (or the renderer reads the wrong attribute), one of
+    these substring assertions fails — much earlier than waiting for
+    Self to start saying weird things about its own fatigue."""
+    status = StatusSnapshot(
+        gm_node_count=42, gm_edge_count=17,
+        fatigue_pct=66, fatigue_hint="(getting tired)",
+        last_sleep_time="2026-04-26 03:14",
+        heartbeats_since_sleep=199,
+    )
+    p = PromptBuilder().build(
+        self_model={}, capabilities=[], status=status,
+        recall=RecallResult(), window=[], stimuli=[],
+        current_time=datetime(2026, 4, 24),
+    )
+    assert "42 nodes" in p
+    assert "17 edges" in p
+    assert "66%" in p
+    assert "(getting tired)" in p
+    assert "2026-04-26 03:14" in p
+    assert "199" in p

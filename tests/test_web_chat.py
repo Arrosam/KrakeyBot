@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from src.dashboard.app_factory import create_app
-from src.dashboard.web_chat import WebChatHistory
-from src.plugins.builtin.web_chat.tentacle import WebChatTentacle
+from src.plugins.dashboard.app_factory import create_app
+from src.plugins.dashboard.web_chat import WebChatHistory
+from src.plugins.dashboard.tentacle import WebChatReplyTentacle as WebChatTentacle
 
 
 # ---------------- WebChatHistory ----------------
@@ -89,7 +89,7 @@ async def test_unsubscribe_stops_delivery(tmp_path):
 
 
 async def test_sensory_push_creates_user_message_stimulus(tmp_path):
-    from src.plugins.builtin.web_chat.sensory import WebChatSensory
+    from src.plugins.dashboard.sensory import WebChatSensory
 
     pushed = []
 
@@ -97,7 +97,7 @@ async def test_sensory_push_creates_user_message_stimulus(tmp_path):
         async def push(self, s): pushed.append(s)
 
     sens = WebChatSensory()
-    await sens.start(_Buf())
+    await sens.start(_Buf().push)
     await sens.push_user_message("hello krakey")
     assert len(pushed) == 1
     s = pushed[0]
@@ -109,7 +109,7 @@ async def test_sensory_push_creates_user_message_stimulus(tmp_path):
 
 
 async def test_sensory_push_appends_attachment_notices(tmp_path):
-    from src.plugins.builtin.web_chat.sensory import WebChatSensory
+    from src.plugins.dashboard.sensory import WebChatSensory
 
     pushed = []
 
@@ -117,7 +117,7 @@ async def test_sensory_push_appends_attachment_notices(tmp_path):
         async def push(self, s): pushed.append(s)
 
     sens = WebChatSensory()
-    await sens.start(_Buf())
+    await sens.start(_Buf().push)
     await sens.push_user_message(
         "see file",
         attachments=[{"name": "a.png", "type": "image/png",
@@ -130,7 +130,7 @@ async def test_sensory_push_appends_attachment_notices(tmp_path):
 
 
 async def test_sensory_push_before_start_silently_drops():
-    from src.plugins.builtin.web_chat.sensory import WebChatSensory
+    from src.plugins.dashboard.sensory import WebChatSensory
 
     sens = WebChatSensory()
     # No start() — buffer is None. Must not raise.
@@ -138,7 +138,7 @@ async def test_sensory_push_before_start_silently_drops():
 
 
 async def test_sensory_push_after_stop_silently_drops():
-    from src.plugins.builtin.web_chat.sensory import WebChatSensory
+    from src.plugins.dashboard.sensory import WebChatSensory
 
     pushed = []
 
@@ -146,7 +146,7 @@ async def test_sensory_push_after_stop_silently_drops():
         async def push(self, s): pushed.append(s)
 
     sens = WebChatSensory()
-    await sens.start(_Buf())
+    await sens.start(_Buf().push)
     await sens.stop()
     await sens.push_user_message("dropped")
     assert pushed == []
@@ -157,7 +157,6 @@ async def test_sensory_push_after_stop_silently_drops():
 def test_tentacle_metadata():
     t = WebChatTentacle(history=None)  # noqa
     assert t.name == "web_chat_reply"
-    assert t.is_internal is False  # outbound chat to a human
 
 
 async def test_tentacle_send_appends_to_history(tmp_path):

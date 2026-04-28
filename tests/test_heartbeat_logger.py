@@ -4,8 +4,8 @@ import sys
 
 import pytest
 
-from src.runtime import colors
-from src.runtime.heartbeat_logger import HeartbeatLogger
+from src.runtime.console import colors
+from src.runtime.console.heartbeat_logger import HeartbeatLogger
 
 
 def _capture(monkeypatch):

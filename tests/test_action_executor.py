@@ -1,19 +1,21 @@
-"""Action executor — parses [ACTION] JSONL into TentacleCalls.
+"""Tool-call executor — parses <tool_call>...</tool_call> blocks
+into TentacleCalls.
 
-This is the default tentacle dispatch path when no hypothalamus
-Reflect is registered (Reflect #1 default OFF design).
+This is the default tentacle dispatch path when no decision-translator
+Reflect (e.g. the hypothalamus plugin) is registered. Format chosen
+for breadth of training coverage in modern open-source LLMs.
 """
-from src.runtime.action_executor import parse_action_block
+from src.runtime.heartbeat.action_executor import parse_tool_calls
 
 
 def test_empty_input_returns_empty():
-    assert parse_action_block("") == []
-    assert parse_action_block(None) == []  # type: ignore[arg-type]
+    assert parse_tool_calls("") == []
+    assert parse_tool_calls(None) == []  # type: ignore[arg-type]
 
 
-def test_no_action_block_returns_empty():
+def test_no_tool_call_returns_empty():
     """Self can produce thinking/decision/note without invoking any
-    tentacle — the executor should accept that as a valid no-op."""
+    tentacle — the parser should accept that as a valid no-op."""
     text = """[THINKING]
 Just reflecting today.
 [DECISION]
@@ -21,17 +23,17 @@ No action needed.
 [NOTE]
 Nothing to do.
 """
-    assert parse_action_block(text) == []
+    assert parse_tool_calls(text) == []
 
 
 def test_single_call_parsed():
     text = """[DECISION]
 Greet the user.
-[ACTION]
+<tool_call>
 {"name": "web_chat_reply", "arguments": {"text": "Hi!"}}
-[/ACTION]
+</tool_call>
 """
-    calls = parse_action_block(text)
+    calls = parse_tool_calls(text)
     assert len(calls) == 1
     c = calls[0]
     assert c.tentacle == "web_chat_reply"
@@ -39,122 +41,142 @@ Greet the user.
     assert c.adrenalin is False
 
 
-def test_multiple_calls_in_one_block():
-    text = """[ACTION]
+def test_multiple_calls_in_separate_blocks():
+    """Parallel calls = repeat the tag (one JSON object per tag, not
+    one-call-per-line within a single tag)."""
+    text = """<tool_call>
 {"name": "web_chat_reply", "arguments": {"text": "ok"}}
+</tool_call>
+<tool_call>
 {"name": "search", "arguments": {"query": "weather"}, "adrenalin": true}
-[/ACTION]
+</tool_call>
 """
-    calls = parse_action_block(text)
+    calls = parse_tool_calls(text)
     assert len(calls) == 2
     assert calls[0].tentacle == "web_chat_reply"
     assert calls[1].tentacle == "search"
     assert calls[1].adrenalin is True
 
 
-def test_multiple_blocks_concatenated():
-    """Edge case: Self might emit two [ACTION] blocks (e.g. one
-    after [DECISION], one after [NOTE]). Both should parse."""
-    text = """[ACTION]
+def test_blocks_separated_by_prose_still_parse():
+    """Self might explain in between two tool calls. Both should parse."""
+    text = """<tool_call>
 {"name": "first", "arguments": {}}
-[/ACTION]
-some text in between
-[ACTION]
+</tool_call>
+some text in between explaining the next call
+<tool_call>
 {"name": "second", "arguments": {}}
-[/ACTION]
+</tool_call>
 """
-    calls = parse_action_block(text)
+    calls = parse_tool_calls(text)
     assert [c.tentacle for c in calls] == ["first", "second"]
 
 
-def test_one_bad_line_skipped_others_parse():
-    """Single-line failure must not poison adjacent good calls."""
-    text = """[ACTION]
+def test_one_bad_block_skipped_others_parse():
+    """A single malformed block must not poison adjacent good ones."""
+    text = """<tool_call>
 {"name": "good_one", "arguments": {}}
+</tool_call>
+<tool_call>
 this is not json
+</tool_call>
+<tool_call>
 {"name": "good_two", "arguments": {"x": 1}}
-[/ACTION]
+</tool_call>
 """
-    calls = parse_action_block(text)
+    calls = parse_tool_calls(text)
     assert [c.tentacle for c in calls] == ["good_one", "good_two"]
 
 
 def test_missing_name_skipped():
-    text = """[ACTION]
+    text = """<tool_call>
 {"name": "ok", "arguments": {}}
+</tool_call>
+<tool_call>
 {"arguments": {"x": 1}}
+</tool_call>
+<tool_call>
 {"name": "", "arguments": {}}
+</tool_call>
+<tool_call>
 {"name": "also_ok"}
-[/ACTION]
+</tool_call>
 """
-    calls = parse_action_block(text)
+    calls = parse_tool_calls(text)
     assert [c.tentacle for c in calls] == ["ok", "also_ok"]
 
 
 def test_arguments_default_to_empty_dict():
-    text = """[ACTION]
+    text = """<tool_call>
 {"name": "minimal"}
-[/ACTION]
+</tool_call>
 """
-    calls = parse_action_block(text)
+    calls = parse_tool_calls(text)
     assert calls[0].params == {}
 
 
 def test_arguments_must_be_object_else_empty():
     """Defensive: if `arguments` is a non-object (string/list/null),
     treat as empty dict so the tentacle doesn't blow up on bad type."""
-    text = """[ACTION]
+    text = """<tool_call>
 {"name": "weird", "arguments": "not a dict"}
-[/ACTION]
+</tool_call>
 """
-    calls = parse_action_block(text)
+    calls = parse_tool_calls(text)
     assert calls[0].params == {}
 
 
 def test_unicode_arguments():
-    text = """[ACTION]
+    text = """<tool_call>
 {"name": "say", "arguments": {"text": "你好世界"}}
-[/ACTION]
+</tool_call>
 """
-    calls = parse_action_block(text)
+    calls = parse_tool_calls(text)
     assert calls[0].params == {"text": "你好世界"}
 
 
 def test_intent_synthesized_from_arg_keys():
-    """The intent string drives /dispatch event display. Should be a
+    """The intent string drives the dispatch event display. Should be a
     compact label, not the full arg blob (some tentacles take huge
     payloads)."""
     big_source = "x" * 5000
     text = (
-        '[ACTION]\n'
+        '<tool_call>\n'
         '{"name": "code_run", "arguments": '
         '{"language": "python", "source": "' + big_source + '"}}\n'
-        '[/ACTION]\n'
+        '</tool_call>\n'
     )
-    calls = parse_action_block(text)
-    # Intent ≈ "code_run(language, source)" — short, no full source dump
+    calls = parse_tool_calls(text)
     assert "code_run" in calls[0].intent
     assert "language" in calls[0].intent
-    # Must not include the giant source blob
     assert len(calls[0].intent) < 200
 
 
-def test_action_block_inside_decision_section():
-    """Realistic scenario: Self writes [ACTION]...[/ACTION] nested
-    inside [DECISION]. Parser shouldn't care about which tag section
-    it lives in — only about the [ACTION]...[/ACTION] sentinels."""
+def test_tag_inside_decision_section():
+    """Realistic scenario: Self writes <tool_call> nested inside
+    [DECISION]. Parser only cares about the <tool_call> tags."""
     text = """[THINKING]
 weighing options.
 [DECISION]
 I should reply and then search.
-[ACTION]
+<tool_call>
 {"name": "web_chat_reply", "arguments": {"text": "checking"}}
+</tool_call>
+<tool_call>
 {"name": "search", "arguments": {"query": "X"}}
-[/ACTION]
+</tool_call>
 [NOTE]
 will check in next beat
 [HIBERNATE]
 30
 """
-    calls = parse_action_block(text)
+    calls = parse_tool_calls(text)
     assert [c.tentacle for c in calls] == ["web_chat_reply", "search"]
+
+
+def test_back_compat_alias_still_works():
+    """parse_action_block was the old name; kept as alias since two
+    other modules import it."""
+    from src.runtime.heartbeat.action_executor import parse_action_block
+    text = '<tool_call>\n{"name": "x"}\n</tool_call>'
+    assert parse_action_block(text) == parse_tool_calls(text)

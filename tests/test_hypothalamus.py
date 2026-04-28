@@ -2,7 +2,10 @@ import json
 
 import pytest
 
-from src.hypothalamus import Hypothalamus, HypothalamusResult
+from src.plugins.hypothalamus.reflect import (
+    HypothalamusReflectImpl as Hypothalamus,
+)
+from src.interfaces.reflect import DecisionResult
 
 
 class MockLLM:
@@ -35,7 +38,7 @@ async def test_parses_tentacle_call_non_urgent():
     hypo = Hypothalamus(llm=llm)
     result = await hypo.translate("Search apple online. Not urgent.", _tentacles())
 
-    assert isinstance(result, HypothalamusResult)
+    assert isinstance(result, DecisionResult)
     assert len(result.tentacle_calls) == 1
     assert result.tentacle_calls[0].tentacle == "action"
     assert result.tentacle_calls[0].adrenalin is False

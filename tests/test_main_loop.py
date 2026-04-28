@@ -9,7 +9,7 @@ from src.main import Runtime, RuntimeDeps
 from src.models.self_model import SelfModelStore, default_self_model
 from tests._runtime_helpers import build_runtime_with_fakes
 from src.models.stimulus import Stimulus
-from src.runtime.stimulus_buffer import StimulusBuffer
+from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
 class ScriptedLLM:
@@ -87,13 +87,12 @@ async def test_hypothalamus_error_pushes_system_event_stimulus():
     await runtime.run(iterations=1)
 
     stims = runtime.buffer.drain()
-    hypo_errs = [s for s in stims
-                 if s.type == "system_event"
-                 and s.source == "system:hypothalamus"]
-    assert hypo_errs, "no hypothalamus error stimulus pushed"
-    assert hypo_errs[0].adrenalin is True
-    assert "could not be translated" in hypo_errs[0].content.lower() \
-        or "hypothalamus" in hypo_errs[0].content.lower()
+    decision_errs = [s for s in stims
+                     if s.type == "system_event"
+                     and s.source == "system:decision"]
+    assert decision_errs, "no decision-dispatch error stimulus pushed"
+    assert decision_errs[0].adrenalin is True
+    assert "could not be translated" in decision_errs[0].content.lower()
 
 
 async def test_tentacle_feedback_does_not_inherit_adrenalin_from_hypothalamus():
@@ -265,12 +264,24 @@ async def test_bootstrap_self_model_update_and_completion(tmp_path):
     ])
     hypo_llm = ScriptedLLM([])
 
+    # Pre-seed the self-model file with defaults so the runtime + the
+    # BootstrapCoordinator both anchor to the SAME file from
+    # construction. (Post-construction swap of runtime._self_model_store
+    # used to work but broke when the coordinator started holding its
+    # own store reference — passing the path up-front is cleaner anyway.)
+    sm_path.write_text(
+        # Yaml-dump default content; SelfModelStore.load handles missing
+        # too but we want a non-empty starting state for the test.
+        "identity: {}\nstate: {bootstrap_complete: false}\n",
+        encoding="utf-8",
+    )
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=hypo_llm,
         skip_bootstrap=False,
     )
-    # Override the self-model path to the tmp file
+    # Re-anchor BOTH runtime + coordinator to the tmp self-model file.
     runtime._self_model_store = SelfModelStore(sm_path)
+    runtime.bootstrap._store = runtime._self_model_store
     runtime.self_model = default_self_model()
     runtime.is_bootstrap = True
     # Tighten hibernate so the test isn't slow (bootstrap forces 10s default,
@@ -287,7 +298,7 @@ async def test_bootstrap_self_model_update_and_completion(tmp_path):
     assert runtime.is_bootstrap is False
 
 
-async def test_override_kill_stops_runtime():
+async def test_command_kill_stops_runtime():
     self_llm = ScriptedLLM([
         # Heartbeat 1 should hit /kill before reaching Self.
         "[DECISION]\nNo action.\n[HIBERNATE]\n1",
@@ -305,8 +316,8 @@ async def test_override_kill_stops_runtime():
     assert self_llm.calls == []
 
 
-async def test_override_status_pushes_system_event_for_self(tmp_path):
-    """Override result lands in buffer, visible on the *next* heartbeat."""
+async def test_command_status_pushes_system_event_for_self(tmp_path):
+    """Command result lands in buffer, visible on the *next* heartbeat."""
     self_llm = ScriptedLLM([
         "[DECISION]\nNo action.\n[HIBERNATE]\n1",  # HB #1: handles /status
         "[DECISION]\nNo action.\n[HIBERNATE]\n1",  # HB #2: sees system_event
@@ -322,11 +333,11 @@ async def test_override_status_pushes_system_event_for_self(tmp_path):
     await runtime.close()
 
     joined = json.dumps(self_llm.calls[1], ensure_ascii=False)
-    assert "system:override" in joined
+    assert "system:command" in joined
     assert "/status" in joined or "heartbeats=" in joined
 
 
-async def test_override_sleep_triggers_full_sleep(tmp_path):
+async def test_command_sleep_triggers_full_sleep(tmp_path):
     sleep_llm = ScriptedLLM(["summary"] * 5)
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
@@ -352,7 +363,7 @@ async def test_override_sleep_triggers_full_sleep(tmp_path):
     await runtime.close()
 
 
-async def test_override_normal_text_passes_through_to_self():
+async def test_normal_text_passes_through_to_self():
     """Sanity: non-/cmd messages still reach Self normally."""
     self_llm = ScriptedLLM([
         "[DECISION]\nNo action.\n[HIBERNATE]\n1",
@@ -369,69 +380,6 @@ async def test_override_normal_text_passes_through_to_self():
     # Self saw "hello there" in its prompt
     joined = json.dumps(self_llm.calls[0], ensure_ascii=False)
     assert "hello there" in joined
-
-
-async def test_memory_recall_renders_via_internal_not_chat(tmp_path):
-    """Visual contract: memory_recall output must NOT be styled as Krakey's
-    outward chat (green). Goes through logger.internal (magenta) instead."""
-    self_llm = ScriptedLLM([
-        "[DECISION]\nRecall apple.\n[HIBERNATE]\n1",
-        "[DECISION]\nNo action.\n[HIBERNATE]\n1",
-    ])
-    hypo_llm = ScriptedLLM([
-        json.dumps({
-            "tentacle_calls": [{"tentacle": "memory_recall",
-                                  "intent": "apple",
-                                  "params": {"query": "apple"},
-                                  "adrenalin": False}],
-            "memory_writes": [], "memory_updates": [], "sleep": False,
-        }),
-        json.dumps({"tentacle_calls": [], "memory_writes": [],
-                     "memory_updates": [], "sleep": False}),
-    ])
-
-    class StubLogger:
-        def __init__(self):
-            self.internal_calls: list[tuple[str, str]] = []
-            self.chat_calls: list[tuple[str, str]] = []
-            self.heartbeat_id = 0
-
-        def set_heartbeat(self, n): self.heartbeat_id = n
-        def hb(self, msg): pass
-        def hb_warn(self, msg): pass
-        def hb_thought(self, label, text): pass
-        def runtime_error(self, msg): pass
-        def hypo(self, msg): pass
-        def hypo_warn(self, msg): pass
-        def dispatch(self, msg): pass
-        def chat(self, sender, content):
-            self.chat_calls.append((sender, content))
-        def internal(self, sender, content):
-            self.internal_calls.append((sender, content))
-
-    spy = StubLogger()
-
-    class MapEmbed:
-        async def __call__(self, text):
-            return [1.0, 0.0]
-
-    runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
-        embedder=MapEmbed(),
-    )
-    runtime.log = spy
-    await runtime.gm.initialize()
-    await runtime.gm.insert_node(
-        name="apple", category="FACT", description="red fruit",
-        embedding=[1.0, 0.0],
-    )
-
-    await runtime.run(iterations=2)
-    await runtime.close()
-
-    # memory_recall went to internal, not chat
-    assert any(s == "memory_recall" for (s, _) in spy.internal_calls)
-    assert not any(s == "memory_recall" for (s, _) in spy.chat_calls)
 
 
 async def test_self_can_dispatch_memory_recall_and_see_feedback():

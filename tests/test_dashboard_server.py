@@ -4,8 +4,8 @@ import asyncio
 import httpx
 import pytest
 
-from src.dashboard.app_factory import create_app
-from src.dashboard.server import DashboardServer
+from src.plugins.dashboard.app_factory import create_app
+from src.plugins.dashboard.server import DashboardServer
 
 
 def test_app_factory_returns_fastapi_instance():
@@ -67,3 +67,47 @@ async def test_dashboard_server_port_in_use_fails_loud():
             await clash.start()
     finally:
         await blocker.stop()
+
+
+def test_threaded_server_stop_terminates_thread_and_frees_port():
+    """The plugin uses ThreadedDashboardServer (not DashboardServer)
+    because its server starts during synchronous plugin construction,
+    before any asyncio loop is running. stop() must signal uvicorn to
+    exit and join the daemon thread so WebChatSensory.stop() (called
+    on runtime shutdown) can hand control back to the runtime once the
+    server is actually down — not just rely on daemon-thread death at
+    process exit."""
+    import socket
+    from src.plugins.dashboard.threaded_server import ThreadedDashboardServer
+
+    server = ThreadedDashboardServer(
+        create_app(runtime=None), host="127.0.0.1", port=0,
+    )
+    server.start()
+    bound_port = server.port
+    assert bound_port and bound_port > 0
+    assert server._thread is not None and server._thread.is_alive()
+
+    server.stop(timeout=5.0)
+
+    # Thread joined → uvicorn finished its shutdown → port is free.
+    assert server._thread is None
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+    try:
+        probe.bind(("127.0.0.1", bound_port))
+    finally:
+        probe.close()
+
+
+def test_threaded_server_stop_idempotent_when_never_started():
+    """stop() on a never-started server must be a no-op (safe to call
+    from WebChatSensory.stop() in the port=0 / dashboard-disabled
+    path, even though the factory already short-circuits there)."""
+    from src.plugins.dashboard.threaded_server import ThreadedDashboardServer
+
+    server = ThreadedDashboardServer(
+        create_app(runtime=None), host="127.0.0.1", port=0,
+    )
+    # Never called start(): no thread, no uvicorn instance.
+    server.stop()  # must not raise

@@ -4,8 +4,8 @@ import json
 import pytest
 
 from src.memory.graph_memory import GraphMemory
-from src.runtime.compact import compact_if_needed
-from src.runtime.sliding_window import SlidingWindow, SlidingWindowRound
+from src.runtime.heartbeat.compact import compact_if_needed
+from src.runtime.heartbeat.sliding_window import SlidingWindow, SlidingWindowRound
 
 
 class Embed:

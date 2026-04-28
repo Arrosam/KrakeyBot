@@ -1,11 +1,11 @@
-"""Reflect #3 — default_in_mind.
+"""Reflect #3 — in_mind_note.
 
 Coverage:
   * State store: missing file / load+save round-trip / corrupted JSON
     fallback / atomic write / now_iso bumped on update.
   * Reflect: read / partial update / explicit clear via empty string /
     None means leave-alone / timestamp updates.
-  * Tentacle: dispatch via [ACTION] JSONL → state mutated + feedback
+  * Tentacle: dispatch via <tool_call> → state mutated + feedback
     receipt names what changed.
   * Prompt injection: virtual round appears in [HISTORY] when state
     populated; absent when all fields empty; instructions layer
@@ -23,13 +23,13 @@ from types import SimpleNamespace
 import pytest
 
 from src.memory.recall import RecallResult
-from src.plugins.builtin.default_in_mind.reflect import (
+from src.plugins.in_mind_note.reflect import (
     InMindReflectImpl, build_reflect,
 )
-from src.plugins.builtin.default_in_mind.state import (
+from src.plugins.in_mind_note.state import (
     InMindState, load, now_iso, save,
 )
-from src.plugins.builtin.default_in_mind.prompt import (
+from src.plugins.in_mind_note.prompt import (
     IN_MIND_INSTRUCTIONS_LAYER, render_virtual_round,
 )
 from tests._runtime_helpers import (
@@ -165,14 +165,14 @@ def test_update_persists_across_reflect_instances(tmp_path):
 def test_build_reflect_factory_signature():
     """build_reflect takes a PluginContext; reads the deps' state
     path override (None for the default behavior)."""
-    from src.reflects.context import PluginContext
+    from src.interfaces.plugin_context import PluginContext
     fake_deps = SimpleNamespace(in_mind_state_path=None)
-    ctx = PluginContext(deps=fake_deps, plugin_name="default_in_mind",
-                          config={}, llms={})
+    ctx = PluginContext(deps=fake_deps, plugin_name="in_mind_note",
+                          config={})
     r = build_reflect(ctx)
     assert isinstance(r, InMindReflectImpl)
-    assert r.kind == "in_mind"
-    assert r.name == "default_in_mind"
+    assert r.role == "in_mind"
+    assert r.name == "in_mind_note"
 
 
 # ---- prompt rendering helpers ----------------------------------------
@@ -234,7 +234,7 @@ async def test_runtime_prompt_includes_instructions_when_in_mind_active(
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=["default_in_mind"],
+        reflects=["in_mind_note"],
     )
     await runtime.gm.initialize()
     runtime._recall = runtime._new_recall()
@@ -255,13 +255,13 @@ async def test_runtime_prompt_includes_virtual_round_when_state_set(
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=["default_in_mind"],
+        reflects=["in_mind_note"],
     )
     # Mutate the in_mind Reflect's state directly so we don't need to
     # round-trip through the tentacle for this prompt-shape test.
-    in_mind_chain = runtime.reflects.by_kind("in_mind")
-    assert in_mind_chain
-    in_mind_chain[0].update(
+    in_mind = runtime.reflects.by_role("in_mind")
+    assert in_mind is not None
+    in_mind.update(
         thoughts="thinking about Cython hot loops",
         focus="port the inner loop",
     )
@@ -281,7 +281,7 @@ async def test_attach_registers_update_in_mind_tentacle(tmp_path):
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=["default_in_mind"],
+        reflects=["in_mind_note"],
     )
     assert "update_in_mind" in runtime.tentacles
 
@@ -292,7 +292,7 @@ async def test_attach_tolerates_pre_existing_tentacle(tmp_path):
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=["default_in_mind"],
+        reflects=["in_mind_note"],
     )
     # Second attach shouldn't raise
     runtime.reflects.attach_all(runtime)
@@ -302,29 +302,29 @@ async def test_attach_tolerates_pre_existing_tentacle(tmp_path):
 async def test_self_can_dispatch_update_in_mind_via_action_executor(
     tmp_path,
 ):
-    """End-to-end via the ACTION executor path: Self emits an
-    [ACTION] block calling update_in_mind, runtime dispatches, state
-    file gets written, feedback stimulus arrives in the buffer.
+    """End-to-end via the tool-call executor path: Self emits a
+    <tool_call> block calling update_in_mind, runtime dispatches,
+    state file gets written, feedback stimulus arrives in the buffer.
     """
     self_llm = ScriptedLLM([
         '[THINKING]\nshifting focus to debug session.\n'
         '[DECISION]\nUpdate in_mind.\n'
-        '[ACTION]\n'
+        '<tool_call>\n'
         '{"name": "update_in_mind", "arguments": '
         '{"focus": "debug recall regression", "mood": "curious"}}\n'
-        '[/ACTION]\n'
+        '</tool_call>\n'
         '[HIBERNATE]\n1'
     ])
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=["default_in_mind"],  # only in_mind, no hypothalamus
+        reflects=["in_mind_note"],  # only in_mind, no hypothalamus
     )
     # The helper has already provisioned a tmpdir state file via
     # RuntimeDeps.in_mind_state_path, so the Reflect's state lives
     # there — not in production. Capture the path for the post-run
     # assertion below.
-    in_mind = runtime.reflects.by_kind("in_mind")[0]
+    in_mind = runtime.reflects.by_role("in_mind")
     isolated_state_path = in_mind._state_path
 
     await runtime.run(iterations=1)
