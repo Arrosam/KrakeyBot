@@ -21,7 +21,7 @@ IN_MIND_INSTRUCTIONS_LAYER = """# [IN MIND — 操作约束]
 想什么"的唯一来源, 持续显示在 [HISTORY] 头部 "Heartbeat #now (in mind)"
 块里。
 
-每当下列任一情况发生, 你必须立刻调用 update_in_mind tentacle 更新对应
+每当下列任一情况发生, 你必须立刻调用 update_in_mind tool 更新对应
 字段:
 
 - 你的思考焦点切换 (新话题 / 新问题 / 新线索)

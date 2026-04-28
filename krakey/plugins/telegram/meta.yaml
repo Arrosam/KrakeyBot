@@ -2,7 +2,7 @@ name: telegram
 description: >
   Telegram bidirectional channel: incoming messages arrive as
   user_message stimuli; Krakey replies via telegram_reply. Sensory +
-  tentacle share one HttpTelegramClient instance via
+  tool share one HttpTelegramClient instance via
   ``ctx.plugin_cache``.
 config_schema:
   - field: bot_token
@@ -21,12 +21,12 @@ config_schema:
     type: text
     default: ""
     help: >
-      Chat ID the reply tentacle sends to when no chat_id is specified
-      in the tentacle call.
+      Chat ID the reply tool sends to when no chat_id is specified
+      in the tool call.
 components:
   - kind: sensory
     factory_module: krakey.plugins.telegram
     factory_attr: build_sensory
-  - kind: tentacle
+  - kind: tool
     factory_module: krakey.plugins.telegram
-    factory_attr: build_tentacle
+    factory_attr: build_tool

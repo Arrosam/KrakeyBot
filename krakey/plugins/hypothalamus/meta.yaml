@@ -1,8 +1,8 @@
 name: hypothalamus
 description: >
-  LLM-based natural language → tentacle call translator. Takes Self's
+  LLM-based natural language → tool call translator. Takes Self's
   free-form [DECISION] text and produces a structured list of
-  tentacle invocations via a dedicated translator LLM. When this
+  tool invocations via a dedicated translator LLM. When this
   plugin is enabled the [ACTION FORMAT] prompt block is suppressed
   automatically — Self stays in natural-language mode and lets this
   Reflect handle the structuring. Recommended only for weaker models
@@ -20,6 +20,6 @@ components:
       - name: translator
         description: >
           Translates Self's natural-language [DECISION] into structured
-          tentacle calls. Light JSON parsing task; a fast cheap model
+          tool calls. Light JSON parsing task; a fast cheap model
           is usually fine.
         suggested_tag: fast_generation

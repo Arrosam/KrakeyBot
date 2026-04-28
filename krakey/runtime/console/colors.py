@@ -3,7 +3,7 @@
 Convention:
 - normal log lines: default (white-ish, no wrapping)
 - Self's inner monologue (THINKING / DECISION / NOTE): cyan
-- Bot's outward replies (tentacle output that the user sees as chat): green
+- Bot's outward replies (tool output that the user sees as chat): green
 
 Color is auto-disabled when stdout isn't a TTY or NO_COLOR is set
 (https://no-color.org).

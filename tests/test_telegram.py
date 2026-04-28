@@ -1,4 +1,4 @@
-"""Phase 3 / D: Telegram inbound (Sensory) + outbound (Reply Tentacle)."""
+"""Phase 3 / D: Telegram inbound (Sensory) + outbound (Reply Tool)."""
 import asyncio
 from datetime import datetime
 
@@ -6,7 +6,7 @@ import pytest
 
 from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
 from krakey.plugins.telegram.sensory import TelegramSensory
-from krakey.plugins.telegram.tentacle import TelegramReplyTentacle
+from krakey.plugins.telegram.tool import TelegramReplyTool
 
 
 class FakeClient:
@@ -125,47 +125,47 @@ def test_sensory_metadata():
     assert sensory.default_adrenalin is True
 
 
-# ---------------- TelegramReplyTentacle ----------------
+# ---------------- TelegramReplyTool ----------------
 
-def test_tentacle_metadata():
-    t = TelegramReplyTentacle(client=FakeClient())
+def test_tool_metadata():
+    t = TelegramReplyTool(client=FakeClient())
     assert t.name == "telegram_reply"
 
 
-async def test_tentacle_sends_via_client_with_explicit_chat_id():
+async def test_tool_sends_via_client_with_explicit_chat_id():
     client = FakeClient()
-    t = TelegramReplyTentacle(client=client)
+    t = TelegramReplyTool(client=client)
     stim = await t.execute("hi friend",
                               {"chat_id": 42, "text": "hi friend"})
     assert client.sent == [(42, "hi friend")]
     assert "sent" in stim.content.lower() or "已发送" in stim.content
 
 
-async def test_tentacle_uses_default_chat_id_when_param_missing():
+async def test_tool_uses_default_chat_id_when_param_missing():
     client = FakeClient()
-    t = TelegramReplyTentacle(client=client, default_chat_id=99)
+    t = TelegramReplyTool(client=client, default_chat_id=99)
     await t.execute("hi", {})
     assert client.sent[0][0] == 99
 
 
-async def test_tentacle_intent_used_as_text_when_no_text_param():
+async def test_tool_intent_used_as_text_when_no_text_param():
     client = FakeClient()
-    t = TelegramReplyTentacle(client=client, default_chat_id=1)
+    t = TelegramReplyTool(client=client, default_chat_id=1)
     await t.execute("free-form intent text", {})
     assert client.sent[0][1] == "free-form intent text"
 
 
-async def test_tentacle_no_chat_id_returns_error_stimulus():
+async def test_tool_no_chat_id_returns_error_stimulus():
     client = FakeClient()
-    t = TelegramReplyTentacle(client=client)  # no default chat
+    t = TelegramReplyTool(client=client)  # no default chat
     stim = await t.execute("hi", {})
     assert client.sent == []
     assert "no chat" in stim.content.lower() or "缺少" in stim.content
 
 
-async def test_tentacle_send_failure_returns_adrenalin_error():
+async def test_tool_send_failure_returns_adrenalin_error():
     client = FakeClient(send_raises=RuntimeError("network down"))
-    t = TelegramReplyTentacle(client=client, default_chat_id=1)
+    t = TelegramReplyTool(client=client, default_chat_id=1)
     stim = await t.execute("hi", {})
     assert stim.adrenalin is True
     assert "network down" in stim.content

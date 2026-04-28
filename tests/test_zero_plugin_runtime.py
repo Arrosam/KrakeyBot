@@ -2,7 +2,7 @@
 disabled.
 
 Set 2026-04-25 as a load-bearing design rule: disabling or removing
-any plugin (Reflects, tentacles, sensories) must NOT break the
+any plugin (Reflects, tools, sensories) must NOT break the
 runtime's core loop.
 
 Specific paths exercised:
@@ -10,8 +10,8 @@ Specific paths exercised:
     ``NoopRecall``, heartbeat completes with empty ``[GRAPH MEMORY]``.
   * No hypothalamus role registered → tool-call fallback parses
     ``<tool_call>...</tool_call>`` blocks out of the raw Self response.
-  * Zero registered tentacles → Self's tentacle calls produce
-    ``Unknown tentacle: X`` system events, runtime keeps heartbeating.
+  * Zero registered tools → Self's tool calls produce
+    ``Unknown tool: X`` system events, runtime keeps heartbeating.
   * All three at once → cold runtime + empty stimulus → still
     completes a heartbeat without raising.
 """
@@ -72,15 +72,15 @@ async def test_runtime_heartbeat_survives_all_reflects_unregistered(tmp_path):
     await runtime.run(iterations=1)
 
 
-async def test_runtime_heartbeat_with_no_tentacles_emits_unknown_tentacle(tmp_path):
-    """Self emits a <tool_call> referencing a tentacle name that
+async def test_runtime_heartbeat_with_no_tools_emits_unknown_tool(tmp_path):
+    """Self emits a <tool_call> referencing a tool name that
     doesn't exist in the registry. Runtime must NOT crash; it must
-    push an `Unknown tentacle: ...` system event so Self can correct
+    push an `Unknown tool: ...` system event so Self can correct
     on the next beat."""
     self_llm = ScriptedLLM([
         '[THINKING]\nlet me reply.\n'
         '[DECISION]\nGreet.\n'
-        '<tool_call>\n{"name": "nonexistent_tentacle", "arguments": {}}\n</tool_call>\n'
+        '<tool_call>\n{"name": "nonexistent_tool", "arguments": {}}\n</tool_call>\n'
         '[HIBERNATE]\n1'
     ])
     runtime = build_runtime_with_fakes(
@@ -92,19 +92,19 @@ async def test_runtime_heartbeat_with_no_tentacles_emits_unknown_tentacle(tmp_pa
     runtime.reflects._by_role.pop("hypothalamus", None)
     runtime.reflects._order.remove("hypothalamus")
 
-    from krakey.interfaces.tentacle import TentacleRegistry
-    runtime.tentacles = TentacleRegistry()
+    from krakey.interfaces.tool import ToolRegistry
+    runtime.tools = ToolRegistry()
 
     await runtime.run(iterations=1)
     drained = runtime.buffer.drain()
     unknown_events = [
         s for s in drained
         if s.type == "system_event"
-        and "Unknown tentacle" in s.content
-        and "nonexistent_tentacle" in s.content
+        and "Unknown tool" in s.content
+        and "nonexistent_tool" in s.content
     ]
     assert unknown_events, (
-        "expected an 'Unknown tentacle: nonexistent_tentacle' system "
+        "expected an 'Unknown tool: nonexistent_tool' system "
         "event so Self can self-correct, but none was pushed"
     )
 

@@ -1,8 +1,8 @@
 # KrakeyBot
 
 > 以持续心跳维持"存在"的自主认知 Agent。
-> 沙盒 VM 配置见 [`SANDBOX.md`](SANDBOX.md)（启用 coding/GUI/file/browser 任一 tentacle 前必读）。
-> 自定义 tentacle / sensory 见 [`PLUGINS.md`](PLUGINS.md)（把插件项目丢进 `workspace/plugins/<project>/` 自动加载）。
+> 沙盒 VM 配置见 [`SANDBOX.md`](SANDBOX.md)（启用 coding/GUI/file/browser 任一 tool 前必读）。
+> 自定义 tool / sensory 见 [`PLUGINS.md`](PLUGINS.md)（把插件项目丢进 `workspace/plugins/<project>/` 自动加载）。
 
 ---
 
@@ -112,8 +112,8 @@ krakey status     # 查询当前状态（运行中 / 已停止 / 版本号 / 日
 启动后程序进入心跳循环：
 - 无输入时按 `default_interval` 秒数空转（默认 30s）
 - 终端输入文本回车（仅 `krakey run` 模式）→ 标记为 adrenalin stimulus → **立刻打断 hibernate 唤醒 Self**
-- Self 通过 Hypothalamus 翻译决策 → 调用 `Action` Tentacle
-- Tentacle 回复通过 `[action] ...` 前缀打印到终端
+- Self 通过 Hypothalamus 翻译决策 → 调用 `Action` Tool
+- Tool 回复通过 `[action] ...` 前缀打印到终端
 - `Ctrl+C` (或后台模式下 `krakey stop`) 终止
 
 ### 示例会话
@@ -125,7 +125,7 @@ $ krakey run
 [HB #1] hibernate 10s
 hello                                              # ← 你输入（随时可敲，会立即唤醒）
 [HB #2] stimuli=1 (thinking...)
-[HB #2] decision: Use action tentacle to greet user.
+[HB #2] decision: Use action tool to greet user.
 [dispatch] action ← 'Greet the user' (adrenalin)
 [action] Hi! How can I help you?
 [HB #2] hibernate 10s
@@ -206,12 +206,12 @@ sqlite3 workspace/data/graph_memory.sqlite \
 ### 确认链路在跑
 
 健康对话过几轮后应该能观察到：
-1. 终端 `gm: nodes=N (+1)` 增量出现 → tentacle_feedback 在 auto_ingest
+1. 终端 `gm: nodes=N (+1)` 增量出现 → tool_feedback 在 auto_ingest
 2. SQLite 里 `auto` 节点逐步出现 `classified=1` → 异步分类在跑
 3. 长对话后 `compact` 节点出现 → 滑动窗口超限被压缩
 4. `explicit` 节点出现 → Self 说过"记住..."
 
-如果第 1 项一直 `+0`：tentacle 没回馈 / embedder 报错。看终端有无 `[runtime] auto_ingest error:`。
+如果第 1 项一直 `+0`：tool 没回馈 / embedder 报错。看终端有无 `[runtime] auto_ingest error:`。
 
 
 ## 运行测试
@@ -252,7 +252,7 @@ KrakeyBot/
 │   ├── sleep/              # 7 阶段 Sleep 管线
 │   ├── dashboard/          # FastAPI + WS + web chat history
 │   ├── sandbox/            # SubprocessRunner + guest VM backend
-│   ├── interfaces/         # Tentacle / Sensory ABC + Registry
+│   ├── interfaces/         # Tool / Sensory ABC + Registry
 │   └── plugins/
 │       ├── loader.py       # 插件发现 + 安全 import
 │       └── builtin/        # 内置插件项目（search / coding / ...）

@@ -322,7 +322,7 @@ class HeartbeatOrchestrator:
     async def _phase_auto_ingest_feedback(self, stimuli) -> None:
         rt = self._rt
         for s in stimuli:
-            if s.type != "tentacle_feedback":
+            if s.type != "tool_feedback":
                 continue
             try:
                 await rt.gm.auto_ingest(
@@ -332,7 +332,7 @@ class HeartbeatOrchestrator:
                 rt.log.runtime_error(f"auto_ingest error: {e}")
 
     async def _phase_apply_decision(self, parsed, recall_result) -> bool:
-        """Convert Self's response into tentacle calls + dispatch.
+        """Convert Self's response into tool calls + dispatch.
 
         Two paths, picked by registry lookup:
           * A Reflect with role="hypothalamus" registered → LLM
@@ -354,11 +354,11 @@ class HeartbeatOrchestrator:
         try:
             if translator is not None:
                 result = await translator.translate(
-                    parsed.decision, rt.tentacles.list_descriptions(),
+                    parsed.decision, rt.tools.list_descriptions(),
                 )
             else:
                 result = DecisionResult(
-                    tentacle_calls=parse_action_block(parsed.raw),
+                    tool_calls=parse_action_block(parsed.raw),
                 )
         except Exception as e:  # noqa: BLE001
             err = f"{type(e).__name__}: {e!r}"
@@ -375,8 +375,8 @@ class HeartbeatOrchestrator:
             ))
             return False
         rt._dispatcher.log_summary(rt.heartbeat_count, result)
-        await rt._dispatcher.dispatch_tentacle_calls(
-            rt.heartbeat_count, result.tentacle_calls,
+        await rt._dispatcher.dispatch_tool_calls(
+            rt.heartbeat_count, result.tool_calls,
         )
         await rt._dispatcher.apply_memory_writes(
             result.memory_writes, recall_result.nodes,
@@ -557,13 +557,13 @@ class HeartbeatOrchestrator:
         return anchor.make_recall(self._rt)
 
     def _capabilities(self) -> list["CapabilityView"]:
-        """Tentacle list for the [CAPABILITIES] layer. Only changes on
+        """Tool list for the [CAPABILITIES] layer. Only changes on
         plugin reload, so this gets rendered high in the prompt above
         the cache-breaking volatile layers."""
         from krakey.prompt.views import CapabilityView
         return [
             CapabilityView(name=t["name"], description=t["description"])
-            for t in self._rt.tentacles.list_descriptions()
+            for t in self._rt.tools.list_descriptions()
         ]
 
     def _status(self, node_count: int, edge_count: int,

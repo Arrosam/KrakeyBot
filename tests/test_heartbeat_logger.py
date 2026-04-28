@@ -40,14 +40,14 @@ def test_hypo_uses_yellow(monkeypatch):
     out, _ = _capture(monkeypatch)
     monkeypatch.setattr(colors, "_ENABLED", True)
     log = HeartbeatLogger()
-    log.hypo("tentacle_calls=2")
+    log.hypo("tool_calls=2")
     rendered = out.getvalue()
-    assert "[hypo] tentacle_calls=2" in rendered
+    assert "[hypo] tool_calls=2" in rendered
     assert rendered.startswith("\033[")
 
 
 def test_internal_uses_magenta(monkeypatch):
-    """memory_recall and other internal-only tentacles render magenta to
+    """memory_recall and other internal-only tools render magenta to
     visually distinguish from green outward chat."""
     out, _ = _capture(monkeypatch)
     monkeypatch.setattr(colors, "_ENABLED", True)

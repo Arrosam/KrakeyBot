@@ -133,7 +133,7 @@ def test_discover_does_not_import_plugin_modules():
     plugin_modules = (
         "krakey.plugins.hypothalamus.reflect",
         "krakey.plugins.recall.reflect",
-        "krakey.plugins.recall.tentacle",
+        "krakey.plugins.recall.tool",
     )
     before = {m: m in sys.modules for m in plugin_modules}
     metas = discover_plugins()

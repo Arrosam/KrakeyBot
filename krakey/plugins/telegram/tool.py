@@ -1,21 +1,21 @@
-"""Telegram outbound reply tentacle.
+"""Telegram outbound reply tool.
 
 Takes the same `TelegramClient` instance the sensory polls with;
 sending the message IS Krakey's real outward chat to a human (the
-tentacle_feedback returned to Self is just a delivery receipt).
+tool_feedback returned to Self is just a delivery receipt).
 """
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
 
-from krakey.interfaces.tentacle import Tentacle
+from krakey.interfaces.tool import Tool
 from krakey.models.stimulus import Stimulus
 
 from .client import TelegramClient
 
 
-class TelegramReplyTentacle(Tentacle):
+class TelegramReplyTool(Tool):
     def __init__(self, client: TelegramClient, *,
                   default_chat_id: int | None = None):
         self._client = client
@@ -61,8 +61,8 @@ class TelegramReplyTentacle(Tentacle):
 
     def _stim(self, content: str, *, adrenalin: bool = False) -> Stimulus:
         return Stimulus(
-            type="tentacle_feedback",
-            source=f"tentacle:{self.name}",
+            type="tool_feedback",
+            source=f"tool:{self.name}",
             content=content,
             timestamp=datetime.now(),
             adrenalin=adrenalin,

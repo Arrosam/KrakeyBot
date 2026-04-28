@@ -31,7 +31,7 @@ from krakey.sandbox.subprocess_runner import SubprocessRunner
 def build_code_runner(coding_cfg: dict, sandbox_cfg) -> Any:
     """Return Subprocess on sandbox=false, SandboxRunner otherwise.
 
-    Sandbox defaults to TRUE. When any tentacle enables sandbox but
+    Sandbox defaults to TRUE. When any tool enables sandbox but
     the top-level `sandbox` config is incomplete, refuse to start
     with a clear error — user must configure the guest VM first.
     """
@@ -50,7 +50,7 @@ def build_code_runner(coding_cfg: dict, sandbox_cfg) -> Any:
             "coding.sandbox=true but sandbox is not configured. "
             "Missing: " + ", ".join(missing) + ". "
             "Either complete the `sandbox:` block in config.yaml or "
-            "set tentacle.coding.sandbox=false (unsafe)."
+            "set tool.coding.sandbox=false (unsafe)."
         )
     return SandboxRunner(SandboxConfig(
         agent_url=sandbox_cfg.agent.url,
@@ -98,5 +98,5 @@ async def preflight_if_required(
     except SandboxUnavailableError as e:
         raise RuntimeError(
             f"sandbox preflight failed: {e}. "
-            "Start the guest agent or disable sandboxed tentacles."
+            "Start the guest agent or disable sandboxed tools."
         )

@@ -5,7 +5,7 @@ Plugins extend Krakey by contributing one or more **components**:
 | Component | Purpose | Examples |
 |---|---|---|
 | `reflect` | Heartbeat hook — claims a role string the runtime queries by | hypothalamus, recall_anchor, in_mind |
-| `tentacle` | Outbound action Self can dispatch | search, telegram_reply, update_in_mind |
+| `tool` | Outbound action Self can dispatch | search, telegram_reply, update_in_mind |
 | `sensory`  | Inbound stimulus producer | telegram, dashboard web chat |
 
 Plugins are **strictly additive**: disabling or removing any plugin must
@@ -26,7 +26,7 @@ Each folder contains:
 
 - `meta.yaml` (required) — manifest read by both the runtime loader and
   the dashboard catalogue scanner without importing plugin code.
-- Component code (`reflect.py`, `tentacle.py`, `sensory.py`, or a flat
+- Component code (`reflect.py`, `tool.py`, `sensory.py`, or a flat
   `__init__.py`) exposing one factory per component.
 
 User-editable per-plugin config goes in `workspace/plugins/<name>/config.yaml`
@@ -53,9 +53,9 @@ components:
         description: "..."
         suggested_tag: fast_generation
 
-  - kind: tentacle
-    factory_module: src.plugins.my_plugin.tentacle
-    factory_attr: build_tentacle
+  - kind: tool
+    factory_module: src.plugins.my_plugin.tool
+    factory_attr: build_tool
 
   - kind: sensory
     factory_module: src.plugins.my_plugin.sensory
@@ -97,16 +97,16 @@ same registry.
 
 ## Examples in-tree
 
-- **Single-component tentacle**: [`src/plugins/duckduckgo_search/`](src/plugins/duckduckgo_search/)
-  — flat `__init__.py` with backend Protocol, tentacle, factory.
+- **Single-component tool**: [`src/plugins/duckduckgo_search/`](src/plugins/duckduckgo_search/)
+  — flat `__init__.py` with backend Protocol, tool, factory.
 - **Multi-component sharing a client**: [`src/plugins/telegram/`](src/plugins/telegram/)
-  — sensory + tentacle share an `HttpTelegramClient` via `ctx.plugin_cache`.
+  — sensory + tool share an `HttpTelegramClient` via `ctx.plugin_cache`.
 - **Multi-component sharing a reflect**: [`src/plugins/in_mind_note/`](src/plugins/in_mind_note/)
-  — reflect owns state, tentacle mutates it; both wired through
+  — reflect owns state, tool mutates it; both wired through
   `ctx.plugin_cache`.
 - **Multi-component as a pipeline**: [`src/plugins/recall/`](src/plugins/recall/)
   — passive reflect (auto-recall, claims `recall_anchor` role) +
-  active tentacle (`memory_recall`, Self drills into noticed nodes).
+  active tool (`memory_recall`, Self drills into noticed nodes).
   Two halves of one discovery flow; ship together so the pipeline
   enables/disables atomically. Shared GM-query primitive in
   `gm_query.py`.

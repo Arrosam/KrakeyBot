@@ -5,14 +5,14 @@ Coverage:
     fallback / atomic write / now_iso bumped on update.
   * Reflect: read / partial update / explicit clear via empty string /
     None means leave-alone / timestamp updates.
-  * Tentacle: dispatch via <tool_call> → state mutated + feedback
+  * Tool: dispatch via <tool_call> → state mutated + feedback
     receipt names what changed.
   * Prompt injection: virtual round appears in [HISTORY] when state
     populated; absent when all fields empty; instructions layer
     present iff in_mind Reflect registered.
   * Zero-plugin invariant: no in_mind Reflect → no virtual round, no
     instructions layer, runtime fine.
-  * attach() registers the update_in_mind tentacle; double-attach is
+  * attach() registers the update_in_mind tool; double-attach is
     tolerated.
 """
 import json
@@ -192,13 +192,13 @@ def test_render_virtual_round_includes_only_nonempty_fields():
 
 
 def test_instructions_layer_mentions_update_in_mind():
-    """Standing instruction must reference the tentacle name so Self
+    """Standing instruction must reference the tool name so Self
     knows what to call."""
     assert "update_in_mind" in IN_MIND_INSTRUCTIONS_LAYER
     assert "[HISTORY]" in IN_MIND_INSTRUCTIONS_LAYER
 
 
-# ---- runtime integration: prompt + tentacle dispatch -----------------
+# ---- runtime integration: prompt + tool dispatch -----------------
 
 
 def _counts():
@@ -258,7 +258,7 @@ async def test_runtime_prompt_includes_virtual_round_when_state_set(
         reflects=["in_mind_note"],
     )
     # Mutate the in_mind Reflect's state directly so we don't need to
-    # round-trip through the tentacle for this prompt-shape test.
+    # round-trip through the tool for this prompt-shape test.
     in_mind = runtime.reflects.by_role("in_mind")
     assert in_mind is not None
     in_mind.update(
@@ -275,18 +275,18 @@ async def test_runtime_prompt_includes_virtual_round_when_state_set(
     assert "Focus: port the inner loop" in prompt
 
 
-async def test_attach_registers_update_in_mind_tentacle(tmp_path):
+async def test_attach_registers_update_in_mind_tool(tmp_path):
     """After attach_all runs (called at the end of Runtime.__init__),
-    update_in_mind must be in the tentacle registry."""
+    update_in_mind must be in the tool registry."""
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
         reflects=["in_mind_note"],
     )
-    assert "update_in_mind" in runtime.tentacles
+    assert "update_in_mind" in runtime.tools
 
 
-async def test_attach_tolerates_pre_existing_tentacle(tmp_path):
+async def test_attach_tolerates_pre_existing_tool(tmp_path):
     """Re-attaching (e.g. in a test that calls attach_all again) must
     not crash — it should log + skip."""
     runtime = build_runtime_with_fakes(
@@ -296,7 +296,7 @@ async def test_attach_tolerates_pre_existing_tentacle(tmp_path):
     )
     # Second attach shouldn't raise
     runtime.reflects.attach_all(runtime)
-    assert "update_in_mind" in runtime.tentacles
+    assert "update_in_mind" in runtime.tools
 
 
 async def test_self_can_dispatch_update_in_mind_via_action_executor(
@@ -337,8 +337,8 @@ async def test_self_can_dispatch_update_in_mind_via_action_executor(
     drained = runtime.buffer.drain()
     feedback = [
         s for s in drained
-        if s.type == "tentacle_feedback"
-        and s.source == "tentacle:update_in_mind"
+        if s.type == "tool_feedback"
+        and s.source == "tool:update_in_mind"
     ]
     assert feedback, "no feedback stimulus from update_in_mind"
     assert "in_mind updated" in feedback[0].content

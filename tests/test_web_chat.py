@@ -1,4 +1,4 @@
-"""Phase 3.F.3: web chat history + tentacle + WS endpoint."""
+"""Phase 3.F.3: web chat history + tool + WS endpoint."""
 import asyncio
 import json
 from datetime import datetime
@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from krakey.plugins.dashboard.app_factory import create_app
 from krakey.plugins.dashboard.web_chat import WebChatHistory
-from krakey.plugins.dashboard.tentacle import WebChatReplyTentacle as WebChatTentacle
+from krakey.plugins.dashboard.tool import WebChatReplyTool as WebChatTool
 
 
 # ---------------- WebChatHistory ----------------
@@ -152,16 +152,16 @@ async def test_sensory_push_after_stop_silently_drops():
     assert pushed == []
 
 
-# ---------------- WebChatTentacle ----------------
+# ---------------- WebChatTool ----------------
 
-def test_tentacle_metadata():
-    t = WebChatTentacle(history=None)  # noqa
+def test_tool_metadata():
+    t = WebChatTool(history=None)  # noqa
     assert t.name == "web_chat_reply"
 
 
-async def test_tentacle_send_appends_to_history(tmp_path):
+async def test_tool_send_appends_to_history(tmp_path):
     h = WebChatHistory(tmp_path / "chat.jsonl")
-    t = WebChatTentacle(history=h)
+    t = WebChatTool(history=h)
     stim = await t.execute("hello world", {"text": "hello world"})
     msgs = h.all_messages()
     assert msgs[0]["sender"] == "krakey"
@@ -169,27 +169,27 @@ async def test_tentacle_send_appends_to_history(tmp_path):
     assert "sent" in stim.content.lower() or "已发送" in stim.content
 
 
-async def test_tentacle_intent_used_when_no_text_param(tmp_path):
+async def test_tool_intent_used_when_no_text_param(tmp_path):
     h = WebChatHistory(tmp_path / "chat.jsonl")
-    t = WebChatTentacle(history=h)
+    t = WebChatTool(history=h)
     await t.execute("free-form intent", {})
     assert h.all_messages()[0]["content"] == "free-form intent"
 
 
-async def test_tentacle_empty_text_returns_clear_msg(tmp_path):
+async def test_tool_empty_text_returns_clear_msg(tmp_path):
     h = WebChatHistory(tmp_path / "chat.jsonl")
-    t = WebChatTentacle(history=h)
+    t = WebChatTool(history=h)
     stim = await t.execute("", {"text": "   "})
     assert h.all_messages() == []
     assert "empty" in stim.content.lower() or "空" in stim.content
 
 
-async def test_tentacle_history_failure_returns_adrenalin_error(tmp_path):
+async def test_tool_history_failure_returns_adrenalin_error(tmp_path):
     class BrokenHistory:
         async def append(self, sender, content):
             raise RuntimeError("disk full")
 
-    t = WebChatTentacle(history=BrokenHistory())
+    t = WebChatTool(history=BrokenHistory())
     stim = await t.execute("hi", {"text": "hi"})
     assert stim.adrenalin is True
     assert "disk full" in stim.content
@@ -238,7 +238,7 @@ def test_ws_chat_krakey_messages_broadcast_to_clients(tmp_path):
     client = TestClient(app)
     with client.websocket_connect("/ws/chat") as ws:
         ws.receive_json()  # initial history (empty)
-        # Tentacle writes to history → all subscribed sockets receive
+        # Tool writes to history → all subscribed sockets receive
         asyncio.run(h.append("krakey", "from server"))
         msg = ws.receive_json()
         assert msg["kind"] == "message"

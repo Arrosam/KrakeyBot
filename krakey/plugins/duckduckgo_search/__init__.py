@@ -1,10 +1,10 @@
 """Built-in ``duckduckgo_search`` plugin — web search via the ddgs library.
 
 Krakey's "look out the window" — fetches results and returns them as a
-tentacle_feedback stimulus. Self decides whether/how to relay them
+tool_feedback stimulus. Self decides whether/how to relay them
 to the user.
 
-Tentacle name is the abstract verb ``search`` so Self can address it
+Tool name is the abstract verb ``search`` so Self can address it
 without caring about the backend; the plugin folder name pins the
 implementation (DuckDuckGo via ``ddgs``).
 """
@@ -14,7 +14,7 @@ import asyncio
 from datetime import datetime
 from typing import Any, Protocol
 
-from krakey.interfaces.tentacle import Tentacle
+from krakey.interfaces.tool import Tool
 from krakey.models.stimulus import Stimulus
 
 
@@ -40,7 +40,7 @@ class DDGSBackend:
         return await asyncio.to_thread(_run)
 
 
-class SearchTentacle(Tentacle):
+class SearchTool(Tool):
     def __init__(self, backend: SearchBackend, *, max_results: int = 5):
         self._backend = backend
         self._max_results = max_results
@@ -82,8 +82,8 @@ class SearchTentacle(Tentacle):
 
     def _stim(self, content: str) -> Stimulus:
         return Stimulus(
-            type="tentacle_feedback",
-            source=f"tentacle:{self.name}",
+            type="tool_feedback",
+            source=f"tool:{self.name}",
             content=content,
             timestamp=datetime.now(),
             adrenalin=False,
@@ -104,10 +104,10 @@ def _format(results: list[dict[str, str]], query: str) -> str:
     return "\n".join(lines)
 
 
-def build_tentacle(ctx) -> Tentacle:
+def build_tool(ctx) -> Tool:
     """Unified-format factory (Phase 2). Pulls config from
     ctx.config; no shared services needed."""
-    return SearchTentacle(
+    return SearchTool(
         backend=DDGSBackend(),
         max_results=int(ctx.config.get("max_results", 5)),
     )

@@ -1,8 +1,8 @@
-"""Phase 3 / B: Search tentacle (web search via injectable backend)."""
+"""Phase 3 / B: Search tool (web search via injectable backend)."""
 import pytest
 
 from krakey.models.stimulus import Stimulus
-from krakey.plugins.duckduckgo_search import SearchTentacle
+from krakey.plugins.duckduckgo_search import SearchTool
 
 
 class FakeBackend:
@@ -18,8 +18,8 @@ class FakeBackend:
         return self.results[:max_results]
 
 
-def test_tentacle_metadata():
-    t = SearchTentacle(backend=FakeBackend())
+def test_tool_metadata():
+    t = SearchTool(backend=FakeBackend())
     assert t.name == "search"
     assert t.description
     assert isinstance(t.parameters_schema, dict)
@@ -32,12 +32,12 @@ async def test_returns_formatted_results():
         {"title": "PyPI", "href": "https://pypi.org",
          "body": "Package index"},
     ])
-    t = SearchTentacle(backend=backend, max_results=5)
+    t = SearchTool(backend=backend, max_results=5)
     stim = await t.execute("python", {})
 
     assert isinstance(stim, Stimulus)
-    assert stim.type == "tentacle_feedback"
-    assert stim.source == "tentacle:search"
+    assert stim.type == "tool_feedback"
+    assert stim.source == "tool:search"
     assert "python.org" in stim.content
     assert "Programming language" in stim.content
     assert backend.calls[0] == ("python", 5)
@@ -45,20 +45,20 @@ async def test_returns_formatted_results():
 
 async def test_query_param_overrides_intent():
     backend = FakeBackend(results=[])
-    t = SearchTentacle(backend=backend)
+    t = SearchTool(backend=backend)
     await t.execute("free-form intent", {"query": "actual query", "max_results": 3})
     assert backend.calls[0] == ("actual query", 3)
 
 
 async def test_empty_results_returns_clear_message():
-    t = SearchTentacle(backend=FakeBackend(results=[]))
+    t = SearchTool(backend=FakeBackend(results=[]))
     stim = await t.execute("nothing matches", {})
     assert ("no results" in stim.content.lower()
             or "无结果" in stim.content)
 
 
 async def test_backend_failure_returns_error_stimulus():
-    t = SearchTentacle(backend=FakeBackend(raises=RuntimeError("net down")))
+    t = SearchTool(backend=FakeBackend(raises=RuntimeError("net down")))
     stim = await t.execute("query", {})
     assert "search failed" in stim.content.lower() or "失败" in stim.content
     assert "net down" in stim.content
@@ -66,7 +66,7 @@ async def test_backend_failure_returns_error_stimulus():
 
 async def test_max_results_default_used_when_param_missing():
     backend = FakeBackend(results=[])
-    t = SearchTentacle(backend=backend, max_results=7)
+    t = SearchTool(backend=backend, max_results=7)
     await t.execute("q", {})
     assert backend.calls[0][1] == 7
 
@@ -76,7 +76,7 @@ async def test_results_truncate_long_body():
         {"title": "X", "href": "h",
          "body": "a" * 1000},  # very long
     ])
-    t = SearchTentacle(backend=backend)
+    t = SearchTool(backend=backend)
     stim = await t.execute("q", {})
     # Body should be truncated for prompt friendliness
     assert len(stim.content) < 5000

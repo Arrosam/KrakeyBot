@@ -1,7 +1,7 @@
 """Host-side sandbox backend: HTTP RPC client against the guest agent.
 
 Provides a `SandboxRunner` with a `CodeRunner`-compatible interface so
-the coding tentacle can swap between local Subprocess and Sandbox
+the coding tool can swap between local Subprocess and Sandbox
 transparently.
 
 Protocol with agent (Phase S1):
@@ -45,12 +45,12 @@ class SandboxConfig:
 
 class SandboxUnavailableError(RuntimeError):
     """Raised when the guest agent cannot be reached / is misconfigured
-    while a sandboxed tentacle is enabled. Runtime should refuse to
+    while a sandboxed tool is enabled. Runtime should refuse to
     start in that case."""
 
 
 class SandboxRunner:
-    """Drop-in replacement for tentacles.coding.SubprocessRunner.
+    """Drop-in replacement for tools.coding.SubprocessRunner.
 
     Matches the CodeRunner Protocol:
         async def run(cmd, *, cwd, timeout, stdin=None) -> (exit, out, err)

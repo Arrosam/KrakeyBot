@@ -4,7 +4,7 @@ Single source of truth for the web chat:
   - persists to JSONL on disk (so messages survive restarts)
   - holds an in-memory cache for fast initial-load on WS connect
   - broadcasts every appended message to subscribed callbacks (the WS
-    endpoints push to connected browsers; the WebChatTentacle and
+    endpoints push to connected browsers; the WebChatTool and
     WebChatSensory both use the same store)
 """
 from __future__ import annotations

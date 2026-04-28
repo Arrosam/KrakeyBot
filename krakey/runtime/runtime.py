@@ -18,7 +18,7 @@ from typing import Any
 
 from krakey.bootstrap import load_self_model_or_default
 from krakey.models.self_model import SelfModelStore
-from krakey.interfaces.tentacle import TentacleRegistry
+from krakey.interfaces.tool import ToolRegistry
 from krakey.llm.resolve import AsyncEmbedder, ChatLike, resolve_llm_for_tag
 from krakey.memory.graph_memory import GraphMemory
 from krakey.memory.knowledge_base import KBRegistry
@@ -79,7 +79,7 @@ class Runtime:
         self.reranker = deps.reranker
         # Reflect registry — role-keyed (one Reflect per role; second
         # registration claiming the same role raises). Plugin loader
-        # runs LATER (after tentacles + sensories registries exist)
+        # runs LATER (after tools + sensories registries exist)
         # since a single plugin can contribute components of all three
         # kinds; loading them before all three registries are built
         # would crash.
@@ -115,7 +115,7 @@ class Runtime:
             embedder=deps.embedder,
         )
 
-        self.tentacles = TentacleRegistry()
+        self.tools = ToolRegistry()
         # Each plugin's config lives at
         # <plugin_configs_root>/<name>/config.yaml. Same root as the
         # plugin folders themselves (workspace/plugins/) so user config
@@ -135,7 +135,7 @@ class Runtime:
         self.buffer.register(self.batch_tracker)
 
         # Plugin registration. Each plugin can contribute reflect /
-        # tentacle / sensory components in any combination via its
+        # tool / sensory components in any combination via its
         # meta.yaml. Has to run AFTER the three registries exist
         # (above) because one plugin may register into any of them.
         #
@@ -158,7 +158,7 @@ class Runtime:
         self._plugin_loader = PluginLoader(
             config=self.config,
             reflects=self.reflects,
-            tentacles=self.tentacles,
+            tools=self.tools,
             sensories=self.buffer,
             services={
                 "runtime": self,
@@ -222,14 +222,14 @@ class Runtime:
         self._last_edge_count = 0
 
         # DecisionDispatcher — executes the 4 side-effects of a
-        # DecisionResult (log+publish summary, dispatch tentacle calls,
+        # DecisionResult (log+publish summary, dispatch tool calls,
         # apply memory writes, apply memory updates). Pure composition
-        # over the same 5 collaborators (tentacles, batch_tracker,
+        # over the same 5 collaborators (tools, batch_tracker,
         # buffer, gm, log+events). Built once; heartbeat passes its
         # current heartbeat_id on each call.
         from krakey.runtime.heartbeat.dispatcher import DecisionDispatcher
         self._dispatcher = DecisionDispatcher(
-            tentacles=self.tentacles,
+            tools=self.tools,
             batch_tracker=self.batch_tracker,
             buffer=self.buffer,
             gm=self.gm,
@@ -253,11 +253,11 @@ class Runtime:
                 self.log.runtime_error(f"config backup failed: {e}")
 
         # Reflect attach() lifecycle hook — fires after every other
-        # subsystem (TentacleRegistry, plugin loader, etc.) is up so
+        # subsystem (ToolRegistry, plugin loader, etc.) is up so
         # Reflects with extra runtime-coupled wiring beyond what the
         # meta.yaml components: list expresses can do it without
         # ordering surprises. No in-tree Reflect uses this today —
-        # multi-component plugins ship sibling tentacles via meta.yaml
+        # multi-component plugins ship sibling tools via meta.yaml
         # — but the hook stays available. attach_all is exception-
         # tolerant by contract; one bad Reflect won't block the others.
         self.reflects.attach_all(self)
@@ -270,7 +270,7 @@ class Runtime:
         from krakey.runtime.plugin_register.observer import PluginObserver
         self._plugin_observer = PluginObserver(
             reflects=self.reflects,
-            tentacles=self.tentacles,
+            tools=self.tools,
             sensories=self.buffer,
             loader=self._plugin_loader,
         )
@@ -331,7 +331,7 @@ class Runtime:
         return self._plugin_observer.collect_infos()
 
     def loaded_plugin_report(self) -> dict[str, Any]:
-        """Pure runtime observation of which tentacles + sensories are
+        """Pure runtime observation of which tools + sensories are
         live (no plugin-config file reads). The dashboard adapter
         combines this with its own ``FilePluginConfigStore`` reads to
         build the ``/api/plugins`` payload."""

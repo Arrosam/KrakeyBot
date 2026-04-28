@@ -1,7 +1,7 @@
 """Tool-call executor — parses <tool_call>...</tool_call> blocks
-into TentacleCalls.
+into ToolCalls.
 
-This is the default tentacle dispatch path when no decision-translator
+This is the default tool dispatch path when no decision-translator
 Reflect (e.g. the hypothalamus plugin) is registered. Format chosen
 for breadth of training coverage in modern open-source LLMs.
 """
@@ -15,7 +15,7 @@ def test_empty_input_returns_empty():
 
 def test_no_tool_call_returns_empty():
     """Self can produce thinking/decision/note without invoking any
-    tentacle — the parser should accept that as a valid no-op."""
+    tool — the parser should accept that as a valid no-op."""
     text = """[THINKING]
 Just reflecting today.
 [DECISION]
@@ -36,7 +36,7 @@ Greet the user.
     calls = parse_tool_calls(text)
     assert len(calls) == 1
     c = calls[0]
-    assert c.tentacle == "web_chat_reply"
+    assert c.tool == "web_chat_reply"
     assert c.params == {"text": "Hi!"}
     assert c.adrenalin is False
 
@@ -53,8 +53,8 @@ def test_multiple_calls_in_separate_blocks():
 """
     calls = parse_tool_calls(text)
     assert len(calls) == 2
-    assert calls[0].tentacle == "web_chat_reply"
-    assert calls[1].tentacle == "search"
+    assert calls[0].tool == "web_chat_reply"
+    assert calls[1].tool == "search"
     assert calls[1].adrenalin is True
 
 
@@ -69,7 +69,7 @@ some text in between explaining the next call
 </tool_call>
 """
     calls = parse_tool_calls(text)
-    assert [c.tentacle for c in calls] == ["first", "second"]
+    assert [c.tool for c in calls] == ["first", "second"]
 
 
 def test_one_bad_block_skipped_others_parse():
@@ -85,7 +85,7 @@ this is not json
 </tool_call>
 """
     calls = parse_tool_calls(text)
-    assert [c.tentacle for c in calls] == ["good_one", "good_two"]
+    assert [c.tool for c in calls] == ["good_one", "good_two"]
 
 
 def test_missing_name_skipped():
@@ -103,7 +103,7 @@ def test_missing_name_skipped():
 </tool_call>
 """
     calls = parse_tool_calls(text)
-    assert [c.tentacle for c in calls] == ["ok", "also_ok"]
+    assert [c.tool for c in calls] == ["ok", "also_ok"]
 
 
 def test_arguments_default_to_empty_dict():
@@ -117,7 +117,7 @@ def test_arguments_default_to_empty_dict():
 
 def test_arguments_must_be_object_else_empty():
     """Defensive: if `arguments` is a non-object (string/list/null),
-    treat as empty dict so the tentacle doesn't blow up on bad type."""
+    treat as empty dict so the tool doesn't blow up on bad type."""
     text = """<tool_call>
 {"name": "weird", "arguments": "not a dict"}
 </tool_call>
@@ -137,7 +137,7 @@ def test_unicode_arguments():
 
 def test_intent_synthesized_from_arg_keys():
     """The intent string drives the dispatch event display. Should be a
-    compact label, not the full arg blob (some tentacles take huge
+    compact label, not the full arg blob (some tools take huge
     payloads)."""
     big_source = "x" * 5000
     text = (
@@ -171,7 +171,7 @@ will check in next beat
 30
 """
     calls = parse_tool_calls(text)
-    assert [c.tentacle for c in calls] == ["web_chat_reply", "search"]
+    assert [c.tool for c in calls] == ["web_chat_reply", "search"]
 
 
 def test_back_compat_alias_still_works():

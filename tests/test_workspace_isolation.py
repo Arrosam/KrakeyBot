@@ -1,6 +1,6 @@
 """Regression: tests must never write into production workspace paths.
 
-History: the web_chat reply tentacle appended "Hi there!" / "go" etc.
+History: the web_chat reply tool appended "Hi there!" / "go" etc.
 (from test_main_loop.py fixtures) to the real user-facing
 ``workspace/data/web_chat.jsonl``. Root cause: FilePluginConfigStore
 reads ``workspace/plugin-configs/web_chat.yaml`` first and only falls
@@ -63,11 +63,11 @@ async def test_runtime_construction_does_not_touch_prod_paths(tmp_path):
 
 
 async def test_web_chat_reply_writes_to_tmpdir_not_prod(tmp_path):
-    """Dispatching the web_chat_reply tentacle must write only to the
+    """Dispatching the web_chat_reply tool must write only to the
     helper's tmpdir chat JSONL, never to workspace/data/web_chat.jsonl.
 
     Web chat is owned by the dashboard plugin now; we reach into the
-    registered tentacle's history (the same object the dashboard
+    registered tool's history (the same object the dashboard
     sensory's chat-WS handler would push to) instead of touching a
     runtime field that no longer exists.
     """
@@ -76,7 +76,7 @@ async def test_web_chat_reply_writes_to_tmpdir_not_prod(tmp_path):
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
     )
-    tent = runtime.tentacles.get("web_chat_reply")
+    tent = runtime.tools.get("web_chat_reply")
     history = tent._history  # noqa: SLF001 — test reaches into plugin
     await history.append("bot", "this must not leak")
     # Prod files untouched

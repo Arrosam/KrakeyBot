@@ -1,12 +1,12 @@
-"""Hypothalamus Reflect — LLM-driven [DECISION] → tentacle-call translator.
+"""Hypothalamus Reflect — LLM-driven [DECISION] → tool-call translator.
 
 Stateless: every call is an independent LLM invocation. Converts
-Self's natural-language [DECISION] into structured ``TentacleCall``
+Self's natural-language [DECISION] into structured ``ToolCall``
 objects, memory writes/updates, and the sleep flag.
 
 Only loaded by ``src.plugin_system.load_component`` when
 ``hypothalamus`` is listed in ``config.yaml``'s ``plugins:``.
-The contract types (``TentacleCall``, ``DecisionResult``) live
+The contract types (``ToolCall``, ``DecisionResult``) live
 in ``src.interfaces.reflect`` so the runtime can consume them without
 importing this plugin.
 """
@@ -16,7 +16,7 @@ import json
 import re
 from typing import TYPE_CHECKING, Any
 
-from krakey.interfaces.reflect import DecisionResult, TentacleCall
+from krakey.interfaces.reflect import DecisionResult, ToolCall
 from krakey.llm.resolve import ChatLike
 
 if TYPE_CHECKING:
@@ -27,13 +27,13 @@ SYSTEM_PROMPT = """# Hypothalamus — 行动翻译器
 
 你是 KrakeyBot 的下丘脑。将 Self 的自然语言决策翻译为结构化指令。
 
-## 可用 Tentacles
-{tentacle_list}
+## 可用 Tools
+{tool_list}
 
 ## 输出格式 (JSON, 只输出 JSON, 无其他文字)
 {{
-  "tentacle_calls": [
-    {{"tentacle": "name", "intent": "描述", "params": {{}}, "adrenalin": false}}
+  "tool_calls": [
+    {{"tool": "name", "intent": "描述", "params": {{}}, "adrenalin": false}}
   ],
   "memory_writes": [
     {{"content": "要记住的内容", "importance": "high|normal"}}
@@ -45,11 +45,11 @@ SYSTEM_PROMPT = """# Hypothalamus — 行动翻译器
 }}
 
 ## 翻译规则
-1. 识别行动 → tentacle_calls
+1. 识别行动 → tool_calls
 2. "记住"/"记录"/"重要" → memory_writes
 3. "目标完成"/"任务结束"/"已完成" → memory_updates (TARGET→FACT)
 4. 紧迫感 ("快"/"急"/"有人在等") → adrenalin: true
-5. "无行动"/"No action" → 空 tentacle_calls
+5. "无行动"/"No action" → 空 tool_calls
 6. **sleep 与 hibernate 的区分 (重要, 不要混淆)**:
    - **sleep: true** 仅当 Self 明确表达要进入"完整睡眠模式" /
      "7-phase sleep" / "enter sleep mode" 这种**重大动作**时
@@ -60,7 +60,7 @@ SYSTEM_PROMPT = """# Hypothalamus — 行动翻译器
      Hibernate 长度由 Self 用 [HIBERNATE] tag 直接控制, 不经过你翻译.
    - 如有疑问 → sleep: false. 只有看到"进入睡眠 / 睡眠模式 / sleep mode" 这类
      **明确、完整**的措辞才 sleep: true.
-7. 多个行动 → 多个 tentacle_calls (并发)
+7. 多个行动 → 多个 tool_calls (并发)
 """
 
 
@@ -68,7 +68,7 @@ _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 
 
 class HypothalamusReflectImpl:
-    """LLM-driven [DECISION] → tentacle-call translator.
+    """LLM-driven [DECISION] → tool-call translator.
 
     Stateless: every ``translate()`` call is an independent
     system+user message pair. The translator LLM is bound at
@@ -83,7 +83,7 @@ class HypothalamusReflectImpl:
         self._llm = llm
 
     def modify_prompt(self, elements) -> None:
-        """The hypothalamus owns the [DECISION] → tentacle-call
+        """The hypothalamus owns the [DECISION] → tool-call
         translation, so teaching Self the structured-tag syntax in
         [ACTION FORMAT] would create competing dispatch paths. Drop
         the action_format element."""
@@ -91,9 +91,9 @@ class HypothalamusReflectImpl:
             del elements["action_format"]
 
     async def translate(
-        self, decision: str, tentacles: list[dict[str, Any]],
+        self, decision: str, tools: list[dict[str, Any]],
     ) -> DecisionResult:
-        system = SYSTEM_PROMPT.format(tentacle_list=_format_tentacles(tentacles))
+        system = SYSTEM_PROMPT.format(tool_list=_format_tools(tools))
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": decision},
@@ -136,11 +136,11 @@ def build_reflect(ctx: "PluginContext") -> HypothalamusReflectImpl | None:
     return HypothalamusReflectImpl(llm)
 
 
-def _format_tentacles(tentacles: list[dict[str, Any]]) -> str:
-    if not tentacles:
+def _format_tools(tools: list[dict[str, Any]]) -> str:
+    if not tools:
         return "(none)"
     lines = []
-    for t in tentacles:
+    for t in tools:
         lines.append(f"- {t['name']}: {t['description']} "
                      f"params={t.get('parameters_schema', {})}")
     return "\n".join(lines)
@@ -195,16 +195,16 @@ def _sanitize(text: str) -> str:
 
 def _to_result(data: dict[str, Any]) -> DecisionResult:
     calls = [
-        TentacleCall(
-            tentacle=c["tentacle"],
+        ToolCall(
+            tool=c["tool"],
             intent=c.get("intent", ""),
             params=c.get("params") or {},
             adrenalin=bool(c.get("adrenalin", False)),
         )
-        for c in (data.get("tentacle_calls") or [])
+        for c in (data.get("tool_calls") or [])
     ]
     return DecisionResult(
-        tentacle_calls=calls,
+        tool_calls=calls,
         memory_writes=list(data.get("memory_writes") or []),
         memory_updates=list(data.get("memory_updates") or []),
         sleep=bool(data.get("sleep", False)),

@@ -1,7 +1,7 @@
-"""``update_in_mind`` tentacle — Self's interface to mutate the
+"""``update_in_mind`` tool — Self's interface to mutate the
 in_mind state.
 
-Built by ``build_tentacle(ctx)`` as the second component of the
+Built by ``build_tool(ctx)`` as the second component of the
 ``in_mind_note`` plugin. Pulls the already-built reflect instance
 from ``ctx.plugin_cache`` (the reflect factory ran first because
 ``components:`` lists it first). The execute() result is a feedback
@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from datetime import datetime
 
-from krakey.interfaces.tentacle import Tentacle
+from krakey.interfaces.tool import Tool
 from krakey.models.stimulus import Stimulus
 from krakey.plugins.in_mind_note import _CACHE_KEY
 
@@ -38,25 +38,25 @@ if TYPE_CHECKING:
     )
 
 
-def build_tentacle(ctx: "PluginContext") -> "UpdateInMindTentacle | None":
+def build_tool(ctx: "PluginContext") -> "UpdateInMindTool | None":
     """Factory for the second component. Grabs the reflect instance
     that the reflect factory stashed in ``ctx.plugin_cache`` and wires
-    the tentacle to it. Returns ``None`` (opt-out) if the reflect
+    the tool to it. Returns ``None`` (opt-out) if the reflect
     factory didn't run — the additive-plugin invariant: a missing
     half degrades, doesn't crash."""
     reflect = ctx.plugin_cache.get(_CACHE_KEY)
     if reflect is None:
         import logging
         logging.getLogger(__name__).warning(
-            "in_mind_note tentacle skipped: reflect not in "
+            "in_mind_note tool skipped: reflect not in "
             "plugin_cache. Components likely loaded out of order.",
         )
         return None
-    return UpdateInMindTentacle(reflect)
+    return UpdateInMindTool(reflect)
 
 
-class UpdateInMindTentacle(Tentacle):
-    """Self-facing tentacle that calls back into the in_mind Reflect.
+class UpdateInMindTool(Tool):
+    """Self-facing tool that calls back into the in_mind Reflect.
 
     Held by reference, not registry lookup, so the link is direct
     and immune to reflect re-registration weirdness.
@@ -128,6 +128,6 @@ class UpdateInMindTentacle(Tentacle):
             )
             content = f"in_mind updated: {shown}"
         return Stimulus(
-            type="tentacle_feedback", source=f"tentacle:{self.name}",
+            type="tool_feedback", source=f"tool:{self.name}",
             content=content, timestamp=datetime.now(), adrenalin=False,
         )

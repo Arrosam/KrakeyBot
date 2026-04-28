@@ -5,7 +5,7 @@ turns Self's natural-language [DECISION] into a structured
 ``DecisionResult``, four side-effects need to fire:
 
   1. **Log + publish** the summary (counts + sleep flag).
-  2. **Dispatch** each TentacleCall as an async task and register
+  2. **Dispatch** each ToolCall as an async task and register
      the batch with the BatchTracker so completion can wake Self.
   3. **Apply memory writes** (LLM-extracted nodes/edges via
      ``GraphMemory.explicit_write``).
@@ -13,7 +13,7 @@ turns Self's natural-language [DECISION] into a structured
      via ``GraphMemory.update_node_category``).
 
 These were five Runtime methods that touched the same five
-collaborators (tentacles, batch_tracker, buffer, gm, log+events)
+collaborators (tools, batch_tracker, buffer, gm, log+events)
 and nothing from the heartbeat loop's state. Clean seam.
 
 Each entry method takes ``heartbeat_id`` as a parameter — the
@@ -27,12 +27,12 @@ from typing import TYPE_CHECKING, Any
 
 from krakey.models.stimulus import Stimulus
 from krakey.runtime.events.event_types import (
-    DecisionExecutedEvent, DispatchEvent, TentacleResultEvent,
+    DecisionExecutedEvent, DispatchEvent, ToolResultEvent,
 )
 
 if TYPE_CHECKING:
-    from krakey.interfaces.reflect import DecisionResult, TentacleCall
-    from krakey.interfaces.tentacle import TentacleRegistry
+    from krakey.interfaces.reflect import DecisionResult, ToolCall
+    from krakey.interfaces.tool import ToolRegistry
     from krakey.memory.graph_memory import GraphMemory
     from krakey.runtime.stimuli.batch_tracker import BatchTrackerSensory
     from krakey.runtime.events.event_bus import EventBus
@@ -46,14 +46,14 @@ class DecisionDispatcher:
     def __init__(
         self,
         *,
-        tentacles: "TentacleRegistry",
+        tools: "ToolRegistry",
         batch_tracker: "BatchTrackerSensory",
         buffer: "StimulusBuffer",
         gm: "GraphMemory",
         log: "HeartbeatLogger",
         events: "EventBus",
     ):
-        self._tentacles = tentacles
+        self._tools = tools
         self._batch_tracker = batch_tracker
         self._buffer = buffer
         self._gm = gm
@@ -66,23 +66,23 @@ class DecisionDispatcher:
                     result: "DecisionResult") -> None:
         """Log + publish DecisionExecutedEvent (counts + sleep flag)."""
         self._log.hypo(
-            f"tentacle_calls={len(result.tentacle_calls)} "
+            f"tool_calls={len(result.tool_calls)} "
             f"memory_writes={len(result.memory_writes)} "
             f"memory_updates={len(result.memory_updates)} "
             f"sleep={result.sleep}"
         )
         self._events.publish(DecisionExecutedEvent(
             heartbeat_id=heartbeat_id,
-            tentacle_calls_count=len(result.tentacle_calls),
+            tool_calls_count=len(result.tool_calls),
             memory_writes_count=len(result.memory_writes),
             memory_updates_count=len(result.memory_updates),
             sleep_requested=result.sleep,
         ))
 
-    # ---- tentacle dispatch ---------------------------------------------
+    # ---- tool dispatch ---------------------------------------------
 
-    async def dispatch_tentacle_calls(
-        self, heartbeat_id: int, calls: list["TentacleCall"],
+    async def dispatch_tool_calls(
+        self, heartbeat_id: int, calls: list["ToolCall"],
     ) -> None:
         """Schedule each call as an async task and register the batch
         so the BatchTracker can wake Self when all complete."""
@@ -95,58 +95,58 @@ class DecisionDispatcher:
             self._batch_tracker.register_batch(call_ids)
 
     async def _dispatch_one(
-        self, heartbeat_id: int, call: "TentacleCall", call_id: str,
+        self, heartbeat_id: int, call: "ToolCall", call_id: str,
     ) -> None:
         try:
-            tentacle = self._tentacles.get(call.tentacle)
+            tool = self._tools.get(call.tool)
         except KeyError:
             await self._buffer.push(Stimulus(
                 type="system_event", source="runtime",
-                content=f"Unknown tentacle: {call.tentacle}",
+                content=f"Unknown tool: {call.tool}",
                 timestamp=datetime.now(), adrenalin=False,
             ))
-            self._log.dispatch(f"unknown tentacle: {call.tentacle}")
+            self._log.dispatch(f"unknown tool: {call.tool}")
             await self._batch_tracker.mark_completed(call_id)
             return
 
         self._log.dispatch(
-            f"{call.tentacle} ← {call.intent!r}"
+            f"{call.tool} ← {call.intent!r}"
             f"{' (adrenalin)' if call.adrenalin else ''}"
         )
         self._events.publish(DispatchEvent(
-            heartbeat_id=heartbeat_id, tentacle=call.tentacle,
+            heartbeat_id=heartbeat_id, tool=call.tool,
             intent=call.intent, adrenalin=call.adrenalin,
         ))
         try:
-            stim = await tentacle.execute(call.intent, call.params)
+            stim = await tool.execute(call.intent, call.params)
         except Exception as e:  # noqa: BLE001
-            # Catastrophic tentacle crash — worth waking Self regardless
+            # Catastrophic tool crash — worth waking Self regardless
             # of whether the original call was urgent.
-            self._log.dispatch(f"{call.tentacle} error: {e}")
+            self._log.dispatch(f"{call.tool} error: {e}")
             await self._buffer.push(Stimulus(
-                type="system_event", source=f"tentacle:{call.tentacle}",
+                type="system_event", source=f"tool:{call.tool}",
                 content=f"error: {e}", timestamp=datetime.now(),
                 adrenalin=True,
             ))
             await self._batch_tracker.mark_completed(call_id)
             return
 
-        # Tentacle-feedback stimuli are low-priority receipts by design.
-        # The tentacle itself decides whether its outcome is worth
+        # Tool-feedback stimuli are low-priority receipts by design.
+        # The tool itself decides whether its outcome is worth
         # interrupting Self's hibernate (failures typically set
         # adrenalin=True in their own return). Do NOT inherit adrenalin
         # from the dispatch: by the time feedback arrives Self has
         # already acted on the urgent upstream signal, and re-waking
         # for the echo just produces avoidable heartbeats.
         #
-        # All tentacle output goes through ONE log channel — the
+        # All tool output goes through ONE log channel — the
         # previous internal/chat split was driven by a self-declared
-        # ``Tentacle.is_internal`` flag, removed because a malicious
+        # ``Tool.is_internal`` flag, removed because a malicious
         # plugin could set it True to hide its actions from operator
         # view. Operator transparency wins over log-color aesthetics.
-        self._log.chat(call.tentacle, stim.content)
-        self._events.publish(TentacleResultEvent(
-            tentacle=call.tentacle, content=stim.content,
+        self._log.chat(call.tool, stim.content)
+        self._events.publish(ToolResultEvent(
+            tool=call.tool, content=stim.content,
         ))
         await self._buffer.push(stim)
         await self._batch_tracker.mark_completed(call_id)

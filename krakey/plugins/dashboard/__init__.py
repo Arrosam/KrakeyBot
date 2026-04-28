@@ -7,12 +7,12 @@ Two component factories:
     ``threaded_server.py``). The server start happens at plugin
     registration time so it doesn't pollute the Sensory ABC's
     ``start()/stop()`` hooks with non-sensory work.
-  * ``build_tentacle``: returns the ``web_chat_reply`` outbound
-    tentacle. Shares the ``WebChatHistory`` instance with the sensory
+  * ``build_tool``: returns the ``web_chat_reply`` outbound
+    tool. Shares the ``WebChatHistory`` instance with the sensory
     via ``ctx.plugin_cache``.
 
 ``port=0`` in the per-plugin config short-circuits the server start
-(used by tests so the sensory + tentacle register without binding
+(used by tests so the sensory + tool register without binding
 a port).
 """
 from __future__ import annotations
@@ -51,18 +51,18 @@ def build_sensory(ctx: "PluginContext"):
     return sensory
 
 
-def build_tentacle(ctx: "PluginContext"):
-    """Reply tentacle — shares the WebChatHistory the sibling sensory
+def build_tool(ctx: "PluginContext"):
+    """Reply tool — shares the WebChatHistory the sibling sensory
     factory built."""
-    from krakey.plugins.dashboard.tentacle import WebChatReplyTentacle
+    from krakey.plugins.dashboard.tool import WebChatReplyTool
 
     history = ctx.plugin_cache.get(_HISTORY_CACHE_KEY)
     if history is None:
         raise RuntimeError(
-            "dashboard.build_tentacle: WebChatHistory not in plugin_cache. "
+            "dashboard.build_tool: WebChatHistory not in plugin_cache. "
             "build_sensory must run first (meta.yaml component order)."
         )
-    return WebChatReplyTentacle(history=history)
+    return WebChatReplyTool(history=history)
 
 
 def _start_dashboard_server(ctx, sensory, history, host: str, port: int) -> None:

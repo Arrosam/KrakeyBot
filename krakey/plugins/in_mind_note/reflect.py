@@ -2,7 +2,7 @@
 
 Imported lazily by ``src.plugin_system.load_component``.
 The plugin contributes TWO components: this reflect (owns the state)
-and ``tentacle.UpdateInMindTentacle`` (lets Self mutate the state via
+and ``tool.UpdateInMindTool`` (lets Self mutate the state via
 the normal action-dispatch pipeline). The factories share the
 reflect instance via ``ctx.plugin_cache`` — same pattern telegram +
 dashboard use to share a client / history across their components.
@@ -32,7 +32,7 @@ class InMindReflectImpl:
 
     Reads from / writes to the JSON state file. Exposes ``read`` /
     ``update`` for the prompt builder + the ``update_in_mind``
-    tentacle. No LLM in this Reflect — pure state plumbing.
+    tool. No LLM in this Reflect — pure state plumbing.
     """
 
     name = "in_mind_note"
@@ -84,7 +84,7 @@ class InMindReflectImpl:
           * non-empty string — set that field
 
         Persists immediately (atomic write). Returns the post-update
-        snapshot for the tentacle's feedback receipt.
+        snapshot for the tool's feedback receipt.
         """
         if thoughts is not None:
             self._state.thoughts = thoughts
@@ -115,7 +115,7 @@ class InMindReflectImpl:
 
 def build_reflect(ctx: "PluginContext") -> InMindReflectImpl:
     """Factory invoked by ``load_component``. Stashes the instance in
-    ``ctx.plugin_cache`` so the sibling tentacle factory (loaded next,
+    ``ctx.plugin_cache`` so the sibling tool factory (loaded next,
     same plugin) can wire to the same reflect.
 
     ``ctx.deps.in_mind_state_path`` is honored when provided so tests

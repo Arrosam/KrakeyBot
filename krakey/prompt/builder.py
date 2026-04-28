@@ -9,7 +9,7 @@ Layer order (most-stable cacheable prefix first → most-volatile last):
                               role is registered (plugins delete this
                               key when they own the dispatch path)
     5. in_mind_instructions — standing instruction (added by in_mind plugin)
-    6. stimulus             — often empty / repeated tentacle feedback
+    6. stimulus             — often empty / repeated tool feedback
     7. recall               — derived from stimulus
     8. in_mind_round        — virtual "Heartbeat #now (in mind)" round
                               (filled by in_mind plugin; empty otherwise)
@@ -160,16 +160,16 @@ class PromptBuilder:
         )
         return f"# [SELF-MODEL]\n{body}"
 
-    def render_capabilities(self, tentacles: list[CapabilityView]) -> str:
-        if tentacles:
+    def render_capabilities(self, tools: list[CapabilityView]) -> str:
+        if tools:
             lines = "\n".join(
-                f"- {t.name}: {t.description}" for t in tentacles
+                f"- {t.name}: {t.description}" for t in tools
             )
         else:
             lines = "(none)"
         return (
             "# [CAPABILITIES]\n"
-            "可用 Tentacles (本跳已注册):\n"
+            "可用 Tools (本跳已注册):\n"
             f"{lines}"
         )
 
@@ -235,7 +235,7 @@ class PromptBuilder:
             for s in stimuli:
                 if s.type == "user_message":
                     incoming.append(s)
-                elif s.type == "tentacle_feedback":
+                elif s.type == "tool_feedback":
                     own_actions.append(s)
                 else:
                     system.append(s)

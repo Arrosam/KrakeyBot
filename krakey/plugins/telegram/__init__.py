@@ -1,8 +1,8 @@
-"""Built-in Telegram plugin — sensory + outbound reply tentacle.
+"""Built-in Telegram plugin — sensory + outbound reply tool.
 
 Multi-component plugin: the sensory polls incoming messages, the
-tentacle sends replies, and both share one HttpTelegramClient instance.
-``build_sensory`` and ``build_tentacle`` cooperate via ``ctx.plugin_cache``
+tool sends replies, and both share one HttpTelegramClient instance.
+``build_sensory`` and ``build_tool`` cooperate via ``ctx.plugin_cache``
 so the first factory call constructs the client and the second reuses
 it — a factory-per-component would otherwise build two clients and lose
 rate-limit / connection coordination.
@@ -10,13 +10,13 @@ rate-limit / connection coordination.
 Layout within this package:
   - client.py   — HttpTelegramClient + TelegramClient Protocol
   - sensory.py  — TelegramSensory (inbound polling)
-  - tentacle.py — TelegramReplyTentacle (outbound send)
+  - tool.py — TelegramReplyTool (outbound send)
 """
 from __future__ import annotations
 
 from .client import HttpTelegramClient
 from .sensory import TelegramSensory
-from .tentacle import TelegramReplyTentacle
+from .tool import TelegramReplyTool
 
 
 def _parse_allowed(raw) -> set[int] | None:
@@ -32,9 +32,9 @@ def _parse_allowed(raw) -> set[int] | None:
 
 def _shared_client(ctx) -> HttpTelegramClient:
     """Build (or fetch from plugin_cache) the shared HTTP client.
-    Both build_sensory and build_tentacle call this; first call
+    Both build_sensory and build_tool call this; first call
     constructs, subsequent calls hit the cache so the sensory and
-    the tentacle both talk through the same connection."""
+    the tool both talk through the same connection."""
     if "client" not in ctx.plugin_cache:
         token = str(ctx.config.get("bot_token") or "").strip()
         if not token:
@@ -53,9 +53,9 @@ def build_sensory(ctx):
     return TelegramSensory(client=client, allowed_chat_ids=allowed)
 
 
-def build_tentacle(ctx):
+def build_tool(ctx):
     """Unified-format factory (Phase 2). Outbound reply channel."""
     client = _shared_client(ctx)
     default_chat_raw = str(ctx.config.get("default_chat_id") or "").strip()
     default_chat = int(default_chat_raw) if default_chat_raw else None
-    return TelegramReplyTentacle(client=client, default_chat_id=default_chat)
+    return TelegramReplyTool(client=client, default_chat_id=default_chat)

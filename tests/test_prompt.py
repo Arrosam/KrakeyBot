@@ -28,9 +28,9 @@ def test_dna_disambiguates_sleep_and_hibernate():
 
 
 def test_dna_mentions_active_memory_recall():
-    """Self must know it can dispatch a recall tentacle to actively
+    """Self must know it can dispatch a recall tool to actively
     explore GM, not just receive passive auto-recall. DNA does not
-    name a specific tentacle (the live name lives in [CAPABILITIES]
+    name a specific tool (the live name lives in [CAPABILITIES]
     — naming it in DNA would couple the always-on prompt prefix to a
     swappable plugin), but it must teach the *concept* of proactive
     recall and point Self at [CAPABILITIES] to find the actual name.
@@ -43,19 +43,19 @@ def test_dna_mentions_active_memory_recall():
 
 
 def test_dna_warns_about_self_vs_external_signals():
-    """Regression for the 'Self echoes its own tentacle output as if user
-    replied' bug. DNA must explain that tentacle_feedback in [STIMULUS]
+    """Regression for the 'Self echoes its own tool output as if user
+    replied' bug. DNA must explain that tool_feedback in [STIMULUS]
     is the bot's own action, not user input.
     """
     assert "INCOMING" in DNA or "外部" in DNA
-    assert "tentacle_feedback" in DNA.lower() or "你自己" in DNA or "YOUR" in DNA
+    assert "tool_feedback" in DNA.lower() or "你自己" in DNA or "YOUR" in DNA
     # Must explicitly warn against the self-echo loop
     assert "自言自语" in DNA or "self-echo" in DNA.lower() or "不是用户" in DNA
 
 
-def test_dna_points_tentacle_lookup_at_capabilities_not_status():
+def test_dna_points_tool_lookup_at_capabilities_not_status():
     """After the [STATUS] split, the sentence telling Self where to look
-    up tentacle names must point to [CAPABILITIES], not [STATUS]."""
+    up tool names must point to [CAPABILITIES], not [STATUS]."""
     # "look it up in [CAPABILITIES]" should be present
     assert "[CAPABILITIES]" in DNA
     # the old phrasing "look it up in [STATUS]" must be gone
@@ -139,7 +139,7 @@ def test_builder_stimulus_has_no_per_stim_timestamps():
     stimuli = [
         Stimulus(type="user_message", source="sensory:cli", content="hi",
                   timestamp=stim_ts),
-        Stimulus(type="tentacle_feedback", source="tentacle:action",
+        Stimulus(type="tool_feedback", source="tool:action",
                   content="done", timestamp=stim_ts),
     ]
     p = PromptBuilder().build(
@@ -167,7 +167,7 @@ def test_builder_current_time_present_even_on_empty_stimulus():
     assert "当前时间: 2026-04-24 09:15:03" in p
 
 
-def test_builder_capabilities_layer_renders_tentacles():
+def test_builder_capabilities_layer_renders_tools():
     p = PromptBuilder().build(
         self_model={},
         capabilities=[
@@ -183,8 +183,8 @@ def test_builder_capabilities_layer_renders_tentacles():
     assert "memory_recall: GM recall" in cap_block
 
 
-def test_builder_status_has_no_tentacle_info():
-    """After split, tentacle list must NOT appear under [STATUS] (cache
+def test_builder_status_has_no_tool_info():
+    """After split, tool list must NOT appear under [STATUS] (cache
     hygiene — status changes every beat, capabilities shouldn't)."""
     p = PromptBuilder().build(
         self_model={},
@@ -200,11 +200,11 @@ def test_builder_status_has_no_tentacle_info():
 
 def test_builder_splits_stimulus_by_source_type():
     """Phase 1.7 fix: STIMULUS must group by type so Self does not confuse
-    its own tentacle outputs with user input."""
+    its own tool outputs with user input."""
     stimuli = [
         Stimulus(type="user_message", source="sensory:cli_input",
                   content="hello bot", timestamp=datetime(2026, 4, 19)),
-        Stimulus(type="tentacle_feedback", source="tentacle:action",
+        Stimulus(type="tool_feedback", source="tool:action",
                   content="hi user!", timestamp=datetime(2026, 4, 19)),
         Stimulus(type="batch_complete", source="sensory:batch_tracker",
                   content="batch done", timestamp=datetime(2026, 4, 19)),
@@ -232,7 +232,7 @@ def test_builder_splits_stimulus_by_source_type():
     assert incoming_idx < user_pos < own_idx, \
         "user_message must land under INCOMING, before YOUR RECENT ACTIONS"
     assert own_idx < bot_pos, \
-        "tentacle_feedback must land under YOUR RECENT ACTIONS"
+        "tool_feedback must land under YOUR RECENT ACTIONS"
 
 
 def test_builder_marks_recall_retry_stimuli():
@@ -279,7 +279,7 @@ def test_builder_marks_recall_retry_stimuli():
 def test_builder_omits_empty_subsections():
     """If no incoming, that subsection header should not appear."""
     stimuli = [
-        Stimulus(type="tentacle_feedback", source="tentacle:action",
+        Stimulus(type="tool_feedback", source="tool:action",
                   content="my reply", timestamp=datetime(2026, 4, 19)),
     ]
     p = PromptBuilder().build(

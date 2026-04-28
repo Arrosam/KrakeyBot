@@ -8,7 +8,7 @@ description: >
 
   This plugin is special only in that it ships with Krakey itself
   and pulls a runtime reference via ctx.services["runtime"]. From
-  the runtime's view it's a normal sensory + tentacle plugin: no
+  the runtime's view it's a normal sensory + tool plugin: no
   hardcoded "dashboard" name in any core code.
 
 config_schema:
@@ -29,6 +29,6 @@ components:
   - kind: sensory
     factory_module: krakey.plugins.dashboard
     factory_attr: build_sensory
-  - kind: tentacle
+  - kind: tool
     factory_module: krakey.plugins.dashboard
-    factory_attr: build_tentacle
+    factory_attr: build_tool

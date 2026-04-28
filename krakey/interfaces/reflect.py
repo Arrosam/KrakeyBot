@@ -1,6 +1,6 @@
 """Reflect plugin interface — protocols + registry.
 
-Sibling to ``sensory.py`` and ``tentacle.py``: defines the contract
+Sibling to ``sensory.py`` and ``tool.py``: defines the contract
 the runtime depends on and the registry it stores instances in.
 Concrete Reflects live under ``krakey/plugins/<plugin>/``.
 
@@ -31,11 +31,11 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class TentacleCall:
-    """Structured tentacle invocation produced by a decision-translator
+class ToolCall:
+    """Structured tool invocation produced by a decision-translator
     Reflect's ``translate()``. Consumed by the dispatcher and by the
     script-only action executor (when no translator is registered)."""
-    tentacle: str
+    tool: str
     intent: str
     params: dict[str, Any] = field(default_factory=dict)
     adrenalin: bool = False
@@ -43,12 +43,12 @@ class TentacleCall:
 
 @dataclass
 class DecisionResult:
-    """Aggregate result of one decision-translation pass: the tentacle
+    """Aggregate result of one decision-translation pass: the tool
     calls to dispatch, plus any memory side-effects and the sleep
     flag. Produced by either the hypothalamus role's translate() or
     the bare tool-call parser fallback; the dispatcher consumes it
     without caring which path produced it."""
-    tentacle_calls: list[TentacleCall] = field(default_factory=list)
+    tool_calls: list[ToolCall] = field(default_factory=list)
     memory_writes: list[dict[str, Any]] = field(default_factory=list)
     memory_updates: list[dict[str, Any]] = field(default_factory=list)
     sleep: bool = False
@@ -76,12 +76,12 @@ class Reflect(Protocol):
 @runtime_checkable
 class HypothalamusReflect(Protocol):
     """Optional shape advised for Reflects that translate Self's
-    [DECISION] text into structured tentacle calls."""
+    [DECISION] text into structured tool calls."""
     name: str
     role: str
 
     async def translate(
-        self, decision: str, tentacles: list[dict[str, Any]],
+        self, decision: str, tools: list[dict[str, Any]],
     ) -> DecisionResult: ...
 
 
@@ -191,7 +191,7 @@ class ReflectRegistry:
         Each registered Reflect that defines an ``attach`` method
         gets called with the runtime so it can wire up its own
         runtime-coupled assets that don't fit the meta.yaml
-        ``components:`` shape (in-tree plugins ship sibling tentacles
+        ``components:`` shape (in-tree plugins ship sibling tools
         as additional components instead, but the hook stays available
         for plugins that need direct runtime references at startup).
 

@@ -1,7 +1,7 @@
 """Tool-call parser — extracts ``<tool_call>...</tool_call>`` blocks
-out of Self's raw response into ``TentacleCall`` objects.
+out of Self's raw response into ``ToolCall`` objects.
 
-This is the default tentacle-dispatch path when no decision-translator
+This is the default tool-dispatch path when no decision-translator
 Reflect (e.g. the hypothalamus plugin) is registered. Format chosen
 for breadth of training coverage in modern open-source models —
 Hermes / Qwen 2.5+ emit this format natively (their tokenizers
@@ -13,14 +13,14 @@ shape matches what they were already trained on.
 Format:
 
     <tool_call>
-    {"name": "<tentacle_name>", "arguments": {...}}
+    {"name": "<tool_name>", "arguments": {...}}
     </tool_call>
 
 Parallel calls = repeat the tag. Each tag wraps exactly one JSON
 object. Fields per call:
 
-    name:       str (required)         — tentacle name
-    arguments:  dict (optional)        — params for the tentacle; default {}
+    name:       str (required)         — tool name
+    arguments:  dict (optional)        — params for the tool; default {}
     adrenalin:  bool (optional)        — urgency flag; default False
 
 Failure modes are isolated per-block: a single malformed payload is
@@ -33,7 +33,7 @@ import logging
 import re
 from typing import Any
 
-from krakey.interfaces.reflect import TentacleCall
+from krakey.interfaces.reflect import ToolCall
 
 _log = logging.getLogger(__name__)
 
@@ -46,16 +46,16 @@ _TOOL_CALL_BLOCK = re.compile(
 )
 
 
-def parse_tool_calls(self_text: str) -> list[TentacleCall]:
+def parse_tool_calls(self_text: str) -> list[ToolCall]:
     """Extract every ``<tool_call>...</tool_call>`` block from
-    ``self_text`` and return the parsed ``TentacleCall`` list.
+    ``self_text`` and return the parsed ``ToolCall`` list.
 
     Empty / missing blocks return ``[]``. Malformed payloads are
     skipped with a warning so one bad tag doesn't poison the others.
     """
     if not self_text:
         return []
-    calls: list[TentacleCall] = []
+    calls: list[ToolCall] = []
     for block_match in _TOOL_CALL_BLOCK.finditer(self_text):
         payload = block_match.group(1).strip()
         if not payload:
@@ -70,7 +70,7 @@ def parse_tool_calls(self_text: str) -> list[TentacleCall]:
 parse_action_block = parse_tool_calls
 
 
-def _parse_one_call(payload: str) -> TentacleCall | None:
+def _parse_one_call(payload: str) -> ToolCall | None:
     """Parse the JSON payload of one ``<tool_call>`` block.
 
     The payload must JSON-decode to an object with a non-empty
@@ -104,8 +104,8 @@ def _parse_one_call(payload: str) -> TentacleCall | None:
     # doesn't carry it natively; we synthesize from name + a short
     # arg preview so the dashboard's dispatch line is informative.
     intent = _synth_intent(name, arguments)
-    return TentacleCall(
-        tentacle=name, intent=intent, params=arguments,
+    return ToolCall(
+        tool=name, intent=intent, params=arguments,
         adrenalin=adrenalin,
     )
 
@@ -114,7 +114,7 @@ def _synth_intent(name: str, arguments: dict[str, Any]) -> str:
     """Compact one-line label for the dispatch event display.
 
     Avoids dumping the entire arguments dict — large prompts /
-    file-write tentacles would render unreadably long.
+    file-write tools would render unreadably long.
     """
     if not arguments:
         return name

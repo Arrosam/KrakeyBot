@@ -1,13 +1,13 @@
-"""Krakey → web chat outbound reply tentacle.
+"""Krakey → web chat outbound reply tool.
 
-No LLM in this tentacle — Self already wrote the text in [DECISION];
-this tentacle just persists + broadcasts it to the connected chat
+No LLM in this tool — Self already wrote the text in [DECISION];
+this tool just persists + broadcasts it to the connected chat
 clients. Returns success/failure as feedback. Failure preserves the
 underlying error message and is marked adrenalin so Self knows to
 react.
 
 Lives with the dashboard plugin because the embedded chat UI is part
-of the dashboard bundle. Runtime never references this tentacle by
+of the dashboard bundle. Runtime never references this tool by
 name.
 """
 from __future__ import annotations
@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Protocol
 
-from krakey.interfaces.tentacle import Tentacle
+from krakey.interfaces.tool import Tool
 from krakey.models.stimulus import Stimulus
 
 
@@ -23,7 +23,7 @@ class _HistoryLike(Protocol):
     async def append(self, sender: str, content: str) -> Any: ...
 
 
-class WebChatReplyTentacle(Tentacle):
+class WebChatReplyTool(Tool):
     def __init__(self, history: _HistoryLike):
         self._history = history
 
@@ -54,8 +54,8 @@ class WebChatReplyTentacle(Tentacle):
 
     def _stim(self, content: str, *, adrenalin: bool = False) -> Stimulus:
         return Stimulus(
-            type="tentacle_feedback",
-            source=f"tentacle:{self.name}",
+            type="tool_feedback",
+            source=f"tool:{self.name}",
             content=content,
             timestamp=datetime.now(),
             adrenalin=adrenalin,

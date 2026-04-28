@@ -4,7 +4,7 @@ The loader is fire-and-forget: ``register_from_config(deps)`` walks the
 enabled-plugin list once at runtime startup, opens each plugin's
 ``meta.yaml`` (no scan), reads its per-plugin config, builds a
 ``PluginContext`` per declared component, invokes the factory, and
-routes the returned instance to the right registry (reflect / tentacle
+routes the returned instance to the right registry (reflect / tool
 / sensory).
 
 Failure modes are isolated per-plugin AND per-component (broken
@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from krakey.interfaces.reflect import ReflectRegistry
-    from krakey.interfaces.tentacle import TentacleRegistry
+    from krakey.interfaces.tool import ToolRegistry
     from krakey.models.config import Config
     from krakey.runtime.runtime import RuntimeDeps
     from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
@@ -49,13 +49,13 @@ class PluginLoader:
         *,
         config: "Config",
         reflects: "ReflectRegistry",
-        tentacles: "TentacleRegistry",
+        tools: "ToolRegistry",
         sensories: "StimulusBuffer",
         services: dict[str, Any],
     ):
         self._config = config
         self._reflects = reflects
-        self._tentacles = tentacles
+        self._tools = tools
         self._sensories = sensories
         self._services = services
         self.registered: set[tuple[str, str]] = set()
@@ -145,8 +145,8 @@ class PluginLoader:
         try:
             if kind == "reflect":
                 self._reflects.register(instance)
-            elif kind == "tentacle":
-                self._tentacles.register(instance)
+            elif kind == "tool":
+                self._tools.register(instance)
             elif kind == "sensory":
                 self._sensories.register(instance)
             else:

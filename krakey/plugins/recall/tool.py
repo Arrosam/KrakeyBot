@@ -1,10 +1,10 @@
-"""``memory_recall`` tentacle — Self-driven explicit GM/KB exploration.
+"""``memory_recall`` tool — Self-driven explicit GM/KB exploration.
 
 Read-side counterpart to ``gm.explicit_write`` (the LLM-extraction
 write path). Self emits ``[DECISION]`` like "recall what I know about
-X" → orchestrator dispatches a ``memory_recall`` tentacle call → this
-tentacle queries GM (via the shared ``gm_query`` helper) and returns
-the result as a ``tentacle_feedback`` Stimulus, surfaced under
+X" → orchestrator dispatches a ``memory_recall`` tool call → this
+tool queries GM (via the shared ``gm_query`` helper) and returns
+the result as a ``tool_feedback`` Stimulus, surfaced under
 ``[STIMULUS]`` / ``YOUR RECENT ACTIONS`` on the next heartbeat.
 
 Two query paths, picked by the presence of ``kb_id`` in params:
@@ -24,7 +24,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from krakey.interfaces.tentacle import Tentacle
+from krakey.interfaces.tool import Tool
 from krakey.memory.graph_memory import GraphMemory
 from krakey.memory.knowledge_base import KBRegistry
 from krakey.memory.recall import AsyncEmbedder
@@ -32,7 +32,7 @@ from krakey.models.stimulus import Stimulus
 from krakey.plugins.recall.gm_query import query_gm_with_fts_fallback
 
 
-class MemoryRecallTentacle(Tentacle):
+class MemoryRecallTool(Tool):
     def __init__(self, gm: GraphMemory | None,
                   embedder: AsyncEmbedder | None,
                   *, default_top_k: int = 8,
@@ -147,8 +147,8 @@ class MemoryRecallTentacle(Tentacle):
 
     def _stim(self, content: str) -> Stimulus:
         return Stimulus(
-            type="tentacle_feedback",
-            source=f"tentacle:{self.name}",
+            type="tool_feedback",
+            source=f"tool:{self.name}",
             content=content,
             timestamp=datetime.now(),
             adrenalin=False,
@@ -189,10 +189,10 @@ def _format(nodes: list[dict[str, Any]],
     return "\n".join(lines)
 
 
-def build_tentacle(ctx) -> Tentacle:
+def build_tool(ctx) -> Tool:
     """Unified-format factory. Pulls gm + embedder + kb_registry from
     ctx.services."""
-    return MemoryRecallTentacle(
+    return MemoryRecallTool(
         gm=ctx.services["gm"],
         embedder=ctx.services["embedder"],
         kb_registry=ctx.services["kb_registry"],

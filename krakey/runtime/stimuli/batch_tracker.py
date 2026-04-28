@@ -50,7 +50,7 @@ class BatchTrackerSensory(Sensory):
         await self._push(Stimulus(
             type="batch_complete",
             source=f"sensory:{self.name}",
-            content="All dispatched tentacles completed.",
+            content="All dispatched tools completed.",
             timestamp=datetime.now(),
             adrenalin=True,
         ))

@@ -1,6 +1,6 @@
 """Plugin report + per-project config edit routes.
 
-- ``GET /api/plugins``: snapshot of every known tentacle + sensory +
+- ``GET /api/plugins``: snapshot of every known tool + sensory +
   plugin project (config schema, current values, enabled flag).
 - ``POST /api/plugins/{project}/config``: save dashboard edits into
   the project's per-plugin YAML file. Body: ``{enabled, values}``.

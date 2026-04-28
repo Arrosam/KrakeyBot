@@ -117,9 +117,9 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         # path pass ``reflects=[]`` to opt out explicitly.
         #
         # The dashboard plugin is included so the web_chat_reply
-        # tentacle is registered (existing tests dispatch to it). Its
+        # tool is registered (existing tests dispatch to it). Its
         # per-plugin config (planted below) sets port=0 so the Web UI
-        # server never binds — only the sensory + tentacle live.
+        # server never binds — only the sensory + tool live.
         plugins=(
             list(reflects)
             if reflects is not None

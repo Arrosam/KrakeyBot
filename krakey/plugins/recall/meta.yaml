@@ -2,7 +2,7 @@ name: recall
 description: >
   GM/KB recall — both halves of the discovery pipeline. The reflect
   half (claims `recall_anchor` role) auto-recalls per beat and fills
-  [GRAPH MEMORY]; the tentacle half (`memory_recall`) lets Self
+  [GRAPH MEMORY]; the tool half (`memory_recall`) lets Self
   explicitly drill into nodes she's noticed, including KB index nodes
   that lead her into a specific KnowledgeBase. Ships as one plugin
   because the two halves form one pipeline — without auto-recall
@@ -14,7 +14,7 @@ config_schema:
     type: number
     default: 8
     help: >
-      Default top-K for the explicit memory_recall tentacle when Self
+      Default top-K for the explicit memory_recall tool when Self
       doesn't pass `top_k` in arguments.
 
 components:
@@ -22,6 +22,6 @@ components:
     role: recall_anchor
     factory_module: krakey.plugins.recall.reflect
     factory_attr: build_reflect
-  - kind: tentacle
-    factory_module: krakey.plugins.recall.tentacle
-    factory_attr: build_tentacle
+  - kind: tool
+    factory_module: krakey.plugins.recall.tool
+    factory_attr: build_tool

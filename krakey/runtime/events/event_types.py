@@ -83,7 +83,7 @@ class NoteEvent(_BaseEvent):
 @dataclass
 class DecisionExecutedEvent(_BaseEvent):
     heartbeat_id: int
-    tentacle_calls_count: int
+    tool_calls_count: int
     memory_writes_count: int
     memory_updates_count: int
     sleep_requested: bool
@@ -92,14 +92,14 @@ class DecisionExecutedEvent(_BaseEvent):
 @dataclass
 class DispatchEvent(_BaseEvent):
     heartbeat_id: int
-    tentacle: str
+    tool: str
     intent: str
     adrenalin: bool
 
 
 @dataclass
-class TentacleResultEvent(_BaseEvent):
-    tentacle: str
+class ToolResultEvent(_BaseEvent):
+    tool: str
     content: str
 
 

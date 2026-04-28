@@ -89,7 +89,7 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
 
         Pure-text scan — never imports any plugin module
         (architectural invariant). Each plugin's ``components`` array
-        carries reflect / tentacle / sensory entries with their own
+        carries reflect / tool / sensory entries with their own
         ``llm_purposes`` declarations.
         """
         out = []

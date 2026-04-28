@@ -26,7 +26,7 @@ BOOTSTRAP_PROMPT = """# [BOOTSTRAP — 你刚被创建]
 这是你的第一次启动 (或 self_model 被重置)。请完成 4 阶段 Bootstrap:
 
 ## 阶段 1 (心跳 1-3): 读 GENESIS, 形成自我认知, 填充 self_model
-## 阶段 2 (心跳 4-6): 用 action tentacle 给共生者发出第一条消息
+## 阶段 2 (心跳 4-6): 用 action tool 给共生者发出第一条消息
 ## 阶段 3 (心跳 7-10): 设定初始目标 (用 "记住: 目标是 ..." 触发 explicit_write)
 ## 阶段 4: 完成后在 [NOTE] 中写 `bootstrap complete` 一行
 
