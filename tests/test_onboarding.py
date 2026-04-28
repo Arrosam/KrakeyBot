@@ -47,6 +47,13 @@ def _skip_verify(kind, provider, model):
     return True, "stubbed"
 
 
+def _no_models(provider):
+    """Stub model listing as unavailable so tests fall through to
+    plain text model entry. Tests that exercise the picker pass
+    their own stub."""
+    return None
+
+
 def test_wizard_writes_minimal_config(tmp_path):
     """Happy path: chat provider + skip embedding + accept defaults
     in plugin picker. Resulting file round-trips through load_config."""
@@ -76,6 +83,7 @@ def test_wizard_writes_minimal_config(tmp_path):
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
+        list_models_fn=_no_models,
     )
     assert written == cfg_path
     assert cfg_path.exists()
@@ -108,6 +116,7 @@ def test_wizard_dashboard_default_recommended_and_first(tmp_path):
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
+        list_models_fn=_no_models,
     )
     cfg = load_config(cfg_path)
     assert cfg.plugins == ["dashboard"]
@@ -146,6 +155,7 @@ def test_wizard_toggle_plugin_selection(tmp_path):
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
+        list_models_fn=_no_models,
     )
     cfg = load_config(cfg_path)
     assert cfg.plugins is not None
@@ -172,6 +182,7 @@ def test_wizard_embedding_same_provider_as_chat(tmp_path):
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
+        list_models_fn=_no_models,
     )
     cfg = load_config(cfg_path)
     assert list(cfg.llm.providers.keys()) == ["ChatCo"]
@@ -196,6 +207,7 @@ def test_wizard_backs_up_existing_config(tmp_path):
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
+        list_models_fn=_no_models,
     )
     backups = list(backup_dir.iterdir())
     assert backups, "expected a backup file in backup_dir"
@@ -218,6 +230,7 @@ def test_wizard_abort_at_confirm_does_not_write(tmp_path):
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
+        list_models_fn=_no_models,
     )
     assert not cfg_path.exists()
     assert any("aborted" in line for line in lines)
@@ -245,6 +258,7 @@ def test_wizard_reranker_reuses_embedding_provider(tmp_path):
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
+        list_models_fn=_no_models,
     )
     cfg = load_config(cfg_path)
     assert cfg.llm.reranker == "rerank"
@@ -271,6 +285,7 @@ def test_wizard_skip_reranker_leaves_field_unset(tmp_path):
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
+        list_models_fn=_no_models,
     )
     cfg = load_config(cfg_path)
     assert cfg.llm.reranker is None
@@ -301,6 +316,7 @@ def test_wizard_verify_called_for_each_endpoint(tmp_path):
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
         verify_fn=_record,
+        list_models_fn=_no_models,
     )
     kinds = [c[0] for c in calls]
     assert kinds == ["chat", "embedding", "reranker"]
@@ -332,6 +348,7 @@ def test_wizard_verify_failure_warns_but_does_not_abort(tmp_path):
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
         verify_fn=_failing,
+        list_models_fn=_no_models,
     )
     # Config still written.
     assert cfg_path.exists()
@@ -360,6 +377,7 @@ def test_wizard_anthropic_provider_type(tmp_path):
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
+        list_models_fn=_no_models,
     )
     cfg = load_config(cfg_path)
     assert cfg.llm.providers["Claude"].type == "anthropic"
@@ -388,6 +406,7 @@ def test_wizard_skip_chat_force_enables_dashboard(tmp_path):
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
+        list_models_fn=_no_models,
     )
     cfg = load_config(cfg_path)
     # Dashboard force-enabled despite being toggled off, because the
@@ -397,6 +416,64 @@ def test_wizard_skip_chat_force_enables_dashboard(tmp_path):
     block = "\n".join(lines)
     assert "auto-enabling dashboard" in block.lower() \
         or "auto-enabling" in block.lower()
+
+
+def test_wizard_model_picker_uses_listed_models(tmp_path):
+    """When list_models_fn returns IDs, the wizard shows a numbered
+    picker; answering with the index uses that model name."""
+    cfg_path = tmp_path / "config.yaml"
+    catalogue = _fake_catalogue("dashboard")
+
+    listed = ["gpt-4o-mini", "gpt-4o", "o1-mini"]
+
+    def _models(provider):
+        return listed
+
+    answers = [
+        "1",                              # chat type
+        "OpenAI", "http://x", "k",       # label, base, key
+        "2",                              # pick model #2 → gpt-4o
+        "n", "n", "done", "y",
+    ]
+    lines, out = _capture_output()
+    run_wizard(
+        config_path=cfg_path,
+        backup_dir=str(tmp_path / "backups"),
+        input_fn=_stub_inputs(answers),
+        output_fn=out,
+        list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
+        list_models_fn=_models,
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.llm.tags["self_main"].provider == "OpenAI/gpt-4o"
+    block = "\n".join(lines)
+    for m in listed:
+        assert m in block
+
+
+def test_wizard_model_picker_falls_back_to_text_when_listing_fails(tmp_path):
+    """When list_models_fn returns None (network error / unsupported),
+    the wizard quietly falls back to plain-text model name entry."""
+    cfg_path = tmp_path / "config.yaml"
+    catalogue = _fake_catalogue("dashboard")
+    answers = [
+        "1", "OpenAI", "http://x", "k",
+        "my-custom-model",                # plain entry, no picker
+        "n", "n", "done", "y",
+    ]
+    _, out = _capture_output()
+    run_wizard(
+        config_path=cfg_path,
+        backup_dir=str(tmp_path / "backups"),
+        input_fn=_stub_inputs(answers),
+        output_fn=out,
+        list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
+        list_models_fn=_no_models,        # returns None
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.llm.tags["self_main"].provider == "OpenAI/my-custom-model"
 
 
 def test_wizard_dashboard_nudge_re_enables_on_no(tmp_path):
@@ -422,6 +499,7 @@ def test_wizard_dashboard_nudge_re_enables_on_no(tmp_path):
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
+        list_models_fn=_no_models,
     )
     cfg = load_config(cfg_path)
     assert "dashboard" in (cfg.plugins or [])
@@ -447,6 +525,7 @@ def test_wizard_skip_embedding_warns(tmp_path):
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
+        list_models_fn=_no_models,
     )
     block = "\n".join(lines).lower()
     assert "warn" in block
@@ -478,6 +557,7 @@ def test_wizard_handles_unknown_command(tmp_path):
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
+        list_models_fn=_no_models,
     )
     assert any("unknown command" in line for line in lines)
     assert any("out of range" in line for line in lines)

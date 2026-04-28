@@ -81,6 +81,9 @@ ListPluginsFn = Callable[[], dict[str, PluginMetadata]]
 # verify_fn(kind, provider, model) -> (ok, message)
 #   kind in {"chat", "embedding", "reranker"}
 VerifyFn = Callable[[str, "Provider", str], tuple[bool, str]]
+# list_models_fn(provider) -> list[str] | None
+#   None on failure (network error, unsupported endpoint, etc.).
+ListModelsFn = Callable[["Provider"], "list[str] | None"]
 
 
 def run_wizard(
@@ -91,6 +94,7 @@ def run_wizard(
     output_fn: OutputFn = print,
     list_plugins_fn: ListPluginsFn = list_available_plugins,
     verify_fn: VerifyFn | None = None,
+    list_models_fn: ListModelsFn | None = None,
 ) -> Path:
     """Run the wizard and return the path of the (possibly) written config.
 
@@ -99,12 +103,15 @@ def run_wizard(
     """
     cfg_path = Path(config_path)
     verify = verify_fn or _default_verify
+    list_models = list_models_fn or _default_list_models
 
     _print_intro(output_fn)
 
-    chat = _ask_chat_provider(input_fn, output_fn, verify)
-    embed = _ask_embedding(input_fn, output_fn, chat, verify)
-    rerank_cfg = _ask_reranker(input_fn, output_fn, chat, embed, verify)
+    chat = _ask_chat_provider(input_fn, output_fn, verify, list_models)
+    embed = _ask_embedding(input_fn, output_fn, chat, verify, list_models)
+    rerank_cfg = _ask_reranker(
+        input_fn, output_fn, chat, embed, verify, list_models,
+    )
     plugins = _ask_plugins(input_fn, output_fn, list_plugins_fn())
 
     # When chat was skipped, the user has NO LLM configured — they
@@ -179,22 +186,61 @@ def _ask_provider_type(
 
 
 def _collect_provider_fields(
-    input_fn: InputFn, *, provider_type: str,
+    input_fn: InputFn, output_fn: OutputFn, *,
+    provider_type: str,
     default_label: str, default_base: str, default_model: str,
+    list_models: ListModelsFn,
 ) -> tuple[str, Provider, str]:
-    """Prompt for label / base URL / api key / model name. Defaults
-    vary by provider_type so the user gets sensible suggestions."""
+    """Prompt for label / base URL / api key, then attempt to enumerate
+    models from the provider's `/models` endpoint. On success, present
+    a numbered picker (or "type custom"); on failure, fall back to
+    plain text entry. Defaults vary by provider_type."""
     name = _prompt(input_fn, "Provider label", default=default_label)
     base_url = _prompt(input_fn, "Base URL", default=default_base)
     api_key = _prompt(
         input_fn, "API key (blank = leave empty / set later)",
         default="",
     )
-    model = _prompt(input_fn, "Model name", default=default_model)
     provider = Provider(
         type=provider_type, base_url=base_url, api_key=api_key,
     )
+    model = _pick_model(
+        input_fn, output_fn, provider,
+        default_model=default_model, list_models=list_models,
+    )
     return name, provider, model
+
+
+def _pick_model(
+    input_fn: InputFn, output_fn: OutputFn, provider: Provider,
+    *, default_model: str, list_models: ListModelsFn,
+) -> str:
+    """Try to list models from the provider; show a picker if listing
+    works. Always fall back to plain text entry."""
+    models = list_models(provider)
+    if not models:
+        return _prompt(input_fn, "Model name", default=default_model)
+    output_fn(f"\n  Available models ({len(models)}):")
+    for i, m in enumerate(models, start=1):
+        output_fn(f"    {i:>2}. {m}")
+    output_fn("    or type a custom model name.")
+    while True:
+        raw = _prompt(input_fn, "Model number or name",
+                       default=default_model).strip()
+        # Numeric pick
+        try:
+            idx = int(raw) - 1
+            if 0 <= idx < len(models):
+                return models[idx]
+            output_fn(f"  ? out of range: {idx + 1}")
+            continue
+        except ValueError:
+            pass
+        # Anything non-empty is treated as a model name (custom).
+        if raw:
+            return raw
+        # Empty + no default → re-prompt
+        output_fn("  ? please enter a number or a model name.")
 
 
 def _skip_hint(output_fn: OutputFn, label: str) -> None:
@@ -208,7 +254,8 @@ def _skip_hint(output_fn: OutputFn, label: str) -> None:
 # ---- Step 1: chat provider --------------------------------------
 
 def _ask_chat_provider(
-    input_fn: InputFn, output_fn: OutputFn, verify: VerifyFn,
+    input_fn: InputFn, output_fn: OutputFn,
+    verify: VerifyFn, list_models: ListModelsFn,
 ) -> tuple[str, Provider, str] | None:
     output_fn("\n--- Step 1/4: chat LLM provider ---")
     ptype = _ask_provider_type(input_fn, output_fn, label="chat")
@@ -221,9 +268,9 @@ def _ask_chat_provider(
     else:
         defaults = ("OpenAI", "", "gpt-4o-mini")
     name, provider, model = _collect_provider_fields(
-        input_fn, provider_type=ptype,
+        input_fn, output_fn, provider_type=ptype,
         default_label=defaults[0], default_base=defaults[1],
-        default_model=defaults[2],
+        default_model=defaults[2], list_models=list_models,
     )
     _report_verify(output_fn, "chat", verify("chat", provider, model))
     return name, provider, model
@@ -234,7 +281,7 @@ def _ask_chat_provider(
 def _ask_embedding(
     input_fn: InputFn, output_fn: OutputFn,
     chat: tuple[str, Provider, str] | None,
-    verify: VerifyFn,
+    verify: VerifyFn, list_models: ListModelsFn,
 ) -> tuple[str, Provider, str] | None:
     output_fn("\n--- Step 2/4: embedding model (optional) ---")
     output_fn(
@@ -276,16 +323,18 @@ def _ask_embedding(
                          "https://api.siliconflow.cn",
                          "BAAI/bge-m3")
         emb_name, emb_provider, emb_model = _collect_provider_fields(
-            input_fn, provider_type=ptype,
+            input_fn, output_fn, provider_type=ptype,
             default_label=defaults[0], default_base=defaults[1],
-            default_model=defaults[2],
+            default_model=defaults[2], list_models=list_models,
         )
         _report_verify(output_fn, "embedding",
                         verify("embedding", emb_provider, emb_model))
         return emb_name, emb_provider, emb_model
     # Reused chat provider — model still asked separately.
-    emb_model = _prompt(input_fn, "Embedding model name",
-                         default="BAAI/bge-m3")
+    emb_model = _pick_model(
+        input_fn, output_fn, emb_provider,
+        default_model="BAAI/bge-m3", list_models=list_models,
+    )
     _report_verify(output_fn, "embedding",
                     verify("embedding", emb_provider, emb_model))
     return emb_name, emb_provider, emb_model
@@ -297,7 +346,7 @@ def _ask_reranker(
     input_fn: InputFn, output_fn: OutputFn,
     chat: tuple[str, Provider, str] | None,
     embed: tuple[str, Provider, str] | None,
-    verify: VerifyFn,
+    verify: VerifyFn, list_models: ListModelsFn,
 ) -> tuple[str, Provider, str] | None:
     """Ask for an optional reranker. Defaults to reusing the embedding
     provider when one is configured (rerankers are commonly served
@@ -342,8 +391,11 @@ def _ask_reranker(
 
     if same and reuse_provider is not None:
         rer_name, rer_provider = reuse_provider
-        rer_model = _prompt(input_fn, "Reranker model name",
-                             default="BAAI/bge-reranker-v2-m3")
+        rer_model = _pick_model(
+            input_fn, output_fn, rer_provider,
+            default_model="BAAI/bge-reranker-v2-m3",
+            list_models=list_models,
+        )
     else:
         ptype = _ask_provider_type(
             input_fn, output_fn, label="reranker", default_index=1,
@@ -355,9 +407,9 @@ def _ask_reranker(
                      "https://api.siliconflow.cn",
                      "BAAI/bge-reranker-v2-m3")
         rer_name, rer_provider, rer_model = _collect_provider_fields(
-            input_fn, provider_type=ptype,
+            input_fn, output_fn, provider_type=ptype,
             default_label=defaults[0], default_base=defaults[1],
-            default_model=defaults[2],
+            default_model=defaults[2], list_models=list_models,
         )
     _report_verify(output_fn, "reranker",
                     verify("reranker", rer_provider, rer_model))
@@ -554,6 +606,53 @@ def _report_verify(output_fn: OutputFn, kind: str,
     else:
         output_fn(f"  [warn]  {kind} verification failed: {msg}")
         output_fn("           continuing — you can fix the config later.")
+
+
+def _default_list_models(provider: Provider) -> list[str] | None:
+    """GET `<base>/models` and parse the standard `{"data": [{"id": ...}]}`
+    shape that both OpenAI and Anthropic return. Returns the list of
+    model ids on success or None on any failure (network error, non-200,
+    unparseable body, missing fields). Failure is intentionally silent
+    so the wizard cleanly falls back to manual entry — listing is a
+    nice-to-have, not a requirement.
+    """
+    import json
+    import socket
+    import urllib.error
+    import urllib.request
+
+    base = (provider.base_url or "").rstrip("/")
+    if not base:
+        return None
+    url = f"{base}/models"
+    headers: dict[str, str] = {}
+    if provider.type == "anthropic":
+        if provider.api_key:
+            headers["x-api-key"] = provider.api_key
+        headers["anthropic-version"] = "2023-06-01"
+    else:
+        if provider.api_key:
+            headers["Authorization"] = f"Bearer {provider.api_key}"
+
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status != 200:
+                return None
+            payload = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError,
+              socket.timeout, OSError, ValueError):
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, list):
+        return None
+    out = []
+    for item in data:
+        if isinstance(item, dict) and isinstance(item.get("id"), str):
+            out.append(item["id"])
+    return out or None
 
 
 def _default_verify(kind: str, provider: Provider,
