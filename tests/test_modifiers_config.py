@@ -3,9 +3,9 @@
 Architecture invariant being pinned (Samuel 2026-04-25): a Modifier's
 Python code must NOT be imported until the user explicitly enables
 it. Catalogue scanning lives in
-``src.plugins.dashboard.services.plugin_catalogue.list_available_plugins``
-(Web UI side); runtime loads by name via
-``src.plugin_system.loader.load_plugin_meta``. ``load_component``
+``krakey.plugin_system.catalogue.list_available_plugins``
+(shared by onboarding + dashboard); runtime loads by name via
+``krakey.plugin_system.loader.load_plugin_meta``. ``load_component``
 is the only path that imports plugin modules — both scanners stay
 pure-text.
 
@@ -21,7 +21,7 @@ import textwrap
 
 import pytest
 
-from krakey.plugins.dashboard.services.plugin_catalogue import (
+from krakey.plugin_system.catalogue import (
     list_available_plugins as discover_plugins,
 )
 from krakey.models.config import load_config

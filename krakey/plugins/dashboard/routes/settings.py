@@ -23,7 +23,7 @@ import yaml
 
 from krakey.plugins.dashboard.services.config import ConfigService
 from krakey.models.config import llm_params_schema
-from krakey.plugins.dashboard.services.plugin_catalogue import (
+from krakey.plugin_system.catalogue import (
     list_available_plugins as _discover_unified,
 )
 

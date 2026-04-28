@@ -35,10 +35,8 @@ from krakey.models.config import (
     dump_config,
 )
 from krakey.models.config_backup import backup_config
+from krakey.plugin_system.catalogue import list_available_plugins
 from krakey.plugin_system.loader import PluginMetadata
-from krakey.plugins.dashboard.services.plugin_catalogue import (
-    list_available_plugins,
-)
 
 
 # Plugins the wizard pre-selects + flags as recommended. Currently

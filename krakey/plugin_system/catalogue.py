@@ -1,14 +1,18 @@
-"""Plugin catalogue scanner — Web UI side.
+"""Plugin catalogue scanner — pure-text enumeration of installable plugins.
 
 Walks the same plugin folder roots as ``krakey/plugin_system/loader.py``
-and returns one ``PluginMetadata`` per ``meta.yaml`` found. Pure-text
-(no plugin module is imported), so the Web UI can show a complete
-"available plugins" list without spinning up plugin code.
+and returns one ``PluginMetadata`` per ``meta.yaml`` found. **No
+plugin module is imported** — only the YAML manifest is read — so
+callers can show a complete "available plugins" list without
+spinning up plugin code or pulling in plugin-only dependencies.
 
-Lives under ``dashboard/services/`` because the **only** consumer is
-the dashboard. Runtime never enumerates installed plugins — it loads
-by name from ``config.yaml``'s ``plugins:`` list via
-``plugin_system.load_plugin_meta(name)``.
+Lives under ``plugin_system/`` because both the onboarding wizard
+(non-plugin) and the dashboard plugin need it. Previously it was
+buried inside ``dashboard/services/`` and the wizard's import of
+it created a core-→-plugin coupling that broke the additive-plugin
+invariant (see CLAUDE.md). Runtime itself never enumerates
+installed plugins — it loads by name from ``config.yaml``'s
+``plugins:`` list via ``plugin_system.load_plugin_meta(name)``.
 
 Workspace overrides built-in (later iteration wins) so users can
 shadow a shipped plugin's meta with a customised version.
