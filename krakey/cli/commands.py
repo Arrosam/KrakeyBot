@@ -33,7 +33,7 @@ def status(args: argparse.Namespace) -> int:
 
 
 def onboard(args: argparse.Namespace) -> int:
-    from . import _meta
+    from . import _meta, lifecycle
     import os
 
     repo = _meta.repo_root()
@@ -53,7 +53,11 @@ def onboard(args: argparse.Namespace) -> int:
             return 1
     finally:
         os.chdir(prev_cwd)
-    return 0
+    # Auto-continue into the heartbeat so the user doesn't have to
+    # type a second command. `run_foreground` checks for an existing
+    # daemon and pid-files itself, so this is safe even if the user
+    # had a stray daemon running.
+    return lifecycle.run_foreground()
 
 
 def update(args: argparse.Namespace) -> int:

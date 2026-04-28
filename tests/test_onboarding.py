@@ -214,28 +214,6 @@ def test_wizard_backs_up_existing_config(tmp_path):
     assert any("backed up" in line for line in lines)
 
 
-def test_wizard_abort_at_confirm_does_not_write(tmp_path):
-    """Saying 'n' at the final confirm leaves no file on disk."""
-    cfg_path = tmp_path / "config.yaml"
-    catalogue = _fake_catalogue("dashboard")
-    answers = [
-        "1", "P", "http://x", "k", "m", "n", "n", "done",
-        "n",  # confirm: no
-    ]
-    lines, out = _capture_output()
-    run_wizard(
-        config_path=cfg_path,
-        backup_dir=str(tmp_path / "backups"),
-        input_fn=_stub_inputs(answers),
-        output_fn=out,
-        list_plugins_fn=lambda: catalogue,
-        verify_fn=_skip_verify,
-        list_models_fn=_no_models,
-    )
-    assert not cfg_path.exists()
-    assert any("aborted" in line for line in lines)
-
-
 def test_wizard_reranker_reuses_embedding_provider(tmp_path):
     """Configuring a reranker after embedding reuses the embedding
     provider by default — rerankers commonly co-locate with embedders."""

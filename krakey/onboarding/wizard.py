@@ -136,25 +136,21 @@ def run_wizard(
 
     cfg = _build_config(chat, embed, rerank_cfg, plugins)
 
-    if not _confirm_save(input_fn, output_fn, cfg, cfg_path):
-        output_fn("aborted; nothing written.")
-        return cfg_path
-
+    # No "preview + confirm" step — the user just walked through the
+    # answers, the wizard already verified each endpoint, and a final
+    # YAML dump dump on stdout is just a chunk of unparseable text for
+    # most users. Write straight through; existing config gets backed
+    # up first so accidents are recoverable.
     if cfg_path.exists():
         backup_path = backup_config(cfg_path, backup_dir)
         output_fn(f"backed up existing config -> {backup_path}")
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     cfg_path.write_text(dump_config(cfg), encoding="utf-8")
-    output_fn(
-        f"wrote {cfg_path}. start Krakey with: krakey run"
-    )
-    output_fn(
-        "\nTip: to right-size the GM node soft-limit for your machine, "
-        "run\n  python scripts/bench_gm.py\n"
-        "It benchmarks vec_search latency at increasing GM sizes and "
-        "prints a recommended `fatigue.gm_node_soft_limit` you can drop "
-        "into config.yaml."
-    )
+    output_fn(_ui.green(f"  [ok] wrote {cfg_path}"))
+    output_fn(_ui.dim(
+        "  Tip: `python scripts/bench_gm.py` benchmarks vec_search "
+        "and prints a recommended `fatigue.gm_node_soft_limit`."
+    ))
     return cfg_path
 
 
@@ -683,20 +679,6 @@ def _build_config(
         embedding=embedding_tag, reranker=reranker_tag,
     )
     return Config(llm=llm, plugins=(plugin_names or None))
-
-
-# ---- Preview + confirm ------------------------------------------
-
-def _confirm_save(
-    input_fn: InputFn, output_fn: OutputFn,
-    cfg: Config, cfg_path: Path,
-) -> bool:
-    output_fn("\n--- Preview ---")
-    output_fn(dump_config(cfg))
-    output_fn(f"target: {cfg_path}")
-    return _prompt_yes_no(
-        input_fn, output_fn, "Write this config?", default=True,
-    )
 
 
 # ---- Prompt helpers ---------------------------------------------
