@@ -2,8 +2,9 @@
 
 Each adapter is a thin wrapper that reshapes Runtime's existing
 methods into the service Protocol's narrower surface. Routes depend
-on the Protocol; `app_factory.build_services(runtime)` picks the
-adapter here. Tests can substitute hand-built fakes.
+on the Protocol; ``app_factory.create_app`` instantiates the adapter
+inline when no test override was passed for that service slot. Tests
+substitute hand-built fakes via the ``*_service`` kwargs.
 
 Every adapter raises its own failure mode (usually RuntimeError or
 ValueError); the routes translate those into HTTPException.

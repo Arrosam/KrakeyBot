@@ -6,9 +6,14 @@ broadcaster pushes every new event until the socket disconnects.
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from src.plugins.dashboard.services.events import EventBroadcasterService
+
+
+_log = logging.getLogger(__name__)
 
 
 def register(app: FastAPI, *, broadcaster: EventBroadcasterService) -> None:
@@ -29,7 +34,10 @@ def register(app: FastAPI, *, broadcaster: EventBroadcasterService) -> None:
                 await ws.receive_text()
         except WebSocketDisconnect:
             pass
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            # Don't kill the WS process on unexpected errors, but DO
+            # leave a breadcrumb — silent swallow makes WS bugs
+            # invisible during debugging.
+            _log.warning("events ws unexpected error: %r", e)
         finally:
             broadcaster.remove_socket(_send)

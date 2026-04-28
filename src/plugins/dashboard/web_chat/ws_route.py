@@ -10,9 +10,14 @@ Lifecycle:
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from src.plugins.dashboard.services.web_chat import WebChatService
+
+
+_log = logging.getLogger(__name__)
 
 
 def register(app: FastAPI, *, service: WebChatService) -> None:
@@ -44,7 +49,10 @@ def register(app: FastAPI, *, service: WebChatService) -> None:
                 await service.receive_user_message(text, attachments)
         except WebSocketDisconnect:
             pass
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            # Don't kill the WS process on unexpected errors, but DO
+            # leave a breadcrumb — silent swallow makes WS bugs
+            # invisible during debugging.
+            _log.warning("chat ws unexpected error: %r", e)
         finally:
             history.unsubscribe(_send)
