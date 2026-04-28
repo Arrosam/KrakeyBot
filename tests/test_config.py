@@ -219,6 +219,17 @@ def test_ensure_config_creates_default_file(tmp_path):
     assert ensure_config(path) is False
 
 
+def test_load_config_missing_file_points_at_onboarding(tmp_path):
+    """No more silent auto-generation: load_config raises with a hint
+    pointing at the standalone onboarding wizard."""
+    missing = tmp_path / "does_not_exist.yaml"
+    with pytest.raises(FileNotFoundError) as excinfo:
+        load_config(missing)
+    assert "onboarding" in str(excinfo.value)
+    # And we must NOT have created the file as a side effect.
+    assert not missing.exists()
+
+
 def test_default_config_is_loadable():
     """Config() with no args plus dump→load must round-trip cleanly."""
     text = dump_config(Config())

@@ -3,10 +3,12 @@
 Parses YAML, substitutes ``${VAR}`` from os.environ at load time,
 validates fatigue thresholds vs force_sleep_threshold.
 
-First-run bootstrap: if the target config file is missing, a
-defaults-populated file is written at that path and the process
-returns the parsed defaults. The single source of truth for defaults
-is the dataclasses in this package's submodules.
+If the target config file is missing, ``load_config`` raises
+``FileNotFoundError`` with a hint pointing the user at the standalone
+onboarding wizard (``python -m src.onboarding``). No silent
+auto-generation — fresh installs are expected to run the wizard so
+they get providers + tags + plugin choices wired up before the first
+runtime boot.
 
 Submodule layout (split out of the original 872-line monolith):
 
@@ -161,38 +163,25 @@ def ensure_config(path: str | Path = "config.yaml") -> bool:
 
 
 class _ConfigBootstrapExit(SystemExit):
-    """SystemExit subclass raised after first-run config generation so
-    tests can distinguish it from unrelated exits."""
+    """SystemExit subclass raised on unrecoverable config-shape errors
+    (currently: detected the deprecated ``llm.roles:`` schema). Lets
+    tests distinguish a config-bootstrap exit from unrelated exits."""
     pass
 
 
 def load_config(path: str | Path = "config.yaml") -> Config:
     """Load + parse ``config.yaml``.
 
-    First-run path (file missing): writes a defaults-populated file
-    at ``path`` and returns the parsed Config. Does NOT exit — the
-    runtime caller (``build_runtime_from_config``) detects an
-    incomplete config (no providers / no self_thinking binding) and
-    drops into setup mode (dashboard-only, no heartbeat) so the user
-    can fill in providers + tags from the Web UI before the next
-    restart kicks off the real heartbeat loop.
+    Raises ``FileNotFoundError`` if the file is missing — fresh
+    installs are expected to run ``python -m src.onboarding`` first.
     """
     p = Path(path)
     if not p.exists():
-        ensure_config(p)
-        print(
-            f"✨ Generated default config at {p}\n"
-            "   Krakey will start in SETUP MODE (dashboard only, no\n"
-            "   heartbeat) so you can configure it via the Web UI:\n"
-            "     1. http://127.0.0.1:8765 (default dashboard port)\n"
-            "     2. LLM section: add a provider, define a tag, bind\n"
-            "        core_purposes.self_thinking + embedding.\n"
-            "     3. Reflects section: enable the ones you want.\n"
-            "     4. Save → Restart. Krakey then runs heartbeat.",
-            file=sys.stderr,
+        raise FileNotFoundError(
+            f"config not found at {p} — run `python -m src.onboarding` "
+            "to generate one (the wizard walks you through providers, "
+            "tags, and plugin selection)."
         )
-        # Fall through to load the freshly-written defaults; caller
-        # decides what to do (setup mode vs full Runtime).
 
     raw_text = p.read_text(encoding="utf-8")
     raw: dict[str, Any] = yaml.safe_load(raw_text) or {}

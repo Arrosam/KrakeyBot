@@ -286,19 +286,6 @@ class Runtime:
         return self._orchestrator.new_recall()
 
     @property
-    def is_setup_mode(self) -> bool:
-        """True when no Self LLM is bound (config incomplete).
-
-        In this state Krakey still starts the dashboard so the user
-        can finish configuration via Web UI, but the heartbeat loop
-        is skipped. After the user fills in providers + tags + the
-        ``self_thinking`` core purpose binding and clicks "Restart"
-        in the dashboard, the next process boot will see a complete
-        config and run the real heartbeat.
-        """
-        return self.self_llm is None
-
-    @property
     def is_bootstrap(self) -> bool:
         """Bootstrap mode flag — delegates to the coordinator. Kept as
         a property so tests that read ``runtime.is_bootstrap`` keep
@@ -321,11 +308,6 @@ class Runtime:
         # dashboard is just a sensory like any other.
         await self.buffer.start_all()
 
-        if self.is_setup_mode:
-            await self._run_setup_mode()
-            await self.buffer.stop_all()
-            return
-
         self._recall = self._new_recall()
         try:
             count = 0
@@ -340,11 +322,6 @@ class Runtime:
             pending = [t for t in self._classify_tasks if not t.done()]
             for t in pending:
                 t.cancel()
-
-    async def _run_setup_mode(self) -> None:
-        # Facade — banner + idle loop live in src.runtime.setup_mode.
-        from src.runtime.setup_mode import run_setup_mode
-        await run_setup_mode(self)
 
     @property
     def _plugin_infos(self) -> list:

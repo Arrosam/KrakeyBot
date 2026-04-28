@@ -57,11 +57,15 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
         return resolve_llm_for_tag(cfg, tag_name, client_cache)
 
     # Core purposes (Self / compact / classifier ...). Self is required
-    # for the heartbeat to fire; if missing, we DON'T raise — the
-    # Runtime drops into "setup mode" (dashboard runs, heartbeat
-    # skipped) so the user can complete the config via Web UI without
-    # having to hand-edit YAML before they ever see Krakey's UI.
+    # for the heartbeat to fire; missing it is fatal — direct the user
+    # at the onboarding wizard rather than half-starting.
     self_llm = _client_for_tag(cfg.llm.core_purposes.get("self_thinking"))
+    if self_llm is None:
+        raise RuntimeError(
+            "core_purposes.self_thinking has no LLM bound — run "
+            "`python -m src.onboarding` to (re)configure providers, "
+            "tags, and core-purpose bindings."
+        )
     compact_llm = _client_for_tag(cfg.llm.core_purposes.get("compact"))
     classify_llm = (
         _client_for_tag(cfg.llm.core_purposes.get("classifier"))
@@ -69,8 +73,6 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
     )
     if compact_llm is None:
         compact_llm = self_llm  # last-resort fallback so sleep doesn't crash
-        # (in setup mode self_llm is also None — that's fine, sleep
-        # never runs without a heartbeat)
 
     # Embedding + reranker (model-type slots, not purposes)
     embed_client = _client_for_tag(cfg.llm.embedding)
@@ -122,3 +124,9 @@ if __name__ == "__main__":
         asyncio.run(_amain())
     except KeyboardInterrupt:
         pass
+    except FileNotFoundError as e:
+        # Missing config.yaml — load_config raises this with a hint
+        # pointing at the onboarding wizard. Print just the message
+        # (not a traceback) and exit non-zero.
+        print(str(e), file=sys.stderr)
+        sys.exit(2)
