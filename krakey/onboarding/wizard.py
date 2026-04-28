@@ -440,7 +440,44 @@ def _ask_plugins(
     names = sorted(
         available.keys(), key=lambda n: (n not in RECOMMENDED_PLUGINS, n),
     )
-    selected: set[str] = {n for n in RECOMMENDED_PLUGINS if n in available}
+    initial = {n for n in RECOMMENDED_PLUGINS if n in available}
+
+    # Real TTY → arrow-key picker (↑/↓ move, Space toggle, Enter
+    # confirm). Test fakes / piped stdin → fall back to numbered
+    # toggle UI so existing scripts and tests still drive the wizard.
+    if output_fn is print and _ui.is_interactive():
+        selected = _ask_plugins_arrow(names, available, initial)
+    else:
+        selected = _ask_plugins_numbered(
+            input_fn, output_fn, names, available, initial,
+        )
+
+    # Dashboard-nudge applies to whichever UI ran.
+    if "dashboard" in available and "dashboard" not in selected:
+        output_fn(
+            f"\n  {_ui.yellow('[warn]')} dashboard is NOT selected. "
+            "Without it you have no in-app way to view runtime state, "
+            "browse memory, or change config — only re-running "
+            "`krakey onboard` or hand-editing config.yaml."
+        )
+        if not _prompt_yes_no(
+            input_fn, output_fn, "Continue without dashboard?",
+            default=False,
+        ):
+            selected.add("dashboard")
+            output_fn("  re-enabled dashboard.")
+    return [n for n in names if n in selected]
+
+
+def _ask_plugins_numbered(
+    input_fn: InputFn, output_fn: OutputFn,
+    names: list[str], available: dict[str, PluginMetadata],
+    initial: set[str],
+) -> set[str]:
+    """Pre-arrow-key UI: show a numbered list, ask the user to type
+    indices to toggle / 'all' / 'none' / 'done'. Used as the fallback
+    when stdout isn't a TTY (CI / tests / piped input)."""
+    selected: set[str] = set(initial)
     while True:
         _print_plugin_list(output_fn, names, available, selected)
         cmd = _prompt(
@@ -449,31 +486,7 @@ def _ask_plugins(
             default="done",
         ).strip().lower()
         if cmd == "done":
-            # Strong nudge if dashboard ended up unchecked. The
-            # dashboard is the only in-app way to inspect Krakey's
-            # state and edit config; without it the only recovery
-            # path is hand-editing config.yaml or re-running the
-            # wizard. Warn and ask to confirm.
-            if (
-                "dashboard" in available
-                and "dashboard" not in selected
-            ):
-                output_fn(
-                    f"\n  {_ui.yellow('[warn]')} dashboard is NOT "
-                    "selected. Without it you have no in-app way to "
-                    "view runtime state, browse memory, or change "
-                    "config — only re-running `krakey onboard` or "
-                    "hand-editing config.yaml."
-                )
-                if not _prompt_yes_no(
-                    input_fn, output_fn,
-                    "Continue without dashboard?",
-                    default=False,
-                ):
-                    selected.add("dashboard")
-                    output_fn("  re-enabled dashboard.")
-                    continue
-            break
+            return selected
         if cmd == "all":
             selected = set(names)
             continue
@@ -493,7 +506,109 @@ def _ask_plugins(
             selected.discard(n)
         else:
             selected.add(n)
-    return [n for n in names if n in selected]
+
+
+def _ask_plugins_arrow(
+    names: list[str], available: dict[str, PluginMetadata],
+    initial: set[str],
+) -> set[str]:
+    """Interactive picker. Up/Down moves the cursor, Space toggles
+    the highlighted plugin, Enter confirms. Esc / q cancel and keep
+    the current selection.
+
+    Renders inline with ANSI cursor-up + clear so the menu stays in
+    place across keystrokes; only used when stdout is a real TTY.
+    """
+    import sys
+
+    selected: set[str] = set(initial)
+    cursor = 0
+    last_lines = 0
+
+    # Reserve a fixed slot for the cursor item's description so the
+    # total line count is stable across keystrokes (otherwise redraw
+    # cursor-up math gets ugly when descriptions vary in length).
+    _DESC_SLOT = 4
+
+    while True:
+        rows: list[str] = []
+        rows.append(_ui.dim(
+            "  ↑/↓ move • Space toggle • Enter confirm • Esc cancel"
+        ))
+        rows.append("")
+        for i, n in enumerate(names):
+            is_cursor = (i == cursor)
+            is_recommended = n in RECOMMENDED_PLUGINS
+            arrow = _ui.color("›", "bright_green", "bold") \
+                if is_cursor else " "
+            mark = _ui.green("[x]") if n in selected \
+                else _ui.dim("[ ]")
+            star = _ui.yellow(_ui.bold(" *")) if is_recommended else "  "
+            if is_cursor:
+                if is_recommended:
+                    name_part = _ui.cyan(_ui.bold(n))
+                else:
+                    name_part = _ui.bold(n)
+                # Whole row underlined when cursor is on it.
+                row = _ui.color(
+                    f"{arrow} {mark}{star} {name_part}", "bold",
+                )
+            else:
+                if is_recommended:
+                    name_part = _ui.cyan(_ui.bold(n))
+                else:
+                    name_part = n
+                row = f"{arrow} {mark}{star} {name_part}"
+            rows.append("  " + row)
+        rows.append("")
+
+        # Description slot for the cursor item, padded to _DESC_SLOT
+        # lines so the redraw always clears the same region.
+        desc_lines: list[str] = []
+        meta = available[names[cursor]]
+        if meta.description:
+            for line in meta.description.strip().splitlines():
+                desc_lines.append(_ui.dim(f"      {line}"))
+        # Pad / truncate.
+        if len(desc_lines) > _DESC_SLOT:
+            desc_lines = desc_lines[: _DESC_SLOT - 1]
+            desc_lines.append(_ui.dim("      ..."))
+        while len(desc_lines) < _DESC_SLOT:
+            desc_lines.append("")
+        rows.extend(desc_lines)
+
+        # Redraw: clear the previous menu region, emit the new one.
+        if last_lines:
+            sys.stdout.write(f"\033[{last_lines}A")
+            for _ in range(last_lines):
+                sys.stdout.write("\033[2K\n")
+            sys.stdout.write(f"\033[{last_lines}A")
+        for row in rows:
+            sys.stdout.write(row + "\n")
+        sys.stdout.flush()
+        last_lines = len(rows)
+
+        # Block on a single keystroke.
+        try:
+            key = _ui.read_key()
+        except KeyboardInterrupt:
+            raise
+
+        if key == _ui.KEY_UP:
+            cursor = (cursor - 1) % len(names)
+        elif key == _ui.KEY_DOWN:
+            cursor = (cursor + 1) % len(names)
+        elif key == _ui.KEY_SPACE:
+            n = names[cursor]
+            if n in selected:
+                selected.discard(n)
+            else:
+                selected.add(n)
+        elif key == _ui.KEY_ENTER:
+            return selected
+        elif key in (_ui.KEY_ESC, "q", "Q"):
+            return selected
+        # Any other key: ignore and redraw next loop.
 
 
 def _print_plugin_list(

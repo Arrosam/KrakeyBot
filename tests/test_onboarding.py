@@ -532,6 +532,55 @@ def test_wizard_skip_embedding_warns(tmp_path):
     assert ("recall" in block or "kb" in block)
 
 
+def test_arrow_picker_toggles_with_space_and_confirms_with_enter(
+    monkeypatch, capsys,
+):
+    """The arrow-key picker drives plugin selection without input_fn:
+    Down moves cursor, Space toggles, Enter confirms. Test by injecting
+    a scripted key sequence and a fake `is_interactive=True`."""
+    from krakey.onboarding import wizard as wiz
+    from krakey.onboarding import _ui
+
+    # Force the picker into the interactive branch.
+    monkeypatch.setattr(_ui, "is_interactive", lambda: True)
+
+    # Catalogue: dashboard preselected, memory + telegram start unchecked.
+    catalogue = _fake_catalogue("dashboard", "memory", "telegram")
+    names = sorted(
+        catalogue.keys(),
+        key=lambda n: (n not in wiz.RECOMMENDED_PLUGINS, n),
+    )
+    initial = {"dashboard"}
+
+    # Cursor starts at index 0 = dashboard.
+    # Sequence: Down (→ memory) → Space (→ select memory) → Enter.
+    keys = iter([_ui.KEY_DOWN, _ui.KEY_SPACE, _ui.KEY_ENTER])
+    monkeypatch.setattr(_ui, "read_key", lambda: next(keys))
+
+    selected = wiz._ask_plugins_arrow(names, catalogue, initial)
+    assert selected == {"dashboard", "memory"}
+
+
+def test_arrow_picker_esc_returns_current_selection(monkeypatch):
+    from krakey.onboarding import wizard as wiz
+    from krakey.onboarding import _ui
+
+    monkeypatch.setattr(_ui, "is_interactive", lambda: True)
+    catalogue = _fake_catalogue("dashboard", "memory")
+    names = sorted(
+        catalogue.keys(),
+        key=lambda n: (n not in wiz.RECOMMENDED_PLUGINS, n),
+    )
+    initial = {"dashboard"}
+
+    keys = iter([_ui.KEY_ESC])
+    monkeypatch.setattr(_ui, "read_key", lambda: next(keys))
+
+    selected = wiz._ask_plugins_arrow(names, catalogue, initial)
+    # Esc keeps the initial selection unchanged.
+    assert selected == {"dashboard"}
+
+
 def test_module_exports_run_wizard():
     """`from krakey.onboarding import run_wizard` works (entry point relies on it)."""
     from krakey.onboarding import run_wizard as imported
