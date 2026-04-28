@@ -135,7 +135,8 @@ def test_wizard_toggle_plugin_selection(tmp_path):
         "1",                          # toggle dashboard OFF
         "3",                          # toggle telegram ON
         "done",
-        "y",
+        "y",                          # confirm: yes continue without dashboard
+        "y",                          # save config
     ]
     _, out = _capture_output()
     run_wizard(
@@ -376,7 +377,8 @@ def test_wizard_skip_chat_force_enables_dashboard(tmp_path):
         "n",                  # skip reranker
         "1",                  # toggle dashboard OFF (was preselected)
         "done",
-        "y",
+        "y",                  # confirm: yes continue without dashboard
+        "y",                  # save config
     ]
     lines, out = _capture_output()
     run_wizard(
@@ -395,6 +397,35 @@ def test_wizard_skip_chat_force_enables_dashboard(tmp_path):
     block = "\n".join(lines)
     assert "auto-enabling dashboard" in block.lower() \
         or "auto-enabling" in block.lower()
+
+
+def test_wizard_dashboard_nudge_re_enables_on_no(tmp_path):
+    """Toggling dashboard off and answering 'no' to the 'continue
+    without dashboard?' prompt re-adds dashboard to the selection."""
+    cfg_path = tmp_path / "config.yaml"
+    catalogue = _fake_catalogue("dashboard", "telegram")
+    answers = [
+        "1", "P", "http://x", "k", "m",
+        "n",                          # skip embedding
+        "n",                          # skip reranker
+        "1",                          # toggle dashboard OFF
+        "done",
+        "n",                          # nudge: NO, don't continue without dashboard
+        "done",                       # back to plugin loop, accept current
+        "y",                          # save (no second nudge — dashboard now selected)
+    ]
+    lines, out = _capture_output()
+    run_wizard(
+        config_path=cfg_path,
+        backup_dir=str(tmp_path / "backups"),
+        input_fn=_stub_inputs(answers),
+        output_fn=out,
+        list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
+    )
+    cfg = load_config(cfg_path)
+    assert "dashboard" in (cfg.plugins or [])
+    assert any("re-enabled dashboard" in l for l in lines)
 
 
 def test_wizard_skip_embedding_warns(tmp_path):

@@ -388,6 +388,29 @@ def _ask_plugins(
             default="done",
         ).strip().lower()
         if cmd == "done":
+            # Strong nudge if dashboard ended up unchecked. The
+            # dashboard is the only in-app way to inspect Krakey's
+            # state and edit config; without it the only recovery
+            # path is hand-editing config.yaml or re-running the
+            # wizard. Warn and ask to confirm.
+            if (
+                "dashboard" in available
+                and "dashboard" not in selected
+            ):
+                output_fn(
+                    "\n  [warn] dashboard is NOT selected. Without it "
+                    "you have no in-app way to view runtime state, "
+                    "browse memory, or change config — only re-running "
+                    "`krakey onboard` or hand-editing config.yaml."
+                )
+                if not _prompt_yes_no(
+                    input_fn, output_fn,
+                    "Continue without dashboard?",
+                    default=False,
+                ):
+                    selected.add("dashboard")
+                    output_fn("  re-enabled dashboard.")
+                    continue
             break
         if cmd == "all":
             selected = set(names)
