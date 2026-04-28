@@ -1,9 +1,10 @@
 """Krakey → web chat outbound reply tentacle.
 
-No LLM — Hypothalamus already crafted the text; this tentacle just
-persists + broadcasts it to the connected chat clients. Returns
-success/failure as feedback. Failure preserves the underlying error
-message and is marked adrenalin so Self knows to react.
+No LLM in this tentacle — Self already wrote the text in [DECISION];
+this tentacle just persists + broadcasts it to the connected chat
+clients. Returns success/failure as feedback. Failure preserves the
+underlying error message and is marked adrenalin so Self knows to
+react.
 
 Lives with the dashboard plugin because the embedded chat UI is part
 of the dashboard bundle. Runtime never references this tentacle by
