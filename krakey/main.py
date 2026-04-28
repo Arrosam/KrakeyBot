@@ -56,23 +56,24 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
     def _client_for_tag(tag_name: str | None) -> LLMClient | None:
         return resolve_llm_for_tag(cfg, tag_name, client_cache)
 
-    # Core purposes (Self / compact / classifier ...). Self is required
-    # for the heartbeat to fire; missing it is fatal — direct the user
-    # at the onboarding wizard rather than half-starting.
+    # Core purposes (Self / compact / classifier ...). Self is what
+    # makes the heartbeat fire; if it isn't bound the runtime starts
+    # in **idle mode** — channels run (so the dashboard is reachable
+    # for the user to fix providers), but the heartbeat doesn't tick
+    # until the user restarts after configuring. Surfacing this as a
+    # crash on startup (the old behavior) was hostile to first-run
+    # users who just installed the package and skipped chat config.
     self_llm = _client_for_tag(cfg.llm.core_purposes.get("self_thinking"))
-    if self_llm is None:
-        raise RuntimeError(
-            "core_purposes.self_thinking has no LLM bound — run "
-            "`python -m src.onboarding` to (re)configure providers, "
-            "tags, and core-purpose bindings."
-        )
     compact_llm = _client_for_tag(cfg.llm.core_purposes.get("compact"))
     classify_llm = (
         _client_for_tag(cfg.llm.core_purposes.get("classifier"))
         or compact_llm  # historical reuse
     )
     if compact_llm is None:
-        compact_llm = self_llm  # last-resort fallback so sleep doesn't crash
+        # Sleep + classify still need *something* callable; reuse Self
+        # if available, else leave None — the idle-mode runtime never
+        # invokes either path.
+        compact_llm = self_llm
 
     # Embedding + reranker (model-type slots, not purposes)
     embed_client = _client_for_tag(cfg.llm.embedding)

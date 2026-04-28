@@ -83,10 +83,36 @@ def _install_pidfile_cleanup(pidfile: Path) -> None:
     # SIGINT is handled by asyncio.run as KeyboardInterrupt anyway
 
 
+def _has_chat_llm_configured(repo: Path) -> bool:
+    """Cheap config peek — true iff `core_purposes.self_thinking` maps
+    to a tag that has a binding. Used by the CLI to print a friendly
+    "configure LLM" prompt before starting the runtime in idle mode."""
+    cfg_path = repo / "config.yaml"
+    if not cfg_path.exists():
+        return False
+    try:
+        from krakey.models.config import load_config
+        cfg = load_config(cfg_path)
+    except Exception:  # noqa: BLE001
+        return False
+    tag = cfg.llm.core_purposes.get("self_thinking")
+    return bool(tag) and tag in cfg.llm.tags
+
+
 def _exec_runtime(repo: Path) -> int:
     """Run the heartbeat loop in this process. Blocks until exit."""
     import asyncio
     os.chdir(str(repo))
+    if not _has_chat_llm_configured(repo):
+        print(
+            "\nkrakey: no chat LLM configured — runtime will start in "
+            "IDLE mode (no heartbeat).\n"
+            "        Open the dashboard's LLM tab (default "
+            "http://127.0.0.1:8765) and add a provider + tag, or run\n"
+            "        `krakey onboard` to redo setup. Restart krakey "
+            "afterwards.\n",
+            file=sys.stderr,
+        )
     from krakey.main import build_runtime_from_config
     try:
         asyncio.run(build_runtime_from_config().run())

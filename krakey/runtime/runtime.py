@@ -37,7 +37,13 @@ from krakey.sandbox.policy import build_code_runner, preflight_if_required
 @dataclass
 class RuntimeDeps:
     config: Config
-    self_llm: ChatLike
+    # ``self_llm`` is the only LLM whose presence is load-bearing
+    # for the heartbeat. ``None`` is allowed (idle mode) so the
+    # runtime can still come up — channels/sensories/dashboard
+    # all start, the heartbeat loop just doesn't tick. Useful when
+    # the user installs Krakey and skips chat config in onboarding,
+    # planning to fill it in via the dashboard.
+    self_llm: ChatLike | None
     hypo_llm: ChatLike
     compact_llm: ChatLike
     classify_llm: ChatLike
@@ -309,6 +315,25 @@ class Runtime:
         await self.buffer.start_all()
 
         self._recall = self._new_recall()
+
+        # Idle mode: no Self LLM bound (user skipped chat in onboarding,
+        # plans to fix in dashboard). Channels are alive — the dashboard
+        # is up — but the heartbeat doesn't fire. Park here until stop
+        # is signalled. Periodic-ish console reminder so an attached
+        # terminal doesn't look frozen.
+        if self.self_llm is None:
+            self.log.hb_warn(
+                "no chat LLM configured — heartbeat is idle. "
+                "Configure providers in the dashboard's LLM tab "
+                "(or re-run `krakey onboard`), then restart."
+            )
+            try:
+                while not self._stop:
+                    await asyncio.sleep(5.0)
+            finally:
+                await self.buffer.stop_all()
+            return
+
         try:
             count = 0
             while not self._stop:
