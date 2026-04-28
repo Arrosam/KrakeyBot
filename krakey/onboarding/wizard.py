@@ -46,13 +46,30 @@ from krakey.plugin_system.loader import PluginMetadata
 RECOMMENDED_PLUGINS: tuple[str, ...] = ("dashboard",)
 
 
-_BANNER = (
+_BANNER_FALLBACK = (
     "\n=========================================\n"
     "  Krakey onboarding\n"
     "=========================================\n"
     "Walks you through creating config.yaml.\n"
     "Re-run this any time: krakey onboard\n"
 )
+
+
+def _print_intro(output_fn: OutputFn) -> None:
+    """Print the synthwave KRAKEY banner if `output_fn` is the real
+    `print` (so the CLI gets the full visual treatment); otherwise
+    print a plain text fallback so test fakes that capture output as
+    a list of lines stay tidy and grep-able.
+    """
+    if output_fn is print:
+        from krakey.cli._banner import print_banner
+        print_banner()
+        print()
+        print("Walks you through creating config.yaml.")
+        print("Re-run this any time: krakey onboard")
+        print()
+    else:
+        output_fn(_BANNER_FALLBACK)
 
 
 InputFn = Callable[[str], str]
@@ -75,7 +92,7 @@ def run_wizard(
     """
     cfg_path = Path(config_path)
 
-    output_fn(_BANNER)
+    _print_intro(output_fn)
 
     chat = _ask_chat_provider(input_fn, output_fn)
     embed = _ask_embedding(input_fn, output_fn, chat)
@@ -94,6 +111,13 @@ def run_wizard(
     cfg_path.write_text(dump_config(cfg), encoding="utf-8")
     output_fn(
         f"wrote {cfg_path}. start Krakey with: krakey run"
+    )
+    output_fn(
+        "\nTip: to right-size the GM node soft-limit for your machine, "
+        "run\n  python scripts/bench_gm.py\n"
+        "It benchmarks vec_search latency at increasing GM sizes and "
+        "prints a recommended `fatigue.gm_node_soft_limit` you can drop "
+        "into config.yaml."
     )
     return cfg_path
 
@@ -216,10 +240,14 @@ def _print_plugin_list(
         meta = available[n]
         mark = "[x]" if n in selected else "[ ]"
         star = " *" if n in RECOMMENDED_PLUGINS else "  "
-        desc = ""
+        # Full description shown under the header line, indented for
+        # readability. Multi-line descriptions stay readable;
+        # previously we cut to the first line which often hid the
+        # actual purpose of a plugin.
+        output_fn(f"  {i:>2}. {mark}{star} {n}")
         if meta.description:
-            desc = meta.description.strip().splitlines()[0]
-        output_fn(f"  {i:>2}. {mark}{star} {n} - {desc}")
+            for line in meta.description.strip().splitlines():
+                output_fn(f"        {line}")
 
 
 # ---- Build Config -----------------------------------------------

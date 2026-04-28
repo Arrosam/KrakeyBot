@@ -102,9 +102,10 @@ def test_wizard_dashboard_default_recommended_and_first(tmp_path):
     block = "\n".join(lines)
     assert block.index("dashboard") < block.index("aaa_first_alpha")
     # The dashboard listing line must carry the recommended star and
-    # the [x] preselect mark.
+    # the [x] preselect mark. Format: "  1. [x] * dashboard"
     dashboard_line = next(
-        l for l in lines if "dashboard - " in l and l.lstrip().startswith("1.")
+        l for l in lines
+        if "dashboard" in l and "1." in l and ("[x]" in l or "[ ]" in l)
     )
     assert "*" in dashboard_line
     assert "[x]" in dashboard_line
