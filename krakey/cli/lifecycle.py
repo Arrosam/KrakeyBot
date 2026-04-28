@@ -97,14 +97,21 @@ def _exec_runtime(repo: Path) -> int:
 
 # -------- public ops --------
 
-def _ensure_config(repo: Path) -> int | None:
+def _ensure_config(repo: Path) -> tuple[int | None, bool]:
     """If config.yaml is missing, auto-launch onboarding and let the
-    user generate one. Returns an exit code on early exit (wizard
-    aborted, still no config) or ``None`` to proceed with run/start.
+    user generate one.
+
+    Returns ``(exit_code_or_None, wizard_ran)``:
+      * ``(rc, _)`` with rc != None  → caller should return rc immediately
+        (wizard aborted, stdin closed, or no config written).
+      * ``(None, False)`` → config existed already; caller proceeds.
+      * ``(None, True)``  → wizard ran successfully; caller proceeds.
+        The caller uses this flag to suppress its own banner print
+        (the wizard already showed one — single-banner-per-invocation).
     """
     cfg = repo / "config.yaml"
     if cfg.exists():
-        return None
+        return None, False
     print("krakey: no config.yaml found — launching onboarding wizard.\n",
           file=sys.stderr)
     from krakey.onboarding import run_wizard
@@ -112,21 +119,30 @@ def _ensure_config(repo: Path) -> int | None:
         run_wizard(config_path=cfg)
     except KeyboardInterrupt:
         print("\nkrakey: onboarding cancelled.", file=sys.stderr)
-        return 130
+        return 130, False
     except EOFError:
         print("\nkrakey: onboarding ended (stdin closed).", file=sys.stderr)
-        return 1
+        return 1, False
     if not cfg.exists():
         print("krakey: onboarding finished but no config was written; "
               "re-run `krakey onboard` when ready.", file=sys.stderr)
-        return 1
+        return 1, False
     print()
-    return None
+    return None, True
+
+
+def _print_runtime_banner_if_needed(wizard_ran: bool) -> None:
+    """Print the KRAKEY banner before runtime startup, but only if the
+    wizard didn't already print one this invocation."""
+    if wizard_ran:
+        return
+    from . import _banner
+    _banner.print_banner()
 
 
 def run_foreground() -> int:
     repo, pidfile, _log = _paths()
-    rc = _ensure_config(repo)
+    rc, wizard_ran = _ensure_config(repo)
     if rc is not None:
         return rc
 
@@ -138,6 +154,7 @@ def run_foreground() -> int:
     if existing:
         _clear_pidfile(pidfile)
 
+    _print_runtime_banner_if_needed(wizard_ran)
     _write_pidfile(pidfile, os.getpid())
     _install_pidfile_cleanup(pidfile)
     return _exec_runtime(repo)
@@ -145,7 +162,7 @@ def run_foreground() -> int:
 
 def start_daemon() -> int:
     repo, pidfile, logfile = _paths()
-    rc = _ensure_config(repo)
+    rc, wizard_ran = _ensure_config(repo)
     if rc is not None:
         return rc
 
@@ -158,6 +175,7 @@ def start_daemon() -> int:
 
     logfile.parent.mkdir(parents=True, exist_ok=True)
 
+    _print_runtime_banner_if_needed(wizard_ran)
     if os.name == "nt":
         return _spawn_daemon_windows(repo, pidfile, logfile)
     return _spawn_daemon_unix(repo, pidfile, logfile)

@@ -1,12 +1,19 @@
-"""Sub-command handlers. Each takes an argparse Namespace, returns int exit code."""
+"""Sub-command handlers. Each takes an argparse Namespace, returns int exit code.
+
+Banner-printing rule: at most one KRAKEY banner per CLI invocation. The
+wizard prints its own banner via ``_print_intro``; the runtime prints
+its banner when starting the heartbeat. Handlers in this module never
+print the banner themselves — that double-prints in flows where one
+calls the other (e.g. ``krakey run`` auto-launching onboarding when
+config is missing).
+"""
 from __future__ import annotations
 
 import argparse
 
 
 def run(args: argparse.Namespace) -> int:
-    from . import _banner, lifecycle
-    _banner.print_banner()
+    from . import lifecycle
     return lifecycle.run_foreground()
 
 
@@ -26,10 +33,9 @@ def status(args: argparse.Namespace) -> int:
 
 
 def onboard(args: argparse.Namespace) -> int:
-    from . import _banner, _meta
+    from . import _meta
     import os
 
-    _banner.print_banner()
     repo = _meta.repo_root()
     # Run inside the repo so ``config.yaml`` (relative path) lands at
     # the repo root, matching where the runtime looks for it.

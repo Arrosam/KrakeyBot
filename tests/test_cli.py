@@ -99,3 +99,22 @@ def test_no_args_prints_banner(capsys) -> None:
     out = capsys.readouterr().out
     assert "██╗" in out             # logo
     assert "usage: krakey" in out   # argparse help follows banner
+
+
+def test_runtime_banner_suppressed_when_wizard_ran(capsys) -> None:
+    """`krakey run` with no config auto-launches onboarding which has
+    its own banner; the runtime startup banner must NOT also print, or
+    the user sees TWO banners back-to-back."""
+    from krakey.cli import lifecycle
+
+    lifecycle._print_runtime_banner_if_needed(wizard_ran=True)
+    assert "██╗" not in capsys.readouterr().out
+
+
+def test_runtime_banner_prints_when_no_wizard(capsys) -> None:
+    """Happy path (`krakey run` with config already present): the
+    runtime banner is the one and only banner of the invocation."""
+    from krakey.cli import lifecycle
+
+    lifecycle._print_runtime_banner_if_needed(wizard_ran=False)
+    assert "██╗" in capsys.readouterr().out
