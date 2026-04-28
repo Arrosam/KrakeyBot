@@ -54,3 +54,29 @@ def test_status_runs_and_returns_zero() -> None:
     # When no daemon is running it should return 0 (informational).
     rc = main(["status"])
     assert rc == 0
+
+
+def test_update_falls_back_when_non_editable(monkeypatch, capsys) -> None:
+    from krakey.cli import release
+
+    def fake_repo_root() -> Path:
+        raise RuntimeError("krakey was installed non-editably; reinstall …")
+
+    monkeypatch.setattr(release._meta, "repo_root", fake_repo_root)
+    rc = release.update()
+    assert rc == 2
+    out = capsys.readouterr().out
+    assert "pip install -U krakey" in out
+
+
+def test_repair_falls_back_when_non_editable(monkeypatch, capsys) -> None:
+    from krakey.cli import release
+
+    def fake_repo_root() -> Path:
+        raise RuntimeError("krakey was installed non-editably; reinstall …")
+
+    monkeypatch.setattr(release._meta, "repo_root", fake_repo_root)
+    rc = release.repair()
+    assert rc == 2
+    out = capsys.readouterr().out
+    assert "pip install -U krakey" in out

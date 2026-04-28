@@ -61,10 +61,20 @@ def _confirm(prompt: str) -> bool:
     return ans in ("y", "yes")
 
 
+_PYPI_HINT = (
+    "krakey: this is a non-editable (PyPI) install — use pip to update:\n"
+    "        python -m pip install -U krakey"
+)
+
+
 # -------- update --------
 
 def update() -> int:
-    repo = _meta.repo_root()
+    try:
+        repo = _meta.repo_root()
+    except RuntimeError:
+        print(_PYPI_HINT)
+        return 2
     print(f"krakey: fetching tags from origin in {repo}")
     fetch = _git("fetch", "--tags", "--prune", "origin", cwd=repo, check=False)
     if fetch.returncode != 0:
@@ -109,7 +119,11 @@ def update() -> int:
 # -------- repair --------
 
 def repair() -> int:
-    repo = _meta.repo_root()
+    try:
+        repo = _meta.repo_root()
+    except RuntimeError:
+        print(_PYPI_HINT)
+        return 2
     current = _meta.version()
     target = f"v{current}"
 

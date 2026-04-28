@@ -20,11 +20,9 @@
 
 ## 安装
 
-KrakeyBot 通过 pip 安装为本地命令行工具 `krakey`。
+### 用户 — 从 PyPI 装
 
 ```bash
-git clone https://github.com/Arrosam/KrakeyBot.git
-cd KrakeyBot
 python -m venv .venv
 
 # Linux / macOS
@@ -32,17 +30,32 @@ source .venv/bin/activate
 # Windows (PowerShell)
 .venv\Scripts\Activate.ps1
 
-pip install -e .
+pip install krakey
 ```
 
-安装完成后 `krakey` 命令立即可用：
+装完 `krakey` 命令直接可用：
 
 ```bash
 krakey --version          # krakey 0.1.0
 krakey                    # 显示 help
+krakey onboard            # 走配置向导
+krakey run                # 启动心跳
 ```
 
-> 想跑测试？加 dev extras：`pip install -e ".[dev]"`，然后 `pytest -q`。
+升级：`pip install -U krakey`。
+
+### 开发者 — 从源码 editable 装
+
+```bash
+git clone https://github.com/Arrosam/KrakeyBot.git
+cd KrakeyBot
+python -m venv .venv && source .venv/bin/activate   # mac/linux
+pip install -e ".[dev]"                              # 含 pytest 等
+pytest -q                                            # 560+ 测试，应该全绿
+```
+
+editable 模式下 `krakey update` / `krakey repair` 会基于 git tag 操作仓库；
+PyPI 用户跑 `krakey update` 会得到提示，让用 `pip install -U krakey` 替代。
 
 ---
 
