@@ -40,7 +40,7 @@ class ThreadedDashboardServer:
     """Run uvicorn on a private event loop in a daemon thread.
 
     ``port=0`` lets the OS pick an ephemeral port; after ``start()``
-    returns, ``self.port`` reflects the bound port.
+    returns, ``self.port`` matches the bound port.
     """
 
     def __init__(self, app: FastAPI, *, host: str = "127.0.0.1",

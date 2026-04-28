@@ -1,13 +1,13 @@
-"""Reflect protocol + registry tests.
+"""Modifier protocol + registry tests.
 
 Pins:
   * Built-ins implement the role contract (each declares a unique
     role string).
   * Registry is role-keyed; second registration claiming the same
     role raises.
-  * Runtime auto-registers the default reflects.
+  * Runtime auto-registers the default modifiers.
   * Prompt suppression: [ACTION FORMAT] layer is included iff no
-    Reflect has claimed role="hypothalamus".
+    Modifier has claimed role="hypothalamus".
 """
 import json
 from datetime import datetime
@@ -15,12 +15,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from krakey.interfaces.reflect import (
-    HypothalamusReflect, DecisionResult, RecallAnchorReflect,
-    Reflect, ReflectRegistry,
+from krakey.interfaces.modifier import (
+    HypothalamusModifier, DecisionResult, RecallAnchorModifier,
+    Modifier, ModifierRegistry,
 )
-from krakey.plugins.hypothalamus.reflect import HypothalamusReflectImpl
-from krakey.plugins.recall.reflect import RecallAnchorReflectImpl
+from krakey.plugins.hypothalamus.modifier import HypothalamusModifierImpl
+from krakey.plugins.recall.modifier import RecallAnchorModifierImpl
 from tests._runtime_helpers import (
     NullEmbedder, ScriptedLLM, build_runtime_with_fakes,
 )
@@ -29,11 +29,11 @@ from tests._runtime_helpers import (
 # ---- protocol compliance ----------------------------------------------
 
 
-def _stub_recall_anchor() -> RecallAnchorReflectImpl:
-    """Build a RecallAnchorReflectImpl with placeholder state for
+def _stub_recall_anchor() -> RecallAnchorModifierImpl:
+    """Build a RecallAnchorModifierImpl with placeholder state for
     tests that only inspect protocol attributes (role/name/registry
     behavior). make_recall is never invoked on these stubs."""
-    return RecallAnchorReflectImpl(
+    return RecallAnchorModifierImpl(
         gm=None, embedder=None, reranker=None,  # type: ignore[arg-type]
         per_stimulus_k=0, neighbor_depth=0, recall_token_budget=0,
         screening_token_multiplier=1.0,
@@ -41,17 +41,17 @@ def _stub_recall_anchor() -> RecallAnchorReflectImpl:
 
 
 def test_hypothalamus_satisfies_protocol():
-    r = HypothalamusReflectImpl(ScriptedLLM([]))
-    assert isinstance(r, Reflect)
-    assert isinstance(r, HypothalamusReflect)
+    r = HypothalamusModifierImpl(ScriptedLLM([]))
+    assert isinstance(r, Modifier)
+    assert isinstance(r, HypothalamusModifier)
     assert r.role == "hypothalamus"
     assert r.name == "hypothalamus"
 
 
 def test_recall_anchor_satisfies_protocol():
     r = _stub_recall_anchor()
-    assert isinstance(r, Reflect)
-    assert isinstance(r, RecallAnchorReflect)
+    assert isinstance(r, Modifier)
+    assert isinstance(r, RecallAnchorModifier)
     assert r.role == "recall_anchor"
     assert r.name == "recall_anchor"
 
@@ -60,8 +60,8 @@ def test_recall_anchor_satisfies_protocol():
 
 
 def test_registry_keys_by_role():
-    reg = ReflectRegistry()
-    h = HypothalamusReflectImpl(ScriptedLLM([]))
+    reg = ModifierRegistry()
+    h = HypothalamusModifierImpl(ScriptedLLM([]))
     r = _stub_recall_anchor()
     reg.register(h)
     reg.register(r)
@@ -74,9 +74,9 @@ def test_registry_keys_by_role():
 
 
 def test_registry_rejects_duplicate_role():
-    """Two Reflects claiming the same role is a startup error — the
+    """Two Modifiers claiming the same role is a startup error — the
     runtime can't pick which one to use."""
-    reg = ReflectRegistry()
+    reg = ModifierRegistry()
 
     class A:
         name, role = "a", "hypothalamus"
@@ -90,7 +90,7 @@ def test_registry_rejects_duplicate_role():
 
 
 def test_registry_rejects_missing_name_or_role():
-    reg = ReflectRegistry()
+    reg = ModifierRegistry()
 
     class NoRole:
         name = "x"
@@ -107,8 +107,8 @@ def test_registry_rejects_missing_name_or_role():
 
 
 def test_registry_iteration_in_registration_order():
-    reg = ReflectRegistry()
-    h = HypothalamusReflectImpl(ScriptedLLM([]))
+    reg = ModifierRegistry()
+    h = HypothalamusModifierImpl(ScriptedLLM([]))
     r = _stub_recall_anchor()
     reg.register(r)
     reg.register(h)
@@ -120,21 +120,21 @@ def test_registry_iteration_in_registration_order():
 # ---- runtime integration --------------------------------------------
 
 
-async def test_runtime_registers_default_reflects(tmp_path):
+async def test_runtime_registers_default_modifiers(tmp_path):
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
     )
-    assert "hypothalamus" in runtime.reflects.names()
-    assert "recall_anchor" in runtime.reflects.names()
+    assert "hypothalamus" in runtime.modifiers.names()
+    assert "recall_anchor" in runtime.modifiers.names()
     # Roles registered:
-    assert runtime.reflects.has_role("hypothalamus")
-    assert runtime.reflects.has_role("recall_anchor")
+    assert runtime.modifiers.has_role("hypothalamus")
+    assert runtime.modifiers.has_role("recall_anchor")
 
 
 async def test_runtime_no_longer_holds_hypothalamus_attribute(tmp_path):
     """Regression: Runtime used to expose `self.hypothalamus`. Now it's
-    looked up via reflects.by_role("hypothalamus")."""
+    looked up via modifiers.by_role("hypothalamus")."""
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
@@ -153,9 +153,9 @@ async def test_prompt_includes_action_format_when_no_hypothalamus(tmp_path):
         gm_path=str(tmp_path / "gm.sqlite"),
     )
     # Drop the auto-registered hypothalamus.
-    runtime.reflects._by_role.pop("hypothalamus", None)
-    runtime.reflects._order.remove("hypothalamus")
-    assert runtime.reflects.has_role("hypothalamus") is False
+    runtime.modifiers._by_role.pop("hypothalamus", None)
+    runtime.modifiers._order.remove("hypothalamus")
+    assert runtime.modifiers.has_role("hypothalamus") is False
 
     await runtime.gm.initialize()
     runtime._recall = runtime._new_recall()
@@ -177,7 +177,7 @@ async def test_prompt_omits_action_format_when_hypothalamus_active(tmp_path):
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
     )
-    assert runtime.reflects.has_role("hypothalamus") is True
+    assert runtime.modifiers.has_role("hypothalamus") is True
 
     await runtime.gm.initialize()
     runtime._recall = runtime._new_recall()

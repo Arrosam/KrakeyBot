@@ -4,7 +4,7 @@ Plugins extend Krakey by contributing one or more **components**:
 
 | Component | Purpose | Examples |
 |---|---|---|
-| `reflect` | Heartbeat hook — claims a role string the runtime queries by | hypothalamus, recall_anchor, in_mind |
+| `modifier` | Heartbeat hook — claims a role string the runtime queries by | hypothalamus, recall_anchor, in_mind |
 | `tool` | Outbound action Self can dispatch | search, telegram_reply, update_in_mind |
 | `channel`  | Inbound stimulus producer | telegram, dashboard web chat |
 
@@ -26,7 +26,7 @@ Each folder contains:
 
 - `meta.yaml` (required) — manifest read by both the runtime loader and
   the dashboard catalogue scanner without importing plugin code.
-- Component code (`reflect.py`, `tool.py`, `channel.py`, or a flat
+- Component code (`modifier.py`, `tool.py`, `channel.py`, or a flat
   `__init__.py`) exposing one factory per component.
 
 User-editable per-plugin config goes in `workspace/plugins/<name>/config.yaml`
@@ -44,10 +44,10 @@ config_schema: []          # plugin-level config fields (UI hints only)
 requires_sandbox: false    # set true if any component touches the sandbox VM
 
 components:
-  - kind: reflect
-    role: my_role          # required for kind=reflect; must be unique
-    factory_module: src.plugins.my_plugin.reflect
-    factory_attr: build_reflect
+  - kind: modifier
+    role: my_role          # required for kind=modifier; must be unique
+    factory_module: src.plugins.my_plugin.modifier
+    factory_attr: build_modifier
     llm_purposes:          # optional
       - name: translator
         description: "..."
@@ -101,11 +101,11 @@ same registry.
   — flat `__init__.py` with backend Protocol, tool, factory.
 - **Multi-component sharing a client**: [`src/plugins/telegram/`](src/plugins/telegram/)
   — channel + tool share an `HttpTelegramClient` via `ctx.plugin_cache`.
-- **Multi-component sharing a reflect**: [`src/plugins/in_mind_note/`](src/plugins/in_mind_note/)
-  — reflect owns state, tool mutates it; both wired through
+- **Multi-component sharing a modifier**: [`src/plugins/in_mind_note/`](src/plugins/in_mind_note/)
+  — modifier owns state, tool mutates it; both wired through
   `ctx.plugin_cache`.
 - **Multi-component as a pipeline**: [`src/plugins/recall/`](src/plugins/recall/)
-  — passive reflect (auto-recall, claims `recall_anchor` role) +
+  — passive modifier (auto-recall, claims `recall_anchor` role) +
   active tool (`memory_recall`, Self drills into noticed nodes).
   Two halves of one discovery flow; ship together so the pipeline
   enables/disables atomically. Shared GM-query primitive in

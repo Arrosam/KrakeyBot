@@ -2,7 +2,7 @@
 into ToolCalls.
 
 This is the default tool dispatch path when no decision-translator
-Reflect (e.g. the hypothalamus plugin) is registered. Format chosen
+Modifier (e.g. the hypothalamus plugin) is registered. Format chosen
 for breadth of training coverage in modern open-source LLMs.
 """
 from krakey.runtime.heartbeat.action_executor import parse_tool_calls
@@ -17,7 +17,7 @@ def test_no_tool_call_returns_empty():
     """Self can produce thinking/decision/note without invoking any
     tool — the parser should accept that as a valid no-op."""
     text = """[THINKING]
-Just reflecting today.
+Just thinking today.
 [DECISION]
 No action needed.
 [NOTE]

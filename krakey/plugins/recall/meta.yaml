@@ -1,6 +1,6 @@
 name: recall
 description: >
-  GM/KB recall — both halves of the discovery pipeline. The reflect
+  GM/KB recall — both halves of the discovery pipeline. The modifier
   half (claims `recall_anchor` role) auto-recalls per beat and fills
   [GRAPH MEMORY]; the tool half (`memory_recall`) lets Self
   explicitly drill into nodes she's noticed, including KB index nodes
@@ -18,10 +18,10 @@ config_schema:
       doesn't pass `top_k` in arguments.
 
 components:
-  - kind: reflect
+  - kind: modifier
     role: recall_anchor
-    factory_module: krakey.plugins.recall.reflect
-    factory_attr: build_reflect
+    factory_module: krakey.plugins.recall.modifier
+    factory_attr: build_modifier
   - kind: tool
     factory_module: krakey.plugins.recall.tool
     factory_attr: build_tool

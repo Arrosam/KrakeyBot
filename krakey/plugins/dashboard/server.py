@@ -18,7 +18,7 @@ class DashboardServer:
     """Run uvicorn in the same asyncio loop as the runtime.
 
     Use port=0 to let the OS pick an ephemeral port (handy for tests);
-    after `.start()`, `self.port` reflects the actually-bound port.
+    after `.start()`, `self.port` matches the actually-bound port.
     """
 
     def __init__(self, app: FastAPI, *, host: str = "127.0.0.1",

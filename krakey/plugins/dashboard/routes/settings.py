@@ -83,13 +83,13 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
                                   detail=f"restart failed: {e}")
         return {"status": "restarting"}
 
-    @app.get("/api/reflects/available")
-    async def get_available_reflects():  # noqa: ANN201
+    @app.get("/api/modifiers/available")
+    async def get_available_modifiers():  # noqa: ANN201
         """List unified-format plugins discoverable on disk.
 
         Pure-text scan — never imports any plugin module
         (architectural invariant). Each plugin's ``components`` array
-        carries reflect / tool / channel entries with their own
+        carries modifier / tool / channel entries with their own
         ``llm_purposes`` declarations.
         """
         out = []
@@ -111,16 +111,16 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
                 "llm_purposes": all_purposes,
             })
         out.sort(key=lambda r: r["name"])
-        return {"reflects": out}
+        return {"modifiers": out}
 
-    @app.get("/api/reflects/{name}/config")
-    async def get_reflect_config(name: str):  # noqa: ANN201
+    @app.get("/api/modifiers/{name}/config")
+    async def get_modifier_config(name: str):  # noqa: ANN201
         """Read the per-plugin config file
         (``workspace/plugins/<name>/config.yaml``).
 
         Returns ``{}`` if the file doesn't exist yet — valid initial
         state. (Endpoint name kept for back-compat with the dashboard
-        JS; the underlying path moved from ``workspace/reflects/`` to
+        JS; the underlying path moved from ``workspace/modifiers/`` to
         ``workspace/plugins/`` in the unification refactor.)
         """
         path = Path("workspace") / "plugins" / name / "config.yaml"
@@ -140,8 +140,8 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
             )
         return {"path": str(path), "config": raw}
 
-    @app.post("/api/reflects/{name}/config")
-    async def post_reflect_config(name: str, payload: dict = Body(...)):  # noqa: ANN201
+    @app.post("/api/modifiers/{name}/config")
+    async def post_modifier_config(name: str, payload: dict = Body(...)):  # noqa: ANN201
         """Write the per-plugin config file. Creates directory if
         needed; replaces existing content."""
         new_cfg = payload.get("config")

@@ -4,8 +4,8 @@ description: >
   focus) that Self maintains across heartbeats to declare what's
   currently at the front of its mental workspace. Self updates them
   via the `update_in_mind` tool (this plugin contributes BOTH
-  the reflect that owns the state AND the tool that mutates it,
-  declared as two components below; they share the reflect instance
+  the modifier that owns the state AND the tool that mutates it,
+  declared as two components below; they share the modifier instance
   via ctx.plugin_cache). The current state is injected into every
   Self prompt as a virtual "Heartbeat #now (in mind)" round at the
   head of [HISTORY], plus a constant [IN MIND — 操作约束] standing
@@ -17,14 +17,14 @@ description: >
 config_schema: []
 
 components:
-  # Order matters: reflect builds first and stashes itself in
+  # Order matters: modifier builds first and stashes itself in
   # plugin_cache; the tool factory then grabs it. Out-of-order
-  # loading would leave the tool with no reflect — its factory
+  # loading would leave the tool with no modifier — its factory
   # opts out (returns None) so the runtime degrades rather than crashes.
-  - kind: reflect
+  - kind: modifier
     role: in_mind
-    factory_module: krakey.plugins.in_mind_note.reflect
-    factory_attr: build_reflect
+    factory_module: krakey.plugins.in_mind_note.modifier
+    factory_attr: build_modifier
   - kind: tool
     factory_module: krakey.plugins.in_mind_note.tool
     factory_attr: build_tool

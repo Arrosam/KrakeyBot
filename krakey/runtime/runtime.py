@@ -53,8 +53,8 @@ class RuntimeDeps:
     # Tests pass a tmpdir so per-plugin config writes (history_path,
     # llm_purposes, …) don't bleed into the production workspace.
     plugin_configs_root: str | None = None  # default: workspace/plugins
-    # in_mind Reflect's state file. None → workspace/data/in_mind.json
-    # (the locked-in production path, see design doc Reflect #3).
+    # in_mind Modifier's state file. None → workspace/data/in_mind.json
+    # (the locked-in production path, see design doc Modifier #3).
     # Tests pass a tmpdir so update_in_mind dispatches don't bleed
     # into the production state.
     in_mind_state_path: str | None = None
@@ -77,14 +77,14 @@ class Runtime:
         self.compact_llm = deps.compact_llm
         self.embedder = deps.embedder
         self.reranker = deps.reranker
-        # Reflect registry — role-keyed (one Reflect per role; second
+        # Modifier registry — role-keyed (one Modifier per role; second
         # registration claiming the same role raises). Plugin loader
         # runs LATER (after tools + channels registries exist)
         # since a single plugin can contribute components of all three
         # kinds; loading them before all three registries are built
         # would crash.
-        from krakey.interfaces.reflect import ReflectRegistry
-        self.reflects = ReflectRegistry()
+        from krakey.interfaces.modifier import ModifierRegistry
+        self.modifiers = ModifierRegistry()
         self.buffer = StimulusBuffer()
         # History token budget is derived from the Self role's input
         # context window × history_token_fraction. The Self role's
@@ -134,7 +134,7 @@ class Runtime:
         self.batch_tracker = BatchTrackerChannel()
         self.buffer.register(self.batch_tracker)
 
-        # Plugin registration. Each plugin can contribute reflect /
+        # Plugin registration. Each plugin can contribute modifier /
         # tool / channel components in any combination via its
         # meta.yaml. Has to run AFTER the three registries exist
         # (above) because one plugin may register into any of them.
@@ -157,7 +157,7 @@ class Runtime:
         from krakey.runtime.plugin_register.loader import PluginLoader
         self._plugin_loader = PluginLoader(
             config=self.config,
-            reflects=self.reflects,
+            modifiers=self.modifiers,
             tools=self.tools,
             channels=self.buffer,
             services={
@@ -252,15 +252,15 @@ class Runtime:
             except Exception as e:  # noqa: BLE001
                 self.log.runtime_error(f"config backup failed: {e}")
 
-        # Reflect attach() lifecycle hook — fires after every other
+        # Modifier attach() lifecycle hook — fires after every other
         # subsystem (ToolRegistry, plugin loader, etc.) is up so
-        # Reflects with extra runtime-coupled wiring beyond what the
+        # Modifiers with extra runtime-coupled wiring beyond what the
         # meta.yaml components: list expresses can do it without
-        # ordering surprises. No in-tree Reflect uses this today —
+        # ordering surprises. No in-tree Modifier uses this today —
         # multi-component plugins ship sibling tools via meta.yaml
         # — but the hook stays available. attach_all is exception-
-        # tolerant by contract; one bad Reflect won't block the others.
-        self.reflects.attach_all(self)
+        # tolerant by contract; one bad Modifier won't block the others.
+        self.modifiers.attach_all(self)
 
         # Plugin observer is built AFTER attach_all so the snapshot it
         # walks includes anything an attach() hook added. Components
@@ -269,13 +269,13 @@ class Runtime:
         # source="core".
         from krakey.runtime.plugin_register.observer import PluginObserver
         self._plugin_observer = PluginObserver(
-            reflects=self.reflects,
+            modifiers=self.modifiers,
             tools=self.tools,
             channels=self.buffer,
             loader=self._plugin_loader,
         )
 
-    # Test-only facade — two reflect-config tests rebuild registries by
+    # Test-only facade — two modifier-config tests rebuild registries by
     # clearing them and re-running registration. New code should reach
     # for ``self._plugin_loader.register_from_config(deps)`` directly.
     def _register_plugins_from_config(self, deps: "RuntimeDeps") -> None:

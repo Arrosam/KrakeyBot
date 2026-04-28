@@ -114,7 +114,7 @@ def load_self_model_or_default(path: str | Path) -> tuple[dict[str, Any], bool]:
     were never read in steady state; keeping them around just bloated
     every Self prompt for no behavioral benefit. If anything was
     dropped, we save the cleaned version back to disk so next boot
-    is fast and the YAML reflects what's actually in use.
+    is fast and the YAML modifiers what's actually in use.
     """
     import logging
 

@@ -91,10 +91,10 @@ class Config:
         default_factory=KnowledgeBaseSection
     )
     # Ordered list of unified-format plugin names to enable at
-    # startup. A plugin can declare any mix of reflect / tool /
+    # startup. A plugin can declare any mix of modifier / tool /
     # channel components in its meta.yaml (Samuel 2026-04-26
     # unification). Order = chain execution order for same-kind
-    # reflect components.
+    # modifier components.
     #
     # ``None`` (field absent) and ``[]`` are both honored as "zero
     # plugins" — the runtime never enables anything implicitly
@@ -215,20 +215,20 @@ def _build_plugins(raw: dict[str, Any]) -> list[str] | None:
       * key empty list   → return [] (explicit "zero plugins")
       * key string list  → return that list, in order
 
-    Migration: the OLD ``reflects:`` field is silently translated to
+    Migration: the OLD ``modifiers:`` field is silently translated to
     ``plugins:`` for one release window so users mid-migration still
     boot. Non-string entries are dropped with a warning.
     """
-    # Old `reflects:` field migration alias
-    if "plugins" not in raw and "reflects" in raw:
+    # Old `modifiers:` field migration alias
+    if "plugins" not in raw and "modifiers" in raw:
         print(
-            "config: `reflects:` is deprecated — renamed to `plugins:` "
+            "config: `modifiers:` is deprecated — renamed to `plugins:` "
             "in the unified plugin refactor (2026-04-26). Treating your "
-            "`reflects:` list as the plugin list this run; please rename "
+            "`modifiers:` list as the plugin list this run; please rename "
             "the key to silence this warning.",
             file=sys.stderr,
         )
-        raw = {**raw, "plugins": raw["reflects"]}
+        raw = {**raw, "plugins": raw["modifiers"]}
 
     if "plugins" not in raw:
         return None

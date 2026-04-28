@@ -9,7 +9,7 @@ names listed in ``config.yaml`` ``plugins:``. Catalogue scanning
 A "plugin" is the unit of distribution + enable. A plugin can declare
 any combination of components, each one of:
 
-  * ``reflect``  — heartbeat hook (hypothalamus / recall_anchor /
+  * ``modifier``  — heartbeat hook (hypothalamus / recall_anchor /
                    in_mind / future kinds)
   * ``tool`` — outbound action
   * ``channel``  — inbound stimulus producer
@@ -32,11 +32,11 @@ description: "..."
 config_schema: []          # plugin-level config fields (UI hints)
 
 components:
-  - kind: reflect
-    role: hypothalamus               # the Reflect's role (must be unique
+  - kind: modifier
+    role: hypothalamus               # the Modifier's role (must be unique
                                      # across all enabled plugins)
-    factory_module: src.plugins.my_plugin.reflect
-    factory_attr: build_reflect
+    factory_module: src.plugins.my_plugin.modifier
+    factory_attr: build_modifier
     llm_purposes:                    # optional; what LLM purposes this
       - name: translator             # component declares
         description: "..."
@@ -80,11 +80,11 @@ WORKSPACE_ROOT = Path("workspace") / "plugins"
 @dataclass
 class ComponentMetadata:
     """One entry in a plugin's ``components:`` list."""
-    kind: str  # "reflect" | "tool" | "channel"
+    kind: str  # "modifier" | "tool" | "channel"
     factory_module: str
     factory_attr: str
-    role: str | None = None  # for kind="reflect": role string the
-                              # Reflect claims; runtime errors on dup
+    role: str | None = None  # for kind="modifier": role string the
+                              # Modifier claims; runtime errors on dup
     llm_purposes: list[dict[str, Any]] = field(default_factory=list)
     # Anything else from the component dict is preserved as `extra` so
     # plugin-specific options can ride along without schema changes.
@@ -169,7 +169,7 @@ def parse_meta(path: Path) -> PluginMetadata:
     )
 
 
-_KNOWN_COMPONENT_KINDS = {"reflect", "tool", "channel"}
+_KNOWN_COMPONENT_KINDS = {"modifier", "tool", "channel"}
 
 
 def _parse_component(c: Any) -> ComponentMetadata:

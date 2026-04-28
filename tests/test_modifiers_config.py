@@ -1,6 +1,6 @@
-"""Config-driven Reflect registration + discovery laziness.
+"""Config-driven Modifier registration + discovery laziness.
 
-Architecture invariant being pinned (Samuel 2026-04-25): a Reflect's
+Architecture invariant being pinned (Samuel 2026-04-25): a Modifier's
 Python code must NOT be imported until the user explicitly enables
 it. Catalogue scanning lives in
 ``src.plugins.dashboard.services.plugin_catalogue.list_available_plugins``
@@ -9,10 +9,10 @@ it. Catalogue scanning lives in
 is the only path that imports plugin modules — both scanners stay
 pure-text.
 
-Three input states for ``config.reflects`` (see Config docstring):
+Three input states for ``config.modifiers`` (see Config docstring):
   * None         — field absent: register nothing + stderr nudge.
                    No legacy fallback per "all plugins default off".
-  * []           — explicit zero Reflects. Honored silently.
+  * []           — explicit zero Modifiers. Honored silently.
   * [name, ...]  — explicit ordered list; each name resolved via
                    discovery, unknown names skipped with log.
 """
@@ -40,7 +40,7 @@ def _write(tmp_path, body: str):
 
 def _minimal_deps_for_runtime(runtime):
     """Re-derive a deps-shaped namespace from a runtime built by the
-    helper, so tests can re-invoke ``_register_reflects_from_config``
+    helper, so tests can re-invoke ``_register_modifiers_from_config``
     with the same plugin-isolation setup the helper provisioned.
 
     Includes ``config`` because plugin factories now resolve their own
@@ -50,14 +50,14 @@ def _minimal_deps_for_runtime(runtime):
     from types import SimpleNamespace
     return SimpleNamespace(
         config=runtime.config,
-        plugin_configs_root=runtime._test_reflect_configs_root,
+        plugin_configs_root=runtime._test_modifier_configs_root,
         llm_clients_by_tag=runtime._test_llm_clients_by_tag,
         hypo_llm=ScriptedLLM([]),
         in_mind_state_path=None,
     )
 
 
-def test_loader_returns_none_when_reflects_key_absent(tmp_path):
+def test_loader_returns_none_when_modifiers_key_absent(tmp_path):
     p = _write(tmp_path, """
         llm:
           providers:
@@ -71,7 +71,7 @@ def test_loader_returns_none_when_reflects_key_absent(tmp_path):
     assert cfg.plugins is None
 
 
-def test_loader_returns_empty_list_when_reflects_is_empty(tmp_path):
+def test_loader_returns_empty_list_when_modifiers_is_empty(tmp_path):
     p = _write(tmp_path, """
         llm:
           providers:
@@ -80,7 +80,7 @@ def test_loader_returns_empty_list_when_reflects_is_empty(tmp_path):
             t1: {provider: "p/claude-sonnet-4-5"}
           core_purposes:
             self_thinking: t1
-        reflects: []
+        modifiers: []
     """)
     cfg = load_config(p)
     assert cfg.plugins == []
@@ -95,7 +95,7 @@ def test_loader_returns_ordered_list_when_specified(tmp_path):
             t1: {provider: "p/claude-sonnet-4-5"}
           core_purposes:
             self_thinking: t1
-        reflects:
+        modifiers:
           - recall
           - hypothalamus
     """)
@@ -118,12 +118,12 @@ def test_discover_finds_builtin_meta_files():
     assert "in_mind_note" in metas
     h = metas["hypothalamus"]
     assert len(h.components) >= 1
-    refl_comp = next(c for c in h.components if c.kind == "reflect")
+    refl_comp = next(c for c in h.components if c.kind == "modifier")
     assert refl_comp.role == "hypothalamus"
     assert refl_comp.factory_module == (
-        "krakey.plugins.hypothalamus.reflect"
+        "krakey.plugins.hypothalamus.modifier"
     )
-    assert refl_comp.factory_attr == "build_reflect"
+    assert refl_comp.factory_attr == "build_modifier"
 
 
 def test_discover_does_not_import_plugin_modules():
@@ -131,8 +131,8 @@ def test_discover_does_not_import_plugin_modules():
     plugin code into sys.modules.
     """
     plugin_modules = (
-        "krakey.plugins.hypothalamus.reflect",
-        "krakey.plugins.recall.reflect",
+        "krakey.plugins.hypothalamus.modifier",
+        "krakey.plugins.recall.modifier",
         "krakey.plugins.recall.tool",
     )
     before = {m: m in sys.modules for m in plugin_modules}
@@ -159,7 +159,7 @@ def test_load_component_imports_and_calls_factory():
     from krakey.interfaces.plugin_context import PluginContext
     metas = discover_plugins()
     refl_comp = next(c for c in metas["hypothalamus"].components
-                     if c.kind == "reflect")
+                     if c.kind == "modifier")
     fake_llm = ScriptedLLM([])
     ctx = PluginContext(
         deps=SimpleNamespace(config=None, llm_clients_by_tag={}),
@@ -184,37 +184,37 @@ async def test_runtime_registers_explicit_list_in_order(tmp_path, capsys):
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=["hypothalamus", "recall"],
+        modifiers=["hypothalamus", "recall"],
     )
     err = capsys.readouterr().err
     assert "no `plugins:`" not in err
-    assert set(runtime.reflects.names()) == {
+    assert set(runtime.modifiers.names()) == {
         "hypothalamus", "recall_anchor",
     }
 
 
 async def test_runtime_registers_empty_list_with_no_warning(tmp_path, capsys):
-    """`reflects: []` → zero plugins registered, NO warning."""
+    """`modifiers: []` → zero plugins registered, NO warning."""
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=[],
+        modifiers=[],
     )
     err = capsys.readouterr().err
     assert "no `plugins:`" not in err
-    assert runtime.reflects.names() == []
+    assert runtime.modifiers.names() == []
 
 
-async def test_runtime_warns_when_reflects_field_is_none(tmp_path, capsys):
-    """No `reflects:` field → register nothing + stderr nudge.
+async def test_runtime_warns_when_modifiers_field_is_none(tmp_path, capsys):
+    """No `modifiers:` field → register nothing + stderr nudge.
     No legacy fallback (per all-plugins-default-off principle).
     """
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=[],  # helper preset; we'll simulate the None case below
+        modifiers=[],  # helper preset; we'll simulate the None case below
     )
-    runtime.reflects._by_role.clear(); runtime.reflects._order.clear()
+    runtime.modifiers._by_role.clear(); runtime.modifiers._order.clear()
     runtime.config.plugins = None
     capsys.readouterr()  # discard prior output
 
@@ -222,24 +222,24 @@ async def test_runtime_warns_when_reflects_field_is_none(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "no `plugins:`" in err
     # No legacy default registered — explicit principle.
-    assert runtime.reflects.names() == []
+    assert runtime.modifiers.names() == []
 
 
-async def test_runtime_skips_unknown_reflect_names_loudly(tmp_path, capsys):
+async def test_runtime_skips_unknown_modifier_names_loudly(tmp_path, capsys):
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=[],
+        modifiers=[],
     )
-    runtime.reflects._by_role.clear(); runtime.reflects._order.clear()
+    runtime.modifiers._by_role.clear(); runtime.modifiers._order.clear()
     runtime.config.plugins = [
-        "recall", "typo_reflect", "hypothalamus",
+        "recall", "typo_modifier", "hypothalamus",
     ]
     capsys.readouterr()
 
     runtime._register_plugins_from_config(_minimal_deps_for_runtime(runtime))
     err = capsys.readouterr().err
-    assert "typo_reflect" in err
-    assert set(runtime.reflects.names()) == {
+    assert "typo_modifier" in err
+    assert set(runtime.modifiers.names()) == {
         "recall_anchor", "hypothalamus",
     }

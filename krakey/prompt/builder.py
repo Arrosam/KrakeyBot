@@ -18,7 +18,7 @@ Layer order (most-stable cacheable prefix first → most-volatile last):
                               doesn't invalidate the cacheable prefix
     11. heartbeat_question  — end anchor
 
-Plugins receive a ``PromptElements`` per heartbeat (via their Reflect's
+Plugins receive a ``PromptElements`` per heartbeat (via their Modifier's
 ``modify_prompt`` hook) and can read/write/delete any element. The
 runtime tracks per-element modifications and warns on conflicts.
 
@@ -141,7 +141,7 @@ class PromptBuilder:
     ) -> str:
         """Convenience: build the default elements (no plugin
         modification) and serialize. Used by tests that exercise the
-        basic prompt shape without the runtime's full Reflect pipeline.
+        basic prompt shape without the runtime's full Modifier pipeline.
         Production callers should use ``build_default_elements`` +
         plugin ``modify_prompt`` hooks + ``render`` instead."""
         return self.render(self.build_default_elements(

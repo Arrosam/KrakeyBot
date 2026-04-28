@@ -211,40 +211,40 @@ async def test_upload_endpoint_saves_files_and_serves_them(tmp_path, monkeypatch
         assert r2.content == b"hi there"
 
 
-# ---- Reflects discovery + per-plugin config endpoints ----------------
+# ---- Modifiers discovery + per-plugin config endpoints ----------------
 
 
-async def test_reflects_available_lists_metadata(tmp_path):
-    """The /api/reflects/available endpoint exposes every Reflect's
+async def test_modifiers_available_lists_metadata(tmp_path):
+    """The /api/modifiers/available endpoint exposes every Modifier's
     static metadata so the dashboard can render the available-plugin
     list without importing plugin code."""
     p = tmp_path / "config.yaml"
     p.write_text("a: 1\n", encoding="utf-8")
     async with _client(config_path=p) as c:
-        r = await c.get("/api/reflects/available")
+        r = await c.get("/api/modifiers/available")
     assert r.status_code == 200
-    names = {entry["name"] for entry in r.json()["reflects"]}
+    names = {entry["name"] for entry in r.json()["modifiers"]}
     # All three in-tree built-ins must be discovered
     assert {"hypothalamus", "recall",
             "in_mind_note"} <= names
 
     # Hypothalamus declares its `translator` purpose
-    by_name = {e["name"]: e for e in r.json()["reflects"]}
+    by_name = {e["name"]: e for e in r.json()["modifiers"]}
     purposes = by_name["hypothalamus"]["llm_purposes"]
     assert any(p.get("name") == "translator" for p in purposes)
 
 
-async def test_reflect_config_get_missing_returns_empty(tmp_path):
+async def test_modifier_config_get_missing_returns_empty(tmp_path):
     p = tmp_path / "config.yaml"
     p.write_text("a: 1\n", encoding="utf-8")
     async with _client(config_path=p) as c:
-        r = await c.get("/api/reflects/some_reflect/config")
+        r = await c.get("/api/modifiers/some_modifier/config")
     assert r.status_code == 200
     assert r.json()["config"] == {}
 
 
-async def test_reflect_config_save_and_read_back(tmp_path, monkeypatch):
-    """POST /api/reflects/<name>/config writes the workspace file;
+async def test_modifier_config_save_and_read_back(tmp_path, monkeypatch):
+    """POST /api/modifiers/<name>/config writes the workspace file;
     a follow-up GET reads it back. Path is rooted under
     `workspace/plugins/`; isolate to tmp_path so the test doesn't
     write into the real workspace."""
@@ -254,7 +254,7 @@ async def test_reflect_config_save_and_read_back(tmp_path, monkeypatch):
 
     async with _client(config_path=cfg_path) as c:
         save = await c.post(
-            "/api/reflects/hypothalamus/config",
+            "/api/modifiers/hypothalamus/config",
             json={"config": {
                 "llm_purposes": {"translator": "fast_generation"},
             }},
@@ -262,7 +262,7 @@ async def test_reflect_config_save_and_read_back(tmp_path, monkeypatch):
         assert save.status_code == 200
         assert save.json()["restart_required"] is True
 
-        read = await c.get("/api/reflects/hypothalamus/config")
+        read = await c.get("/api/modifiers/hypothalamus/config")
         assert read.status_code == 200
         body = read.json()["config"]
         assert body["llm_purposes"] == {"translator": "fast_generation"}

@@ -38,7 +38,7 @@ def test_dna_mentions_active_memory_recall():
     d = DNA.lower()
     assert "proactive" in d or "主动" in DNA or "explicit" in d
     assert "recall" in d
-    assert "reflect" in d or "反思" in DNA
+    assert "modifier" in d or "反思" in DNA
     assert "[capabilities]" in d
 
 

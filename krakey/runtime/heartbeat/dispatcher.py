@@ -1,6 +1,6 @@
 """Decision-result side-effects executor — extracted from Runtime.
 
-After the hypothalamus Reflect (or the tool-call executor fallback)
+After the hypothalamus Modifier (or the tool-call executor fallback)
 turns Self's natural-language [DECISION] into a structured
 ``DecisionResult``, four side-effects need to fire:
 
@@ -31,7 +31,7 @@ from krakey.runtime.events.event_types import (
 )
 
 if TYPE_CHECKING:
-    from krakey.interfaces.reflect import DecisionResult, ToolCall
+    from krakey.interfaces.modifier import DecisionResult, ToolCall
     from krakey.interfaces.tool import ToolRegistry
     from krakey.memory.graph_memory import GraphMemory
     from krakey.runtime.stimuli.batch_tracker import BatchTrackerChannel

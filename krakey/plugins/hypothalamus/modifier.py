@@ -1,4 +1,4 @@
-"""Hypothalamus Reflect — LLM-driven [DECISION] → tool-call translator.
+"""Hypothalamus Modifier — LLM-driven [DECISION] → tool-call translator.
 
 Stateless: every call is an independent LLM invocation. Converts
 Self's natural-language [DECISION] into structured ``ToolCall``
@@ -7,7 +7,7 @@ objects, memory writes/updates, and the sleep flag.
 Only loaded by ``src.plugin_system.load_component`` when
 ``hypothalamus`` is listed in ``config.yaml``'s ``plugins:``.
 The contract types (``ToolCall``, ``DecisionResult``) live
-in ``src.interfaces.reflect`` so the runtime can consume them without
+in ``src.interfaces.modifier`` so the runtime can consume them without
 importing this plugin.
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ import json
 import re
 from typing import TYPE_CHECKING, Any
 
-from krakey.interfaces.reflect import DecisionResult, ToolCall
+from krakey.interfaces.modifier import DecisionResult, ToolCall
 from krakey.llm.resolve import ChatLike
 
 if TYPE_CHECKING:
@@ -67,7 +67,7 @@ SYSTEM_PROMPT = """# Hypothalamus — 行动翻译器
 _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 
 
-class HypothalamusReflectImpl:
+class HypothalamusModifierImpl:
     """LLM-driven [DECISION] → tool-call translator.
 
     Stateless: every ``translate()`` call is an independent
@@ -109,14 +109,14 @@ class HypothalamusReflectImpl:
         return _to_result(data)
 
 
-def build_reflect(ctx: "PluginContext") -> HypothalamusReflectImpl | None:
+def build_modifier(ctx: "PluginContext") -> HypothalamusModifierImpl | None:
     """Factory invoked by ``load_component``.
 
     Reads its own ``llm_purposes.translator`` binding from
     ``workspace/plugins/hypothalamus/config.yaml`` (surfaced via
     ``ctx.config``), then asks the runtime to resolve that tag to
     a concrete ``LLMClient``. When the binding is missing or the tag
-    is unknown, returns ``None`` — the loader skips this Reflect
+    is unknown, returns ``None`` — the loader skips this Modifier
     rather than crashing the runtime (additive plugin model).
     """
     import logging
@@ -133,7 +133,7 @@ def build_reflect(ctx: "PluginContext") -> HypothalamusReflectImpl | None:
             "Skipping registration."
         )
         return None
-    return HypothalamusReflectImpl(llm)
+    return HypothalamusModifierImpl(llm)
 
 
 def _format_tools(tools: list[dict[str, Any]]) -> str:

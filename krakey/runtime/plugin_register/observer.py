@@ -1,11 +1,11 @@
 """PluginObserver — read-only snapshot of what's currently registered.
 
-Walks the three registries (reflects / tools / channels) to
+Walks the three registries (modifiers / tools / channels) to
 produce a ``PluginInfo`` list and a dashboard-friendly dict. Pure
 read; observer holds no state of its own beyond a back-reference to
 the loader (used to label each component's ``source`` as either
 "builtin" — registered by the loader — or "core" — registered some
-other way, e.g. by a Reflect's ``attach()`` hook or directly by
+other way, e.g. by a Modifier's ``attach()`` hook or directly by
 runtime code).
 
 Called every time the dashboard's /api/plugins endpoint hits, so
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from krakey.interfaces.reflect import ReflectRegistry
+    from krakey.interfaces.modifier import ModifierRegistry
     from krakey.interfaces.tool import ToolRegistry
     from krakey.runtime.plugin_register.loader import PluginLoader
     from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class PluginInfo:
-    """Descriptor for one registered runtime component (reflect /
+    """Descriptor for one registered runtime component (modifier /
     tool / channel). Consumed by the dashboard's /api/plugins
     endpoint.
 
@@ -36,7 +36,7 @@ class PluginInfo:
     missing keys.
     """
     name: str                           # component name
-    kind: str                           # "reflect" | "tool" | "channel"
+    kind: str                           # "modifier" | "tool" | "channel"
     source: str                         # "builtin" | "core"
     path: str                           # module path on disk, "" today
     project: str = ""                   # containing plugin folder name
@@ -50,12 +50,12 @@ class PluginObserver:
     def __init__(
         self,
         *,
-        reflects: "ReflectRegistry",
+        modifiers: "ModifierRegistry",
         tools: "ToolRegistry",
         channels: "StimulusBuffer",
         loader: "PluginLoader",
     ):
-        self._reflects = reflects
+        self._modifiers = modifiers
         self._tools = tools
         self._channels = channels
         self._loader = loader
@@ -64,13 +64,13 @@ class PluginObserver:
         """Snapshot every currently-registered component as a
         ``PluginInfo``. ``source`` is "builtin" if the loader
         registered it, "core" if it landed in the registry some other
-        way (Reflect ``attach()``, BatchTracker, etc.).
+        way (Modifier ``attach()``, BatchTracker, etc.).
 
         Walks the live registries fresh each call — cheap, since
         registries are in-memory dicts/lists."""
         infos: list[PluginInfo] = []
-        for r in self._reflects.all():
-            infos.append(self._info("reflect", r.name))
+        for r in self._modifiers.all():
+            infos.append(self._info("modifier", r.name))
         for t in self._tools.all():
             infos.append(self._info("tool", t.name))
         for sname in self._channels.channel_names():
@@ -81,8 +81,8 @@ class PluginObserver:
         """Dashboard /api/plugins payload: tools + channels with
         a ``loaded`` flag (always True for items in the registry).
 
-        Reflects are not included in the report because the dashboard's
-        plugins panel only renders tools + channels — reflects
+        Modifiers are not included in the report because the dashboard's
+        plugins panel only renders tools + channels — modifiers
         live in their own panel that uses the catalogue scan, not this
         snapshot."""
         infos = self.collect_infos()

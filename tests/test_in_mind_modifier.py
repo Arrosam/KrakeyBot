@@ -1,16 +1,16 @@
-"""Reflect #3 — in_mind_note.
+"""Modifier #3 — in_mind_note.
 
 Coverage:
   * State store: missing file / load+save round-trip / corrupted JSON
     fallback / atomic write / now_iso bumped on update.
-  * Reflect: read / partial update / explicit clear via empty string /
+  * Modifier: read / partial update / explicit clear via empty string /
     None means leave-alone / timestamp updates.
   * Tool: dispatch via <tool_call> → state mutated + feedback
     receipt names what changed.
   * Prompt injection: virtual round appears in [HISTORY] when state
     populated; absent when all fields empty; instructions layer
-    present iff in_mind Reflect registered.
-  * Zero-plugin invariant: no in_mind Reflect → no virtual round, no
+    present iff in_mind Modifier registered.
+  * Zero-plugin invariant: no in_mind Modifier → no virtual round, no
     instructions layer, runtime fine.
   * attach() registers the update_in_mind tool; double-attach is
     tolerated.
@@ -23,8 +23,8 @@ from types import SimpleNamespace
 import pytest
 
 from krakey.memory.recall import RecallResult
-from krakey.plugins.in_mind_note.reflect import (
-    InMindReflectImpl, build_reflect,
+from krakey.plugins.in_mind_note.modifier import (
+    InMindModifierImpl, build_modifier,
 )
 from krakey.plugins.in_mind_note.state import (
     InMindState, load, now_iso, save,
@@ -107,11 +107,11 @@ def test_state_is_empty_predicate():
     assert InMindState(updated_at="2026-01-01T00:00:00").is_empty()
 
 
-# ---- reflect -- read / update semantics ------------------------------
+# ---- modifier -- read / update semantics ------------------------------
 
 
-def test_reflect_starts_empty_when_state_file_absent(tmp_path):
-    r = InMindReflectImpl(state_path=tmp_path / "in_mind.json")
+def test_modifier_starts_empty_when_state_file_absent(tmp_path):
+    r = InMindModifierImpl(state_path=tmp_path / "in_mind.json")
     assert r.read() == {
         "thoughts": "", "mood": "", "focus": "", "updated_at": "",
     }
@@ -119,7 +119,7 @@ def test_reflect_starts_empty_when_state_file_absent(tmp_path):
 
 def test_update_partial_only_touches_named_fields(tmp_path):
     p = tmp_path / "in_mind.json"
-    r = InMindReflectImpl(state_path=p)
+    r = InMindModifierImpl(state_path=p)
     r.update(thoughts="t1", mood="m1", focus="f1")
     snapshot1 = r.read()
     # Now update only `thoughts`
@@ -133,7 +133,7 @@ def test_update_partial_only_touches_named_fields(tmp_path):
 
 
 def test_update_empty_string_clears_field(tmp_path):
-    r = InMindReflectImpl(state_path=tmp_path / "in_mind.json")
+    r = InMindModifierImpl(state_path=tmp_path / "in_mind.json")
     r.update(thoughts="t", mood="m", focus="f")
     r.update(mood="")  # explicit clear
     snap = r.read()
@@ -143,7 +143,7 @@ def test_update_empty_string_clears_field(tmp_path):
 
 
 def test_update_none_field_means_leave_alone(tmp_path):
-    r = InMindReflectImpl(state_path=tmp_path / "in_mind.json")
+    r = InMindModifierImpl(state_path=tmp_path / "in_mind.json")
     r.update(thoughts="t", mood="m", focus="f")
     before = r.read()
     r.update(thoughts=None, mood=None, focus=None)
@@ -155,22 +155,22 @@ def test_update_none_field_means_leave_alone(tmp_path):
     assert after["updated_at"] == before["updated_at"]
 
 
-def test_update_persists_across_reflect_instances(tmp_path):
+def test_update_persists_across_modifier_instances(tmp_path):
     p = tmp_path / "in_mind.json"
-    InMindReflectImpl(state_path=p).update(thoughts="persist me")
+    InMindModifierImpl(state_path=p).update(thoughts="persist me")
     # New instance reads from disk
-    assert InMindReflectImpl(state_path=p).read()["thoughts"] == "persist me"
+    assert InMindModifierImpl(state_path=p).read()["thoughts"] == "persist me"
 
 
-def test_build_reflect_factory_signature():
-    """build_reflect takes a PluginContext; reads the deps' state
+def test_build_modifier_factory_signature():
+    """build_modifier takes a PluginContext; reads the deps' state
     path override (None for the default behavior)."""
     from krakey.interfaces.plugin_context import PluginContext
     fake_deps = SimpleNamespace(in_mind_state_path=None)
     ctx = PluginContext(deps=fake_deps, plugin_name="in_mind_note",
                           config={})
-    r = build_reflect(ctx)
-    assert isinstance(r, InMindReflectImpl)
+    r = build_modifier(ctx)
+    assert isinstance(r, InMindModifierImpl)
     assert r.role == "in_mind"
     assert r.name == "in_mind_note"
 
@@ -207,15 +207,15 @@ def _counts():
     )
 
 
-async def test_runtime_prompt_omits_in_mind_layers_when_no_reflect(
+async def test_runtime_prompt_omits_in_mind_layers_when_no_modifier(
     tmp_path,
 ):
-    """No in_mind Reflect registered → no virtual round, no
+    """No in_mind Modifier registered → no virtual round, no
     instructions layer. Zero-plugin invariant."""
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=[],  # explicitly nothing
+        modifiers=[],  # explicitly nothing
     )
     await runtime.gm.initialize()
     runtime._recall = runtime._new_recall()
@@ -229,12 +229,12 @@ async def test_runtime_prompt_omits_in_mind_layers_when_no_reflect(
 async def test_runtime_prompt_includes_instructions_when_in_mind_active(
     tmp_path,
 ):
-    """in_mind Reflect registered → instructions layer present even
+    """in_mind Modifier registered → instructions layer present even
     if the state itself is empty (no virtual round in that case)."""
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=["in_mind_note"],
+        modifiers=["in_mind_note"],
     )
     await runtime.gm.initialize()
     runtime._recall = runtime._new_recall()
@@ -255,11 +255,11 @@ async def test_runtime_prompt_includes_virtual_round_when_state_set(
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=["in_mind_note"],
+        modifiers=["in_mind_note"],
     )
-    # Mutate the in_mind Reflect's state directly so we don't need to
+    # Mutate the in_mind Modifier's state directly so we don't need to
     # round-trip through the tool for this prompt-shape test.
-    in_mind = runtime.reflects.by_role("in_mind")
+    in_mind = runtime.modifiers.by_role("in_mind")
     assert in_mind is not None
     in_mind.update(
         thoughts="thinking about Cython hot loops",
@@ -281,7 +281,7 @@ async def test_attach_registers_update_in_mind_tool(tmp_path):
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=["in_mind_note"],
+        modifiers=["in_mind_note"],
     )
     assert "update_in_mind" in runtime.tools
 
@@ -292,10 +292,10 @@ async def test_attach_tolerates_pre_existing_tool(tmp_path):
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=["in_mind_note"],
+        modifiers=["in_mind_note"],
     )
     # Second attach shouldn't raise
-    runtime.reflects.attach_all(runtime)
+    runtime.modifiers.attach_all(runtime)
     assert "update_in_mind" in runtime.tools
 
 
@@ -318,13 +318,13 @@ async def test_self_can_dispatch_update_in_mind_via_action_executor(
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        reflects=["in_mind_note"],  # only in_mind, no hypothalamus
+        modifiers=["in_mind_note"],  # only in_mind, no hypothalamus
     )
     # The helper has already provisioned a tmpdir state file via
-    # RuntimeDeps.in_mind_state_path, so the Reflect's state lives
+    # RuntimeDeps.in_mind_state_path, so the Modifier's state lives
     # there — not in production. Capture the path for the post-run
     # assertion below.
-    in_mind = runtime.reflects.by_role("in_mind")
+    in_mind = runtime.modifiers.by_role("in_mind")
     isolated_state_path = in_mind._state_path
 
     await runtime.run(iterations=1)

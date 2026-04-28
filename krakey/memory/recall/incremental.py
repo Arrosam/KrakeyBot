@@ -9,9 +9,9 @@ What lives here:
                          + hibernate (``processed_stimuli`` attr,
                          ``add_stimuli``, ``finalize``). Any plugin
                          that implements this Protocol can claim the
-                         ``recall_anchor`` Reflect role.
+                         ``recall_anchor`` Modifier role.
   * ``NoopRecall``     — concrete null-object used when no
-                         Reflect claims the ``recall_anchor`` role.
+                         Modifier claims the ``recall_anchor`` role.
                          Honors the additive-plugin invariant
                          (CLAUDE.md): disabling the recall plugin
                          must not break the heartbeat.
@@ -63,7 +63,7 @@ class RecallLike(Protocol):
 
 class NoopRecall:
     """No-op stand-in. Returned by ``HeartbeatOrchestrator.new_recall``
-    when no ``recall_anchor`` Reflect is registered. Self heartbeats
+    when no ``recall_anchor`` Modifier is registered. Self heartbeats
     with an empty ``[GRAPH MEMORY]`` layer — graceful degradation,
     not a crash.
 

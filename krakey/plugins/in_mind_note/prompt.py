@@ -1,11 +1,11 @@
-"""Prompt-side rendering for the in_mind Reflect.
+"""Prompt-side rendering for the in_mind Modifier.
 
 Two pieces:
 
   * ``IN_MIND_INSTRUCTIONS_LAYER`` — constant string injected as a
     standalone prompt layer (between [CAPABILITIES] and [STIMULUS]).
     Cache-friendly: only present / absent depending on whether the
-    in_mind Reflect is registered, never changing content within a
+    in_mind Modifier is registered, never changing content within a
     run. Its job is to teach Self **when** to call ``update_in_mind``.
   * ``render_virtual_round(state)`` — formats the per-beat virtual
     round prepended to [HISTORY] when at least one in_mind field is

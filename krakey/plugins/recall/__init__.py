@@ -3,7 +3,7 @@
 Two components ship together because they are **two stages of one
 discovery pipeline**, not two unrelated capabilities:
 
-  1. The Reflect (passive, per-beat) vec-searches GM against incoming
+  1. The Modifier (passive, per-beat) vec-searches GM against incoming
      ``[STIMULUS]`` content and fills the ``[GRAPH MEMORY]`` prompt
      layer with the highest-weighted nodes that fit the token budget.
      KB *index nodes* (placed by Sleep when migrating mature GM
@@ -19,5 +19,5 @@ Sharing the package keeps the two halves enabled or disabled together
 (consistent UX), gives the shared GM-query primitive a clean home
 (``gm_query.py``), and makes the pipeline visible to anyone reading
 the plugin folder. Same packaging pattern as ``in_mind_note``
-(reflect-owns-state + tool-mutates-state).
+(modifier-owns-state + tool-mutates-state).
 """

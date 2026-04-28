@@ -49,7 +49,7 @@ class MemoryRecallTool(Tool):
     @property
     def description(self) -> str:
         return ("Self-initiated memory recall. Use when you want to remember, "
-                "reflect, or browse what you already know about a topic. "
+                "modifier, or browse what you already know about a topic. "
                 "Returns matching GM nodes + neighbors + edges + (when a KB "
                 "index node hits or kb_id is given) entries from that KB.")
 

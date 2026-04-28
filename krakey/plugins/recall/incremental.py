@@ -1,7 +1,7 @@
 """IncrementalRecall — the per-stimulus search + weighted-merge driver.
 
 Lives in this plugin (not in ``krakey/memory/recall/``) because it is
-the *implementation* of the ``recall_anchor`` Reflect role and the
+the *implementation* of the ``recall_anchor`` Modifier role and the
 **only producer** of the type. Core defines the ``RecallLike``
 Protocol that ``Runtime`` types against; this module supplies one
 concrete implementation. A future plugin can ship a different

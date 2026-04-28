@@ -1,11 +1,11 @@
 """Shared GM-query primitive.
 
-Both the auto-recall reflect (``incremental.py``) and the explicit
+Both the auto-recall modifier (``incremental.py``) and the explicit
 ``memory_recall`` tool (``tool.py``) need the same low-level
 operation: turn a query string into a list of GM nodes via vector
 search, falling back to FTS when the embedder is down or vec_search
 returns nothing. They each layer different orchestration on top —
-the reflect accumulates across stimuli with weight-merge, the
+the modifier accumulates across stimuli with weight-merge, the
 tool takes the first batch and dedups for top-K — but the bottom
 turn-text-into-candidates step is identical. Living here, used by
 both, single source of truth.

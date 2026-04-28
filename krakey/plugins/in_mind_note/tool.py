@@ -2,8 +2,8 @@
 in_mind state.
 
 Built by ``build_tool(ctx)`` as the second component of the
-``in_mind_note`` plugin. Pulls the already-built reflect instance
-from ``ctx.plugin_cache`` (the reflect factory ran first because
+``in_mind_note`` plugin. Pulls the already-built modifier instance
+from ``ctx.plugin_cache`` (the modifier factory ran first because
 ``components:`` lists it first). The execute() result is a feedback
 receipt for Self only — there's no separate human-facing channel
 to broadcast to (in_mind is pure inner state).
@@ -33,37 +33,37 @@ from krakey.plugins.in_mind_note import _CACHE_KEY
 
 if TYPE_CHECKING:
     from krakey.interfaces.plugin_context import PluginContext
-    from krakey.plugins.in_mind_note.reflect import (
-        InMindReflectImpl,
+    from krakey.plugins.in_mind_note.modifier import (
+        InMindModifierImpl,
     )
 
 
 def build_tool(ctx: "PluginContext") -> "UpdateInMindTool | None":
-    """Factory for the second component. Grabs the reflect instance
-    that the reflect factory stashed in ``ctx.plugin_cache`` and wires
-    the tool to it. Returns ``None`` (opt-out) if the reflect
+    """Factory for the second component. Grabs the modifier instance
+    that the modifier factory stashed in ``ctx.plugin_cache`` and wires
+    the tool to it. Returns ``None`` (opt-out) if the modifier
     factory didn't run — the additive-plugin invariant: a missing
     half degrades, doesn't crash."""
-    reflect = ctx.plugin_cache.get(_CACHE_KEY)
-    if reflect is None:
+    modifier = ctx.plugin_cache.get(_CACHE_KEY)
+    if modifier is None:
         import logging
         logging.getLogger(__name__).warning(
-            "in_mind_note tool skipped: reflect not in "
+            "in_mind_note tool skipped: modifier not in "
             "plugin_cache. Components likely loaded out of order.",
         )
         return None
-    return UpdateInMindTool(reflect)
+    return UpdateInMindTool(modifier)
 
 
 class UpdateInMindTool(Tool):
-    """Self-facing tool that calls back into the in_mind Reflect.
+    """Self-facing tool that calls back into the in_mind Modifier.
 
     Held by reference, not registry lookup, so the link is direct
-    and immune to reflect re-registration weirdness.
+    and immune to modifier re-registration weirdness.
     """
 
-    def __init__(self, reflect: "InMindReflectImpl"):
-        self._reflect = reflect
+    def __init__(self, modifier: "InMindModifierImpl"):
+        self._modifier = modifier
 
     @property
     def name(self) -> str:
@@ -106,7 +106,7 @@ class UpdateInMindTool(Tool):
     ) -> Stimulus:
         # Pull only the three known fields; ignore extras silently
         # (forward-compat if Self over-specifies).
-        new_state = self._reflect.update(
+        new_state = self._modifier.update(
             thoughts=params.get("thoughts"),
             mood=params.get("mood"),
             focus=params.get("focus"),

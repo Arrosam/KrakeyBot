@@ -14,7 +14,7 @@ change and pushes updates to the browser over Server-Sent Events.
 
 Edge resolution is heuristic — we resolve names that come through
 ``import`` / ``from … import`` statements and ``self.method`` calls
-within the same class. Reflective / dynamic dispatch is not tracked.
+within the same class. Runtime / dynamic dispatch is not tracked.
 """
 from __future__ import annotations
 

@@ -1,10 +1,10 @@
-"""``in_mind_note`` Reflect — owner of Self's in-mind state.
+"""``in_mind_note`` Modifier — owner of Self's in-mind state.
 
 Imported lazily by ``src.plugin_system.load_component``.
-The plugin contributes TWO components: this reflect (owns the state)
+The plugin contributes TWO components: this modifier (owns the state)
 and ``tool.UpdateInMindTool`` (lets Self mutate the state via
 the normal action-dispatch pipeline). The factories share the
-reflect instance via ``ctx.plugin_cache`` — same pattern telegram +
+modifier instance via ``ctx.plugin_cache`` — same pattern telegram +
 dashboard use to share a client / history across their components.
 """
 from __future__ import annotations
@@ -23,16 +23,16 @@ _log = logging.getLogger(__name__)
 
 
 # Lock-in (Samuel 2026-04-25): state files live under
-# workspace/data/, not workspace/reflects/. State ≠ config.
+# workspace/data/, not workspace/modifiers/. State ≠ config.
 DEFAULT_STATE_PATH = Path("workspace") / "data" / "in_mind.json"
 
 
-class InMindReflectImpl:
+class InMindModifierImpl:
     """Runtime owner of Self's in_mind state.
 
     Reads from / writes to the JSON state file. Exposes ``read`` /
     ``update`` for the prompt builder + the ``update_in_mind``
-    tool. No LLM in this Reflect — pure state plumbing.
+    tool. No LLM in this Modifier — pure state plumbing.
     """
 
     name = "in_mind_note"
@@ -42,7 +42,7 @@ class InMindReflectImpl:
         self._state_path = Path(state_path)
         self._state = state_mod.load(self._state_path)
 
-    # ---- public surface (InMindReflect Protocol) -----------------------
+    # ---- public surface (InMindModifier Protocol) -----------------------
 
     def read(self) -> dict[str, str]:
         """Snapshot dict — safe to mutate; we don't share the inner
@@ -113,20 +113,20 @@ class InMindReflectImpl:
         return self.read()
 
 
-def build_reflect(ctx: "PluginContext") -> InMindReflectImpl:
+def build_modifier(ctx: "PluginContext") -> InMindModifierImpl:
     """Factory invoked by ``load_component``. Stashes the instance in
     ``ctx.plugin_cache`` so the sibling tool factory (loaded next,
-    same plugin) can wire to the same reflect.
+    same plugin) can wire to the same modifier.
 
     ``ctx.deps.in_mind_state_path`` is honored when provided so tests
     can isolate the state file. Production leaves it ``None`` and
-    the Reflect uses the locked-in
+    the Modifier uses the locked-in
     ``workspace/data/in_mind.json``. No LLM purposes declared.
     """
     state_path = (
         getattr(ctx.deps, "in_mind_state_path", None)
         or DEFAULT_STATE_PATH
     )
-    reflect = InMindReflectImpl(state_path=state_path)
-    ctx.plugin_cache[_CACHE_KEY] = reflect
-    return reflect
+    modifier = InMindModifierImpl(state_path=state_path)
+    ctx.plugin_cache[_CACHE_KEY] = modifier
+    return modifier

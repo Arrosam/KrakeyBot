@@ -292,7 +292,7 @@ def _raise_old_roles_migration_error() -> None:
         "  Per-plugin (workspace/plugins/<name>/config.yaml):\n"
         "    llm_purposes:\n"
         "      <purpose_name>: <tag_name>\n\n"
-        "See docs/design/reflects-and-self-model.md for the full spec.\n"
+        "See docs/design/modifiers-and-self-model.md for the full spec.\n"
         "Krakey will not start until this migrates."
     )
     print(msg, file=sys.stderr)

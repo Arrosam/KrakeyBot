@@ -335,22 +335,22 @@ class HeartbeatOrchestrator:
         """Convert Self's response into tool calls + dispatch.
 
         Two paths, picked by registry lookup:
-          * A Reflect with role="hypothalamus" registered → LLM
+          * A Modifier with role="hypothalamus" registered → LLM
             translation of ``parsed.decision``.
-          * No such Reflect → script-only action executor scans
+          * No such Modifier → script-only action executor scans
             ``parsed.raw`` for ``<tool_call>...</tool_call>`` blocks.
 
         Returns True iff Self requested sleep.
         """
         rt = self._rt
-        from krakey.interfaces.reflect import DecisionResult
+        from krakey.interfaces.modifier import DecisionResult
         from krakey.runtime.heartbeat.action_executor import parse_action_block
 
         decision = parsed.decision.strip().lower()
         if not decision or decision in ("no action", "无行动"):
             return False
 
-        translator = rt.reflects.by_role("hypothalamus")
+        translator = rt.modifiers.by_role("hypothalamus")
         try:
             if translator is not None:
                 result = await translator.translate(
@@ -429,18 +429,18 @@ class HeartbeatOrchestrator:
             stimuli=stimuli,
             current_time=datetime.now(),
         )
-        # 2. Each Reflect that defines a modify_prompt hook gets its
+        # 2. Each Modifier that defines a modify_prompt hook gets its
         #    chance to mutate. Modifications are tracked per element;
         #    PromptElements logs a warning on second-write conflicts.
-        for reflect in rt.reflects.all():
-            modify = getattr(reflect, "modify_prompt", None)
+        for modifier in rt.modifiers.all():
+            modify = getattr(modifier, "modify_prompt", None)
             if modify is None:
                 continue
             try:
-                modify(elements.for_plugin(reflect.name))
+                modify(elements.for_plugin(modifier.name))
             except Exception as e:  # noqa: BLE001
                 rt.log.runtime_error(
-                    f"Reflect {reflect.name!r} modify_prompt raised "
+                    f"Modifier {modifier.name!r} modify_prompt raised "
                     f"{type(e).__name__}: {e}; ignoring its modifications"
                 )
         # 3. Bootstrap intro is runtime-owned (BootstrapCoordinator is
@@ -546,11 +546,11 @@ class HeartbeatOrchestrator:
         })
 
     def new_recall(self) -> "RecallLike":
-        # Look up the Reflect that claimed the "recall_anchor" role.
+        # Look up the Modifier that claimed the "recall_anchor" role.
         # Without one, fall back to NoopRecall (Self heartbeats with
         # an empty [GRAPH MEMORY] layer — graceful degradation per
         # the additive-plugin invariant).
-        anchor = self._rt.reflects.by_role("recall_anchor")
+        anchor = self._rt.modifiers.by_role("recall_anchor")
         if anchor is None:
             from krakey.memory.recall import NoopRecall
             return NoopRecall()

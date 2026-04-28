@@ -4,7 +4,7 @@ The loader is fire-and-forget: ``register_from_config(deps)`` walks the
 enabled-plugin list once at runtime startup, opens each plugin's
 ``meta.yaml`` (no scan), reads its per-plugin config, builds a
 ``PluginContext`` per declared component, invokes the factory, and
-routes the returned instance to the right registry (reflect / tool
+routes the returned instance to the right registry (modifier / tool
 / channel).
 
 Failure modes are isolated per-plugin AND per-component (broken
@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from krakey.interfaces.reflect import ReflectRegistry
+    from krakey.interfaces.modifier import ModifierRegistry
     from krakey.interfaces.tool import ToolRegistry
     from krakey.models.config import Config
     from krakey.runtime.runtime import RuntimeDeps
@@ -41,20 +41,20 @@ class PluginLoader:
 
     Records what it registered as ``(kind, name)`` pairs in
     ``self.registered`` so the observer can distinguish loader-installed
-    components from those registered by other paths (e.g. reflect
+    components from those registered by other paths (e.g. modifier
     ``attach()`` extras, BatchTracker)."""
 
     def __init__(
         self,
         *,
         config: "Config",
-        reflects: "ReflectRegistry",
+        modifiers: "ModifierRegistry",
         tools: "ToolRegistry",
         channels: "StimulusBuffer",
         services: dict[str, Any],
     ):
         self._config = config
-        self._reflects = reflects
+        self._modifiers = modifiers
         self._tools = tools
         self._channels = channels
         self._services = services
@@ -143,8 +143,8 @@ class PluginLoader:
         the observer can label it as plugin-sourced."""
         kind = component.kind
         try:
-            if kind == "reflect":
-                self._reflects.register(instance)
+            if kind == "modifier":
+                self._modifiers.register(instance)
             elif kind == "tool":
                 self._tools.register(instance)
             elif kind == "channel":

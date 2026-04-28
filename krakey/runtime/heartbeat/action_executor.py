@@ -2,7 +2,7 @@
 out of Self's raw response into ``ToolCall`` objects.
 
 This is the default tool-dispatch path when no decision-translator
-Reflect (e.g. the hypothalamus plugin) is registered. Format chosen
+Modifier (e.g. the hypothalamus plugin) is registered. Format chosen
 for breadth of training coverage in modern open-source models —
 Hermes / Qwen 2.5+ emit this format natively (their tokenizers
 reserve ``<tool_call>`` / ``</tool_call>`` as special tokens), and
@@ -33,7 +33,7 @@ import logging
 import re
 from typing import Any
 
-from krakey.interfaces.reflect import ToolCall
+from krakey.interfaces.modifier import ToolCall
 
 _log = logging.getLogger(__name__)
 

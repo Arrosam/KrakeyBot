@@ -15,7 +15,7 @@ cycles, heartbeat counts, last-X timestamps) lives on the Runtime
 object in memory; nothing in Self-model is "statistics".
 
 This is the result of the 2026-04-25 self-model slim refactor —
-see docs/design/reflects-and-self-model.md (Part 1) for the full
+see docs/design/modifiers-and-self-model.md (Part 1) for the full
 rationale.
 """
 from __future__ import annotations

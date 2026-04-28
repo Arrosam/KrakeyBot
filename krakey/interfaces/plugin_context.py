@@ -1,7 +1,7 @@
 """``PluginContext`` — what every plugin's factory sees.
 
 Passed to ``build_<component>(ctx)`` for every plugin kind
-(reflect / tool / channel). Carries:
+(modifier / tool / channel). Carries:
 
   * ``ctx.config`` — the parsed contents of the plugin's own
     ``workspace/plugins/<plugin>/config.yaml``. Plugin code reads
