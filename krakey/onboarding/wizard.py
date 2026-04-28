@@ -107,6 +107,19 @@ def run_wizard(
     rerank_cfg = _ask_reranker(input_fn, output_fn, chat, embed, verify)
     plugins = _ask_plugins(input_fn, output_fn, list_plugins_fn())
 
+    # When chat was skipped, the user has NO LLM configured — they
+    # depend entirely on the dashboard to fill it in later. Force-add
+    # the dashboard plugin if it's available and they unchecked it.
+    if chat is None and "dashboard" not in plugins:
+        try_available = list_plugins_fn()
+        if "dashboard" in try_available:
+            output_fn(
+                "  [warn] no chat provider configured AND dashboard "
+                "is unselected — auto-enabling dashboard so you have "
+                "a way to configure providers later."
+            )
+            plugins = ["dashboard"] + plugins
+
     cfg = _build_config(chat, embed, rerank_cfg, plugins)
 
     if not _confirm_save(input_fn, output_fn, cfg, cfg_path):
@@ -131,26 +144,86 @@ def run_wizard(
     return cfg_path
 
 
-# ---- Step 1: chat provider --------------------------------------
+# ---- Provider-type helper (shared by chat/embedding/reranker) ---
 
-def _ask_chat_provider(
-    input_fn: InputFn, output_fn: OutputFn, verify: VerifyFn,
-) -> tuple[str, Provider, str]:
-    output_fn("\n--- Step 1/4: chat LLM provider ---")
-    name = _prompt(input_fn, "Provider label (e.g. 'OpenAI')",
-                   default="OpenAI")
-    base_url = _prompt(
-        input_fn, "Base URL (e.g. https://api.openai.com/v1)",
-        default="",
+def _ask_provider_type(
+    input_fn: InputFn, output_fn: OutputFn, *,
+    label: str, default_index: int = 1,
+) -> str | None:
+    """Ask the user which provider family this {label} talks to.
+
+    Returns one of:
+      * ``"openai_compatible"`` — OpenAI, DashScope, llama-server, vllm,
+        lmstudio, ollama (OpenAI-compat mode), OneAPI, SiliconFlow, ...
+      * ``"anthropic"`` — direct Anthropic API
+      * ``None`` — user chose to skip; they'll configure in the dashboard
+
+    ``default_index`` is the 1-based pick when the user just hits Enter.
+    """
+    output_fn(
+        f"\n  Which API does the {label} provider talk?\n"
+        "    1. openai_compatible  (OpenAI, DashScope, OneAPI, "
+        "SiliconFlow, llama-server, vllm, lmstudio, ollama, ...)\n"
+        "    2. anthropic          (Anthropic API directly)\n"
+        "    3. skip for now       (configure later in the dashboard)"
     )
+    while True:
+        raw = _prompt(input_fn, "Choice", default=str(default_index)).strip()
+        if raw in ("1", "openai", "openai_compatible"):
+            return "openai_compatible"
+        if raw in ("2", "anthropic"):
+            return "anthropic"
+        if raw in ("3", "skip", "s"):
+            return None
+        output_fn(f"  ? unknown choice: {raw!r}; please answer 1, 2, or 3.")
+
+
+def _collect_provider_fields(
+    input_fn: InputFn, *, provider_type: str,
+    default_label: str, default_base: str, default_model: str,
+) -> tuple[str, Provider, str]:
+    """Prompt for label / base URL / api key / model name. Defaults
+    vary by provider_type so the user gets sensible suggestions."""
+    name = _prompt(input_fn, "Provider label", default=default_label)
+    base_url = _prompt(input_fn, "Base URL", default=default_base)
     api_key = _prompt(
         input_fn, "API key (blank = leave empty / set later)",
         default="",
     )
-    model = _prompt(input_fn, "Model name (e.g. gpt-4o-mini)",
-                    default="")
+    model = _prompt(input_fn, "Model name", default=default_model)
     provider = Provider(
-        type="openai_compatible", base_url=base_url, api_key=api_key,
+        type=provider_type, base_url=base_url, api_key=api_key,
+    )
+    return name, provider, model
+
+
+def _skip_hint(output_fn: OutputFn, label: str) -> None:
+    output_fn(
+        f"  [skip] {label} not configured. You can fill it in via the "
+        "dashboard's LLM tab once Krakey is running, or by hand-editing "
+        "config.yaml. Make sure the dashboard plugin is enabled."
+    )
+
+
+# ---- Step 1: chat provider --------------------------------------
+
+def _ask_chat_provider(
+    input_fn: InputFn, output_fn: OutputFn, verify: VerifyFn,
+) -> tuple[str, Provider, str] | None:
+    output_fn("\n--- Step 1/4: chat LLM provider ---")
+    ptype = _ask_provider_type(input_fn, output_fn, label="chat")
+    if ptype is None:
+        _skip_hint(output_fn, "chat")
+        return None
+    if ptype == "anthropic":
+        defaults = ("Anthropic", "https://api.anthropic.com/v1",
+                    "claude-haiku-4-5-20251001")
+    else:
+        defaults = ("OpenAI", "", "gpt-4o-mini")
+    name, provider, model = _collect_provider_fields(
+        input_fn, provider_type=ptype,
+        default_label=defaults[0], default_base=defaults[1],
+        default_model=defaults[2],
     )
     _report_verify(output_fn, "chat", verify("chat", provider, model))
     return name, provider, model
@@ -160,36 +233,57 @@ def _ask_chat_provider(
 
 def _ask_embedding(
     input_fn: InputFn, output_fn: OutputFn,
-    chat: tuple[str, Provider, str],
+    chat: tuple[str, Provider, str] | None,
     verify: VerifyFn,
 ) -> tuple[str, Provider, str] | None:
     output_fn("\n--- Step 2/4: embedding model (optional) ---")
     output_fn(
         "Embeddings power memory recall and KB indexing. "
-        "You can skip and configure later by editing config.yaml.",
+        "Skip = recall + KB inert (no harm, just no memory benefits).",
     )
     if not _prompt_yes_no(
         input_fn, output_fn, "Configure an embedding model now?",
         default=True,
     ):
+        _skip_hint(output_fn, "embedding")
+        output_fn(
+            "  [warn] Self can't actively recall topics and sleep "
+            "won't migrate memories into KBs until you configure one."
+        )
         return None
-    same = _prompt_yes_no(
-        input_fn, output_fn, "Use the same provider as chat?",
-        default=False,
-    )
-    if same:
+    if chat is not None:
+        same = _prompt_yes_no(
+            input_fn, output_fn, "Use the same provider as chat?",
+            default=False,
+        )
+    else:
+        same = False
+    if same and chat is not None:
         emb_name, emb_provider, _ = chat
     else:
-        emb_name = _prompt(input_fn, "Embedding provider label",
-                            default="SiliconFlow")
-        emb_base = _prompt(
-            input_fn, "Embedding base URL",
-            default="https://api.siliconflow.cn",
+        ptype = _ask_provider_type(
+            input_fn, output_fn, label="embedding", default_index=1,
         )
-        emb_key = _prompt(input_fn, "Embedding API key", default="")
-        emb_provider = Provider(
-            type="openai_compatible", base_url=emb_base, api_key=emb_key,
+        if ptype is None:
+            _skip_hint(output_fn, "embedding")
+            return None
+        if ptype == "anthropic":
+            # Anthropic doesn't ship native embeddings, but allow the
+            # user to point at a proxy / aggregator that does.
+            defaults = ("Anthropic-proxy", "", "")
+        else:
+            defaults = ("SiliconFlow",
+                         "https://api.siliconflow.cn",
+                         "BAAI/bge-m3")
+        emb_name, emb_provider, emb_model = _collect_provider_fields(
+            input_fn, provider_type=ptype,
+            default_label=defaults[0], default_base=defaults[1],
+            default_model=defaults[2],
         )
+        _report_verify(output_fn, "embedding",
+                        verify("embedding", emb_provider, emb_model))
+        return emb_name, emb_provider, emb_model
+    # Reused chat provider — model still asked separately.
     emb_model = _prompt(input_fn, "Embedding model name",
                          default="BAAI/bge-m3")
     _report_verify(output_fn, "embedding",
@@ -201,13 +295,15 @@ def _ask_embedding(
 
 def _ask_reranker(
     input_fn: InputFn, output_fn: OutputFn,
-    chat: tuple[str, Provider, str],
+    chat: tuple[str, Provider, str] | None,
     embed: tuple[str, Provider, str] | None,
     verify: VerifyFn,
 ) -> tuple[str, Provider, str] | None:
     """Ask for an optional reranker. Defaults to reusing the embedding
     provider when one is configured (rerankers are commonly served
-    alongside embeddings); falls back to chat provider otherwise.
+    alongside embeddings); falls back to chat when there's no
+    embedding; falls back to fresh provider config when neither
+    earlier step landed.
 
     Skipping is fine: the runtime degrades gracefully — auto-recall
     falls back to scripted multi-axis scoring, and KB sleep dedup
@@ -225,34 +321,44 @@ def _ask_reranker(
     ):
         return None
 
-    # Default reuse: embedding provider if any, else chat provider.
+    # Default reuse: embedding provider if any, else chat provider, else
+    # ask fresh.
+    reuse_provider: tuple[str, Provider] | None = None
+    reuse_label = ""
     if embed is not None:
-        reuse_label = "embedding"
         reuse_provider = (embed[0], embed[1])
-    else:
-        reuse_label = "chat"
+        reuse_label = "embedding"
+    elif chat is not None:
         reuse_provider = (chat[0], chat[1])
+        reuse_label = "chat"
 
-    same = _prompt_yes_no(
-        input_fn, output_fn,
-        f"Use the same provider as {reuse_label}?",
-        default=True,
-    )
-    if same:
+    same = False
+    if reuse_provider is not None:
+        same = _prompt_yes_no(
+            input_fn, output_fn,
+            f"Use the same provider as {reuse_label}?",
+            default=True,
+        )
+
+    if same and reuse_provider is not None:
         rer_name, rer_provider = reuse_provider
+        rer_model = _prompt(input_fn, "Reranker model name",
+                             default="BAAI/bge-reranker-v2-m3")
     else:
-        rer_name = _prompt(input_fn, "Reranker provider label",
-                            default="SiliconFlow")
-        rer_base = _prompt(
-            input_fn, "Reranker base URL",
-            default="https://api.siliconflow.cn",
+        ptype = _ask_provider_type(
+            input_fn, output_fn, label="reranker", default_index=1,
         )
-        rer_key = _prompt(input_fn, "Reranker API key", default="")
-        rer_provider = Provider(
-            type="openai_compatible", base_url=rer_base, api_key=rer_key,
+        if ptype is None:
+            _skip_hint(output_fn, "reranker")
+            return None
+        defaults = ("SiliconFlow",
+                     "https://api.siliconflow.cn",
+                     "BAAI/bge-reranker-v2-m3")
+        rer_name, rer_provider, rer_model = _collect_provider_fields(
+            input_fn, provider_type=ptype,
+            default_label=defaults[0], default_base=defaults[1],
+            default_model=defaults[2],
         )
-    rer_model = _prompt(input_fn, "Reranker model name",
-                         default="BAAI/bge-reranker-v2-m3")
     _report_verify(output_fn, "reranker",
                     verify("reranker", rer_provider, rer_model))
     return rer_name, rer_provider, rer_model
@@ -327,24 +433,26 @@ def _print_plugin_list(
 # ---- Build Config -----------------------------------------------
 
 def _build_config(
-    chat: tuple[str, Provider, str],
+    chat: tuple[str, Provider, str] | None,
     embed: tuple[str, Provider, str] | None,
     rerank_cfg: tuple[str, Provider, str] | None,
     plugin_names: list[str],
 ) -> Config:
-    chat_name, chat_provider, chat_model = chat
-    providers = {chat_name: chat_provider}
-    tags = {
-        "self_main": TagBinding(
+    providers: dict[str, Provider] = {}
+    tags: dict[str, TagBinding] = {}
+    core_purposes: dict[str, str] = {}
+    if chat is not None:
+        chat_name, chat_provider, chat_model = chat
+        providers[chat_name] = chat_provider
+        tags["self_main"] = TagBinding(
             provider=f"{chat_name}/{chat_model}",
             params=LLMParams(),
-        ),
-    }
-    core_purposes = {
-        "self_thinking": "self_main",
-        "compact": "self_main",
-        "classifier": "self_main",
-    }
+        )
+        core_purposes = {
+            "self_thinking": "self_main",
+            "compact": "self_main",
+            "classifier": "self_main",
+        }
     embedding_tag: str | None = None
     if embed is not None:
         emb_name, emb_provider, emb_model = embed
@@ -431,10 +539,17 @@ def _default_verify(kind: str, provider: Provider,
     `urllib.request` so onboarding stays sync and dependency-light.
 
     Sends a minimal real request that exercises base URL + auth +
-    model name in one shot:
-      * chat       → POST /chat/completions, max_tokens=1
-      * embedding  → POST /embeddings, single input
-      * reranker   → POST /rerank, one query + one doc
+    model name in one shot. Endpoint + auth header shape vary by
+    `provider.type`:
+
+      * openai_compatible:
+          chat       → POST /chat/completions  + Authorization: Bearer
+          embedding  → POST /embeddings        + Authorization: Bearer
+          reranker   → POST /rerank            + Authorization: Bearer
+      * anthropic:
+          chat       → POST /messages          + x-api-key + anthropic-version
+          embedding/reranker: Anthropic API doesn't ship these natively;
+          skip the probe and report "skipped".
     """
     import json
     import socket
@@ -445,27 +560,39 @@ def _default_verify(kind: str, provider: Provider,
     if not base:
         return False, "no base URL configured"
 
-    if kind == "chat":
-        url = f"{base}/chat/completions"
+    headers = {"Content-Type": "application/json"}
+    if provider.type == "anthropic":
+        if kind != "chat":
+            return True, "skipped (anthropic native API has no /embeddings or /rerank)"
+        url = f"{base}/messages"
         body = {
             "model": model,
-            "messages": [{"role": "user", "content": "ping"}],
             "max_tokens": 1,
+            "messages": [{"role": "user", "content": "ping"}],
         }
-    elif kind == "embedding":
-        url = f"{base}/embeddings"
-        body = {"model": model, "input": "ping"}
-    elif kind == "reranker":
-        url = f"{base}/rerank"
-        body = {
-            "model": model, "query": "ping", "documents": ["test"],
-        }
+        if provider.api_key:
+            headers["x-api-key"] = provider.api_key
+        headers["anthropic-version"] = "2023-06-01"
     else:
-        return False, f"unknown verify kind {kind!r}"
-
-    headers = {"Content-Type": "application/json"}
-    if provider.api_key:
-        headers["Authorization"] = f"Bearer {provider.api_key}"
+        if kind == "chat":
+            url = f"{base}/chat/completions"
+            body = {
+                "model": model,
+                "messages": [{"role": "user", "content": "ping"}],
+                "max_tokens": 1,
+            }
+        elif kind == "embedding":
+            url = f"{base}/embeddings"
+            body = {"model": model, "input": "ping"}
+        elif kind == "reranker":
+            url = f"{base}/rerank"
+            body = {
+                "model": model, "query": "ping", "documents": ["test"],
+            }
+        else:
+            return False, f"unknown verify kind {kind!r}"
+        if provider.api_key:
+            headers["Authorization"] = f"Bearer {provider.api_key}"
 
     req = urllib.request.Request(
         url, data=json.dumps(body).encode("utf-8"),

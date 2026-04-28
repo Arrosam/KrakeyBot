@@ -52,7 +52,8 @@ def test_wizard_writes_minimal_config(tmp_path):
     in plugin picker. Resulting file round-trips through load_config."""
     cfg_path = tmp_path / "config.yaml"
     answers = [
-        # Step 1: chat provider
+        # Step 1: chat provider — choose openai_compatible (1)
+        "1",                             # provider type
         "MyOpenAI",                      # provider label
         "https://api.example.com",       # base url
         "sk-test-key",                   # api key
@@ -90,7 +91,7 @@ def test_wizard_dashboard_default_recommended_and_first(tmp_path):
     """Dashboard sorts to the top of the picker AND is preselected."""
     cfg_path = tmp_path / "config.yaml"
     answers = [
-        "P", "http://x", "k", "m",   # provider
+        "1", "P", "http://x", "k", "m",   # provider
         "n",                          # skip embedding
         "n",                          # skip reranker
         "done",                       # accept default
@@ -128,7 +129,7 @@ def test_wizard_toggle_plugin_selection(tmp_path):
     catalogue = _fake_catalogue("dashboard", "memory", "telegram")
     # Recommended-first sort: 1=dashboard, 2=memory, 3=telegram
     answers = [
-        "P", "http://x", "k", "m",   # provider
+        "1", "P", "http://x", "k", "m",   # provider
         "n",                          # skip embedding
         "n",                          # skip reranker
         "1",                          # toggle dashboard OFF
@@ -156,6 +157,7 @@ def test_wizard_embedding_same_provider_as_chat(tmp_path):
     cfg_path = tmp_path / "config.yaml"
     catalogue = _fake_catalogue("dashboard")
     answers = [
+        "1",                              # chat type: openai_compatible
         "ChatCo", "http://x", "k", "chat-model",
         "y", "y", "embed-model",   # embed: yes, same provider, model
         "n",                       # skip reranker
@@ -182,7 +184,7 @@ def test_wizard_backs_up_existing_config(tmp_path):
     cfg_path.write_text("existing: 1\n", encoding="utf-8")
     backup_dir = tmp_path / "backups"
     answers = [
-        "P", "http://x", "k", "m", "n", "n", "done", "y",
+        "1", "P", "http://x", "k", "m", "n", "n", "done", "y",
     ]
     catalogue = _fake_catalogue("dashboard")
     lines, out = _capture_output()
@@ -204,7 +206,7 @@ def test_wizard_abort_at_confirm_does_not_write(tmp_path):
     cfg_path = tmp_path / "config.yaml"
     catalogue = _fake_catalogue("dashboard")
     answers = [
-        "P", "http://x", "k", "m", "n", "n", "done",
+        "1", "P", "http://x", "k", "m", "n", "n", "done",
         "n",  # confirm: no
     ]
     lines, out = _capture_output()
@@ -226,9 +228,10 @@ def test_wizard_reranker_reuses_embedding_provider(tmp_path):
     cfg_path = tmp_path / "config.yaml"
     catalogue = _fake_catalogue("dashboard")
     answers = [
+        "1",                              # chat type: openai_compatible
         "ChatCo", "http://x", "k", "chat-model",
-        # embed: yes, separate provider, model
-        "y", "n", "EmbedCo", "http://e", "ek", "embed-model",
+        # embed: yes, separate provider, type 1, then fields, model
+        "y", "n", "1", "EmbedCo", "http://e", "ek", "embed-model",
         # reranker: yes, reuse embedding provider, model
         "y", "y", "rerank-model",
         "done", "y",
@@ -254,7 +257,7 @@ def test_wizard_skip_reranker_leaves_field_unset(tmp_path):
     cfg_path = tmp_path / "config.yaml"
     catalogue = _fake_catalogue("dashboard")
     answers = [
-        "P", "http://x", "k", "m",
+        "1", "P", "http://x", "k", "m",
         "n",         # skip embedding
         "n",         # skip reranker
         "done", "y",
@@ -284,9 +287,9 @@ def test_wizard_verify_called_for_each_endpoint(tmp_path):
         return True, "ok"
 
     answers = [
-        "ChatCo", "http://chat", "k1", "chat-model",
-        "y", "n", "EmbedCo", "http://embed", "k2", "embed-model",
-        "y", "n", "RerankCo", "http://rerank", "k3", "rerank-model",
+        "1", "ChatCo", "http://chat", "k1", "chat-model",
+        "y", "n", "1", "EmbedCo", "http://embed", "k2", "embed-model",
+        "y", "n", "1", "RerankCo", "http://rerank", "k3", "rerank-model",
         "done", "y",
     ]
     _, out = _capture_output()
@@ -315,7 +318,7 @@ def test_wizard_verify_failure_warns_but_does_not_abort(tmp_path):
         return False, "HTTP 401 Unauthorized"
 
     answers = [
-        "P", "http://x", "k", "m",
+        "1", "P", "http://x", "k", "m",
         "n",         # skip embedding
         "n",         # skip reranker
         "done", "y",
@@ -336,6 +339,89 @@ def test_wizard_verify_failure_warns_but_does_not_abort(tmp_path):
     assert "401" in block
 
 
+def test_wizard_anthropic_provider_type(tmp_path):
+    """Picking 'anthropic' (option 2) sets provider.type accordingly."""
+    cfg_path = tmp_path / "config.yaml"
+    catalogue = _fake_catalogue("dashboard")
+    answers = [
+        "2",                              # chat type: anthropic
+        "Claude",                         # label
+        "https://api.anthropic.com/v1",   # base
+        "sk-ant-test",                    # api key
+        "claude-haiku-4-5-20251001",      # model
+        "n", "n", "done", "y",
+    ]
+    _, out = _capture_output()
+    run_wizard(
+        config_path=cfg_path,
+        backup_dir=str(tmp_path / "backups"),
+        input_fn=_stub_inputs(answers),
+        output_fn=out,
+        list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.llm.providers["Claude"].type == "anthropic"
+
+
+def test_wizard_skip_chat_force_enables_dashboard(tmp_path):
+    """If user picks 'skip for now' on chat, the wizard force-adds the
+    dashboard plugin so the user has a way to fill in providers later
+    even if they unchecked it in step 4."""
+    cfg_path = tmp_path / "config.yaml"
+    catalogue = _fake_catalogue("dashboard", "memory")
+    answers = [
+        "3",                  # chat type: skip
+        "n",                  # skip embedding
+        "n",                  # skip reranker
+        "1",                  # toggle dashboard OFF (was preselected)
+        "done",
+        "y",
+    ]
+    lines, out = _capture_output()
+    run_wizard(
+        config_path=cfg_path,
+        backup_dir=str(tmp_path / "backups"),
+        input_fn=_stub_inputs(answers),
+        output_fn=out,
+        list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
+    )
+    cfg = load_config(cfg_path)
+    # Dashboard force-enabled despite being toggled off, because the
+    # user has no providers configured.
+    assert cfg.plugins is not None
+    assert "dashboard" in cfg.plugins
+    block = "\n".join(lines)
+    assert "auto-enabling dashboard" in block.lower() \
+        or "auto-enabling" in block.lower()
+
+
+def test_wizard_skip_embedding_warns(tmp_path):
+    """Declining embedding config prints a [warn] line about
+    recall + KB indexing being inert."""
+    cfg_path = tmp_path / "config.yaml"
+    catalogue = _fake_catalogue("dashboard")
+    answers = [
+        "1", "P", "http://x", "k", "m",
+        "n",                  # skip embedding
+        "n",                  # skip reranker
+        "done", "y",
+    ]
+    lines, out = _capture_output()
+    run_wizard(
+        config_path=cfg_path,
+        backup_dir=str(tmp_path / "backups"),
+        input_fn=_stub_inputs(answers),
+        output_fn=out,
+        list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
+    )
+    block = "\n".join(lines).lower()
+    assert "warn" in block
+    assert ("recall" in block or "kb" in block)
+
+
 def test_module_exports_run_wizard():
     """`from krakey.onboarding import run_wizard` works (entry point relies on it)."""
     from krakey.onboarding import run_wizard as imported
@@ -347,7 +433,7 @@ def test_wizard_handles_unknown_command(tmp_path):
     cfg_path = tmp_path / "config.yaml"
     catalogue = _fake_catalogue("dashboard")
     answers = [
-        "P", "http://x", "k", "m", "n", "n",
+        "1", "P", "http://x", "k", "m", "n", "n",
         "??",       # unknown command
         "999",      # out of range
         "done",
