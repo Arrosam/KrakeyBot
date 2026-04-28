@@ -4,9 +4,9 @@ from datetime import datetime
 
 import pytest
 
-from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
-from src.plugins.telegram.sensory import TelegramSensory
-from src.plugins.telegram.tentacle import TelegramReplyTentacle
+from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
+from krakey.plugins.telegram.sensory import TelegramSensory
+from krakey.plugins.telegram.tentacle import TelegramReplyTentacle
 
 
 class FakeClient:

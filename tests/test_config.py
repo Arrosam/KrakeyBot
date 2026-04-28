@@ -10,7 +10,7 @@ import textwrap
 import pytest
 import yaml
 
-from src.models.config import (
+from krakey.models.config import (
     Config,
     LLMParams,
     LLMSection,
@@ -21,7 +21,7 @@ from src.models.config import (
     llm_params_schema,
     load_config,
 )
-from src.models.config import _ConfigBootstrapExit
+from krakey.models.config import _ConfigBootstrapExit
 
 
 def _write(tmp_path, body):
@@ -116,7 +116,7 @@ def test_loader_resolves_max_input_tokens_from_model_lookup(tmp_path):
         safety: {gm_node_hard_limit: 500, max_consecutive_no_action: 50}
     """)
     cfg = load_config(p)
-    # claude-sonnet-4-5 → 200_000 from src.utils.model_context
+    # claude-sonnet-4-5 → 200_000 from krakey.utils.model_context
     assert cfg.llm.tags["heavy"].params.max_input_tokens == 200_000
 
 

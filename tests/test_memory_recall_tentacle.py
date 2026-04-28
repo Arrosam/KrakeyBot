@@ -1,9 +1,9 @@
 """Phase 1 extension: memory_recall tentacle — Self-initiated recall."""
 import pytest
 
-from src.memory.graph_memory import GraphMemory
-from src.models.stimulus import Stimulus
-from src.plugins.recall.tentacle import MemoryRecallTentacle
+from krakey.memory.graph_memory import GraphMemory
+from krakey.models.stimulus import Stimulus
+from krakey.plugins.recall.tentacle import MemoryRecallTentacle
 
 
 class MapEmbedder:
@@ -98,7 +98,7 @@ async def test_includes_neighbors_and_edges(tmp_path):
 async def test_recall_follows_kb_index_node(tmp_path):
     """When a recalled GM node carries metadata is_kb_index=true, the
     tentacle should also pull top entries from that KB."""
-    from src.memory.knowledge_base import KBRegistry
+    from krakey.memory.knowledge_base import KBRegistry
 
     embed = MapEmbedder({"astronomy": [1.0, 0.0]})
     gm = await _gm(tmp_path, embed)
@@ -116,7 +116,7 @@ async def test_recall_follows_kb_index_node(tmp_path):
     await kb.write_entry("Sun is a yellow dwarf star",
                           embedding=[0.95, 0.31])
 
-    from src.plugins.recall.tentacle import MemoryRecallTentacle
+    from krakey.plugins.recall.tentacle import MemoryRecallTentacle
     t = MemoryRecallTentacle(gm=gm, embedder=embed, kb_registry=reg)
     stim = await t.execute("astronomy", {})
 
@@ -129,7 +129,7 @@ async def test_recall_follows_kb_index_node(tmp_path):
 async def test_recall_with_kb_id_param_queries_that_kb_directly(tmp_path):
     """Self → params={'kb_id': 'X', 'query': '...'} bypasses GM and
     queries KB X directly."""
-    from src.memory.knowledge_base import KBRegistry
+    from krakey.memory.knowledge_base import KBRegistry
 
     embed = MapEmbedder({"sun": [1.0, 0.0]})
     gm = await _gm(tmp_path, embed)
@@ -138,7 +138,7 @@ async def test_recall_with_kb_id_param_queries_that_kb_directly(tmp_path):
     await kb.write_entry("Sun mass: 2e30 kg", embedding=[1.0, 0.0])
     await kb.write_entry("Earth orbits Sun", embedding=[0.95, 0.31])
 
-    from src.plugins.recall.tentacle import MemoryRecallTentacle
+    from krakey.plugins.recall.tentacle import MemoryRecallTentacle
     t = MemoryRecallTentacle(gm=gm, embedder=embed, kb_registry=reg)
     stim = await t.execute("look up sun in astronomy",
                               {"kb_id": "astronomy", "query": "sun"})
@@ -155,7 +155,7 @@ async def test_recall_without_kb_registry_still_works(tmp_path):
     await gm.insert_node(name="apple", category="FACT", description="",
                           embedding=[1.0, 0.0])
 
-    from src.plugins.recall.tentacle import MemoryRecallTentacle
+    from krakey.plugins.recall.tentacle import MemoryRecallTentacle
     t = MemoryRecallTentacle(gm=gm, embedder=embed)  # no kb_registry
     stim = await t.execute("x", {})
     assert "apple" in stim.content

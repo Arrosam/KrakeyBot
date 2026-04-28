@@ -21,11 +21,11 @@ import textwrap
 
 import pytest
 
-from src.plugins.dashboard.services.plugin_catalogue import (
+from krakey.plugins.dashboard.services.plugin_catalogue import (
     list_available_plugins as discover_plugins,
 )
-from src.models.config import load_config
-from src.plugin_system.loader import load_component
+from krakey.models.config import load_config
+from krakey.plugin_system.loader import load_component
 from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
 
 
@@ -121,7 +121,7 @@ def test_discover_finds_builtin_meta_files():
     refl_comp = next(c for c in h.components if c.kind == "reflect")
     assert refl_comp.role == "hypothalamus"
     assert refl_comp.factory_module == (
-        "src.plugins.hypothalamus.reflect"
+        "krakey.plugins.hypothalamus.reflect"
     )
     assert refl_comp.factory_attr == "build_reflect"
 
@@ -131,9 +131,9 @@ def test_discover_does_not_import_plugin_modules():
     plugin code into sys.modules.
     """
     plugin_modules = (
-        "src.plugins.hypothalamus.reflect",
-        "src.plugins.recall.reflect",
-        "src.plugins.recall.tentacle",
+        "krakey.plugins.hypothalamus.reflect",
+        "krakey.plugins.recall.reflect",
+        "krakey.plugins.recall.tentacle",
     )
     before = {m: m in sys.modules for m in plugin_modules}
     metas = discover_plugins()
@@ -156,7 +156,7 @@ def test_load_component_imports_and_calls_factory():
     so no Runtime is needed."""
     from types import SimpleNamespace
 
-    from src.interfaces.plugin_context import PluginContext
+    from krakey.interfaces.plugin_context import PluginContext
     metas = discover_plugins()
     refl_comp = next(c for c in metas["hypothalamus"].components
                      if c.kind == "reflect")

@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from src.interfaces.sensory import PushCallback, Sensory
-from src.memory.graph_memory import GraphMemory
-from src.memory.knowledge_base import KBRegistry
-from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
-from src.memory.sleep.sleep_manager import enter_sleep_mode
+from krakey.interfaces.sensory import PushCallback, Sensory
+from krakey.memory.graph_memory import GraphMemory
+from krakey.memory.knowledge_base import KBRegistry
+from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
+from krakey.memory.sleep.sleep_manager import enter_sleep_mode
 
 
 class FixedEmbed:

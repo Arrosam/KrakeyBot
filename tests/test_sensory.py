@@ -3,9 +3,9 @@ from datetime import datetime
 
 import pytest
 
-from src.interfaces.sensory import PushCallback, Sensory
-from src.models.stimulus import Stimulus
-from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
+from krakey.interfaces.sensory import PushCallback, Sensory
+from krakey.models.stimulus import Stimulus
+from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
 class MockSensory(Sensory):

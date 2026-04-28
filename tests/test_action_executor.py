@@ -5,7 +5,7 @@ This is the default tentacle dispatch path when no decision-translator
 Reflect (e.g. the hypothalamus plugin) is registered. Format chosen
 for breadth of training coverage in modern open-source LLMs.
 """
-from src.runtime.heartbeat.action_executor import parse_tool_calls
+from krakey.runtime.heartbeat.action_executor import parse_tool_calls
 
 
 def test_empty_input_returns_empty():
@@ -177,6 +177,6 @@ will check in next beat
 def test_back_compat_alias_still_works():
     """parse_action_block was the old name; kept as alias since two
     other modules import it."""
-    from src.runtime.heartbeat.action_executor import parse_action_block
+    from krakey.runtime.heartbeat.action_executor import parse_action_block
     text = '<tool_call>\n{"name": "x"}\n</tool_call>'
     assert parse_action_block(text) == parse_tool_calls(text)

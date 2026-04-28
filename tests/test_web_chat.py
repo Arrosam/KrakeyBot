@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from src.plugins.dashboard.app_factory import create_app
-from src.plugins.dashboard.web_chat import WebChatHistory
-from src.plugins.dashboard.tentacle import WebChatReplyTentacle as WebChatTentacle
+from krakey.plugins.dashboard.app_factory import create_app
+from krakey.plugins.dashboard.web_chat import WebChatHistory
+from krakey.plugins.dashboard.tentacle import WebChatReplyTentacle as WebChatTentacle
 
 
 # ---------------- WebChatHistory ----------------
@@ -89,7 +89,7 @@ async def test_unsubscribe_stops_delivery(tmp_path):
 
 
 async def test_sensory_push_creates_user_message_stimulus(tmp_path):
-    from src.plugins.dashboard.sensory import WebChatSensory
+    from krakey.plugins.dashboard.sensory import WebChatSensory
 
     pushed = []
 
@@ -109,7 +109,7 @@ async def test_sensory_push_creates_user_message_stimulus(tmp_path):
 
 
 async def test_sensory_push_appends_attachment_notices(tmp_path):
-    from src.plugins.dashboard.sensory import WebChatSensory
+    from krakey.plugins.dashboard.sensory import WebChatSensory
 
     pushed = []
 
@@ -130,7 +130,7 @@ async def test_sensory_push_appends_attachment_notices(tmp_path):
 
 
 async def test_sensory_push_before_start_silently_drops():
-    from src.plugins.dashboard.sensory import WebChatSensory
+    from krakey.plugins.dashboard.sensory import WebChatSensory
 
     sens = WebChatSensory()
     # No start() — buffer is None. Must not raise.
@@ -138,7 +138,7 @@ async def test_sensory_push_before_start_silently_drops():
 
 
 async def test_sensory_push_after_stop_silently_drops():
-    from src.plugins.dashboard.sensory import WebChatSensory
+    from krakey.plugins.dashboard.sensory import WebChatSensory
 
     pushed = []
 

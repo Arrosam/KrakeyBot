@@ -2,8 +2,8 @@ from datetime import datetime
 
 import pytest
 
-from src.interfaces.tentacle import Tentacle, TentacleRegistry
-from src.models.stimulus import Stimulus
+from krakey.interfaces.tentacle import Tentacle, TentacleRegistry
+from krakey.models.stimulus import Stimulus
 
 
 class MockTentacle(Tentacle):

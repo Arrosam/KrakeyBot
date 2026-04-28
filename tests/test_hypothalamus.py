@@ -2,10 +2,10 @@ import json
 
 import pytest
 
-from src.plugins.hypothalamus.reflect import (
+from krakey.plugins.hypothalamus.reflect import (
     HypothalamusReflectImpl as Hypothalamus,
 )
-from src.interfaces.reflect import DecisionResult
+from krakey.interfaces.reflect import DecisionResult
 
 
 class MockLLM:

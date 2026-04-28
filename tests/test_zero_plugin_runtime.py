@@ -17,8 +17,8 @@ Specific paths exercised:
 """
 import pytest
 
-from src.memory.recall import NoopRecall, RecallResult
-from src.interfaces.reflect import ReflectRegistry
+from krakey.memory.recall import NoopRecall, RecallResult
+from krakey.interfaces.reflect import ReflectRegistry
 from tests._runtime_helpers import (
     NullEmbedder, ScriptedLLM, build_runtime_with_fakes,
 )
@@ -92,7 +92,7 @@ async def test_runtime_heartbeat_with_no_tentacles_emits_unknown_tentacle(tmp_pa
     runtime.reflects._by_role.pop("hypothalamus", None)
     runtime.reflects._order.remove("hypothalamus")
 
-    from src.interfaces.tentacle import TentacleRegistry
+    from krakey.interfaces.tentacle import TentacleRegistry
     runtime.tentacles = TentacleRegistry()
 
     await runtime.run(iterations=1)

@@ -1,8 +1,8 @@
 """Phase 3 / B: Search tentacle (web search via injectable backend)."""
 import pytest
 
-from src.models.stimulus import Stimulus
-from src.plugins.duckduckgo_search import SearchTentacle
+from krakey.models.stimulus import Stimulus
+from krakey.plugins.duckduckgo_search import SearchTentacle
 
 
 class FakeBackend:

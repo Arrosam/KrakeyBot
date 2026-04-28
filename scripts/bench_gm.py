@@ -16,7 +16,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from src.tools.perf_bench import measure_at, recommend_soft_limit  # noqa: E402
+from krakey.tools.perf_bench import measure_at, recommend_soft_limit  # noqa: E402
 
 
 # Force UTF-8 stdout for nice rendering on Windows GBK consoles.

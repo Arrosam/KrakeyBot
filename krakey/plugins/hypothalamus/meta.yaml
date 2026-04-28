@@ -1,0 +1,25 @@
+name: hypothalamus
+description: >
+  LLM-based natural language → tentacle call translator. Takes Self's
+  free-form [DECISION] text and produces a structured list of
+  tentacle invocations via a dedicated translator LLM. When this
+  plugin is enabled the [ACTION FORMAT] prompt block is suppressed
+  automatically — Self stays in natural-language mode and lets this
+  Reflect handle the structuring. Recommended only for weaker models
+  that can't reliably emit <tool_call> blocks on their own; strong models
+  should leave this OFF and use the direct action executor path.
+
+config_schema: []
+
+components:
+  - kind: reflect
+    role: hypothalamus
+    factory_module: krakey.plugins.hypothalamus.reflect
+    factory_attr: build_reflect
+    llm_purposes:
+      - name: translator
+        description: >
+          Translates Self's natural-language [DECISION] into structured
+          tentacle calls. Light JSON parsing task; a fast cheap model
+          is usually fine.
+        suggested_tag: fast_generation

@@ -1,7 +1,7 @@
 """Phase 1.3d: FTS5 text search as embedding-unavailable fallback."""
 import pytest
 
-from src.memory.graph_memory import GraphMemory
+from krakey.memory.graph_memory import GraphMemory
 
 
 class Embed:

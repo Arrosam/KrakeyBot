@@ -9,8 +9,8 @@ import tempfile
 from pathlib import Path
 from typing import Protocol
 
-from src.main import Runtime, RuntimeDeps
-from src.memory.recall import Reranker
+from krakey.main import Runtime, RuntimeDeps
+from krakey.memory.recall import Reranker
 
 
 class ChatLike(Protocol):
@@ -83,7 +83,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     in_mind_state_path = (
         f"{tempfile.mkdtemp(prefix='krakey_test_im_')}/in_mind.json"
     )
-    from src.models.config import (
+    from krakey.models.config import (
         Config, FatigueSection, GraphMemorySection,
         HibernateSection, KnowledgeBaseSection, LLMParams, LLMSection,
         Provider, SafetySection, SleepSection, TagBinding,

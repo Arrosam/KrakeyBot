@@ -83,7 +83,7 @@ _bootstrap()
 # --- actual entry (runs once deps are guaranteed) ---
 import asyncio  # noqa: E402
 
-from src.main import build_runtime_from_config  # noqa: E402
+from krakey.main import build_runtime_from_config  # noqa: E402
 
 
 if __name__ == "__main__":

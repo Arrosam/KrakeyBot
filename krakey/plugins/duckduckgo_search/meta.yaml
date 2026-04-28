@@ -1,0 +1,15 @@
+name: duckduckgo_search
+description: >
+  Web search via DuckDuckGo (ddgs library). Tentacle name is "search"
+  — Self addresses it by the abstract verb. The plugin name carries
+  the backend identity so a future plugin can ship a different
+  search provider claiming the same tentacle name.
+config_schema:
+  - field: max_results
+    type: number
+    default: 5
+    help: Upper bound on results per query.
+components:
+  - kind: tentacle
+    factory_module: krakey.plugins.duckduckgo_search
+    factory_attr: build_tentacle

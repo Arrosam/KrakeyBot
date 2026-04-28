@@ -1,0 +1,30 @@
+name: in_mind_note
+description: >
+  Persistent "in-mind" state — three short fields (thoughts / mood /
+  focus) that Self maintains across heartbeats to declare what's
+  currently at the front of its mental workspace. Self updates them
+  via the `update_in_mind` tentacle (this plugin contributes BOTH
+  the reflect that owns the state AND the tentacle that mutates it,
+  declared as two components below; they share the reflect instance
+  via ctx.plugin_cache). The current state is injected into every
+  Self prompt as a virtual "Heartbeat #now (in mind)" round at the
+  head of [HISTORY], plus a constant [IN MIND — 操作约束] standing
+  instruction layer that reminds Self to call update_in_mind whenever
+  any of the three things change. Replaces the deleted
+  self_model.state.focus_topic / state.mood_baseline / goals.active
+  fields.
+
+config_schema: []
+
+components:
+  # Order matters: reflect builds first and stashes itself in
+  # plugin_cache; the tentacle factory then grabs it. Out-of-order
+  # loading would leave the tentacle with no reflect — its factory
+  # opts out (returns None) so the runtime degrades rather than crashes.
+  - kind: reflect
+    role: in_mind
+    factory_module: krakey.plugins.in_mind_note.reflect
+    factory_attr: build_reflect
+  - kind: tentacle
+    factory_module: krakey.plugins.in_mind_note.tentacle
+    factory_attr: build_tentacle

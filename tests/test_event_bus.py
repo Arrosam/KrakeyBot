@@ -7,10 +7,10 @@ import asyncio
 
 import pytest
 
-from src.runtime.events.event_types import (
+from krakey.runtime.events.event_types import (
     DecisionEvent, HeartbeatStartEvent, DecisionExecutedEvent, PromptBuiltEvent, StimuliQueuedEvent, TentacleResultEvent, ThinkingEvent,
 )
-from src.runtime.events.event_bus import EventBus
+from krakey.runtime.events.event_bus import EventBus
 
 
 def test_event_dataclasses_carry_typed_fields():
@@ -78,7 +78,7 @@ async def test_async_subscriber_scheduled_as_task():
 async def test_runtime_publishes_phase_events():
     """Integration: a single heartbeat publishes lifecycle events to the
     bus so a Dashboard subscriber sees them."""
-    from src.runtime.events.event_bus import EventBus
+    from krakey.runtime.events.event_bus import EventBus
     from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
 
     bus = EventBus()
@@ -99,7 +99,7 @@ async def test_runtime_publishes_phase_events():
 
 def test_event_kind_property_for_serialization():
     """UI WS layer needs a string kind discriminator."""
-    from src.runtime.events.event_types import GMStatsEvent
+    from krakey.runtime.events.event_types import GMStatsEvent
     assert ThinkingEvent(1, "x").kind == "thinking"
     assert DecisionEvent(1, "x").kind == "decision"
     assert HeartbeatStartEvent(1, 0).kind == "heartbeat_start"

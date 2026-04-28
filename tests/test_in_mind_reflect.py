@@ -22,14 +22,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.memory.recall import RecallResult
-from src.plugins.in_mind_note.reflect import (
+from krakey.memory.recall import RecallResult
+from krakey.plugins.in_mind_note.reflect import (
     InMindReflectImpl, build_reflect,
 )
-from src.plugins.in_mind_note.state import (
+from krakey.plugins.in_mind_note.state import (
     InMindState, load, now_iso, save,
 )
-from src.plugins.in_mind_note.prompt import (
+from krakey.plugins.in_mind_note.prompt import (
     IN_MIND_INSTRUCTIONS_LAYER, render_virtual_round,
 )
 from tests._runtime_helpers import (
@@ -165,7 +165,7 @@ def test_update_persists_across_reflect_instances(tmp_path):
 def test_build_reflect_factory_signature():
     """build_reflect takes a PluginContext; reads the deps' state
     path override (None for the default behavior)."""
-    from src.interfaces.plugin_context import PluginContext
+    from krakey.interfaces.plugin_context import PluginContext
     fake_deps = SimpleNamespace(in_mind_state_path=None)
     ctx = PluginContext(deps=fake_deps, plugin_name="in_mind_note",
                           config={})

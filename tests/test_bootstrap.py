@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src.bootstrap import (
+from krakey.bootstrap import (
     BOOTSTRAP_PROMPT, detect_bootstrap_complete, load_genesis,
     load_self_model_or_default, parse_self_model_update,
 )

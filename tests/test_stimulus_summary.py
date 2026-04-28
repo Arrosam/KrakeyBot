@@ -16,8 +16,8 @@ without needing a destructive character cap at write time.
 """
 from datetime import datetime
 
-from src.main import _summarize_stimuli
-from src.models.stimulus import Stimulus
+from krakey.main import _summarize_stimuli
+from krakey.models.stimulus import Stimulus
 
 
 def _stim(content: str) -> Stimulus:

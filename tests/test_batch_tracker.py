@@ -2,8 +2,8 @@
 batch drains."""
 import pytest
 
-from src.runtime.stimuli.batch_tracker import BatchTrackerSensory
-from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
+from krakey.runtime.stimuli.batch_tracker import BatchTrackerSensory
+from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
 async def _tracker(buffer=None):

@@ -6,8 +6,8 @@ import time
 
 import pytest
 
-from src.sandbox.agent import AgentState, AgentHandler
-from src.sandbox.backend import (
+from krakey.sandbox.agent import AgentState, AgentHandler
+from krakey.sandbox.backend import (
     SandboxConfig, SandboxRunner, SandboxUnavailableError, preflight,
 )
 
@@ -117,7 +117,7 @@ async def test_runtime_allows_subprocess_when_sandbox_false(tmp_path):
     """Opting OUT of sandbox (sandbox=false) must be explicitly allowed
     so users can run coding directly on the host if they want."""
     from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
-    from src.sandbox.subprocess_runner import SubprocessRunner
+    from krakey.sandbox.subprocess_runner import SubprocessRunner
 
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
@@ -143,19 +143,19 @@ async def test_runtime_builds_sandbox_runner_with_complete_config(tmp_path):
 # ---------------- display mode config ----------------
 
 def test_sandbox_display_defaults_to_headed():
-    from src.models.config import _build_sandbox
+    from krakey.models.config import _build_sandbox
     sb = _build_sandbox({})
     assert sb.display == "headed"
 
 
 def test_sandbox_display_honors_user_choice():
-    from src.models.config import _build_sandbox
+    from krakey.models.config import _build_sandbox
     assert _build_sandbox({"display": "headless"}).display == "headless"
     assert _build_sandbox({"display": "HEADED"}).display == "headed"
 
 
 def test_sandbox_display_invalid_falls_back_to_headed(capsys):
-    from src.models.config import _build_sandbox
+    from krakey.models.config import _build_sandbox
     sb = _build_sandbox({"display": "weird"})
     assert sb.display == "headed"
     assert "display" in capsys.readouterr().err.lower()

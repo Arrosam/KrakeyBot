@@ -1,6 +1,6 @@
 """Build the interactive architecture graph (library module).
 
-Walks ``src/``, parses every ``.py``, and produces
+Walks ``krakey/``, parses every ``.py``, and produces
 
 * ``build_graph()`` — a Cytoscape.js-shaped ``{nodes, edges}`` dict
   describing the folder → file → class → method tree plus import +
@@ -9,7 +9,7 @@ Walks ``src/``, parses every ``.py``, and produces
   HTML page that renders it as a draggable, expandable graph.
 
 Used by the live-reload server (``serve_arch_graph.py``); not run
-directly. The server rebuilds the graph in-memory on every ``src/``
+directly. The server rebuilds the graph in-memory on every ``krakey/``
 change and pushes updates to the browser over Server-Sent Events.
 
 Edge resolution is heuristic — we resolve names that come through
@@ -26,7 +26,7 @@ from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-SRC = ROOT / "src"
+SRC = ROOT / "krakey"
 
 SKIP_DIRS = {"__pycache__", ".pytest_cache"}
 
@@ -35,9 +35,9 @@ SKIP_DIRS = {"__pycache__", ".pytest_cache"}
 
 
 def _module_name_for(path: Path) -> str:
-    """``F:/.../src/foo/bar.py`` → ``src.foo.bar``.
+    """``F:/.../krakey/foo/bar.py`` → ``krakey.foo.bar``.
 
-    ``__init__.py`` collapses to the package name (``src.foo``).
+    ``__init__.py`` collapses to the package name (``krakey.foo``).
     """
     rel = path.relative_to(ROOT).with_suffix("")
     parts = list(rel.parts)
@@ -270,7 +270,7 @@ def _file_id(rel: Path) -> str:
 
 
 def _dir_id(rel_dir: Path) -> str:
-    return rel_dir.as_posix() if rel_dir.parts else "src"
+    return rel_dir.as_posix() if rel_dir.parts else "krakey"
 
 
 def _class_id(file_id: str, name: str) -> str:
@@ -316,18 +316,18 @@ def build_graph() -> dict:
         d = rel.parent
         while True:
             folder_set.add(d)
-            if d == Path("src") or d == Path():
+            if d == Path("krakey") or d == Path():
                 break
             d = d.parent
-    folder_set.add(Path("src"))
+    folder_set.add(Path("krakey"))
 
     for d in sorted(folder_set, key=lambda x: (len(x.parts), x.as_posix())):
         if d == Path():
             continue
         parent = d.parent
         parent_id = _dir_id(parent) if parent != Path() else None
-        # `src` itself has no parent
-        if d == Path("src"):
+        # `krakey` itself has no parent
+        if d == Path("krakey"):
             parent_id = None
         add_node(
             {
@@ -942,7 +942,7 @@ function expandAll() {
 
 setTimeout(() => {
   collapseAllExceptRoot();
-  // Re-expand the top-level `src` container so the user lands on the
+  // Re-expand the top-level `krakey` container so the user lands on the
   // folder map rather than a single collapsed circle.
   const root = cy.nodes('[kind = "dir"]').filter(n => !n.data("parent"));
   if (root && root.length) ec.expand(root);
@@ -1092,7 +1092,7 @@ document.getElementById("search").addEventListener("input", evt => {
 // ---- Live updates over Server-Sent Events ----
 //
 // When this page is served by `scripts/serve_arch_graph.py`, the
-// server pushes an `update` event whenever any file under `src/`
+// server pushes an `update` event whenever any file under `krakey/`
 // changes. We refetch `/graph.json` and swap elements in-place so
 // the user keeps their expand/collapse, hide, pan, and zoom state.
 // When the page is opened from disk (file://) there is no server,

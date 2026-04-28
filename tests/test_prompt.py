@@ -2,11 +2,11 @@ from datetime import datetime
 
 import pytest
 
-from src.memory.recall import RecallResult
-from src.models.stimulus import Stimulus
-from src.prompt.builder import PromptBuilder
-from src.prompt.dna import DNA
-from src.prompt.views import CapabilityView, SlidingWindowRound, StatusSnapshot
+from krakey.memory.recall import RecallResult
+from krakey.models.stimulus import Stimulus
+from krakey.prompt.builder import PromptBuilder
+from krakey.prompt.dna import DNA
+from krakey.prompt.views import CapabilityView, SlidingWindowRound, StatusSnapshot
 
 
 def test_dna_has_all_sections():

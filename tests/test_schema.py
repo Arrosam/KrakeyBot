@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 
-SCHEMA_PATH = Path(__file__).parent.parent / "src" / "memory" / "schemas.sql"
+SCHEMA_PATH = Path(__file__).parent.parent / "krakey" / "memory" / "schemas.sql"
 
 
 def _open(tmp_path):

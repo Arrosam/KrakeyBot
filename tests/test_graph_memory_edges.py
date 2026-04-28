@@ -1,7 +1,7 @@
 """Phase 1.2b: upsert_node + cycle detection + edge insertion."""
 import pytest
 
-from src.memory.graph_memory import GraphMemory
+from krakey.memory.graph_memory import GraphMemory
 
 
 class FakeEmbedder:

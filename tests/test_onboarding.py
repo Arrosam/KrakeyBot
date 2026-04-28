@@ -9,9 +9,9 @@ from typing import Iterable
 
 import pytest
 
-from src.models.config import load_config
-from src.onboarding import run_wizard
-from src.plugin_system.loader import PluginMetadata
+from krakey.models.config import load_config
+from krakey.onboarding import run_wizard
+from krakey.plugin_system.loader import PluginMetadata
 
 
 def _stub_inputs(answers: Iterable[str]):
@@ -203,8 +203,8 @@ def test_wizard_abort_at_confirm_does_not_write(tmp_path):
 
 
 def test_module_exports_run_wizard():
-    """`from src.onboarding import run_wizard` works (entry point relies on it)."""
-    from src.onboarding import run_wizard as imported
+    """`from krakey.onboarding import run_wizard` works (entry point relies on it)."""
+    from krakey.onboarding import run_wizard as imported
     assert callable(imported)
 
 

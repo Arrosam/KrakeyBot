@@ -15,12 +15,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.interfaces.reflect import (
+from krakey.interfaces.reflect import (
     HypothalamusReflect, DecisionResult, RecallAnchorReflect,
     Reflect, ReflectRegistry,
 )
-from src.plugins.hypothalamus.reflect import HypothalamusReflectImpl
-from src.plugins.recall.reflect import RecallAnchorReflectImpl
+from krakey.plugins.hypothalamus.reflect import HypothalamusReflectImpl
+from krakey.plugins.recall.reflect import RecallAnchorReflectImpl
 from tests._runtime_helpers import (
     NullEmbedder, ScriptedLLM, build_runtime_with_fakes,
 )
@@ -159,7 +159,7 @@ async def test_prompt_includes_action_format_when_no_hypothalamus(tmp_path):
 
     await runtime.gm.initialize()
     runtime._recall = runtime._new_recall()
-    from src.memory.recall import RecallResult
+    from krakey.memory.recall import RecallResult
     counts = SimpleNamespace(node_count=0, edge_count=0,
                               fatigue_pct=0, fatigue_hint="")
     prompt = runtime._build_self_prompt(
@@ -181,7 +181,7 @@ async def test_prompt_omits_action_format_when_hypothalamus_active(tmp_path):
 
     await runtime.gm.initialize()
     runtime._recall = runtime._new_recall()
-    from src.memory.recall import RecallResult
+    from krakey.memory.recall import RecallResult
     counts = SimpleNamespace(node_count=0, edge_count=0,
                               fatigue_pct=0, fatigue_hint="")
     prompt = runtime._build_self_prompt(

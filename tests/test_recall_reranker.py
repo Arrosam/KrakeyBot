@@ -3,7 +3,7 @@ from datetime import datetime
 
 import pytest
 
-from src.memory.recall import ScoringWeights, rank_candidates
+from krakey.memory.recall import ScoringWeights, rank_candidates
 
 
 def _node(id_, name, *, category="FACT", importance=1.0,

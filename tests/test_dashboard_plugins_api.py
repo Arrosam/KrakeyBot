@@ -13,8 +13,8 @@ import httpx
 import pytest
 import yaml
 
-from src.plugins.dashboard.app_factory import create_app
-from src.plugins.dashboard.services.plugins import PluginsService
+from krakey.plugins.dashboard.app_factory import create_app
+from krakey.plugins.dashboard.services.plugins import PluginsService
 
 
 class _FakePluginsService:

@@ -1,0 +1,32 @@
+name: telegram
+description: >
+  Telegram bidirectional channel: incoming messages arrive as
+  user_message stimuli; Krakey replies via telegram_reply. Sensory +
+  tentacle share one HttpTelegramClient instance via
+  ``ctx.plugin_cache``.
+config_schema:
+  - field: bot_token
+    type: password
+    default: ""
+    help: >
+      BotFather token. Use ${ENV_VAR} to pull from the environment at
+      load time.
+  - field: allowed_chat_ids
+    type: text
+    default: ""
+    help: >
+      Comma-separated chat IDs the sensory will accept. Empty = allow
+      any.
+  - field: default_chat_id
+    type: text
+    default: ""
+    help: >
+      Chat ID the reply tentacle sends to when no chat_id is specified
+      in the tentacle call.
+components:
+  - kind: sensory
+    factory_module: krakey.plugins.telegram
+    factory_attr: build_sensory
+  - kind: tentacle
+    factory_module: krakey.plugins.telegram
+    factory_attr: build_tentacle
