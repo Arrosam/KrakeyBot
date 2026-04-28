@@ -38,6 +38,7 @@ from krakey.models.config import (
     dump_config,
 )
 from krakey.models.config_backup import backup_config
+from krakey.onboarding import _ui
 from krakey.plugin_system.catalogue import list_available_plugins
 from krakey.plugin_system.loader import PluginMetadata
 
@@ -65,14 +66,20 @@ def _print_intro(output_fn: OutputFn) -> None:
     a list of lines stay tidy and grep-able.
     """
     if output_fn is print:
+        _ui.enable_vt_on_windows()
         from krakey.cli._banner import print_banner
         print_banner()
         print()
-        print("Walks you through creating config.yaml.")
-        print("Re-run this any time: krakey onboard")
+        print(_ui.dim("Walks you through creating config.yaml."))
+        print(_ui.dim("Re-run this any time: krakey onboard"))
         print()
     else:
         output_fn(_BANNER_FALLBACK)
+
+
+def _section(output_fn: OutputFn, title: str) -> None:
+    """Print a `--- Step N/4: title ---` header, cyan + bold."""
+    output_fn("\n" + _ui.cyan(_ui.bold(f"--- {title} ---")))
 
 
 InputFn = Callable[[str], str]
@@ -121,9 +128,9 @@ def run_wizard(
         try_available = list_plugins_fn()
         if "dashboard" in try_available:
             output_fn(
-                "  [warn] no chat provider configured AND dashboard "
-                "is unselected — auto-enabling dashboard so you have "
-                "a way to configure providers later."
+                f"  {_ui.yellow('[warn]')} no chat provider configured "
+                "AND dashboard is unselected — auto-enabling dashboard "
+                "so you have a way to configure providers later."
             )
             plugins = ["dashboard"] + plugins
 
@@ -245,9 +252,10 @@ def _pick_model(
 
 def _skip_hint(output_fn: OutputFn, label: str) -> None:
     output_fn(
-        f"  [skip] {label} not configured. You can fill it in via the "
-        "dashboard's LLM tab once Krakey is running, or by hand-editing "
-        "config.yaml. Make sure the dashboard plugin is enabled."
+        f"  {_ui.dim('[skip]')} {label} not configured. You can fill "
+        "it in via the dashboard's LLM tab once Krakey is running, "
+        "or by hand-editing config.yaml. Make sure the dashboard "
+        "plugin is enabled."
     )
 
 
@@ -257,7 +265,7 @@ def _ask_chat_provider(
     input_fn: InputFn, output_fn: OutputFn,
     verify: VerifyFn, list_models: ListModelsFn,
 ) -> tuple[str, Provider, str] | None:
-    output_fn("\n--- Step 1/4: chat LLM provider ---")
+    _section(output_fn, "Step 1/4: chat LLM provider")
     ptype = _ask_provider_type(input_fn, output_fn, label="chat")
     if ptype is None:
         _skip_hint(output_fn, "chat")
@@ -283,7 +291,7 @@ def _ask_embedding(
     chat: tuple[str, Provider, str] | None,
     verify: VerifyFn, list_models: ListModelsFn,
 ) -> tuple[str, Provider, str] | None:
-    output_fn("\n--- Step 2/4: embedding model (optional) ---")
+    _section(output_fn, "Step 2/4: embedding model (optional)")
     output_fn(
         "Embeddings power memory recall and KB indexing. "
         "Skip = recall + KB inert (no harm, just no memory benefits).",
@@ -294,8 +302,9 @@ def _ask_embedding(
     ):
         _skip_hint(output_fn, "embedding")
         output_fn(
-            "  [warn] Self can't actively recall topics and sleep "
-            "won't migrate memories into KBs until you configure one."
+            f"  {_ui.yellow('[warn]')} Self can't actively recall "
+            "topics and sleep won't migrate memories into KBs until "
+            "you configure one."
         )
         return None
     if chat is not None:
@@ -358,7 +367,7 @@ def _ask_reranker(
     falls back to scripted multi-axis scoring, and KB sleep dedup
     falls back to raw cosine ordering.
     """
-    output_fn("\n--- Step 3/4: reranker model (optional) ---")
+    _section(output_fn, "Step 3/4: reranker model (optional)")
     output_fn(
         "A reranker improves recall ordering and is also used by "
         "the sleep-time KB dedup pass. Skip to use scripted scoring "
@@ -422,7 +431,7 @@ def _ask_plugins(
     input_fn: InputFn, output_fn: OutputFn,
     available: dict[str, PluginMetadata],
 ) -> list[str]:
-    output_fn("\n--- Step 4/4: plugins ---")
+    _section(output_fn, "Step 4/4: plugins")
     if not available:
         output_fn("(no plugins discovered)")
         return []
@@ -450,10 +459,11 @@ def _ask_plugins(
                 and "dashboard" not in selected
             ):
                 output_fn(
-                    "\n  [warn] dashboard is NOT selected. Without it "
-                    "you have no in-app way to view runtime state, "
-                    "browse memory, or change config — only re-running "
-                    "`krakey onboard` or hand-editing config.yaml."
+                    f"\n  {_ui.yellow('[warn]')} dashboard is NOT "
+                    "selected. Without it you have no in-app way to "
+                    "view runtime state, browse memory, or change "
+                    "config — only re-running `krakey onboard` or "
+                    "hand-editing config.yaml."
                 )
                 if not _prompt_yes_no(
                     input_fn, output_fn,
@@ -493,16 +503,26 @@ def _print_plugin_list(
     output_fn("")
     for i, n in enumerate(names, start=1):
         meta = available[n]
-        mark = "[x]" if n in selected else "[ ]"
-        star = " *" if n in RECOMMENDED_PLUGINS else "  "
+        # Colored selection box: green when checked, dim when not.
+        mark = _ui.green("[x]") if n in selected else _ui.dim("[ ]")
+        # Recommended star: bright yellow + bold, two-space pad for
+        # alignment when absent.
+        star = _ui.yellow(_ui.bold(" *")) if n in RECOMMENDED_PLUGINS \
+            else "  "
+        # Plugin name in bold; recommended ones in cyan + bold for
+        # extra emphasis.
+        if n in RECOMMENDED_PLUGINS:
+            name_style = _ui.cyan(_ui.bold(n))
+        else:
+            name_style = _ui.bold(n)
+        output_fn(f"  {i:>2}. {mark}{star} {name_style}")
         # Full description shown under the header line, indented for
         # readability. Multi-line descriptions stay readable;
         # previously we cut to the first line which often hid the
         # actual purpose of a plugin.
-        output_fn(f"  {i:>2}. {mark}{star} {n}")
         if meta.description:
             for line in meta.description.strip().splitlines():
-                output_fn(f"        {line}")
+                output_fn(_ui.dim(f"        {line}"))
 
 
 # ---- Build Config -----------------------------------------------
@@ -602,10 +622,18 @@ def _report_verify(output_fn: OutputFn, kind: str,
     later if a typo only becomes obvious from a real LLM call."""
     ok, msg = result
     if ok:
-        output_fn(f"  [check] {kind} endpoint reachable ({msg})")
+        output_fn(
+            f"  {_ui.green('[check]')} {kind} endpoint reachable ({msg})"
+        )
     else:
-        output_fn(f"  [warn]  {kind} verification failed: {msg}")
-        output_fn("           continuing — you can fix the config later.")
+        output_fn(
+            f"  {_ui.yellow('[warn]')}  {kind} verification failed: {msg}"
+        )
+        output_fn(
+            _ui.dim(
+                "           continuing — you can fix the config later."
+            )
+        )
 
 
 def _default_list_models(provider: Provider) -> list[str] | None:
