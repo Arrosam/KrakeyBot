@@ -30,7 +30,8 @@ from datetime import datetime
 from typing import Any, Callable, TYPE_CHECKING
 
 from krakey.memory.recall import (
-    AsyncEmbedder, RecallResult, Reranker, ScoringWeights, rank_candidates,
+    AsyncEmbedder, RecallResult, Reranker, ScoringWeights,
+    rerank, scripted_score,
 )
 from krakey.plugins.recall.gm_query import query_gm_with_fts_fallback
 from krakey.utils.tokens import estimate_tokens
@@ -128,10 +129,19 @@ class IncrementalRecall:
                 top_k=self._screening_top_k(),
                 min_similarity=self._vec_min_sim,
             )
-            ranked = await rank_candidates(
+            ranked = await rerank(
                 candidates, query=s.content, reranker=self.reranker,
-                weights=self.weights, now=self._now(),
             )
+            if ranked is None:
+                # Reranker unavailable / failed → scripted multi-axis
+                # fallback. Same outcome shape: (node, score) sorted desc.
+                now = self._now()
+                ranked = [
+                    (n, scripted_score(n, vec_sim=sim, now=now,
+                                          weights=self.weights))
+                    for (n, sim) in candidates
+                ]
+                ranked.sort(key=lambda x: x[1], reverse=True)
             weight = 10.0 if getattr(s, "adrenalin", False) else 1.0
             hit_ids: set[int] = set()
             for (node, _score) in ranked:

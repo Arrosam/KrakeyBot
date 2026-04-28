@@ -1,10 +1,12 @@
 """Recall scoring (DevSpec §9.1).
 
 Pure functions + the ``ScoringWeights`` config dataclass. No I/O,
-no GM access, no LLM. Given a candidate node + its vec_similarity,
-``scripted_score`` returns a float; ``rank_candidates`` orchestrates
-"use reranker if available else fall back to scripted_score" and
-returns the ordered list.
+no GM access. Given a candidate node + its vec_similarity,
+``scripted_score`` returns a float. ``rerank`` is a thin wrapper
+around an injected Reranker that returns ordered pairs on success
+or ``None`` on any failure — callers choose their own fallback
+(scripted_score for the recall plugin; raw cosine ordering for the
+sleep-migration dedup pass).
 
 Lives separate from the IncrementalRecall driver in
 ``recall/incremental.py`` because:
@@ -73,37 +75,37 @@ class Reranker(Protocol):
     async def rerank(self, query: str, docs: list[str]) -> list[float]: ...
 
 
-async def rank_candidates(candidates: list[tuple[dict[str, Any], float]],
-                            *, query: str, reranker: Reranker | None,
-                            weights: ScoringWeights,
-                            now: datetime
-                            ) -> list[tuple[dict[str, Any], float]]:
-    """Layer 2/3 of DevSpec §9.1:
-      - If a reranker is provided and succeeds, use its scores.
-      - On any failure (missing, network error, score count mismatch),
-        fall back to scripted_score().
-    Returns (node, final_score) sorted descending.
+async def rerank(candidates: list[tuple[dict[str, Any], float]],
+                   *, query: str,
+                   reranker: Reranker | None
+                   ) -> list[tuple[dict[str, Any], float]] | None:
+    """Reorder candidates using the injected reranker. Returns
+    reranker-scored ``(node, score)`` pairs sorted descending.
+
+    Returns ``None`` on any fail-soft condition so the caller can
+    apply its own fallback policy:
+      * ``reranker is None`` (no reranker configured)
+      * ``reranker.rerank`` raises
+      * the reranker returned a different number of scores than
+        candidates
+
+    Empty candidate list short-circuits to ``[]`` (not ``None``) —
+    nothing to rerank, but also nothing went wrong.
     """
     if not candidates:
         return []
-
-    if reranker is not None:
-        try:
-            docs = [_doc_for_rerank(n) for (n, _sim) in candidates]
-            scores = await reranker.rerank(query, docs)
-            if len(scores) == len(candidates):
-                paired = list(zip((c[0] for c in candidates), scores))
-                paired.sort(key=lambda x: x[1], reverse=True)
-                return paired
-        except Exception:  # noqa: BLE001
-            pass  # fall through to scripted
-
-    scored = [
-        (n, scripted_score(n, vec_sim=sim, now=now, weights=weights))
-        for (n, sim) in candidates
-    ]
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return scored
+    if reranker is None:
+        return None
+    try:
+        docs = [_doc_for_rerank(n) for (n, _sim) in candidates]
+        scores = await reranker.rerank(query, docs)
+    except Exception:  # noqa: BLE001
+        return None
+    if len(scores) != len(candidates):
+        return None
+    paired = list(zip((c[0] for c in candidates), scores))
+    paired.sort(key=lambda x: x[1], reverse=True)
+    return paired
 
 
 def _doc_for_rerank(node: dict[str, Any]) -> str:

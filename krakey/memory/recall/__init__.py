@@ -31,7 +31,7 @@ from krakey.memory.recall.scoring import (  # noqa: F401
     Reranker,
     ScoringWeights,
     category_weight,
-    rank_candidates,
+    rerank,
     scripted_score,
     time_decay,
 )
