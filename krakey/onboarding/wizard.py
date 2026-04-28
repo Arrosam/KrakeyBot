@@ -447,6 +447,15 @@ def _ask_plugins(
     # toggle UI so existing scripts and tests still drive the wizard.
     if output_fn is print and _ui.is_interactive():
         selected = _ask_plugins_arrow(names, available, initial)
+        # Picker runs in the terminal's alternate screen buffer so it
+        # doesn't pollute the wizard's transcript with rerenders. After
+        # the picker exits, log the final selection so the user sees
+        # the result above the next step.
+        chosen = sorted(selected)
+        output_fn(
+            "  selected plugins: "
+            + (", ".join(chosen) if chosen else _ui.dim("(none)"))
+        )
     else:
         selected = _ask_plugins_numbered(
             input_fn, output_fn, names, available, initial,
@@ -516,99 +525,84 @@ def _ask_plugins_arrow(
     the highlighted plugin, Enter confirms. Esc / q cancel and keep
     the current selection.
 
-    Renders inline with ANSI cursor-up + clear so the menu stays in
-    place across keystrokes; only used when stdout is a real TTY.
+    Runs in the terminal's **alternate screen buffer** so the redraw
+    doesn't fight with terminal scroll-back. On exit the alt buffer
+    is dropped and the user is back in their normal scrollback with
+    the wizard's transcript intact. Only used when stdout is a real
+    TTY (gated by the caller).
     """
     import sys
 
     selected: set[str] = set(initial)
     cursor = 0
-    last_lines = 0
 
-    # Reserve a fixed slot for the cursor item's description so the
-    # total line count is stable across keystrokes (otherwise redraw
-    # cursor-up math gets ugly when descriptions vary in length).
-    _DESC_SLOT = 4
+    # Enter alt screen + hide cursor. Wrap in try/finally so we
+    # always restore the terminal even on KeyboardInterrupt.
+    sys.stdout.write("\033[?1049h\033[?25l")
+    sys.stdout.flush()
+    try:
+        while True:
+            # Clear the alt buffer and home the cursor each frame —
+            # cheap because nothing else lives in this buffer.
+            sys.stdout.write("\033[H\033[2J")
 
-    while True:
-        rows: list[str] = []
-        rows.append(_ui.dim(
-            "  ↑/↓ move • Space toggle • Enter confirm • Esc cancel"
-        ))
-        rows.append("")
-        for i, n in enumerate(names):
-            is_cursor = (i == cursor)
-            is_recommended = n in RECOMMENDED_PLUGINS
-            arrow = _ui.color("›", "bright_green", "bold") \
-                if is_cursor else " "
-            mark = _ui.green("[x]") if n in selected \
-                else _ui.dim("[ ]")
-            star = _ui.yellow(_ui.bold(" *")) if is_recommended else "  "
-            if is_cursor:
+            sys.stdout.write(
+                _ui.cyan(_ui.bold("  Pick plugins")) + "\n"
+            )
+            sys.stdout.write(_ui.dim(
+                "  ↑/↓ move • Space toggle • Enter confirm • Esc cancel"
+            ) + "\n\n")
+
+            for i, n in enumerate(names):
+                is_cursor = (i == cursor)
+                is_recommended = n in RECOMMENDED_PLUGINS
+                arrow = _ui.color("›", "bright_green", "bold") \
+                    if is_cursor else " "
+                mark = _ui.green("[x]") if n in selected \
+                    else _ui.dim("[ ]")
+                star = _ui.yellow(_ui.bold(" *")) if is_recommended \
+                    else "  "
                 if is_recommended:
                     name_part = _ui.cyan(_ui.bold(n))
-                else:
+                elif is_cursor:
                     name_part = _ui.bold(n)
-                # Whole row underlined when cursor is on it.
-                row = _ui.color(
-                    f"{arrow} {mark}{star} {name_part}", "bold",
-                )
-            else:
-                if is_recommended:
-                    name_part = _ui.cyan(_ui.bold(n))
                 else:
                     name_part = n
-                row = f"{arrow} {mark}{star} {name_part}"
-            rows.append("  " + row)
-        rows.append("")
+                sys.stdout.write(
+                    f"  {arrow} {mark}{star} {name_part}\n"
+                )
 
-        # Description slot for the cursor item, padded to _DESC_SLOT
-        # lines so the redraw always clears the same region.
-        desc_lines: list[str] = []
-        meta = available[names[cursor]]
-        if meta.description:
-            for line in meta.description.strip().splitlines():
-                desc_lines.append(_ui.dim(f"      {line}"))
-        # Pad / truncate.
-        if len(desc_lines) > _DESC_SLOT:
-            desc_lines = desc_lines[: _DESC_SLOT - 1]
-            desc_lines.append(_ui.dim("      ..."))
-        while len(desc_lines) < _DESC_SLOT:
-            desc_lines.append("")
-        rows.extend(desc_lines)
+            # Cursor item's full description rendered below, dimmed.
+            sys.stdout.write("\n")
+            meta = available[names[cursor]]
+            if meta.description:
+                for line in meta.description.strip().splitlines():
+                    sys.stdout.write(_ui.dim(f"      {line}") + "\n")
 
-        # Redraw: clear the previous menu region, emit the new one.
-        if last_lines:
-            sys.stdout.write(f"\033[{last_lines}A")
-            for _ in range(last_lines):
-                sys.stdout.write("\033[2K\n")
-            sys.stdout.write(f"\033[{last_lines}A")
-        for row in rows:
-            sys.stdout.write(row + "\n")
-        sys.stdout.flush()
-        last_lines = len(rows)
+            sys.stdout.flush()
 
-        # Block on a single keystroke.
-        try:
+            # Block on a single keystroke.
             key = _ui.read_key()
-        except KeyboardInterrupt:
-            raise
 
-        if key == _ui.KEY_UP:
-            cursor = (cursor - 1) % len(names)
-        elif key == _ui.KEY_DOWN:
-            cursor = (cursor + 1) % len(names)
-        elif key == _ui.KEY_SPACE:
-            n = names[cursor]
-            if n in selected:
-                selected.discard(n)
-            else:
-                selected.add(n)
-        elif key == _ui.KEY_ENTER:
-            return selected
-        elif key in (_ui.KEY_ESC, "q", "Q"):
-            return selected
-        # Any other key: ignore and redraw next loop.
+            if key == _ui.KEY_UP:
+                cursor = (cursor - 1) % len(names)
+            elif key == _ui.KEY_DOWN:
+                cursor = (cursor + 1) % len(names)
+            elif key == _ui.KEY_SPACE:
+                n = names[cursor]
+                if n in selected:
+                    selected.discard(n)
+                else:
+                    selected.add(n)
+            elif key == _ui.KEY_ENTER:
+                return selected
+            elif key in (_ui.KEY_ESC, "q", "Q"):
+                return selected
+            # Any other key: ignore and redraw next loop.
+    finally:
+        # Show cursor + leave alt buffer no matter how we exit.
+        sys.stdout.write("\033[?25h\033[?1049l")
+        sys.stdout.flush()
 
 
 def _print_plugin_list(
