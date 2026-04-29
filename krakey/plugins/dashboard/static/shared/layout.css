@@ -129,6 +129,10 @@ main {
 }
 .tab-panel.active { display: flex; }
 
+/* Bootstrap-Icons inline SVGs (hydrated from <i data-bi> placeholders
+   by shared/bi.js). Inherits surrounding text colour via fill. */
+.bi { vertical-align: -2px; flex-shrink: 0; }
+
 /* Generic panel primitive — used by multiple views. */
 .panel {
   background: var(--panel);
