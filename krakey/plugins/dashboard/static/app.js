@@ -1568,6 +1568,12 @@ let availableModifiers = [];
 // plugin model — see MEMORY.md.)
 let modifierConfigEdits = {};
 
+// Names of plugins whose row is currently expanded in the unified
+// panel. Default-collapsed so the section stays scannable; the user
+// expands a row to edit its config or LLM-purpose bindings. Survives
+// renderSettingsForm() rebuilds (the Set is module-scoped).
+let pluginExpanded = new Set();
+
 async function loadAvailableModifiers() {
   try {
     const r = await fetch("/api/modifiers/available");
@@ -1778,9 +1784,30 @@ function _renderPluginCard(plugin, enabled, liveByName, modIdx, modCount) {
   card.className = "subblock";
   card.style.margin = "6px 0";
 
+  const isExpanded = pluginExpanded.has(plugin.name);
+
   const head = document.createElement("div");
   head.style.cssText =
-    "display:flex;align-items:center;gap:8px;flex-wrap:wrap";
+    "display:flex;align-items:center;gap:8px;flex-wrap:wrap;cursor:pointer;user-select:none";
+  // Click anywhere on the head toggles expansion, except over inputs
+  // (checkbox) and buttons (reorder ↑↓) — those have their own
+  // handlers. We can't read the row at click time so we filter on
+  // the event target's tag.
+  head.addEventListener("click", (ev) => {
+    const tag = ev.target && ev.target.tagName;
+    if (tag === "INPUT" || tag === "BUTTON") return;
+    if (pluginExpanded.has(plugin.name)) {
+      pluginExpanded.delete(plugin.name);
+    } else {
+      pluginExpanded.add(plugin.name);
+    }
+    renderSettingsForm();
+  });
+
+  const caret = document.createElement("span");
+  caret.textContent = isExpanded ? "▾" : "▸";
+  caret.style.cssText = "color:var(--muted);font-size:10px;width:10px";
+  head.appendChild(caret);
 
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
@@ -1820,9 +1847,11 @@ function _renderPluginCard(plugin, enabled, liveByName, modIdx, modCount) {
 
   card.appendChild(head);
 
+  if (!isExpanded) return card;
+
   // Live error pre-block, when /api/plugins surfaced one for this
-  // plugin. Render even if checkbox ends up unchecked next save —
-  // an error means runtime tried and failed, which is worth seeing.
+  // plugin. The header status badge already says "error"; this shows
+  // the message body for diagnosis.
   const status = liveByName[plugin.name];
   if (status && status.error) {
     const err = document.createElement("pre");
