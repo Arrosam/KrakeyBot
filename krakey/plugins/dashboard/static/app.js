@@ -191,12 +191,12 @@ function handleEvent(e) {
       break;
     case "hypothalamus":
       appendEntry(hypoEl, e.heartbeat_id,
-        `tentacle_calls=${e.tentacle_calls_count} writes=${e.memory_writes_count}` +
+        `tool_calls=${e.tool_calls_count} writes=${e.memory_writes_count}` +
         ` updates=${e.memory_updates_count} sleep=${e.sleep_requested}`);
       break;
     case "dispatch":
       appendEntry(hypoEl, e.heartbeat_id,
-        `→ ${e.tentacle} : ${e.intent}${e.adrenalin ? " (adrenalin)" : ""}`);
+        `→ ${e.tool} : ${e.intent}${e.adrenalin ? " (adrenalin)" : ""}`);
       break;
     case "prompt_built":
       // Live-append to the Prompts tab cache so users see new beats
@@ -643,17 +643,17 @@ const HELP = {
   "model.capabilities": "模型能力标签。仅供后续路由参考, 当前不强制校验。",
   "role.provider": "为该 role 选一个 provider。",
   "role.model": "在选定 provider 下选一个 model。",
-  "sensory.enabled": "是否启用此 sensory 通道。",
-  "sensory.default_adrenalin": "该 sensory 推送的 stimulus 默认是否激活肾上腺素 (打断 hibernate)。",
-  "tentacle.enabled": "是否注册此 tentacle 给 Hypothalamus 使用。",
-  "tentacle.max_results": "搜索结果数上限。",
-  "tentacle.sandbox_dir": "代码 / 文件操作的工作目录。",
-  "tentacle.timeout_seconds": "子进程超时（秒）。",
-  "tentacle.max_output_chars": "stdout/stderr 截断字符数。",
-  "tentacle.screenshot_dir": "GUI 截图保存目录。",
-  "tentacle.history_path": "Web chat 持久化 JSONL 路径。",
-  "tentacle.sandbox": "该 tentacle 的非幂等操作是否只在沙盒 VM 内发生。默认 true — 关掉 = 危险 (代码/GUI 直接跑在你的机器)。",
-  "sandbox.guest_os": "沙盒客机操作系统: linux / macos / windows。启用任何 sandboxed tentacle 必须先填。",
+  "channel.enabled": "是否启用此 channel 通道。",
+  "channel.default_adrenalin": "该 channel 推送的 stimulus 默认是否激活肾上腺素 (打断 hibernate)。",
+  "tool.enabled": "是否注册此 tool 给 Hypothalamus 使用。",
+  "tool.max_results": "搜索结果数上限。",
+  "tool.sandbox_dir": "代码 / 文件操作的工作目录。",
+  "tool.timeout_seconds": "子进程超时（秒）。",
+  "tool.max_output_chars": "stdout/stderr 截断字符数。",
+  "tool.screenshot_dir": "GUI 截图保存目录。",
+  "tool.history_path": "Web chat 持久化 JSONL 路径。",
+  "tool.sandbox": "该 tool 的非幂等操作是否只在沙盒 VM 内发生。默认 true — 关掉 = 危险 (代码/GUI 直接跑在你的机器)。",
+  "sandbox.guest_os": "沙盒客机操作系统: linux / macos / windows。启用任何 sandboxed tool 必须先填。",
   "sandbox.provider": "虚拟机管理器: qemu (推荐) / virtualbox / utm。",
   "sandbox.vm_name": "VM 实例名 (预先 provision 好)。",
   "sandbox.display": "headed = VM 桌面显示一个窗口, 你能看能介入; headless = VM 完全不显示, 只通过 agent 交互。由你按使用偏好选。",
@@ -717,7 +717,7 @@ const SCHEMAS = {
   ],
 };
 
-let pluginReport = { tentacles: [], sensories: [] };
+let pluginReport = { tools: [], channels: [] };
 // Dirty-tracking target for plugin edits. One entry per project, shape:
 //   { enabled: bool, ...schemaFields }
 // Populated on each render from /api/plugins `values`; re-built from
@@ -753,14 +753,14 @@ async function loadSettings() {
     if (pluginRes && pluginRes.ok) {
       pluginReport = await pluginRes.json();
     } else {
-      pluginReport = { tentacles: [], sensories: [] };
+      pluginReport = { tools: [], channels: [] };
     }
     if (schemaRes && schemaRes.ok) {
       configSchema = await schemaRes.json();
     } else {
       configSchema = { llm_params: [] };
     }
-    await loadAvailableReflects();
+    await loadAvailableModifiers();
     renderSettingsForm();
   } catch (e) {
     settingsForm.innerHTML = "error loading: " + escapeHtml(String(e));
@@ -777,8 +777,8 @@ function renderSettingsForm() {
   ensure(llm, "core_purposes", () => ({}));
   settingsForm.appendChild(renderLLMSection(llm));
 
-  // Reflects — list available + enable/order/configure
-  settingsForm.appendChild(renderReflectsSection());
+  // Modifiers — list available + enable/order/configure
+  settingsForm.appendChild(renderModifiersSection());
 
   // Generic sections (each seeded from SECTION_DEFAULTS so missing fields
   // pre-populate to runtime defaults instead of looking "off"/empty)
@@ -799,7 +799,7 @@ function renderSettingsForm() {
   settingsForm.appendChild(renderGenericSection("knowledge_base", "Knowledge Base",
     cfgState.knowledge_base, SCHEMAS.knowledge_base));
 
-  // Plugins — one card per component (tentacle / sensory) known to
+  // Plugins — one card per component (tool / channel) known to
   // the runtime RIGHT NOW. Components from the same project share one
   // config_schema; edits land in pluginEdits[<project>] and are
   // persisted per-project via POST /api/plugins/<project>/config.
@@ -1416,7 +1416,7 @@ function renderTagParamsBlock(tname, tags) {
 
 
 // Render the core_purposes mapping as `purpose: tag` rows. Users
-// can add custom purposes (e.g. for future Reflects), but the
+// can add custom purposes (e.g. for future Modifiers), but the
 // well-known core purposes (self_thinking required; compact /
 // classifier optional) are always shown so people know they exist.
 const KNOWN_CORE_PURPOSES = [
@@ -1546,91 +1546,91 @@ function renderModelSlotBlock(llm, fieldName, helpText) {
 // Reset-to-defaults dropped because tags have no per-purpose defaults
 // any more; LLMParams field defaults are the only baseline.)
 
-// ---------------- Reflects section ----------------
+// ---------------- Modifiers section ----------------
 
-// Cache of {name → metadata} from /api/reflects/available. Populated
+// Cache of {name → metadata} from /api/modifiers/available. Populated
 // alongside configSchema during loadSettings(). Drives the
-// "Available Reflects" UI.
-let availableReflects = [];
+// "Available Modifiers" UI.
+let availableModifiers = [];
 
-// Cache of per-Reflect config (workspace/reflects/<name>/config.yaml).
-// Keyed by Reflect name. Loaded lazily when the user expands a
-// Reflect's row, persisted via POST /api/reflects/<name>/config.
-let reflectConfigEdits = {};
+// Cache of per-Modifier config (workspace/modifiers/<name>/config.yaml).
+// Keyed by Modifier name. Loaded lazily when the user expands a
+// Modifier's row, persisted via POST /api/modifiers/<name>/config.
+let modifierConfigEdits = {};
 
-async function loadAvailableReflects() {
+async function loadAvailableModifiers() {
   try {
-    const r = await fetch("/api/reflects/available");
+    const r = await fetch("/api/modifiers/available");
     if (r.ok) {
       const body = await r.json();
-      availableReflects = body.reflects || [];
+      availableModifiers = body.modifiers || [];
     } else {
-      availableReflects = [];
+      availableModifiers = [];
     }
   } catch (e) {
-    availableReflects = [];
+    availableModifiers = [];
   }
 }
 
-function renderReflectsSection() {
-  const sec = makeSection("Reflects");
+function renderModifiersSection() {
+  const sec = makeSection("Modifiers");
   const body = sec.querySelector(".body");
 
   // Top: explainer
   const intro = document.createElement("div");
   intro.style.cssText = "font-size:11px;color:var(--muted);margin-bottom:8px";
   intro.textContent =
-    "Reflects are deeper-than-tentacle plugins that hook into the " +
+    "Modifiers are deeper-than-tool plugins that hook into the " +
     "heartbeat. The list below is what's installed on disk; check the " +
     "ones you want loaded. Order in the list = chain execution order.";
   body.appendChild(intro);
 
-  cfgState.reflects = cfgState.reflects || [];
+  cfgState.modifiers = cfgState.modifiers || [];
   // Only treat as "user explicitly disabled" when the field is an
   // empty array; null/undefined means "unconfigured" — render with
   // the available list so the user can opt in.
-  const enabledList = Array.isArray(cfgState.reflects)
-    ? cfgState.reflects.slice() : [];
+  const enabledList = Array.isArray(cfgState.modifiers)
+    ? cfgState.modifiers.slice() : [];
 
-  // Reflects available on disk that the user hasn't enabled yet.
+  // Modifiers available on disk that the user hasn't enabled yet.
   const enabledSet = new Set(enabledList);
-  const knownNames = new Set(availableReflects.map(m => m.name));
+  const knownNames = new Set(availableModifiers.map(m => m.name));
 
   // Render the user's enabled list first, in the user-declared order.
-  // Each enabled Reflect can be expanded for purpose mapping.
+  // Each enabled Modifier can be expanded for purpose mapping.
   for (let i = 0; i < enabledList.length; i++) {
     const name = enabledList[i];
-    const meta = availableReflects.find(m => m.name === name);
-    body.appendChild(renderReflectCard(name, meta, true, i, enabledList));
+    const meta = availableModifiers.find(m => m.name === name);
+    body.appendChild(renderModifierCard(name, meta, true, i, enabledList));
   }
 
   // Then disabled (available but not in user list)
-  const disabled = availableReflects.filter(m => !enabledSet.has(m.name));
+  const disabled = availableModifiers.filter(m => !enabledSet.has(m.name));
   if (disabled.length) {
     const head = document.createElement("h4");
     head.style.cssText = "color:var(--muted);font-size:11px;margin:12px 0 6px";
     head.textContent = "Available (disabled)";
     body.appendChild(head);
     for (const meta of disabled) {
-      body.appendChild(renderReflectCard(meta.name, meta, false, -1,
+      body.appendChild(renderModifierCard(meta.name, meta, false, -1,
                                           enabledList));
     }
   }
 
-  // Detect orphan names — in user's reflects list but not on disk.
+  // Detect orphan names — in user's modifiers list but not on disk.
   const orphans = enabledList.filter(n => !knownNames.has(n));
   if (orphans.length) {
     const warn = document.createElement("div");
     warn.style.cssText = "color:var(--red);font-size:11px;margin-top:8px";
     warn.textContent =
-      `Unknown reflect names in config: ${orphans.join(", ")} — these will ` +
+      `Unknown modifier names in config: ${orphans.join(", ")} — these will ` +
       "be skipped at startup with a warning.";
     body.appendChild(warn);
   }
   return sec;
 }
 
-function renderReflectCard(name, meta, enabled, index, enabledList) {
+function renderModifierCard(name, meta, enabled, index, enabledList) {
   const card = document.createElement("div");
   card.className = "subblock";
   card.style.cssText = "margin:6px 0";
@@ -1642,11 +1642,11 @@ function renderReflectCard(name, meta, enabled, index, enabledList) {
   checkbox.type = "checkbox";
   checkbox.checked = enabled;
   checkbox.addEventListener("change", () => {
-    cfgState.reflects = cfgState.reflects || [];
+    cfgState.modifiers = cfgState.modifiers || [];
     if (checkbox.checked) {
-      if (!cfgState.reflects.includes(name)) cfgState.reflects.push(name);
+      if (!cfgState.modifiers.includes(name)) cfgState.modifiers.push(name);
     } else {
-      cfgState.reflects = cfgState.reflects.filter(n => n !== name);
+      cfgState.modifiers = cfgState.modifiers.filter(n => n !== name);
     }
     renderSettingsForm();
   });
@@ -1686,13 +1686,13 @@ function renderReflectCard(name, meta, enabled, index, enabledList) {
 
   // LLM purposes editor — only if the plugin declares any
   if (meta && enabled && meta.llm_purposes && meta.llm_purposes.length) {
-    card.appendChild(renderReflectLLMPurposes(name, meta));
+    card.appendChild(renderModifierLLMPurposes(name, meta));
   }
   return card;
 }
 
 function _reorderEnabled(index, delta) {
-  const list = cfgState.reflects;
+  const list = cfgState.modifiers;
   if (!Array.isArray(list)) return;
   const target = index + delta;
   if (target < 0 || target >= list.length) return;
@@ -1702,22 +1702,22 @@ function _reorderEnabled(index, delta) {
   renderSettingsForm();
 }
 
-function renderReflectLLMPurposes(name, meta) {
+function renderModifierLLMPurposes(name, meta) {
   // Lazy-load this plugin's per-folder config.yaml the first time
   // we need it; subsequent renders use the cached/edited copy.
-  if (!reflectConfigEdits[name]) {
-    reflectConfigEdits[name] = { llm_purposes: {} };
-    fetch(`/api/reflects/${encodeURIComponent(name)}/config`)
+  if (!modifierConfigEdits[name]) {
+    modifierConfigEdits[name] = { llm_purposes: {} };
+    fetch(`/api/modifiers/${encodeURIComponent(name)}/config`)
       .then(r => r.ok ? r.json() : { config: {} })
       .then(body => {
-        reflectConfigEdits[name] = body.config || {};
-        if (!reflectConfigEdits[name].llm_purposes)
-          reflectConfigEdits[name].llm_purposes = {};
+        modifierConfigEdits[name] = body.config || {};
+        if (!modifierConfigEdits[name].llm_purposes)
+          modifierConfigEdits[name].llm_purposes = {};
         renderSettingsForm();
       })
       .catch(() => {});
   }
-  const cfg = reflectConfigEdits[name];
+  const cfg = modifierConfigEdits[name];
 
   const block = document.createElement("div");
   block.style.cssText = "margin:8px 0 4px;padding:6px;background:rgba(0,0,0,0.02)";
@@ -1757,7 +1757,7 @@ function renderReflectLLMPurposes(name, meta) {
   // Save button — writes this plugin's config to its folder
   const saveBtn = mkBtn("save plugin config", async () => {
     try {
-      const r = await fetch(`/api/reflects/${encodeURIComponent(name)}/config`, {
+      const r = await fetch(`/api/modifiers/${encodeURIComponent(name)}/config`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ config: cfg }),
@@ -1776,7 +1776,7 @@ function renderReflectLLMPurposes(name, meta) {
   return block;
 }
 
-// ---------------- Generic dict section (sensory / tentacle) ----------------
+// ---------------- Generic dict section (channel / tool) ----------------
 
 // ---------------- Plugins section (auto-discovered) ----------------
 
@@ -1792,17 +1792,17 @@ function renderPluginsSection() {
   hint.className = "hint";
   hint.style.margin = "0 0 8px";
   hint.innerHTML =
-    "Tentacles + sensories registered this run — built-ins plus anything " +
+    "Tools + channels registered this run — built-ins plus anything " +
     "dropped into <code>workspace/plugins/</code>. A project can carry " +
-    "multiple components (sensory + tentacle) that share config. See " +
+    "multiple components (channel + tool) that share config. See " +
     "<code>PLUGINS.md</code> for the contract.";
   body.appendChild(hint);
 
   _pluginSchemaSeen = new Set();
-  body.appendChild(_renderPluginGroup("Tentacles",
-    pluginReport.tentacles || [], "tentacle"));
-  body.appendChild(_renderPluginGroup("Sensories",
-    pluginReport.sensories || [], "sensory"));
+  body.appendChild(_renderPluginGroup("Tools",
+    pluginReport.tools || [], "tool"));
+  body.appendChild(_renderPluginGroup("Channels",
+    pluginReport.channels || [], "channel"));
   return sec;
 }
 
