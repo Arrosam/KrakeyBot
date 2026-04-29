@@ -140,6 +140,8 @@ main {
 }
 .panel.cyan { border-color: var(--cyan); }
 .panel.yellow { border-color: var(--yellow); }
+.panel.magenta { border-color: var(--magenta); }
+.panel.white { border-color: var(--text); }
 
 .panel h3 {
   margin: 0;
@@ -151,6 +153,8 @@ main {
 }
 .panel.cyan h3 { color: var(--cyan); }
 .panel.yellow h3 { color: var(--yellow); }
+.panel.magenta h3 { color: var(--magenta); }
+.panel.white h3 { color: var(--text); }
 
 /* Generic scroll container. */
 .scroll {
