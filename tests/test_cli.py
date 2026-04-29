@@ -88,7 +88,7 @@ def test_banner_renders_with_version_and_tagline(capsys) -> None:
     _banner.print_banner()
     out = capsys.readouterr().out
     # logo, tagline, and version line are all present
-    assert "██╗" in out
+    assert "d8b" in out
     assert "ultimate" in out.replace(" ", "").lower() or "u l t i m a t e" in out
     assert _meta.version() in out
 
@@ -97,7 +97,7 @@ def test_no_args_prints_banner(capsys) -> None:
     rc = main([])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "██╗" in out             # logo
+    assert "d8b" in out             # logo
     assert "usage: krakey" in out   # argparse help follows banner
 
 
@@ -108,7 +108,7 @@ def test_runtime_banner_suppressed_when_wizard_ran(capsys) -> None:
     from krakey.cli import lifecycle
 
     lifecycle._print_runtime_banner_if_needed(wizard_ran=True)
-    assert "██╗" not in capsys.readouterr().out
+    assert "d8b" not in capsys.readouterr().out
 
 
 def test_runtime_banner_prints_when_no_wizard(capsys) -> None:
@@ -117,4 +117,4 @@ def test_runtime_banner_prints_when_no_wizard(capsys) -> None:
     from krakey.cli import lifecycle
 
     lifecycle._print_runtime_banner_if_needed(wizard_ran=False)
-    assert "██╗" in capsys.readouterr().out
+    assert "d8b" in capsys.readouterr().out
