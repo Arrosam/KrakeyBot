@@ -328,8 +328,12 @@ class Runtime:
                 "(or re-run `krakey onboard`), then restart."
             )
             try:
+                # Short poll interval (0.25s) so Ctrl+C is responsive.
+                # On Windows + asyncio, signal delivery only happens
+                # when the loop yields back to Python; a long sleep
+                # here makes Ctrl+C feel like the program hung.
                 while not self._stop:
-                    await asyncio.sleep(5.0)
+                    await asyncio.sleep(0.25)
             finally:
                 await self.buffer.stop_all()
             return

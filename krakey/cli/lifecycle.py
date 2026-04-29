@@ -114,9 +114,41 @@ def _exec_runtime(repo: Path) -> int:
             file=sys.stderr,
         )
     from krakey.main import build_runtime_from_config
+
+    rt = build_runtime_from_config()
+
+    # Cooperative shutdown — flip `rt._stop` on Ctrl+C / SIGTERM and let
+    # the runtime exit its loop cleanly. Path differs by platform:
+    #
+    #   Unix: install via `loop.add_signal_handler` inside the coroutine
+    #         (asyncio integrates with the signal subsystem there).
+    #   Windows: `add_signal_handler` is unsupported; use `signal.signal`
+    #         outside the loop. Handler sets the flag, asyncio.sleep
+    #         (0.25s tick) wakes up, runtime sees `_stop=True`, exits.
+    if os.name == "nt":
+        def _win_request_stop(_sig, _frame):  # noqa: ARG001
+            rt._stop = True
+        signal.signal(signal.SIGINT, _win_request_stop)
+
+    async def _supervised() -> None:
+        if os.name != "nt":
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                try:
+                    loop.add_signal_handler(sig, lambda: setattr(rt, "_stop", True))
+                except (NotImplementedError, RuntimeError):
+                    pass
+        try:
+            await rt.run()
+        finally:
+            await rt.close()
+
     try:
-        asyncio.run(build_runtime_from_config().run())
+        asyncio.run(_supervised())
     except KeyboardInterrupt:
+        # Belt-and-suspenders: if the cooperative path didn't catch
+        # Ctrl+C in time, asyncio.run raises KeyboardInterrupt out
+        # of the loop. Runtime's own try/finally already cleaned up.
         pass
     return 0
 
