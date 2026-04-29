@@ -1784,30 +1784,37 @@ function _renderPluginCard(plugin, enabled, liveByName, modIdx, modCount) {
   card.className = "subblock";
   card.style.margin = "6px 0";
 
-  const isExpanded = pluginExpanded.has(plugin.name);
+  const isExpanded = enabled && pluginExpanded.has(plugin.name);
 
   const head = document.createElement("div");
   head.style.cssText =
-    "display:flex;align-items:center;gap:8px;flex-wrap:wrap;cursor:pointer;user-select:none";
-  // Click anywhere on the head toggles expansion, except over inputs
-  // (checkbox) and buttons (reorder ↑↓) — those have their own
-  // handlers. We can't read the row at click time so we filter on
-  // the event target's tag.
-  head.addEventListener("click", (ev) => {
-    const tag = ev.target && ev.target.tagName;
-    if (tag === "INPUT" || tag === "BUTTON") return;
-    if (pluginExpanded.has(plugin.name)) {
-      pluginExpanded.delete(plugin.name);
-    } else {
-      pluginExpanded.add(plugin.name);
-    }
-    renderSettingsForm();
-  });
-
-  const caret = document.createElement("span");
-  caret.textContent = isExpanded ? "▾" : "▸";
-  caret.style.cssText = "color:var(--muted);font-size:10px;width:10px";
-  head.appendChild(caret);
+    "display:flex;align-items:center;gap:8px;flex-wrap:wrap;user-select:none";
+  // Disabled rows have no expandable body, so they get neither a
+  // caret nor a click-to-expand handler — clicking the head just
+  // selects the row (default browser behaviour).
+  if (enabled) {
+    head.style.cursor = "pointer";
+    // Click anywhere on the head toggles expansion, except over inputs
+    // (checkbox) and buttons (reorder ↑↓) — those have their own
+    // handlers. We can't read the row at click time so we filter on
+    // the event target's tag.
+    head.addEventListener("click", (ev) => {
+      const tag = ev.target && ev.target.tagName;
+      if (tag === "INPUT" || tag === "BUTTON") return;
+      if (pluginExpanded.has(plugin.name)) {
+        pluginExpanded.delete(plugin.name);
+      } else {
+        pluginExpanded.add(plugin.name);
+      }
+      renderSettingsForm();
+    });
+    const caret = document.createElement("span");
+    caret.style.cssText = "color:var(--muted);display:inline-flex;align-items:center";
+    caret.innerHTML = window.biIcon(
+      isExpanded ? "chevron-down" : "chevron-right", 12,
+    );
+    head.appendChild(caret);
+  }
 
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
