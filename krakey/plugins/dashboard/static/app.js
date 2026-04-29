@@ -343,7 +343,11 @@ attachBtn.addEventListener("click", () => fileInput.click());
 fileInput.addEventListener("change", async () => {
   const files = Array.from(fileInput.files || []);
   fileInput.value = "";
-  if (!files.length) return;
+  await uploadChatFiles(files);
+});
+
+async function uploadChatFiles(files) {
+  if (!files || !files.length) return;
   const fd = new FormData();
   for (const f of files) fd.append("files", f, f.name);
   try {
@@ -355,7 +359,67 @@ fileInput.addEventListener("change", async () => {
   } catch (e) {
     alert("upload network: " + e);
   }
-});
+}
+
+// Chat-tab drag-drop: dropping files anywhere on the Chat panel
+// kicks off the same upload path as the attach button. The "release
+// to send file" overlay is rendered purely via the .drag-active
+// class — no extra DOM nodes are ever inserted, so the panel
+// stays empty when nothing is being dragged.
+//
+// dragCounter is incremented on dragenter and decremented on
+// dragleave to handle the browser firing those events for every
+// child element the cursor crosses; otherwise the overlay would
+// flicker as the drag pointer moves between the bubble list and
+// the input form.
+(function () {
+  const chatTab = document.getElementById("tab-chat");
+  if (!chatTab) return;
+  let dragCounter = 0;
+
+  function hasFiles(ev) {
+    const types = ev.dataTransfer && ev.dataTransfer.types;
+    if (!types) return false;
+    for (let i = 0; i < types.length; i++) {
+      if (types[i] === "Files") return true;
+    }
+    return false;
+  }
+
+  chatTab.addEventListener("dragenter", (ev) => {
+    if (!hasFiles(ev)) return;
+    dragCounter++;
+    chatTab.classList.add("drag-active");
+  });
+  chatTab.addEventListener("dragover", (ev) => {
+    if (!hasFiles(ev)) return;
+    ev.preventDefault();
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = "copy";
+  });
+  chatTab.addEventListener("dragleave", (ev) => {
+    if (!hasFiles(ev)) return;
+    dragCounter = Math.max(0, dragCounter - 1);
+    if (dragCounter === 0) chatTab.classList.remove("drag-active");
+  });
+  chatTab.addEventListener("drop", (ev) => {
+    if (!hasFiles(ev)) return;
+    ev.preventDefault();
+    dragCounter = 0;
+    chatTab.classList.remove("drag-active");
+    const files = Array.from(ev.dataTransfer.files || []);
+    if (files.length) uploadChatFiles(files);
+  });
+
+  // Stop the browser's default open-the-file behaviour when files are
+  // dropped outside the chat tab — we don't want the dashboard to
+  // navigate away to view a dropped image.
+  window.addEventListener("dragover", (ev) => {
+    if (hasFiles(ev)) ev.preventDefault();
+  });
+  window.addEventListener("drop", (ev) => {
+    if (hasFiles(ev)) ev.preventDefault();
+  });
+})();
 
 function renderAttachStrip() {
   attachStrip.innerHTML = "";
