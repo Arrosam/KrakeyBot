@@ -54,6 +54,14 @@ def _no_models(provider):
     return None
 
 
+def _skip_bench(input_fn, output_fn):
+    """Tests don't run the GM benchmark — it's slow + deterministic
+    enough that exercising it once via its own dedicated test is
+    plenty. Tests that want to verify the soft_limit gets written
+    pass a custom stub that returns the desired int."""
+    return None
+
+
 def test_wizard_writes_minimal_config(tmp_path):
     """Happy path: chat provider + skip embedding + accept defaults
     in plugin picker. Resulting file round-trips through load_config."""
@@ -84,6 +92,7 @@ def test_wizard_writes_minimal_config(tmp_path):
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
         list_models_fn=_no_models,
+        bench_fn=_skip_bench,
     )
     assert written == cfg_path
     assert cfg_path.exists()
@@ -117,6 +126,7 @@ def test_wizard_dashboard_default_recommended_and_first(tmp_path):
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
         list_models_fn=_no_models,
+        bench_fn=_skip_bench,
     )
     cfg = load_config(cfg_path)
     assert cfg.plugins == ["dashboard"]
@@ -156,6 +166,7 @@ def test_wizard_toggle_plugin_selection(tmp_path):
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
         list_models_fn=_no_models,
+        bench_fn=_skip_bench,
     )
     cfg = load_config(cfg_path)
     assert cfg.plugins is not None
@@ -183,6 +194,7 @@ def test_wizard_embedding_same_provider_as_chat(tmp_path):
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
         list_models_fn=_no_models,
+        bench_fn=_skip_bench,
     )
     cfg = load_config(cfg_path)
     assert list(cfg.llm.providers.keys()) == ["ChatCo"]
@@ -208,6 +220,7 @@ def test_wizard_backs_up_existing_config(tmp_path):
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
         list_models_fn=_no_models,
+        bench_fn=_skip_bench,
     )
     backups = list(backup_dir.iterdir())
     assert backups, "expected a backup file in backup_dir"
@@ -237,6 +250,7 @@ def test_wizard_reranker_reuses_embedding_provider(tmp_path):
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
         list_models_fn=_no_models,
+        bench_fn=_skip_bench,
     )
     cfg = load_config(cfg_path)
     assert cfg.llm.reranker == "rerank"
@@ -264,6 +278,7 @@ def test_wizard_skip_reranker_leaves_field_unset(tmp_path):
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
         list_models_fn=_no_models,
+        bench_fn=_skip_bench,
     )
     cfg = load_config(cfg_path)
     assert cfg.llm.reranker is None
@@ -295,6 +310,7 @@ def test_wizard_verify_called_for_each_endpoint(tmp_path):
         list_plugins_fn=lambda: catalogue,
         verify_fn=_record,
         list_models_fn=_no_models,
+        bench_fn=_skip_bench,
     )
     kinds = [c[0] for c in calls]
     assert kinds == ["chat", "embedding", "reranker"]
@@ -327,6 +343,7 @@ def test_wizard_verify_failure_warns_but_does_not_abort(tmp_path):
         list_plugins_fn=lambda: catalogue,
         verify_fn=_failing,
         list_models_fn=_no_models,
+        bench_fn=_skip_bench,
     )
     # Config still written.
     assert cfg_path.exists()
@@ -356,6 +373,7 @@ def test_wizard_anthropic_provider_type(tmp_path):
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
         list_models_fn=_no_models,
+        bench_fn=_skip_bench,
     )
     cfg = load_config(cfg_path)
     assert cfg.llm.providers["Claude"].type == "anthropic"
@@ -385,6 +403,7 @@ def test_wizard_skip_chat_force_enables_dashboard(tmp_path):
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
         list_models_fn=_no_models,
+        bench_fn=_skip_bench,
     )
     cfg = load_config(cfg_path)
     # Dashboard force-enabled despite being toggled off, because the
@@ -448,7 +467,8 @@ def test_wizard_model_picker_falls_back_to_text_when_listing_fails(tmp_path):
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
-        list_models_fn=_no_models,        # returns None
+        list_models_fn=_no_models,
+        bench_fn=_skip_bench,        # returns None
     )
     cfg = load_config(cfg_path)
     assert cfg.llm.tags["self_main"].provider == "OpenAI/my-custom-model"
@@ -478,6 +498,7 @@ def test_wizard_dashboard_nudge_re_enables_on_no(tmp_path):
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
         list_models_fn=_no_models,
+        bench_fn=_skip_bench,
     )
     cfg = load_config(cfg_path)
     assert "dashboard" in (cfg.plugins or [])
@@ -504,6 +525,7 @@ def test_wizard_skip_embedding_warns(tmp_path):
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
         list_models_fn=_no_models,
+        bench_fn=_skip_bench,
     )
     block = "\n".join(lines).lower()
     assert "warn" in block
@@ -559,6 +581,61 @@ def test_arrow_picker_esc_returns_current_selection(monkeypatch):
     assert selected == {"dashboard"}
 
 
+def test_wizard_bench_writes_soft_limit_into_config(tmp_path):
+    """The bench step's recommended limit lands in
+    `cfg.fatigue.gm_node_soft_limit`."""
+    cfg_path = tmp_path / "config.yaml"
+    catalogue = _fake_catalogue("dashboard")
+    answers = [
+        "1", "P", "http://x", "k", "m",
+        "n",         # skip embedding
+        "n",         # skip reranker
+        "done", "y",
+    ]
+    _, out = _capture_output()
+
+    def _bench_returns_750(input_fn, output_fn):
+        return 750
+
+    run_wizard(
+        config_path=cfg_path,
+        backup_dir=str(tmp_path / "backups"),
+        input_fn=_stub_inputs(answers),
+        output_fn=out,
+        list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
+        list_models_fn=_no_models,
+        bench_fn=_bench_returns_750,
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.fatigue.gm_node_soft_limit == 750
+
+
+def test_wizard_bench_skipped_keeps_default_soft_limit(tmp_path):
+    """When the bench is skipped (`bench_fn` returns None), the
+    config keeps the default `gm_node_soft_limit`."""
+    cfg_path = tmp_path / "config.yaml"
+    catalogue = _fake_catalogue("dashboard")
+    answers = [
+        "1", "P", "http://x", "k", "m",
+        "n", "n", "done", "y",
+    ]
+    _, out = _capture_output()
+    run_wizard(
+        config_path=cfg_path,
+        backup_dir=str(tmp_path / "backups"),
+        input_fn=_stub_inputs(answers),
+        output_fn=out,
+        list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
+        list_models_fn=_no_models,
+        bench_fn=_skip_bench,
+    )
+    cfg = load_config(cfg_path)
+    # Default from FatigueSection is 1000.
+    assert cfg.fatigue.gm_node_soft_limit == 1000
+
+
 def test_module_exports_run_wizard():
     """`from krakey.onboarding import run_wizard` works (entry point relies on it)."""
     from krakey.onboarding import run_wizard as imported
@@ -585,6 +662,7 @@ def test_wizard_handles_unknown_command(tmp_path):
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
         list_models_fn=_no_models,
+        bench_fn=_skip_bench,
     )
     assert any("unknown command" in line for line in lines)
     assert any("out of range" in line for line in lines)
