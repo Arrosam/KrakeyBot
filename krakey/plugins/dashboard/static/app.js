@@ -855,11 +855,56 @@ function ensureSection(key) {
   }
 }
 
+// Per-section leading icon (Bootstrap Icons name). Looked up by title;
+// sections without an entry just render no icon.
+const SECTION_ICONS = {
+  "LLM": "cpu",
+  "Plugins": "gear",
+  "Hibernate": "moon",
+  "Fatigue": "bar-chart",
+  "Graph Memory": "geo-alt",
+  "Knowledge Base": "book",
+  "Sleep": "moon",
+  "Safety": "shield-check",
+  "Dashboard": "speedometer2",
+  "Sandbox VM": "hdd",
+};
+
+// Titles whose body is currently collapsed. Module-scoped so the
+// state survives renderSettingsForm() rebuilds within a session.
+let collapsedSections = new Set();
+
 function makeSection(title) {
   const sec = document.createElement("div");
   sec.className = "cfg-section";
+  const isCollapsed = collapsedSections.has(title);
+  if (isCollapsed) sec.classList.add("collapsed");
+
   const h = document.createElement("h3");
-  h.textContent = title;
+
+  const iconName = SECTION_ICONS[title];
+  if (iconName && window.biIcon) {
+    const ico = document.createElement("span");
+    ico.style.cssText = "display:inline-flex;align-items:center";
+    ico.innerHTML = window.biIcon(iconName, 14);
+    h.appendChild(ico);
+  }
+  h.appendChild(document.createTextNode(title));
+
+  const caret = document.createElement("span");
+  caret.className = "section-caret";
+  caret.style.cssText = "display:inline-flex;align-items:center";
+  caret.innerHTML = window.biIcon
+    ? window.biIcon(isCollapsed ? "chevron-right" : "chevron-down", 12)
+    : "";
+  h.appendChild(caret);
+
+  h.addEventListener("click", () => {
+    if (collapsedSections.has(title)) collapsedSections.delete(title);
+    else collapsedSections.add(title);
+    renderSettingsForm();
+  });
+
   const body = document.createElement("div");
   body.className = "body";
   sec.appendChild(h); sec.appendChild(body);
