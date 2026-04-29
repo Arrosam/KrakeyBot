@@ -1526,13 +1526,6 @@ function renderModelSlotBlock(llm, fieldName, helpText) {
   });
   row.appendChild(sel);
   sub.appendChild(row);
-
-  if (helpText) {
-    const desc = document.createElement("div");
-    desc.style.cssText = "font-size:11px;color:var(--muted);margin-top:4px";
-    desc.textContent = helpText;
-    sub.appendChild(desc);
-  }
   return sub;
 }
 
@@ -1800,6 +1793,7 @@ function _renderPluginCard(plugin, enabled, liveByName, modIdx, modCount) {
 
   const title = document.createElement("strong");
   title.textContent = plugin.name;
+  if (plugin.description) title.title = plugin.description;
   head.appendChild(title);
 
   for (const kind of _pluginKinds(plugin)) {
@@ -1825,14 +1819,6 @@ function _renderPluginCard(plugin, enabled, liveByName, modIdx, modCount) {
   }
 
   card.appendChild(head);
-
-  if (plugin.description) {
-    const desc = document.createElement("div");
-    desc.style.cssText =
-      "font-size:11px;color:var(--muted);margin:4px 0";
-    desc.textContent = plugin.description;
-    card.appendChild(desc);
-  }
 
   // Live error pre-block, when /api/plugins surfaced one for this
   // plugin. Render even if checkbox ends up unchecked next save —
