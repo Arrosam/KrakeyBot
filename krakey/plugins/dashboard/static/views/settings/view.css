@@ -20,10 +20,19 @@
   margin: 0;
   padding: 6px 10px;
   font-size: 12px;
-  color: var(--cyan);
+  color: var(--text);
+  font-weight: bold;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
 }
+.cfg-section > h3 .section-caret { margin-left: auto; color: var(--muted); }
+.cfg-section.collapsed > h3 { border-bottom: none; }
+.cfg-section.collapsed > .body { display: none; }
 .cfg-section > .body { padding: 10px; }
 
 .cfg-row {
@@ -55,7 +64,7 @@
 #settings-form input:focus,
 #settings-form select:focus,
 #settings-form textarea:focus {
-  outline: none; border-color: var(--cyan);
+  outline: none; border-color: var(--text);
 }
 #settings-form textarea {
   resize: vertical; min-height: 40px;
@@ -85,7 +94,7 @@
   border-radius: 50%;
   transition: left 0.15s, background 0.15s;
 }
-.toggle.on { background: var(--cyan); border-color: var(--cyan); }
+.toggle.on { background: var(--text); border-color: var(--text); }
 .toggle.on::after { left: 20px; background: var(--bg); }
 
 .subblock {
@@ -96,7 +105,8 @@
 .subblock > h4 {
   margin: 0 0 4px;
   font-size: 11px;
-  color: var(--magenta);
+  color: var(--text);
+  font-weight: bold;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -128,14 +138,14 @@
   gap: 4px;
   padding: 1px 6px;
   background: var(--panel-2);
-  border: 1px solid var(--magenta);
-  color: var(--magenta);
+  border: 1px solid var(--border);
+  color: var(--text);
   border-radius: 3px;
   font-size: 11px;
 }
 .cap-multi .cap-chip .x {
   cursor: pointer;
-  color: var(--red);
+  color: var(--muted);
   font-weight: bold;
 }
 
@@ -157,7 +167,7 @@
   text-align: left;
   width: 100%;
 }
-.dd-trigger:hover { color: var(--cyan); }
+.dd-trigger:hover { color: var(--text); }
 .dd-menu {
   position: absolute;
   top: 100%;
@@ -165,7 +175,7 @@
   z-index: 100;
   min-width: 140px;
   background: var(--panel);
-  border: 1px solid var(--cyan);
+  border: 1px solid var(--border);
   border-radius: 4px;
   margin-top: 2px;
   box-shadow: 0 4px 12px rgba(0,0,0,0.5);
@@ -180,16 +190,16 @@
   color: var(--text);
   font-family: inherit;
 }
-.dd-item:hover { background: var(--panel-2); color: var(--cyan); }
-.dd-item.custom { color: var(--magenta); border-top: 1px dashed var(--border); }
+.dd-item:hover { background: var(--panel-2); color: var(--text); }
+.dd-item.custom { color: var(--muted); border-top: 1px dashed var(--border); }
 
 /* Style native <select> as far as the browser allows (role pickers etc.) */
 #settings-form select {
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
-  background-image: linear-gradient(45deg, transparent 50%, var(--cyan) 50%),
-                     linear-gradient(135deg, var(--cyan) 50%, transparent 50%);
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+                     linear-gradient(135deg, var(--muted) 50%, transparent 50%);
   background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
   background-size: 5px 5px, 5px 5px;
   background-repeat: no-repeat;
@@ -208,7 +218,7 @@
 }
 .settings-actions button {
   padding: 8px 16px;
-  background: var(--cyan);
+  background: var(--text);
   border: none;
   border-radius: 4px;
   color: var(--bg);
@@ -217,7 +227,7 @@
   font-family: inherit;
 }
 .settings-actions button.danger {
-  background: var(--red);
+  background: var(--muted);
 }
 .settings-actions button:hover { filter: brightness(1.1); }
 
@@ -225,5 +235,5 @@
   font-size: 12px;
   margin-left: 12px;
 }
-#settings-toast.ok { color: var(--green); }
-#settings-toast.err { color: var(--red); }
+#settings-toast.ok { color: var(--text); font-weight: bold; }
+#settings-toast.err { color: var(--text); font-weight: bold; }

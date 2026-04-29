@@ -192,12 +192,12 @@ main {
 .btn-mini {
   padding: 2px 8px;
   background: var(--panel);
-  border: 1px solid var(--cyan);
-  color: var(--cyan);
+  border: 1px solid var(--border);
+  color: var(--text);
   border-radius: 3px;
   cursor: pointer;
   font-size: 11px;
   font-family: inherit;
 }
-.btn-mini.danger { border-color: var(--red); color: var(--red); }
+.btn-mini.danger { border-color: var(--muted); color: var(--muted); }
 .btn-mini:hover { background: var(--panel-2); }

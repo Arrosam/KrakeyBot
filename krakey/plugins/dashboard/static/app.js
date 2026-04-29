@@ -1068,7 +1068,7 @@ function renderLLMSection(llm) {
 
   // Providers
   const provHead = document.createElement("h4");
-  provHead.style.cssText = "color:var(--magenta);font-size:11px;margin:0 0 6px";
+  provHead.style.cssText = "color:var(--text);font-weight:bold;font-size:11px;margin:0 0 6px";
   provHead.appendChild(document.createTextNode("Providers"));
   const addProv = mkBtn("+ add provider", () => {
     let name = prompt("Provider name (unique key):");
@@ -1092,7 +1092,7 @@ function renderLLMSection(llm) {
   // Tags
   llm.tags = llm.tags || {};
   const tagsHead = document.createElement("h4");
-  tagsHead.style.cssText = "color:var(--magenta);font-size:11px;margin:12px 0 6px";
+  tagsHead.style.cssText = "color:var(--text);font-weight:bold;font-size:11px;margin:12px 0 6px";
   tagsHead.appendChild(document.createTextNode("Tags"));
   const addTag = mkBtn("+ add tag", () => {
     const name = prompt("Tag name (e.g. fast_generation):");
@@ -1739,18 +1739,11 @@ function renderPluginsSection() {
   return sec;
 }
 
-const _KIND_BADGE_COLOR = {
-  modifier: "var(--magenta)",
-  tool: "var(--cyan)",
-  channel: "var(--yellow)",
-};
-
 function _renderKindBadge(kind) {
   const span = document.createElement("span");
-  const color = _KIND_BADGE_COLOR[kind] || "var(--muted)";
   span.style.cssText =
-    "font-size:10px;padding:1px 6px;border-radius:3px;border:1px solid;" +
-    "color:" + color + ";border-color:" + color + ";";
+    "font-size:10px;padding:1px 6px;border-radius:3px;" +
+    "border:1px solid var(--border);color:var(--text);";
   span.textContent = kind;
   return span;
 }
@@ -1758,23 +1751,19 @@ function _renderKindBadge(kind) {
 function _renderStatusBadge(status) {
   const span = document.createElement("span");
   span.style.cssText =
-    "font-size:10px;padding:1px 6px;border-radius:3px;border:1px solid;";
+    "font-size:10px;padding:1px 6px;border-radius:3px;" +
+    "border:1px solid var(--border);color:var(--muted);";
   if (!status) {
     span.textContent = "not loaded";
-    span.style.color = "var(--muted)";
-    span.style.borderColor = "var(--border)";
   } else if (status.error) {
     span.textContent = "error";
-    span.style.color = "var(--red)";
-    span.style.borderColor = "var(--red)";
+    span.style.fontWeight = "bold";
+    span.style.color = "var(--text)";
   } else if (status.loaded) {
     span.textContent = "loaded";
-    span.style.color = "var(--green)";
-    span.style.borderColor = "var(--green)";
+    span.style.color = "var(--text)";
   } else {
     span.textContent = "pending";
-    span.style.color = "var(--muted)";
-    span.style.borderColor = "var(--muted)";
   }
   return span;
 }
