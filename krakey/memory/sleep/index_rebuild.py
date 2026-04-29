@@ -18,11 +18,11 @@ from krakey.memory.graph_memory import GraphMemory
 from krakey.memory.knowledge_base import KBRegistry
 
 
-KB_RELATION_PROMPT = """以下是当前所有 Knowledge Base 的元数据 (Sleep 后的索引层):
+KB_RELATION_PROMPT = """Below is the metadata for all current Knowledge Bases (the post-Sleep index layer):
 
 {kbs}
 
-请判断哪些 KB 之间存在概念上的关联, 输出关系列表 (JSON):
+Decide which KBs have a conceptual relationship and output the edge list (JSON):
 
 {{
   "edges": [
@@ -31,10 +31,10 @@ KB_RELATION_PROMPT = """以下是当前所有 Knowledge Base 的元数据 (Sleep
   ]
 }}
 
-规则:
-- 只输出 JSON, 不要前缀。
-- 关系应明确而非牵强。
-- source 和 target 都必须是上面列表中的 kb_id。
+Rules:
+- JSON only, no prefix.
+- Relationships must be clear, not stretched.
+- source and target must both be a kb_id from the list above.
 """
 
 
@@ -82,8 +82,9 @@ async def rebuild_index_graph(gm: GraphMemory, reg: KBRegistry, *,
             "name": index_name,
             "category": "KNOWLEDGE",
             "description": (
-                f"知识库索引: {meta.get('description') or meta['name']}. "
-                f"{meta['entry_count']} 条目。"
+                f"Knowledge-base index: "
+                f"{meta.get('description') or meta['name']}. "
+                f"{meta['entry_count']} entries."
             ),
             "embedding": await embedder(
                 f"{meta['name']} {meta.get('description') or ''}"

@@ -116,7 +116,7 @@ class HeartbeatOrchestrator:
         if command_action is CommandAction.SLEEP:
             await self._perform_sleep(
                 "manual /sleep command",
-                wake_msg="完成了一次手动触发的睡眠。",
+                wake_msg="Completed a manually-triggered sleep.",
             )
             return
 
@@ -125,7 +125,7 @@ class HeartbeatOrchestrator:
         if counts.fatigue_pct >= rt.config.fatigue.force_sleep_threshold:
             await self._perform_sleep(
                 f"force-sleep at fatigue {counts.fatigue_pct}%",
-                wake_msg="之前因过于疲劳昏睡过去了。",
+                wake_msg="Fell asleep earlier due to extreme fatigue.",
             )
             return
 
@@ -145,8 +145,8 @@ class HeartbeatOrchestrator:
         if sleep_requested:
             await self._perform_sleep(
                 "voluntary sleep requested by Self",
-                wake_msg=("完成了一次完整睡眠 (聚类 + KB 迁移 + Index 重建)。"
-                          "醒来感觉清爽一些。"),
+                wake_msg=("Completed a full sleep cycle (clustering + KB "
+                          "migration + index rebuild). Feeling refreshed."),
             )
             return
         self._phase_schedule_classify()
@@ -347,7 +347,7 @@ class HeartbeatOrchestrator:
         from krakey.runtime.heartbeat.action_executor import parse_action_block
 
         decision = parsed.decision.strip().lower()
-        if not decision or decision in ("no action", "无行动"):
+        if not decision or decision == "no action":
             return False
 
         translator = rt.modifiers.by_role("hypothalamus")

@@ -75,7 +75,7 @@ async def test_empty_gm_returns_clear_message(tmp_path):
     gm = await _gm(tmp_path, embed)
     t = MemoryRecallTool(gm=gm, embedder=embed)
     stim = await t.execute("anything", {})
-    assert "no" in stim.content.lower() or "无" in stim.content or "empty" in stim.content.lower()
+    assert "no" in stim.content.lower() or "empty" in stim.content.lower()
     await gm.close()
 
 

@@ -8,8 +8,8 @@ description: >
   declared as two components below; they share the modifier instance
   via ctx.plugin_cache). The current state is injected into every
   Self prompt as a virtual "Heartbeat #now (in mind)" round at the
-  head of [HISTORY], plus a constant [IN MIND — 操作约束] standing
-  instruction layer that reminds Self to call update_in_mind whenever
+  head of [HISTORY], plus a constant [IN MIND — operating constraint]
+  standing instruction layer that reminds Self to call update_in_mind whenever
   any of the three things change. Replaces the deleted
   self_model.state.focus_topic / state.mood_baseline / goals.active
   fields.

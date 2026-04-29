@@ -128,11 +128,11 @@ def test_arguments_must_be_object_else_empty():
 
 def test_unicode_arguments():
     text = """<tool_call>
-{"name": "say", "arguments": {"text": "你好世界"}}
+{"name": "say", "arguments": {"text": "héllo wörld"}}
 </tool_call>
 """
     calls = parse_tool_calls(text)
-    assert calls[0].params == {"text": "你好世界"}
+    assert calls[0].params == {"text": "héllo wörld"}
 
 
 def test_intent_synthesized_from_arg_keys():

@@ -119,20 +119,20 @@ class LLMParams:
 # ``/api/config/schema`` endpoint that feeds the dashboard UI. Keep
 # this in sync with LLMParams fields above.
 _LLM_PARAM_HELP: dict[str, str] = {
-    "max_output_tokens": "生成 (输出) token 上限。按 provider 自动翻译: Anthropic max_tokens, OpenAI 经典 max_tokens, OpenAI reasoning max_completion_tokens, Gemini maxOutputTokens。Anthropic 必填。",
-    "max_input_tokens": "输入 (prompt) 上下文 token 预算。留空则启动时按 model 名字自动查表 (未知模型默认 128000)。驱动 sliding window 压缩阈值、GM recall 预算、整体 prompt 超限自动裁剪 history。",
-    "history_token_fraction": "Self role 独有。[HISTORY] 层占用 max_input_tokens 的比例。默认 0.4 = 40%。超过这个比例就触发 compact 把最老 round 收入 GM。",
-    "recall_token_budget": "Self role 独有。[GRAPH MEMORY] 召回节点的总 token 预算 (绝对值, 不是比例)。默认 3000。太多 recall 会污染 context, 所以不跟 context 规模线性增长。",
-    "temperature": "采样温度。0 = 确定性，越大越发散。部分 reasoning 模型 (OpenAI o-series, DeepSeek Reasoner) 不支持，会被自动忽略。",
-    "top_p": "nucleus sampling 阈值 (0-1)。通常和 temperature 二选一。留空 = 不发送此字段。",
-    "stop_sequences": "停止序列列表。遇到任一即停止生成。",
-    "response_format": "响应格式。json_object = 强制 JSON 输出 (OpenAI 兼容有效; Anthropic 无原生 JSON 模式, 自动忽略; 国产兼容端口 xunfei/zhipu/moonshot 等常不支持, 可能触发 500)。留空 = 自由文本。",
-    "seed": "随机种子，用于可复现实验。仅 OpenAI / Gemini 支持；Anthropic 无此字段。",
-    "reasoning_mode": "推理强度: off / low / medium / high。Anthropic 翻译为 thinking.budget_tokens，OpenAI 翻译为 reasoning_effort。",
-    "reasoning_budget_tokens": "Anthropic thinking 预算 token 数 (≥ 1024 且 < max_output_tokens)。只在 reasoning_mode != off 时生效。留空 = 按模式自动推算。",
-    "timeout_seconds": "单次 HTTP 请求超时秒数。Self 建议 180, Hypothalamus 20。",
-    "max_retries": "HTTP 失败时的最大重试次数。指数退避 + jitter。仅 5xx 和 429 会触发重试，4xx 不重试。",
-    "retry_on_status": "触发重试的 HTTP 状态码列表。默认 [429, 500, 502, 503, 504]。",
+    "max_output_tokens": "Output (generation) token cap. Translated per provider: Anthropic max_tokens, OpenAI classic max_tokens, OpenAI reasoning max_completion_tokens, Gemini maxOutputTokens. Required for Anthropic.",
+    "max_input_tokens": "Input (prompt) context token budget. If empty, resolved at startup by model-name lookup (unknown models default to 128000). Drives sliding-window compaction threshold, GM recall budget, and oversized-prompt history trimming.",
+    "history_token_fraction": "Self role only. Fraction of max_input_tokens reserved for the [HISTORY] layer. Default 0.4 = 40%. When the window exceeds this fraction, compact pops the oldest round into GM.",
+    "recall_token_budget": "Self role only. Absolute (not fractional) token budget for the [GRAPH MEMORY] recall section. Default 3000. Too many recall items pollute context, so this does not scale linearly with context size.",
+    "temperature": "Sampling temperature. 0 = deterministic; higher = more diverse. Some reasoning models (OpenAI o-series, DeepSeek Reasoner) do not support it and the field is silently dropped.",
+    "top_p": "Nucleus-sampling threshold (0-1). Usually paired with OR temperature, not both. Empty = do not send this field.",
+    "stop_sequences": "Stop-sequence list. Generation halts on the first match.",
+    "response_format": "Response format. json_object = force JSON output (effective on OpenAI-compatible; Anthropic has no native JSON mode and ignores it; some Chinese-vendor compatibility ports such as xunfei/zhipu/moonshot reject it and may 500). Empty = free text.",
+    "seed": "Random seed for reproducible runs. Supported by OpenAI / Gemini only; Anthropic has no such field.",
+    "reasoning_mode": "Reasoning intensity: off / low / medium / high. Translated to Anthropic thinking.budget_tokens or OpenAI reasoning_effort.",
+    "reasoning_budget_tokens": "Anthropic thinking-budget tokens (≥ 1024 and < max_output_tokens). Active only when reasoning_mode != off. Empty = auto-derived from mode.",
+    "timeout_seconds": "Per-request HTTP timeout in seconds. Suggested: 180 for Self, 20 for Hypothalamus.",
+    "max_retries": "Max retries on HTTP failure. Exponential backoff + jitter. Only 5xx and 429 retry; 4xx does not.",
+    "retry_on_status": "List of HTTP status codes that trigger a retry. Default [429, 500, 502, 503, 504].",
 }
 
 

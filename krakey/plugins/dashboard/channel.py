@@ -92,7 +92,7 @@ class WebChatChannel(Channel):
                 typ = a.get("type", "")
                 size = a.get("size", 0)
                 url = a.get("url", "")
-                lines.append(f"[附件: {name} ({typ}, {size} bytes) {url}]")
+                lines.append(f"[attachment: {name} ({typ}, {size} bytes) {url}]")
             content = "\n".join(lines)
             md["attachments"] = attachments
         stim = Stimulus(

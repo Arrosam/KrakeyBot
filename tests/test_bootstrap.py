@@ -65,7 +65,7 @@ def test_load_genesis_existing_file(tmp_path):
 def test_load_genesis_missing_file_returns_placeholder(tmp_path):
     text = load_genesis(tmp_path / "missing.md")
     assert text  # non-empty placeholder
-    assert "blank" in text.lower() or "白板" in text or "blank" in text.lower() or "GENESIS" in text
+    assert "blank" in text.lower() or "GENESIS" in text
 
 
 # ---------------- self-model loader ----------------

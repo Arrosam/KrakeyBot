@@ -47,34 +47,42 @@ async def test_parses_tool_call_non_urgent():
 
 async def test_parses_adrenalin_true():
     llm = MockLLM(json.dumps({
-        "tool_calls": [{"tool": "action", "intent": "查一下",
+        "tool_calls": [{"tool": "action", "intent": "look it up",
                             "params": {}, "adrenalin": True}],
         "memory_writes": [], "memory_updates": [], "sleep": False,
     }))
-    result = await Hypothalamus(llm=llm).translate("快去查一下, 有人在等", _tools())
+    result = await Hypothalamus(llm=llm).translate(
+        "go check this fast, someone is waiting", _tools(),
+    )
     assert result.tool_calls[0].adrenalin is True
 
 
 async def test_parses_memory_writes():
     llm = MockLLM(json.dumps({
         "tool_calls": [],
-        "memory_writes": [{"content": "用户不喜欢夸奖", "importance": "high"}],
+        "memory_writes": [{"content": "user dislikes flattery",
+                           "importance": "high"}],
         "memory_updates": [],
         "sleep": False,
     }))
-    result = await Hypothalamus(llm=llm).translate("记住: 用户不喜欢夸奖", _tools())
+    result = await Hypothalamus(llm=llm).translate(
+        "remember: the user dislikes flattery", _tools(),
+    )
     assert len(result.memory_writes) == 1
-    assert result.memory_writes[0]["content"] == "用户不喜欢夸奖"
+    assert result.memory_writes[0]["content"] == "user dislikes flattery"
 
 
 async def test_parses_memory_updates_target_completed():
     llm = MockLLM(json.dumps({
         "tool_calls": [],
         "memory_writes": [],
-        "memory_updates": [{"node_name": "苹果搜索任务", "new_category": "FACT"}],
+        "memory_updates": [{"node_name": "apple search task",
+                            "new_category": "FACT"}],
         "sleep": False,
     }))
-    result = await Hypothalamus(llm=llm).translate("苹果搜索任务已完成", _tools())
+    result = await Hypothalamus(llm=llm).translate(
+        "apple search task is done", _tools(),
+    )
     assert result.memory_updates[0]["new_category"] == "FACT"
 
 
@@ -83,7 +91,9 @@ async def test_sleep_decision():
         "tool_calls": [], "memory_writes": [], "memory_updates": [],
         "sleep": True,
     }))
-    result = await Hypothalamus(llm=llm).translate("进入睡眠", _tools())
+    result = await Hypothalamus(llm=llm).translate(
+        "enter sleep mode", _tools(),
+    )
     assert result.sleep is True
 
 
@@ -129,7 +139,7 @@ async def test_system_prompt_includes_tool_list():
 
 
 async def test_system_prompt_disambiguates_sleep_vs_hibernate():
-    """Regression: prompt must tell LLM that 'rest/睡 N 秒/hibernate' ≠ sleep mode."""
+    """Regression: prompt must tell LLM that 'rest / hibernate' != sleep mode."""
     llm = MockLLM(json.dumps({
         "tool_calls": [], "memory_writes": [], "memory_updates": [],
         "sleep": False,
@@ -141,8 +151,8 @@ async def test_system_prompt_disambiguates_sleep_vs_hibernate():
     assert "sleep" in system_content.lower()
     # Must explicitly list ambiguous phrases to exclude
     low = system_content.lower()
-    assert "rest" in low or "休息" in system_content
-    assert "pause" in low or "睡 n 秒" in low or "睡 n 秒" in system_content
+    assert "rest" in low
+    assert "pause" in low
 
 
 async def test_stateless_each_call_independent():

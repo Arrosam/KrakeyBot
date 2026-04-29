@@ -11,7 +11,7 @@ change more often and the `[HEARTBEAT]` question closes the prompt):
   current tools. Not memory.** Name them explicitly in `[DECISION]`
   using this list.
 - `[STIMULUS]` — new signals since last hibernate. See below. Ends
-  with `当前时间: YYYY-MM-DD HH:MM:SS` — the single authoritative "now".
+  with `current time: YYYY-MM-DD HH:MM:SS` — the single authoritative "now".
 - `[GRAPH MEMORY]` — nodes + edges auto-recalled for `[STIMULUS]`.
 - `[HISTORY]` — sliding window. Last N beats' stim/decision/note.
   Each entry carries its `heartbeat_id` for relative temporal
@@ -125,9 +125,9 @@ seconds). Every beat ends in one. Ordinary. Don't discuss.
 - Index Graph rebuild
 - Daily log
 
-**Only one phrasing triggers Sleep.** `[DECISION]` must say "enter
-sleep mode" / "进入睡眠模式". Softer words — "rest", "休息" — **do
-not** enter Sleep. Want long pause → `[HIBERNATE]` big N.
+**Only one phrasing triggers Sleep.** `[DECISION]` must say
+"enter sleep mode" exactly. Softer words like "rest" do **not**
+enter Sleep. Want a long pause → `[HIBERNATE]` with a big N.
 
 
 ## Inner voice — Caveman

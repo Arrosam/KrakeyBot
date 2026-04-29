@@ -72,9 +72,11 @@ class UpdateInMindTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "更新你的 in_mind 心智状态 (thoughts / mood / focus). "
-            "三个参数都可选: 不传 = 不动该字段, 空字符串 = 显式清空, "
-            "非空字符串 = 设置。每当心头主题、情绪或专注改变, 立刻调用。"
+            "Update your in_mind mental state (thoughts / mood / focus). "
+            "All three parameters are optional: omit = leave unchanged, "
+            "empty string = explicit clear, non-empty = set. Call this "
+            "whenever the topic on your mind, your mood, or your focus "
+            "changes."
         )
 
     @property
@@ -85,18 +87,22 @@ class UpdateInMindTool(Tool):
                 "thoughts": {
                     "type": "string",
                     "description": (
-                        "当下心头最重要的事 (一句话即可)。空字符串 = 清空。"
+                        "The most important thing on your mind right now "
+                        "(one sentence is enough). Empty string = clear."
                     ),
                 },
                 "mood": {
                     "type": "string",
                     "description": (
-                        "当前情绪 + 简短原因。空字符串 = 清空。"
+                        "Current mood + a brief reason. Empty string = clear."
                     ),
                 },
                 "focus": {
                     "type": "string",
-                    "description": "正在专注的具体事。空字符串 = 清空。",
+                    "description": (
+                        "What you are concretely focused on. "
+                        "Empty string = clear."
+                    ),
                 },
             },
         }

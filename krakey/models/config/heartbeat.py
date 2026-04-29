@@ -18,9 +18,9 @@ class FatigueSection:
     gm_node_soft_limit: int = 1000
     force_sleep_threshold: int = 1200
     thresholds: dict[int, str] = field(default_factory=lambda: {
-        50: "（不繁忙时可以睡眠）",
-        75: "（疲劳，需要主动睡眠）",
-        100: "（非常疲劳，需要立即找到睡眠的机会）",
+        50: "(may sleep when not busy)",
+        75: "(fatigued; should proactively sleep)",
+        100: "(very fatigued; find an opportunity to sleep immediately)",
     })
 
 

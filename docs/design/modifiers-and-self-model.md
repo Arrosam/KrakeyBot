@@ -1,163 +1,181 @@
-# Modifiers + Self-model 瘦身 + 回忆层 LLM — 设计草案
+# Modifiers + Self-model slimdown + Recall-layer LLM — design draft
 
-> 状态：**草案 / 讨论中**。本文只是 Samuel 口述的需求固化，未开始实现。
-> 修改或补充请直接编辑本文件；实现前会开对应的 PR 讨论贴。
-> 记录日期：2026-04-25。
+> Status: **draft / under discussion**. This document is just a written
+> snapshot of Samuel's stated requirements; implementation has not
+> started.
+> Edit this file directly to change or extend it; a PR thread will be
+> opened before implementation.
+> Last recorded: 2026-04-25.
 
 ---
 
-## 🔒 核心设计原则（载重不变量, 2026-04-25 / 2026-04-26）
+## 🔒 Core design principle (load-bearing invariant, 2026-04-25 / 2026-04-26)
 
-> **删除 / 关闭任何插件 (Modifiers, tools, channels) 都不应该
-> 影响本体 (runtime) 的运行。**
+> **Removing or disabling any plugin (Modifiers, tools, channels) must
+> NOT affect the runtime's core loop.**
+>
+> **Plugin code is not loaded until the user enables it.** The only
+> influence allowed before enablement is exposing "configuration
+> options" in plain text to the Web UI (the Web UI reads `meta.yaml`
+> for the metadata; it does **not** import any plugin code).
+>
+> **Plugins cannot access the central `config.yaml`** (which contains
+> API keys + provider config). Plugin Python code only sees:
+> (1) plain-text settings from its own folder's `config.yaml`
+> (via `ctx.config`); (2) the `LLMClient` instance returned by
+> `ctx.get_llm_for_tag(tag_name)`. Plugins read their own config to
+> get the tag name bound under `llm_purposes`, then ask the runtime
+> for the corresponding client. The `LLMClient` encapsulates provider
+> info internally, but plugins **never see the underlying API key**.
 
-> **插件代码在用户启用前不会被加载。** 启用前唯一允许的影响是
-> 把"配置选项"以纯文本格式暴露给 Web UI（Web UI 读 ``meta.yaml`` 得到
-> 元数据，**不会** import 任何 plugin 代码）。
+## 🏷️ Tag-based LLM system (2026-04-26)
 
-> **插件无法访问中央 ``config.yaml`` (含 API key + provider 配置)。**
-> 插件 Python 代码看到的只有：(1) 自己 folder 下的 ``config.yaml``
-> 纯文本设置（通过 ``ctx.config`` 获取）；(2) ``ctx.get_llm_for_tag(tag_name)``
-> 返回的 ``LLMClient`` 实例。插件读自己的 config 拿到 ``llm_purposes``
-> 里绑定的 tag 名，再向 runtime 要对应的 client。LLMClient 内部封装
-> provider 信息，但插件**拿不到底层 API key**。
-
-## 🏷️ Tag-based LLM 系统（2026-04-26）
-
-三级抽象，每一级单一职责：
+Three layers of abstraction, each with a single responsibility:
 
 ```
-1. providers (中央 config.yaml)
-   API 连接 + 密钥。runtime 唯一可见, 插件永远看不到。
+1. providers (central config.yaml)
+   API connections + secrets. Visible only to runtime; plugins never see them.
 
-2. tags (中央 config.yaml)
-   语义命名 → (provider, model, params) 三元组。
-   provider 字段 = "<provider_name>/<model_name>" 紧凑字符串
-   (按第一个 / 切; provider 名不能含 /; model 名可以)。
+2. tags (central config.yaml)
+   Semantic name → (provider, model, params) triple.
+   The provider field uses the compact "<provider_name>/<model_name>" form
+   (split on the first "/"; provider names must not contain "/", model
+   names may).
 
-3. assignments (purpose → tag)
-   - core 用途 (Self/compact/classifier ...): 中央
-     llm.core_purposes:
-   - 插件用途: 该插件 folder 下的 config.yaml
-     llm_purposes:
-       <purpose>: <tag>
+3. purposes — bind a use case to a tag
+   - core purposes (Self/compact/classifier ...): central config
+   - plugin purposes: that plugin's folder config.yaml
 ```
 
-**特殊 model-type slot**（不是 purpose, 是 capability):
+**Special model-type slots** (not purposes — capabilities):
 
 ```yaml
 llm:
-  embedding: <tag_name>     # 必填用于 GM auto-recall
-  reranker: <tag_name>      # 可选, 用于 recall 重排
+  embedding: <tag_name>     # required for GM auto-recall
+  reranker: <tag_name>      # optional, for recall reranking
 ```
 
-**完整中央配置示例**:
+**Full central-config example**:
 
 ```yaml
 llm:
   providers:
-    "One API": {type: openai_compatible, base_url: ..., api_key: ...}
-    SiliconFlow: {type: openai_compatible, ..., api_key: ...}
+    "One API":
+      base_url: https://api.example/v1
+      api_key: ${ONEAPI_KEY}
   tags:
-    fast_generation:
+    qwen_self:
       provider: "One API/qwen3.6-9b"
-      params: {max_output_tokens: 512, temperature: 0.3}
-    high_performance:
-      provider: "One API/astron"
-      params: {max_output_tokens: 8192, reasoning_mode: medium}
-    text_compression:
-      provider: "SiliconFlow/qwen3.6-27b"
-      params: {max_output_tokens: 4096}
-    embed_tag:
-      provider: "SiliconFlow/BAAI/bge-m3"
-    rerank_tag:
-      provider: "SiliconFlow/BAAI/bge-reranker-v2-m3"
+      params: {temperature: 0.7, max_input_tokens: 32768}
+    bge_embed:
+      provider: "Local/bge-m3"
+      params: {}
   core_purposes:
-    self_thinking: high_performance
-    compact: text_compression
-    classifier: text_compression
-  embedding: embed_tag
-  reranker: rerank_tag
+    self_thinking: qwen_self
+    compact: qwen_self
+    classifier: qwen_self
+  embedding: bge_embed
+  # reranker: ... (optional)
 ```
 
-**插件端**（``workspace/modifiers/<name>/config.yaml``）:
+**Plugin side** (`workspace/modifiers/<name>/config.yaml`):
 
 ```yaml
 llm_purposes:
-  <plugin's purpose name>: <tag name>
+  translator: qwen_self     # bind plugin purpose to a central tag
 ```
 
-**插件 ``meta.yaml`` 端**:
+**Plugin `meta.yaml` side**:
 
 ```yaml
 llm_purposes:
-  - name: <purpose name>
-    description: ...
-    suggested_tag: <hint, optional>     # 不会自动绑定
+  - name: translator
+    description: "..."
+    suggested_tag: <hint, optional>     # not auto-bound
 ```
 
-**Plugin factory 签名**:
+**Plugin factory signature**:
 
 ```python
 def build_modifier(ctx: PluginContext) -> Modifier | None:
-    # 插件读自己的 config 拿到绑定的 tag 名，
-    # 再向 runtime 要对应的 LLMClient。
+    # The plugin reads its own config to get the bound tag name,
+    # then asks the runtime for the corresponding LLMClient.
     purposes = ctx.config.get("llm_purposes") or {}
     tag = purposes.get("translator") if isinstance(purposes, dict) else None
     llm = ctx.get_llm_for_tag(tag)
     if llm is None:
-        return None    # 没绑定 → 跳过自己注册 (additive 原则)
+        return None    # not bound → skip self-registration (additive principle)
     return MyModifier(llm)
 ```
 
-**LLMClient 共享**: 多个 purpose 映射到同一个 tag → 共用一个客户端
-实例 (省连接 + 一致的 rate-limit 计数)。共享缓存 ``deps.llm_clients_by_tag``
-跨 core 和插件路径共用。
+**LLMClient sharing**: multiple purposes mapped to the same tag share
+one client instance (saves connections + a single rate-limit counter).
+The shared cache `deps.llm_clients_by_tag` is reused across the core
+and plugin paths.
 
-**迁移**: 旧 ``llm.roles:`` shape 已删除。loader 检测到则**loud 报错并
-退出**，附详细迁移说明。配置无变化时 runtime 无法启动 — 强制用户显式
-迁移。
-
-
-
-含义:
-- runtime 的核心 heartbeat 循环必须能在**零插件**状态下跑起来。
-  Self 拿到没有 recall 节点的空 `[GRAPH MEMORY]`、没有外部 stimuli、
-  没有 tools 可调用的 prompt, 仍然能完成完整 heartbeat。
-- 所有插件**严格加性**。任何一个被禁用 / 卸载, runtime 不抛异常、
-  不挂 phase、不进入坏状态。
-- 落实方式: 每个插件在 runtime 调用站点都**有 fallback** ——
-  null-object (e.g. `NoopRecall`) 或者 soft-fail (e.g. tool 派发
-  时找不到名字 → 推 `Unknown tool: X` 系统事件给 Self 看, 不抛)。
-- 测试上要求: 无任何 Modifier 注册时 runtime 仍能跑完整 heartbeat。
-  这是 regression 防线, 任何破坏这个不变量的改动会被测试拒绝。
-
-这条原则**优先级高于**"默认行为"——本节决定了**结构上的可靠性**,
-"默认开启什么 Modifier"只是 UX 选择。
+**Migration**: the old `llm.roles:` shape has been removed. The loader
+detects it and **fails loudly with a detailed migration message**, then
+exits. The runtime will not start until the config is migrated — users
+are forced to migrate explicitly.
 
 ---
 
-## 背景 / 动机
+Implications:
+- The runtime's core heartbeat loop must run with **zero plugins**.
+  Self can complete a full heartbeat with an empty `[GRAPH MEMORY]`
+  layer, no external stimuli, and no callable tools.
+- All plugins are **strictly additive**. Disabling or removing any one
+  must not raise, hang a phase, or put the runtime in a bad state.
+- Implementation rule: every plugin call site in the runtime has a
+  **fallback** — a null-object (e.g. `NoopRecall`) or a soft-fail
+  (e.g. tool dispatch with an unknown name → push an
+  `Unknown tool: X` system event to Self instead of raising).
+- Test coverage: with no Modifier registered, the runtime must
+  complete a full heartbeat. This is the regression line; any change
+  that breaks the invariant is rejected by the test suite.
 
-讨论 Self-model 字段时发现几个长期问题：
-
-1. **`statistics` 字段** 大部分不被写入，却占 `[SELF-MODEL]` prompt 层的大段 token。
-2. **`relationships.users`** 把"和谁有关系"显式结构化 —— 违反"重要记忆应通过 GM 召回自然涌现"的设计哲学。
-3. **`is_sleeping`** Self 永远看不到 `true`（sleep 期间 Self 不跑），是个死字段。
-4. **`mood_baseline`** 简单字段无法承载情绪这种复杂涌现现象。
-5. **`focus_topic` / `goals.active`** 与 GM 里的 `FOCUS` / `TARGET` 节点是双重实现；GM 版本更强（边、importance、sleep migration），self-model 版本是冗余。
-
-与此同时，Samuel 提出了三个更激进的想法：
-
-- **回忆层 LLM（recall-layer LLM）**：在处理 stimulus 前加一层专门的 LLM，从 stimulus + 历史提取"回忆特征点"，用这些特征去驱动 GM 召回。比现在"stimulus 原文向量搜索"精确得多，尤其能主动召回发言人印象、相关情景等。
-- **Modifier 插件类型**：比 tool / channel 更深的扩展点，监听心跳开始/结束事件，可以接管或替换 runtime 核心机制。
-- **默认机制 = 默认 Modifier**：现有 Hypothalamus 和 auto-recall 都改写成内置 Modifier，用户可选择替换或关闭。
+This principle has **higher priority than "default behavior"**: this
+section governs **structural reliability**; "which Modifiers are on by
+default" is just a UX choice.
 
 ---
 
-## Part 1 — Self-model 瘦身
+## Background / motivation
 
-### 最终保留的 schema
+Discussing Self-model fields surfaced a few long-standing problems:
+
+1. **`statistics` field** is mostly unwritten yet eats a large chunk
+   of `[SELF-MODEL]` prompt tokens.
+2. **`relationships.users`** explicitly structures "who you have a
+   relationship with" — violating the design philosophy that important
+   memories should naturally emerge through GM recall.
+3. **`is_sleeping`** is never seen as `true` by Self (Self does not
+   run during sleep), so it is a dead field.
+4. **`mood_baseline`** is too simple a field to carry something as
+   complex as emergent emotion.
+5. **`focus_topic` / `goals.active`** duplicate GM's `FOCUS` /
+   `TARGET` nodes; the GM versions are stronger (edges, importance,
+   sleep migration), making the self-model versions redundant.
+
+In parallel, Samuel proposed three more aggressive ideas:
+
+- **Recall-layer LLM**: insert a dedicated LLM before stimulus
+  processing that extracts "recall feature points" from stimulus +
+  history and uses them to drive GM recall. Far more accurate than the
+  current "vector-search the raw stimulus" approach — it can actively
+  recall a speaker's profile, related events, and so on.
+- **Modifier plugin type**: a deeper extension point than tools or
+  channels. Modifiers listen to heartbeat-start / -end events and can
+  intercept or replace runtime core mechanisms.
+- **Default mechanisms = default Modifiers**: rewrite the existing
+  Hypothalamus and auto-recall as built-in Modifiers so users can
+  swap them out or disable them.
+
+---
+
+## Part 1 — Self-model slimdown
+
+### Final retained schema
 
 ```yaml
 identity:
@@ -167,63 +185,72 @@ state:
   bootstrap_complete: false
 ```
 
-**理由**：
-- `identity` 是 Self 的不变核心，Bootstrap 后由 Self 通过专门路径更新（不再用 `<self-model>` tag 黑魔法，见 Modifier #3 `in_mind`）。
-- `bootstrap_complete` 是 runtime 必需的开关。
+**Reasoning**:
+- `identity` is Self's invariant core. After Bootstrap, Self updates
+  it through a dedicated path (no more `<self-model>` tag black
+  magic — see Modifier #3 `in_mind`).
+- `bootstrap_complete` is the runtime's required switch.
 
-### 被删除的字段 + 替代方案
+### Removed fields and their replacements
 
-| 字段 | 替代 |
+| Field | Replacement |
 |---|---|
-| `statistics.*` | 搬到 `workspace/data/runtime_stats.json`（或一个 `system:*` 节点），仅 dashboard 使用，不进 prompt |
-| `relationships.users` | 通过 GM 的 RELATION 节点 + 回忆层 LLM 自然涌现（Part 2） |
-| `state.mood_baseline` | 删除。真正的情绪通过 `in_mind` Modifier 的短语描述承载（Part 3） |
-| `state.is_sleeping` | 删除。runtime in-memory flag 即可，不需要落盘 |
-| `state.focus_topic` | 用 GM 的 `category=FOCUS` 节点替代（已存在机制） |
-| `state.energy_level` | 删除。如果需要"累"的概念，用 fatigue% 就够了 |
-| `goals.active` | 用 GM 的 `category=TARGET` 节点替代 |
-| `goals.completed` | 不单独存；TARGET 完成后 sleep 会降级为 FACT，这就是"已完成的目标"的自然表达 |
+| `statistics.*` | Moved to `workspace/data/runtime_stats.json` (or a `system:*` node) — used only by the dashboard, not in the prompt. |
+| `relationships.users` | Naturally emerges via GM RELATION nodes + the recall-layer LLM (Part 2). |
+| `state.mood_baseline` | Removed. Real emotion is carried by the `in_mind` Modifier's free-text descriptions (Part 3). |
+| `state.is_sleeping` | Removed. An in-memory runtime flag is enough; no need to persist. |
+| `state.focus_topic` | Replaced by GM's `category=FOCUS` nodes (existing mechanism). |
+| `state.energy_level` | Removed. If you need a "tired" concept, fatigue% suffices. |
+| `goals.active` | Replaced by GM's `category=TARGET` nodes. |
+| `goals.completed` | Not stored separately; once a TARGET completes, Sleep demotes it to FACT — that is the natural representation of a "completed goal". |
 
-### 影响面
+### Affected files
 
-- `src/models/self_model.py`: 简化 `default_self_model()`
-- `src/main.py`: 删除 sleep 后的 `total_sleep_cycles` 更新逻辑（搬到别处）
-- `src/prompt/builder.py`: `[SELF-MODEL]` 层变短，prompt 缓存更稳
-- 所有 `test_*.py` 里依赖这些字段的测试需要更新
+- `src/models/self_model.py`: simplify `default_self_model()`.
+- `src/main.py`: remove the post-sleep `total_sleep_cycles` update
+  (move it elsewhere).
+- `src/prompt/builder.py`: the `[SELF-MODEL]` layer becomes shorter,
+  improving prompt-cache stability.
+- All `test_*.py` tests that depend on these fields need updating.
 
 ---
 
-## Part 2 — 回忆层 LLM
+## Part 2 — Recall-layer LLM
 
-### 思路
+### Idea
 
-在 `_phase_drain_and_seed_recall` 之后、Self LLM 调用之前插入一个**回忆层 LLM**，它读当前所有 stimulus + 滚动历史，输出"要用来召回的特征点列表"。
+Insert a **recall-layer LLM** between `_phase_drain_and_seed_recall`
+and the Self LLM call. It reads all current stimuli + the rolling
+window and outputs a list of "feature points to recall on".
 
-**现在**：
+**Today**:
 ```
 stimulus.content → embed → vec_search → ranked merge
 ```
-纯原文向量搜索，精度受限：
-- 用户说"hi"召不到"Samuel 聊过 Agent 架构"的记忆（语义不够近）
-- 无法抽离"要召回哪些人 / 哪些事件 / 哪些相关主题"
+Pure raw-text vector search, with limited precision:
+- A user saying "hi" cannot recall the memory "Samuel discussed agent
+  architecture" (semantically too far).
+- It cannot extract "which people / which events / which related
+  topics to recall".
 
-**新方案**：
+**New approach**:
 ```
-stimuli + window → 回忆层 LLM → [
-  {anchor: "user:Samuel", reason: "消息来自 Samuel"},
-  {anchor: "topic:Agent architecture", reason: "话题延续自上下文"},
-  {anchor: "event:刚结束 Bootstrap", reason: "时间性关联"},
-] → 每个 anchor 分别触发召回（向量 / FTS / name 精确匹配）→ 合并权重
+stimuli + window → recall-layer LLM → [
+  {anchor: "user:Samuel", reason: "message came from Samuel"},
+  {anchor: "topic:Agent architecture", reason: "topic continues from context"},
+  {anchor: "event:just finished Bootstrap", reason: "temporal association"},
+] → each anchor triggers its own recall (vector / FTS / exact-name match) → merge weights
 ```
 
-LLM 的 prompt 模板（finalized 2026-04-25）：
+LLM prompt template (finalized 2026-04-25):
 
 ```
 # Memory Recall Guide
 
-为下一轮决策挑选回忆关键词。读输入, 输出关键词列表, 用于检索图记忆。
+Pick recall keywords for the next decision. Read the input and output
+a keyword list to retrieve from the graph memory.
 
-## 输入
+## Input
 
 [CURRENT_STIMULI]
 {stimuli}
@@ -231,93 +258,105 @@ LLM 的 prompt 模板（finalized 2026-04-25）：
 [RECENT_HISTORY]
 {history}
 
-## 提取标准
+## Selection criteria
 
-✅ 选作 anchor:
-- 具体人名
-- 具体话题或概念
-- 具体事件或里程碑
-- 领域术语
-- 时间关联指代
+✅ Choose as anchor:
+- Concrete person names
+- Concrete topics or concepts
+- Concrete events or milestones
+- Domain-specific terms
+- Temporal references
 
-❌ 不选:
-- 功能词、问候语
-- 宽泛词
-- 刺激原文里的整句
-- 长句子
+❌ Do NOT choose:
+- Function words / greetings
+- Broad words
+- Whole sentences from the stimulus
+- Long sentences
 
-最多 8 个 anchor。无明显可回忆点时输出空列表。
+At most 8 anchors. Output an empty list when no obvious recall points exist.
 
-## 输出 (严格 JSON, 无其他文字, 无 markdown 代码块)
+## Output (strict JSON; no other text, no markdown code fence)
 
 {"anchors": ["..."]}
 
-## 示例
+## Examples
 
-示例 1
+Example 1
 [CURRENT_STIMULI]
 [1] user_message from channel:chat:
-    "Alex: 那个优化方案最后跑出来速度怎么样？"
+    "Alex: how did the optimization plan turn out for speed?"
 [RECENT_HISTORY]
-Heartbeat #N-1: Decision: "用 Cython 重写 hot loop"
-预期输出: {"anchors": ["Alex", "Cython optimization", "performance benchmark"]}
+Heartbeat #N-1: Decision: "rewrite the hot loop in Cython"
+Expected output: {"anchors": ["Alex", "Cython optimization", "performance benchmark"]}
 
-示例 2
+Example 2
 [CURRENT_STIMULI]
-[1] user_message from channel:chat: "Bob: 哦。"
+[1] user_message from channel:chat: "Bob: oh."
 [RECENT_HISTORY]
-(空)
-预期输出: {"anchors": []}
+(empty)
+Expected output: {"anchors": []}
 
-示例 3
+Example 3
 [CURRENT_STIMULI]
 [1] tool_feedback from tool:weather_check: "Sunny, 22°C"
 [2] batch_complete from channel:batch_tracker: "All dispatched."
 [RECENT_HISTORY]
 Heartbeat #N-1: Decision: "Check the weather to plan tomorrow's hike"
-预期输出: {"anchors": ["weather check", "hiking plan"]}
+Expected output: {"anchors": ["weather check", "hiking plan"]}
 ```
 
-**模板设计决策**：
+**Template design decisions**:
 
-- **没有 role 介绍 / 不解释 KrakeyBot 是什么** —— 任务一行话讲清楚。
-  少说一句话就少一个出错点（不需要再交代"你不是 KrakeyBot"）。
-- **没有 ``<thinking>`` 块或任何 CoT 脚手架** —— 让用户自己挑模型。
-  推理模型自己 reason；非推理模型表现差是模型选择的代价，不在核心
-  机制里烘焙拐杖（和 Modifier #1 默认关闭的哲学一致）。
-- **anchors 是扁平字符串列表**，没有 ``reason`` / ``kind`` /
-  ``rationale`` 等字段，因为下游不消费，传输纯浪费。
-- **不传 GM 现状** —— 黑箱。anchor 来自情境语义而非"已存在性"，让
-  vec_search / FTS / name 精确匹配自己处理"找不到"的情况。
-- **不传 agent identity slot** —— in_mind 通过历史层最近端注入
-  （见 Modifier #3 设计），其他自我相关的上下文从历史 / stimulus 里
-  天然可推。
-- **示例用通用人名 / 话题（Alex / Bob / Cython / weather）** —— 不
-  污染 prompt 模板自身的语义中性，避免 LLM 把示例里的 "Samuel" /
-  "ReAct" 这种实际对话内容当成隐含上下文。
+- **No role intro / no explanation of what KrakeyBot is** — the task
+  is stated in one line. Fewer sentences, fewer error surfaces (no
+  need to disclaim "you are not KrakeyBot").
+- **No `<thinking>` block or any CoT scaffolding** — let users pick
+  their own model. Reasoning models reason on their own; non-reasoning
+  models doing poorly is the cost of model choice and is not baked
+  into the core mechanism (consistent with Modifier #1's
+  default-disabled philosophy).
+- **`anchors` is a flat string list** — no `reason` / `kind` /
+  `rationale` fields, since downstream does not consume them and they
+  waste tokens.
+- **GM state is not passed in** — black-box. Anchors come from
+  situational semantics rather than "exists in GM"; vec_search / FTS /
+  exact-name match handle "not found" themselves.
+- **Agent identity slot is not passed in** — `in_mind` is injected at
+  the most-recent end of the history layer (see Modifier #3); other
+  self-related context is naturally inferable from history / stimuli.
+- **Examples use generic names / topics (Alex / Bob / Cython /
+  weather)** — keeps the prompt template's own semantics neutral and
+  prevents the LLM from treating "Samuel" / "ReAct" or other actual
+  conversation content as implicit context.
 
-### 与 Modifier #2 的关系
+### Relationship to Modifier #2
 
-这个功能就是 **Modifier #2 — 回忆特征提取器**。详见 Part 3。
+This feature is **Modifier #2 — recall-feature extractor**. See
+Part 3.
 
-### 开关语义
+### Toggle semantics
 
-- **开启**：上述 LLM-driven 的 anchor 抽取 → 多路召回
-- **关闭**：走现在的脚本化纯向量召回（不变）
+- **On**: LLM-driven anchor extraction → multi-route recall.
+- **Off**: scripted pure-vector recall (current behavior).
 
-两种模式都共享 recall 的排序、token-budget 裁剪等后处理 —— 只是**召回候选从哪来**的差异。
+Both modes share recall's ranking + token-budget trim post-processing —
+they differ only in **where the recall candidates come from**.
 
 ---
 
-## Part 3 — Modifier 插件系统
+## Part 3 — Modifier plugin system
 
-### 定位
+### Position
 
-Modifier 是**深度插件** —— 不同于 tool（outbound 肢体）和 channel（inbound 感官），它听取 **每个心跳的开始 / 结束** 事件，可以替换或拦截 runtime 核心机制。
+A Modifier is a **deep plugin** — unlike a tool (outbound limb) or a
+channel (inbound sensor), it listens to **each heartbeat's start /
+end** events and can replace or intercept core runtime mechanisms.
 
-**核心约束**：Modifier 不是任意 monkey-patching，而是在 runtime 明确的 hook 点上插入。所有 hook 点都应该能被 grep 找到。
+**Core constraint**: Modifiers are not arbitrary monkey-patching;
+they hook into runtime-defined points. Every hook point should be
+findable via `grep`.
 
-### 基础协议（草案）
+### Base protocol (draft)
 
 ```python
 class Modifier(Protocol):
@@ -328,47 +367,59 @@ class Modifier(Protocol):
     async def on_heartbeat_start(self, ctx: HeartbeatContext) -> None: ...
     async def on_heartbeat_end(self, ctx: HeartbeatContext) -> None: ...
 
-    # kind-specific hooks，各种子类自定义
+    # kind-specific hooks defined per subclass
 ```
 
-具体 hook 点按 kind 定义。例如 `kind="hypothalamus"` 的 Modifier 覆盖"翻译 Self Decision → tool calls"这一步。
+Concrete hook points are defined per kind. For example, a Modifier
+with `kind="hypothalamus"` overrides "translate Self's Decision into
+tool calls".
 
-### 三个要做的 Modifier
+### Three Modifiers to build
 
-#### Modifier #1 — `hypothalamus`（可关闭的 Hypothalamus）
+#### Modifier #1 — `hypothalamus` (toggleable Hypothalamus)
 
-**重要前提（2026-04-25 澄清）**：默认机制和 Hypothalamus Modifier 是
-**通过 prompt 层互斥的**，不是"core 配合 Modifier 并行运行"。
+**Important precondition (clarified 2026-04-25)**: the default
+mechanism and the Hypothalamus Modifier are **mutually exclusive via
+the prompt layer** — they do NOT run in parallel.
 
-- **默认状态（Modifier #1 未激活 = 不在 modifiers 列表）**：
-  - Self 的 prompt 里有一层 `[ACTION FORMAT]` 块教它如何用结构化 tag
-    输出 tool 调用
-  - Self 的输出里包含 `[ACTION]...[/ACTION]` 块写 JSONL 调用
-  - 内置 **action executor** (脚本, 非 LLM) 扫描该块, 直接 parse 成
-    tool calls 派发
-  - 路径短: 1 次 Self LLM 调用 → 解析 → 派发
+- **Default state (Modifier #1 inactive — not in the modifiers list)**:
+  - Self's prompt contains an `[ACTION FORMAT]` block teaching it the
+    structured tag syntax for tool calls.
+  - Self's output contains `[ACTION]...[/ACTION]` blocks with JSONL
+    calls.
+  - The built-in **action executor** (script, no LLM) scans that block
+    and parses it directly into tool calls for dispatch.
+  - Short path: 1 Self LLM call → parse → dispatch.
 
-- **激活状态（Modifier #1 在 modifiers 列表里）**：
-  - Modifier #1 激活时**抑制 `[ACTION FORMAT]` 块从 prompt 里消失**
-  - Self 看不到结构化调用的指令, 自然回到自然语言 decision 风格
-  - Hypothalamus LLM 翻译 Self 的自然语言决策为 tool calls
-  - 路径长: 2 次 LLM 调用（Self + Hypothalamus）→ 派发
+- **Active state (Modifier #1 in the modifiers list)**:
+  - Activating Modifier #1 **suppresses the `[ACTION FORMAT]` block —
+    it disappears from the prompt**.
+  - Self no longer sees instructions about structured calls and falls
+    back to natural-language decisions.
+  - The Hypothalamus LLM translates Self's natural-language decision
+    into tool calls.
+  - Long path: 2 LLM calls (Self + Hypothalamus) → dispatch.
 
-**为什么这样设计**:
+**Why this design**:
 
-把"教 Self 写 ACTION tag"和"让 Hypothalamus 翻译"放在同一个 prompt
-里**会互相干扰** —— Self 看到 ACTION 教程会输出 tag, Hypothalamus 又
-会试图翻译这段 tag, 双解释 = 双错乱。所以激活 Modifier #1 = 一刀切移除
-ACTION 教程, Self 不知道有这种格式, Hypothalamus 唯一翻译者。
+Putting "teach Self to write ACTION tags" and "let Hypothalamus
+translate" in the same prompt **interferes** — Self emits tags after
+seeing the tutorial, and Hypothalamus then tries to translate that
+tag, leading to dual interpretation and dual confusion. So activating
+Modifier #1 cleanly removes the ACTION tutorial — Self does not know
+the format exists, and Hypothalamus is the only translator.
 
-**默认**: **关闭**（强模型不需要 Hypothalamus 这层翻译, 直接发 ACTION
-JSONL 比走第二次 LLM 调用快也便宜）。
+**Default**: **off** (strong models do not need the Hypothalamus
+translation layer; emitting ACTION JSONL directly is faster and
+cheaper than a second LLM call).
 
-**保留 Modifier #1 是为了让小模型也能跑** —— 小模型可能无法稳定生成
-合法 JSONL, 这时打开 Modifier #1 让 Hypothalamus 帮它兜底。
+**Modifier #1 exists so smaller models can still run** — small models
+may not stably produce valid JSONL, so turning Modifier #1 on lets
+Hypothalamus cover for them.
 
-**Action tag 格式（finalized 2026-04-25）：OpenAI tool_calls 风格的
-JSONL，每行一个 JSON 对象，外层包 `[ACTION]...[/ACTION]` 划界**。
+**Action tag format (finalized 2026-04-25): OpenAI tool_calls-style
+JSONL — one JSON object per line, wrapped in
+`[ACTION]...[/ACTION]`**:
 
 ```
 [ACTION]
@@ -377,167 +428,237 @@ JSONL，每行一个 JSON 对象，外层包 `[ACTION]...[/ACTION]` 划界**。
 [/ACTION]
 ```
 
-字段：
-- ``name`` (str, required): tool 名字
-- ``arguments`` (object, optional): 参数字典；未传时 = 空字典
-- ``adrenalin`` (bool, optional): 紧迫信号；未传时 = false
+Fields:
+- `name` (str, required): tool name.
+- `arguments` (object, optional): parameter dict; omitted = empty
+  dict.
+- `adrenalin` (bool, optional): urgency flag; omitted = false.
 
-**为什么选这个**：
-- OpenAI function calling 是行业标准（2023-至今），DeepSeek / Mistral
-  / Qwen / Gemini 全跟这个 schema —— LLM 训练数据覆盖最广。
-- 字段名 ``name`` + ``arguments`` 一比一对应 OpenAI tool 定义，便于
-  复用现有的 tool schema 描述。
-- JSONL 一行一个对象 —— Python `for line in block: json.loads(line)`
-  解析最简单，不需要嵌套 XML 解析器。
-- 单行错不影响其它行（比 XML 鲁棒：XML 一个 tag 错就整段废）。
-- 中文 / 转义 / 多行参数等边缘情况靠 JSON 标准处理。
+**Why this format**:
+- OpenAI function calling is the industry standard (2023 onward);
+  DeepSeek / Mistral / Qwen / Gemini all follow the same schema —
+  LLM training data covers it best.
+- Field names `name` + `arguments` map 1:1 to OpenAI tool definitions,
+  reusing existing tool schema descriptions.
+- JSONL with one object per line — `for line in block:
+  json.loads(line)` is the simplest possible parser; no nested XML
+  state machine.
+- A bad line does not corrupt the others (more robust than XML, where
+  a single broken tag invalidates the whole block).
+- Edge cases like Unicode / escapes / multi-line arguments are
+  handled by the JSON standard.
 
-XML-ish `<use>...</use>` 和函数风格 `@tool(...)` 都被拒绝：前者啰嗦
-且 parser 需要更多状态机；后者紧凑但 LLM 在尾随逗号 / 引号转义上常出错。
+XML-ish `<use>...</use>` and function-style `@tool(...)` were
+rejected: the former is verbose and needs a more stateful parser;
+the latter is compact but LLMs frequently miss trailing commas /
+quote escapes.
 
-**问题点**：
-- 默认关闭意味着小模型用户需要手动打开这个 Modifier。OK，可以接受。
-- 现有的 Hypothalamus 代码会被搬进 `src/modifiers/builtin/hypothalamus/` 之类的位置。
+**Open issue**:
+- Default-off means small-model users have to enable this Modifier
+  manually. OK, acceptable.
+- The existing Hypothalamus code will move into a location like
+  `src/modifiers/builtin/hypothalamus/`.
 
-#### Modifier #2 — `recall_anchor`（回忆特征提取器）
+#### Modifier #2 — `recall_anchor` (recall-feature extractor)
 
-**默认**：？（待 Samuel 定，建议**开启**因为质量提升明显）
+**Default**: ? (Samuel to decide; recommendation **on**, the quality
+gain is significant).
 
-**开启时**：Part 2 描述的 LLM-driven anchor 抽取 + 多路召回。
+**On**: the LLM-driven anchor extraction + multi-route recall
+described in Part 2.
 
-**关闭时**：现有的脚本化纯向量召回（`IncrementalRecall` 当前行为）。
+**Off**: the existing scripted pure-vector recall
+(`IncrementalRecall`'s current behavior).
 
-**这个 Modifier 的存在形式**：
-- 现有的脚本化召回被抽成"默认内置 Modifier"—— 即使用户"关闭"它，runtime 也会 fallback 到这个默认。
-- LLM-anchor Modifier 是另一个可选 Modifier，打开后**替换**默认。
-- 也可以允许"同时开两个"—— 先 LLM anchor，再脚本兜底。设计时再决定。
+**Existence form of this Modifier**:
+- The existing scripted recall is extracted into a "default built-in
+  Modifier" — even when the user "disables" it, runtime falls back
+  to this default.
+- The LLM-anchor Modifier is an alternative optional Modifier that
+  **replaces** the default when active.
+- Allowing both at once (LLM anchor first, scripted fallback after)
+  is also possible — decide during design.
 
-#### Modifier #3 — `in_mind`（心智状态自述）
+#### Modifier #3 — `in_mind` (mental-state self-report)
 
-**默认**：？（建议**开启**，因为替代掉了删除的 focus/mood/goals）
+**Default**: ? (recommendation **on**, since it replaces the deleted
+focus / mood / goals fields).
 
-**功能**：允许 Self 在运行过程中持续记录：
-- **当前最重要的思绪**（一句话，什么事占据心头）
-- **情绪状态**（短段文字 + 简短原因）
-- **正在专注的事**（一句话）
+**Function**: lets Self continually record three things during its run:
+- **The most important thought right now** (one sentence — what is
+  on its mind).
+- **Mood** (a short phrase + brief reason).
+- **What it is concretely focused on** (one sentence).
 
-这些内容作为**固定位置的 prompt 层**（e.g. `[IN MIND]`），每跳显式可见，不随着滑动窗口消失。
+These appear as a **fixed-position prompt layer** (e.g. `[IN MIND]`)
+that is always visible per beat and does not slide out of the window.
 
-**Self 怎么更新它**：
-- 通过新的 tool `update_in_mind`（由 Modifier 在 `attach(runtime)` 时
-  注册到 `runtime.tools`, Self 通过 [ACTION] 直接派发或 Hypothalamus
-  翻译路径都支持）, 传 3 个字段（全可选, 部分更新）
-- 状态文件：`workspace/data/in_mind.json`，由 Modifier #3 自己读写
+**How Self updates it**:
+- Via a new tool `update_in_mind` (registered to `runtime.tools` by
+  the Modifier in `attach(runtime)`; Self can dispatch it directly
+  via [ACTION] or via the Hypothalamus translation path), with three
+  optional fields (partial updates allowed).
+- State file: `workspace/data/in_mind.json`, read/written by
+  Modifier #3 itself.
 
-**实现 2026-04-26 落地** (`src/plugins/in_mind_note/`):
-- `meta.yaml` 静态元数据声明, kind="in_mind"
-- `state.py`: `InMindState` dataclass + 原子 load/save (tempfile + replace)
-- `tool.py`: `UpdateInMindTool` (is_internal=True, 直接调 Modifier.update)
-- `prompt.py`: `IN_MIND_INSTRUCTIONS_LAYER` 常量 + 虚拟 round 渲染
-- `modifier.py`: `InMindModifierImpl` 主体 + `attach(runtime)` 注册 tool
-- 协议新增 `InMindModifier` Protocol + Modifier 通用 `attach(runtime)` 钩子
-- Registry 新增 `in_mind_state()` (零插件返回 None) + `attach_all(runtime)`
-- Builder 新增 `in_mind` / `in_mind_instructions` 参数, `_layer_history`
-  按 in_mind 状态在头部插虚拟 "Heartbeat #now (in mind)" round
-- `RuntimeDeps.in_mind_state_path` 用于测试 state 隔离
+**Implementation landed 2026-04-26** (`src/plugins/in_mind_note/`):
+- `meta.yaml` — static metadata declaration, `kind="in_mind"`.
+- `state.py` — `InMindState` dataclass + atomic load/save (tempfile +
+  replace).
+- `tool.py` — `UpdateInMindTool` (`is_internal=True`, calls Modifier
+  directly).
+- `prompt.py` — `IN_MIND_INSTRUCTIONS_LAYER` constant + virtual-round
+  rendering.
+- `modifier.py` — `InMindModifierImpl` body + `attach(runtime)` to
+  register the tool.
+- Protocol additions: `InMindModifier` Protocol + a generic
+  `attach(runtime)` Modifier hook.
+- Registry additions: `in_mind_state()` (returns None when no plugin)
+  + `attach_all(runtime)`.
+- Builder additions: `in_mind` / `in_mind_instructions` parameters;
+  `_layer_history` inserts a virtual "Heartbeat #now (in mind)" round
+  at the head when `in_mind` state is non-empty.
+- `RuntimeDeps.in_mind_state_path` for test state isolation.
 
-**状态 vs 配置分离**：``workspace/data/`` 是运行时状态的家（已有
-``graph_memory.sqlite`` / ``web_chat.jsonl`` / ``knowledge_bases/``），
-``workspace/plugin-configs/`` 和 ``workspace/modifiers/<name>/config.yaml``
-存用户配置。in_mind 是 Self 写、runtime 读的运行时状态，所以归 `data/`，
-和 Modifier 自己的 config（如果有）分开存。
+**State vs configuration separation**: `workspace/data/` is the home
+for runtime state (already houses `graph_memory.sqlite` /
+`web_chat.jsonl` / `knowledge_bases/`); user configuration lives in
+`workspace/plugin-configs/` and `workspace/modifiers/<name>/config.yaml`.
+`in_mind` is runtime state (Self writes, runtime reads), so it
+belongs under `data/`, kept separate from any Modifier config file.
 
-**注入到 prompt 的方式：通过历史层最近端虚拟 round**（finalized 2026-04-25）
+**Prompt-injection method: a virtual round at the most-recent end of
+the history layer** (finalized 2026-04-25).
 
-不开新的 prompt layer，而是让 prompt builder 在渲染 ``[HISTORY]`` 层时
-**虚拟一条最新的 round 插在头部**，内容就是当前的 in_mind 三个字段。例如：
+Instead of opening a new prompt layer, the prompt builder **inserts a
+virtual newest round at the head** when rendering `[HISTORY]`. The
+content is the three current `in_mind` fields. For example:
 
 ```
 [HISTORY]
 --- Heartbeat #now (in mind) ---
-Thoughts: 正在思考如何回应 Alex 的优化问题
-Mood: 略微紧张, 因为 benchmark 数字还没跑完
-Focus: 把 hot loop 从 Python 换到 Cython
+Thoughts: thinking about how to answer Alex's optimization question
+Mood: slightly tense, benchmark numbers haven't finished
+Focus: porting the hot loop from Python to Cython
 --- Heartbeat #N-1 ---
 Stimulus: ...
 Decision: ...
 ...
 ```
 
-**为什么这样而不是开独立 layer**：
+**Why this rather than a separate layer**:
 
-1. **零新 slot**：所有 prompt 消费者（Self LLM、回忆 LLM、未来其他
-   Modifier）只要读历史层就自动拿到 in_mind，不需要每个消费者各自支持。
-2. **时间感正确**：in_mind 是"现在心里的事"，放在历史最近端语义自然。
-3. **单一真源**：in_mind 渲染逻辑只在 prompt builder 一处，其他地方
-   零感知。
-4. **缓存友好**：in_mind 变化频率介于 history 层（每跳变）和
-   self-model 层（几乎不变）之间，正好处在 history 层的位置不会破坏
-   更高层的稳定缓存。
-5. **回忆 LLM 自动受益**：in_mind 里的"focus" / "thoughts"成为下跳
-   anchor 抽取的天然种子。Self 上跳记下"在思考 Cython 优化"，下跳
-   回忆 LLM 看到"Cython optimization"作为最近 history，自然就会去
-   GM 召回相关节点。**自我引导回忆**这个机制免费拿到。
+1. **Zero new slot**: every prompt consumer (Self LLM, recall LLM,
+   future Modifiers) reads the history layer and gets `in_mind`
+   automatically, without per-consumer support.
+2. **Correct sense of time**: `in_mind` is "what is on my mind right
+   now"; placing it at the most-recent end of history is semantically
+   natural.
+3. **Single source of truth**: rendering logic lives only in the
+   prompt builder; everywhere else stays unaware.
+4. **Cache-friendly**: the change rate of `in_mind` sits between the
+   history layer (changes every beat) and the self-model layer
+   (rarely changes), exactly where the history layer lives — so it
+   does not break the higher layers' stable cache.
+5. **Recall LLM benefits for free**: `in_mind`'s "focus" / "thoughts"
+   become natural seeds for the next beat's anchor extraction. Self
+   notes "thinking about Cython optimization" on this beat; on the
+   next beat the recall LLM sees "Cython optimization" in recent
+   history and naturally pulls related GM nodes. **Self-guided
+   recall** comes for free.
 
-**与删除的 self_model 字段的关系**：
-- 替换了 `state.focus_topic`、`state.mood_baseline`
-- 替换了 `goals.active` 的"当下心头目标"这部分（完整的目标体系走
-  GM TARGET 节点，in_mind 只是"此刻关注的一两件"）
-
----
-
-## Part 4 — 实现顺序建议
-
-Samuel 最终拍板，这里是我的推荐：
-
-1. **先修 bug：stimulus 截断**（2026-04-25 同步修掉，不等设计讨论）
-2. **Self-model 瘦身** — 独立 commit，小、干净、不涉及任何新机制
-3. **Modifier 协议 + 默认内置骨架** — 不做任何新功能，只是把现有 Hypothalamus 和 recall 从主流程抽出变成默认 Modifier，保持行为不变。这是最容易失败的重构，先打好基础。
-4. **Modifier #1 `hypothalamus` 可关闭 + action executor engine** — 最贴近 Samuel 的"强模型省 LLM"诉求，先落地获得信号。
-5. **Modifier #3 `in_mind`** — 替代掉删除的 focus/mood/goals 字段，给 Self 主动记录心智状态的能力。
-6. **Modifier #2 `recall_anchor`** — 最复杂（多了一次 LLM 调用，可能影响心跳延迟），最后做；落地时注意测延迟影响。
+**Relation to deleted self_model fields**:
+- Replaces `state.focus_topic` and `state.mood_baseline`.
+- Replaces the "current mental goal" portion of `goals.active` (the
+  full goal system goes through GM TARGET nodes; `in_mind` only holds
+  "the one or two things in mind right now").
 
 ---
 
-## Part 5 — 待 Samuel 决策的开放问题
+## Part 4 — Suggested implementation order
 
-- [x] ~~Modifier #1 action tag 格式~~ — 2026-04-25：**OpenAI tool_calls
-      风格 JSONL** (`{"name": "...", "arguments": {...}}` 每行一个),
-      外层 `[ACTION]...[/ACTION]` 包裹。理由记录在 Part 3 Modifier #1
-      段。
-- [x] ~~Modifier #2 默认开关~~ — 2026-04-25：**默认关**。每跳多一次
-      LLM 调用是延迟 / 成本代价；用户主动开就是接受这个代价。和
-      Modifier #1 默认关同哲学（不为弱模型烘焙拐杖）。
-- [x] ~~Modifier #3 `in_mind` 状态文件存哪~~ — 2026-04-25：
-      `workspace/data/in_mind.json`。运行时状态（Self 写 / runtime 读）
-      归 ``workspace/data/`` —— 和已有 ``graph_memory.sqlite`` /
-      ``web_chat.jsonl`` 同住；用户配置归 ``workspace/plugin-configs/``
-      或 ``workspace/modifiers/<name>/config.yaml``。state ≠ config,
-      分开存。注入路径同日已定：通过历史层最近端虚拟 round。
-- [x] ~~Modifier 启停 / UI~~ — 2026-04-25：**config.yaml 是单一真源**，
-      dashboard 仅显示运行状态 + 提供 config 编辑界面。Modifiers 各自的
-      详细配置在各自文件夹（`workspace/modifiers/<name>/config.yaml`,
-      沿用现有 plugin 模式）。改 config 要重启。
-      **实现 2026-04-25 落地**: `config.modifiers: list[str] | None`
-      字段；列表元素是 `BUILTIN_FACTORIES` 里的 name；按列表顺序注册
-      （= 链执行顺序）。`None` (字段缺失) → 兼容老 config, 注册旧默认
-      + loud deprecation。`[]` → 显式零插件, 静默执行。未知 name → log
-      + skip, 不阻塞启动（strictly additive 原则）。
-- [x] ~~多 Modifier 同 kind 共存~~ — 2026-04-25：**允许，顺序执行**。
-      `config.yaml` 里有一个 modifiers 列表，注册顺序 = 执行顺序。同
-      kind 的 Modifiers 链式调用：前一个的输出（e.g. anchors 列表 / 翻译
-      结果）作为后一个的输入。允许后续 Modifier 增补 / 改写 / 否决前一个
-      的输出，组合行为通过链式表达，不开"并行 + 合并"的复杂语义。
-- [x] ~~`statistics` 搬到哪里？~~ 2026-04-25 已落地：sleep_cycles 改成
-      `Runtime._sleep_cycles` 内存计数器，其他字段直接删除（自 commit
-      `ce59ab4`，self-model slim 重构）。
-- [x] ~~回忆 LLM 输出结构里要不要 `reason` 字段？~~ 2026-04-25 决定：
-      不要。**纯 JSON 输出，连 ``<thinking>`` 块都不加** —— 让用户自己
-      选模型，弱模型表现差是用户选择的代价，不在核心机制里烘焙拐杖
-      （和 Modifier #1 默认关闭的哲学一致）。详见 Part 2。
+Samuel makes the final call; this is my recommendation:
+
+1. **Bug fix first: stimulus truncation** (fixed in sync 2026-04-25;
+   not waiting on this design discussion).
+2. **Self-model slimdown** — independent commit, small, clean,
+   touches no new mechanism.
+3. **Modifier protocol + default built-in skeleton** — no new
+   features. Just extract the existing Hypothalamus and recall paths
+   from the main flow into default Modifiers without changing
+   behavior. This is the highest-risk refactor — get the foundation
+   right first.
+4. **Modifier #1 `hypothalamus` toggleable + action executor engine**
+   — closest to Samuel's "save LLM calls on strong models" desire;
+   land it early to gather signal.
+5. **Modifier #3 `in_mind`** — replaces the deleted focus / mood /
+   goals fields and gives Self the ability to actively record its
+   mental state.
+6. **Modifier #2 `recall_anchor`** — most complex (an extra LLM call
+   per beat, may add heartbeat latency); ship last and watch latency
+   regressions.
 
 ---
 
-## 附录 — 已同步修复的 bug
+## Part 5 — Open questions for Samuel
 
-- **Stimulus 截断 bug**（2026-04-25）：`_summarize_stimuli` 把每条 stimulus 的 content 砍到 60 字符后才写进 sliding window。这导致 `[HISTORY]` 层里 Self 回忆自己接收过的用户消息时只看到开头，下游多个机制（recall 特征提取、compact 提炼、bootstrap 指令识别）都受影响。已在这次 bug 修复中移除截断。
+- [x] ~~Modifier #1 action-tag format~~ — 2026-04-25: **OpenAI
+      tool_calls-style JSONL** (`{"name": "...", "arguments": {...}}`,
+      one per line), wrapped in `[ACTION]...[/ACTION]`. Reasoning
+      recorded in Part 3, Modifier #1.
+- [x] ~~Modifier #2 default toggle~~ — 2026-04-25: **default off**.
+      An extra LLM call per beat costs latency / money; users opt in
+      to accept that cost. Same philosophy as Modifier #1's default
+      off (do not bake crutches for weak models).
+- [x] ~~Where does Modifier #3 `in_mind`'s state file live?~~ —
+      2026-04-25: `workspace/data/in_mind.json`. Runtime state (Self
+      writes / runtime reads) lives under `workspace/data/`,
+      alongside `graph_memory.sqlite` and `web_chat.jsonl`; user
+      config lives under `workspace/plugin-configs/` or
+      `workspace/modifiers/<name>/config.yaml`. State ≠ config; keep
+      them apart. Injection path settled the same day: virtual round
+      at the most-recent end of the history layer.
+- [x] ~~Modifier on/off + UI~~ — 2026-04-25: **`config.yaml` is the
+      single source of truth**; the dashboard only displays runtime
+      status and provides a config editor. Per-Modifier detailed
+      configuration lives in each Modifier's own folder
+      (`workspace/modifiers/<name>/config.yaml`, following the
+      existing plugin pattern). Editing config requires a restart.
+      **Implementation landed 2026-04-25**: `config.modifiers:
+      list[str] | None`. List elements are names from
+      `BUILTIN_FACTORIES`; registration follows list order (= chain
+      execution order). `None` (field absent) → backward-compat,
+      registers the legacy defaults plus a loud deprecation
+      warning. `[]` → explicit zero plugins, executed silently.
+      Unknown name → log + skip without blocking startup (strictly
+      additive principle).
+- [x] ~~Multiple Modifiers of the same kind coexisting?~~ — 2026-04-25:
+      **allowed, executed in order**. There is one modifiers list in
+      `config.yaml`; registration order = execution order. Modifiers
+      of the same kind are chained: each one's output (anchor list,
+      translation result, etc.) is the input of the next. Later
+      Modifiers may augment / overwrite / veto the earlier output;
+      composition is expressed via chaining, not via a complex
+      "parallel + merge" semantics.
+- [x] ~~Where does `statistics` move to?~~ Landed 2026-04-25:
+      `sleep_cycles` becomes a `Runtime._sleep_cycles` in-memory
+      counter; the other fields are removed (commit `ce59ab4`,
+      self-model slim refactor).
+- [x] ~~Should the recall LLM output schema include a `reason`
+      field?~~ Decided 2026-04-25: no. **Pure JSON output, not even a
+      `<thinking>` block** — let users pick their own model; weak-
+      model behavior is the user's choice and is not crutched in the
+      core mechanism (consistent with Modifier #1's default-off
+      philosophy). See Part 2.
+
+---
+
+## Appendix — bugs already fixed in sync
+
+- **Stimulus truncation bug** (2026-04-25): `_summarize_stimuli` was
+  truncating each stimulus's content to 60 characters before writing
+  it into the sliding window. As a result, when Self looked back at
+  user messages it had already received, only the prefix remained in
+  `[HISTORY]`; downstream mechanisms (recall feature extraction,
+  compact summarization, bootstrap-instruction detection) were all
+  affected. The truncation was removed as part of this bug fix.

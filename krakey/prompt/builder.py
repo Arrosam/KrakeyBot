@@ -67,8 +67,8 @@ DEFAULT_ELEMENT_KEYS: tuple[str, ...] = (
 def _format_stim(s: Stimulus) -> list[str]:
     lines = [
         "---",
-        f"来源: {s.source} | adrenalin: {s.adrenalin}",
-        f"内容: {s.content}",
+        f"source: {s.source} | adrenalin: {s.adrenalin}",
+        f"content: {s.content}",
     ]
     # When the recall_anchor plugin couldn't find any GraphMemory
     # context for this stimulus on the previous beat, the orchestrator
@@ -79,7 +79,8 @@ def _format_stim(s: Stimulus) -> list[str]:
     retries = s.metadata.get("recall_retries", 0)
     if retries:
         lines.append(
-            f"⚠ 上一次心跳未召回到与本条相关的图记忆 (重试第 {retries} 次)"
+            f"⚠ no related graph memory recalled on the previous "
+            f"heartbeat (retry #{retries})"
         )
     return lines
 
@@ -169,7 +170,7 @@ class PromptBuilder:
             lines = "(none)"
         return (
             "# [CAPABILITIES]\n"
-            "可用 Tools (本跳已注册):\n"
+            "Available tools (registered this beat):\n"
             f"{lines}"
         )
 
@@ -178,9 +179,9 @@ class PromptBuilder:
             "# [STATUS]\n"
             f"Graph Memory: {s.gm_node_count} nodes, "
             f"{s.gm_edge_count} edges\n"
-            f"疲惫度: {s.fatigue_pct}% {s.fatigue_hint}\n"
-            f"上次 Sleep: {s.last_sleep_time}\n"
-            f"心跳数 (自上次 Sleep): {s.heartbeats_since_sleep}"
+            f"Fatigue: {s.fatigue_pct}% {s.fatigue_hint}\n"
+            f"Last Sleep: {s.last_sleep_time}\n"
+            f"Heartbeats since last Sleep: {s.heartbeats_since_sleep}"
         )
 
     def render_recall(self, recall: "RecallResult") -> str:
@@ -194,7 +195,7 @@ class PromptBuilder:
                 f"{n.get('description', '')}"
             )
             if kw:
-                lines.append(f"  相邻: {kw}")
+                lines.append(f"  neighbors: {kw}")
         for e in recall.edges:
             lines.append(
                 f"- [{e.get('source', '?')}] "
@@ -241,31 +242,32 @@ class PromptBuilder:
                     system.append(s)
 
             lines = [
-                f"# [STIMULUS]\n本次收到 {len(stimuli)} 条信号，按来源分组："
+                f"# [STIMULUS]\nReceived {len(stimuli)} signals, grouped by source:"
             ]
 
             if incoming:
                 lines.append(
-                    "\n## 用户/外部输入 (INCOMING — 别人对你说的话, 需要回应)"
+                    "\n## INCOMING (user / external input — what others said "
+                    "to you; needs a response)"
                 )
                 for s in incoming:
                     lines.extend(_format_stim(s))
 
             if own_actions:
                 lines.append(
-                    "\n## 你自己刚才行动的结果 (YOUR RECENT ACTIONS — "
-                    "这是你刚才说/做的话和动作的回执, 不是用户在跟你互动!)"
+                    "\n## YOUR RECENT ACTIONS (feedback from what YOU just "
+                    "said/did — not the user talking to you!)"
                 )
                 for s in own_actions:
                     lines.extend(_format_stim(s))
 
             if system:
-                lines.append("\n## 系统事件 (SYSTEM)")
+                lines.append("\n## SYSTEM events")
                 for s in system:
                     lines.extend(_format_stim(s))
 
         if current_time is not None:
             ts = current_time.strftime("%Y-%m-%d %H:%M:%S")
-            lines.append(f"\n当前时间: {ts}")
+            lines.append(f"\ncurrent time: {ts}")
 
         return "\n".join(lines)

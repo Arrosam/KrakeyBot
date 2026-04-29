@@ -3,8 +3,8 @@
 Single source of truth for "how many tokens is this string". Replaces
 the `len(text) // 4` heuristic that used to live in
 ``sliding_window._approx_tokens``: that was wildly inaccurate for
-Chinese (1 汉字 ≈ 1-2 tokens, under-counted ~4-8×) which would have
-poisoned any budget-based enforcement.
+CJK text (one ideograph ≈ 1-2 tokens, under-counted ~4-8×) which would
+have poisoned any budget-based enforcement.
 
 Backend:
   * Primary — `tiktoken` with the `cl100k_base` encoding. That's

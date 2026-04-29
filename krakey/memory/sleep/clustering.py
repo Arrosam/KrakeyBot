@@ -16,12 +16,13 @@ from krakey.memory._db import encode_embedding
 from krakey.memory.graph_memory import GraphMemory, _row_to_node
 
 
-COMMUNITY_SUMMARY_PROMPT = """以下是一组紧密相关的记忆节点 (Sleep 聚类发现):
+COMMUNITY_SUMMARY_PROMPT = """Below is a tightly related set of memory nodes (discovered by Sleep clustering):
 
 {members}
 
-用一两句话概括它们共同的主题 (用作长期 KB 的目录摘要)。
-**只输出概括, 不要前缀, 不要列表。**
+Summarize their shared theme in one or two sentences (this becomes the
+long-term KB index summary).
+**Output the summary only — no prefix, no list.**
 """
 
 

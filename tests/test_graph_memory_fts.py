@@ -77,7 +77,9 @@ async def test_fts_respects_top_k(tmp_path):
 
 async def test_fts_unicode_tokens(tmp_path):
     gm = await _gm(tmp_path)
-    await gm.insert_node(name="苹果", category="FACT", description="红色水果")
-    hits = await gm.fts_search("苹果")
-    assert len(hits) == 1 and hits[0]["name"] == "苹果"
+    await gm.insert_node(
+        name="café", category="FACT", description="naïve résumé",
+    )
+    hits = await gm.fts_search("café")
+    assert len(hits) == 1 and hits[0]["name"] == "café"
     await gm.close()

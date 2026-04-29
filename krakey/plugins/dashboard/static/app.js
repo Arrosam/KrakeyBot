@@ -124,7 +124,7 @@ function splitPromptSections(text) {
     if (m) {
       out.push({ title: m[1].trim(), body: m[2] });
     } else {
-      out.push({ title: "DNA / 系统提示", body: p });
+      out.push({ title: "DNA / system prompt", body: p });
     }
   }
   return out;
@@ -618,51 +618,51 @@ const SECTION_DEFAULTS = {
 
 // Hover tooltip text per "section.field" key.
 const HELP = {
-  "hibernate.min_interval": "睡眠最短间隔（秒）。Self 用 [HIBERNATE] N 控制每跳间隔, 但不会低于这个值。",
-  "hibernate.max_interval": "睡眠最长间隔（秒）。即使 Self 要求 hibernate 更久, 也不会超过这个值。",
-  "hibernate.default_interval": "Self 没指定时的默认 hibernate 间隔（秒）。",
-  "fatigue.gm_node_soft_limit": "GM 节点软上限。fatigue% = nodes / soft_limit * 100。Self 看到 fatigue% 决定是否主动睡眠。",
-  "fatigue.force_sleep_threshold": "强制睡眠阈值（fatigue%）。超过这个值, runtime 不等 Self 同意直接进 sleep。",
-  "graph_memory.db_path": "GM SQLite 文件路径。",
-  "graph_memory.auto_ingest_similarity_threshold": "stimulus auto_ingest 的相似度阈值 (0-1)。低于则当作新节点入 GM。",
-  "graph_memory.recall_per_stimulus_k": "每条 stimulus vec_search top_k 的硬上限。实际 top_k 由 recall_screening_token_multiplier 动态算出, 最多不超过这个。",
-  "graph_memory.recall_screening_token_multiplier": "粗筛池的 token 倍数: 每条 stimulus 试图捞 multiplier × recall_token_budget 个 token 的候选, 给最终 token 预算切割留充裕选择空间。1.0 = 不过采样; 默认 3.0。",
-  "graph_memory.neighbor_expand_depth": "召回时邻居展开深度（沿 edges 走几跳）。",
-  "knowledge_base.dir": "KB SQLite 文件目录, sleep migration 会写到这里。",
-  "sleep.max_duration_seconds": "单次 sleep 最长允许时长（秒）, 防 sleep 卡死。",
-  "safety.gm_node_hard_limit": "GM 节点硬上限。超过则 sleep 拒绝继续添加节点（防爆炸）。",
-  "safety.max_consecutive_no_action": "Self 连续 'No action' 多少次后视为僵死, runtime 触发 sleep 自救。",
-  "dashboard.enabled": "Web UI 总开关。关掉这个 = 下次启动后没有浏览器界面, 只剩日志。",
-  "dashboard.host": "监听地址。127.0.0.1 = 仅本机; 0.0.0.0 = 局域网可访问（不安全）。",
-  "dashboard.port": "监听端口。",
-  "dashboard.prompt_log_size": "Prompts 标签页保留最近 N 次心跳构造的完整 prompt。运行时环形缓冲, 不落盘, 重启清零。默认 20。",
-  "provider.type": "Provider 实现类型。目前只支持 openai_compatible。",
-  "provider.base_url": "API 根 URL（不含 /v1 等后缀, LLMClient 会自动加）。",
-  "provider.api_key": "API 密钥。可填 ${ENV_VAR} 占位符从环境变量读取。",
-  "model.name": "模型 ID, 与 provider 的 API 一致。",
-  "model.capabilities": "模型能力标签。仅供后续路由参考, 当前不强制校验。",
-  "role.provider": "为该 role 选一个 provider。",
-  "role.model": "在选定 provider 下选一个 model。",
-  "channel.enabled": "是否启用此 channel 通道。",
-  "channel.default_adrenalin": "该 channel 推送的 stimulus 默认是否激活肾上腺素 (打断 hibernate)。",
-  "tool.enabled": "是否注册此 tool 给 Hypothalamus 使用。",
-  "tool.max_results": "搜索结果数上限。",
-  "tool.sandbox_dir": "代码 / 文件操作的工作目录。",
-  "tool.timeout_seconds": "子进程超时（秒）。",
-  "tool.max_output_chars": "stdout/stderr 截断字符数。",
-  "tool.screenshot_dir": "GUI 截图保存目录。",
-  "tool.history_path": "Web chat 持久化 JSONL 路径。",
-  "tool.sandbox": "该 tool 的非幂等操作是否只在沙盒 VM 内发生。默认 true — 关掉 = 危险 (代码/GUI 直接跑在你的机器)。",
-  "sandbox.guest_os": "沙盒客机操作系统: linux / macos / windows。启用任何 sandboxed tool 必须先填。",
-  "sandbox.provider": "虚拟机管理器: qemu (推荐) / virtualbox / utm。",
-  "sandbox.vm_name": "VM 实例名 (预先 provision 好)。",
-  "sandbox.display": "headed = VM 桌面显示一个窗口, 你能看能介入; headless = VM 完全不显示, 只通过 agent 交互。由你按使用偏好选。",
-  "sandbox.resources.cpu": "分配给 VM 的 vCPU 数。",
-  "sandbox.resources.memory_mb": "分配给 VM 的内存 (MB)。",
-  "sandbox.resources.disk_gb": "VM 磁盘容量 (GB)。",
-  "sandbox.agent.url": "VM 内 guest agent 的 HTTP 地址, e.g. http://10.0.2.10:8765。必须在 host-only 子网上。",
-  "sandbox.agent.token": "host ↔ agent 共享 token。放 ${ENV_VAR} 从环境变量读。",
-  "sandbox.network_mode": "VM 网络策略: nat_allowlist (出互联网白名单) / host_only (无外网) / isolated (全断网)。",
+  "hibernate.min_interval": "Minimum hibernate interval (seconds). Self uses [HIBERNATE] N to control each beat, but it will never go below this value.",
+  "hibernate.max_interval": "Maximum hibernate interval (seconds). Even if Self requests a longer hibernate, it will not exceed this value.",
+  "hibernate.default_interval": "Default hibernate interval (seconds) when Self does not specify one.",
+  "fatigue.gm_node_soft_limit": "Soft upper bound on GM nodes. fatigue% = nodes / soft_limit * 100. Self uses fatigue% to decide whether to sleep proactively.",
+  "fatigue.force_sleep_threshold": "Force-sleep threshold (fatigue%). Above this, runtime enters sleep without waiting for Self's consent.",
+  "graph_memory.db_path": "Path to the GM SQLite file.",
+  "graph_memory.auto_ingest_similarity_threshold": "Similarity threshold (0-1) for stimulus auto_ingest. Below this, the stimulus is treated as a new GM node.",
+  "graph_memory.recall_per_stimulus_k": "Hard cap on per-stimulus vec_search top_k. The actual top_k is computed dynamically from recall_screening_token_multiplier and never exceeds this.",
+  "graph_memory.recall_screening_token_multiplier": "Token multiplier for the screening pool: each stimulus tries to surface multiplier × recall_token_budget tokens of candidates so the final budget cut has a rich pool to choose from. 1.0 = no over-sampling; default 3.0.",
+  "graph_memory.neighbor_expand_depth": "Neighbor-expansion depth at recall time (how many edges to traverse).",
+  "knowledge_base.dir": "Directory for KB SQLite files; sleep migration writes here.",
+  "sleep.max_duration_seconds": "Maximum allowed duration for a single sleep (seconds), to prevent sleep from hanging.",
+  "safety.gm_node_hard_limit": "Hard upper bound on GM nodes. Above this, sleep refuses to add more nodes (prevents runaway growth).",
+  "safety.max_consecutive_no_action": "After this many consecutive 'No action' beats, runtime considers Self stuck and triggers a self-rescue sleep.",
+  "dashboard.enabled": "Master switch for the web UI. Off = next launch has no browser UI, only logs.",
+  "dashboard.host": "Listening address. 127.0.0.1 = local only; 0.0.0.0 = LAN-accessible (insecure).",
+  "dashboard.port": "Listening port.",
+  "dashboard.prompt_log_size": "The Prompts tab keeps the last N fully-built heartbeat prompts. In-memory ring buffer, not persisted, cleared on restart. Default 20.",
+  "provider.type": "Provider implementation type. Currently only openai_compatible is supported.",
+  "provider.base_url": "API root URL (without trailing /v1 etc.; LLMClient appends it automatically).",
+  "provider.api_key": "API key. Supports a ${ENV_VAR} placeholder to read from environment variables.",
+  "model.name": "Model ID, matching the provider's API.",
+  "model.capabilities": "Capability tags for the model. Currently informational only; not strictly validated.",
+  "role.provider": "Pick a provider for this role.",
+  "role.model": "Pick a model under the chosen provider.",
+  "channel.enabled": "Whether this channel is enabled.",
+  "channel.default_adrenalin": "Whether stimuli pushed by this channel default to adrenalin=true (interrupting hibernate).",
+  "tool.enabled": "Whether to register this tool for Hypothalamus to use.",
+  "tool.max_results": "Maximum number of search results.",
+  "tool.sandbox_dir": "Working directory for code / file operations.",
+  "tool.timeout_seconds": "Subprocess timeout (seconds).",
+  "tool.max_output_chars": "Truncation length for stdout/stderr.",
+  "tool.screenshot_dir": "Directory for GUI screenshots.",
+  "tool.history_path": "JSONL persistence path for web chat.",
+  "tool.sandbox": "Whether this tool's non-idempotent operations are confined to the sandbox VM. Default true — turning off is dangerous (code / GUI runs on your host).",
+  "sandbox.guest_os": "Sandbox guest OS: linux / macos / windows. Required before any sandboxed tool can be enabled.",
+  "sandbox.provider": "VM manager: qemu (recommended) / virtualbox / utm.",
+  "sandbox.vm_name": "VM instance name (must be pre-provisioned).",
+  "sandbox.display": "headed = VM desktop shown in a window so you can watch / intervene; headless = VM hidden, only the agent interacts. Choose by your usage preference.",
+  "sandbox.resources.cpu": "vCPU count assigned to the VM.",
+  "sandbox.resources.memory_mb": "RAM (MB) assigned to the VM.",
+  "sandbox.resources.disk_gb": "VM disk size (GB).",
+  "sandbox.agent.url": "HTTP URL of the in-VM guest agent, e.g. http://10.0.2.10:8765. Must be on the host-only subnet.",
+  "sandbox.agent.token": "Shared token between host and agent. Use ${ENV_VAR} to read from the environment.",
+  "sandbox.network_mode": "VM network policy: nat_allowlist (egress allow-list) / host_only (no internet) / isolated (no network).",
 };
 
 // Fixed numeric/string dataclass schemas — drives generic renderer.
@@ -882,7 +882,7 @@ function renderGenericSection(key, title, target, schema) {
 
 const SAFETY_CONFIRMS = {
   "dashboard.enabled":
-    "关掉这个 = 下次重启后没有 Web UI, 只剩日志。确定？",
+    "Turning this off means no web UI on next restart — only logs. Continue?",
 };
 
 function renderRow(label, target, key, type, helpPath) {

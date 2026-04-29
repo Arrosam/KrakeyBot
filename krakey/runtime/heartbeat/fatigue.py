@@ -6,7 +6,7 @@ Phase-1: calculate_fatigue(node_count, soft_limit) → (pct, hint).
 from __future__ import annotations
 
 
-LOW_FATIGUE_HINT = "（精力充沛，无需睡眠）"
+LOW_FATIGUE_HINT = "(energy is high; no need to sleep)"
 
 
 def calculate_fatigue(node_count: int, soft_limit: int,

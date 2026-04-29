@@ -56,7 +56,7 @@ def _estimate_node_render_tokens(node: dict[str, Any],
 
     Format (see krakey/prompt/builder.py):
         - [name] (category) — description
-          相邻: kw1, kw2, ...
+          neighbors: kw1, kw2, ...
     """
     name = node.get("name", "") or ""
     cat = node.get("category", "") or ""
@@ -64,7 +64,7 @@ def _estimate_node_render_tokens(node: dict[str, Any],
     header = f"- [{name}] ({cat}) — {desc}"
     total = estimate_tokens(header)
     if neighbor_keywords:
-        total += estimate_tokens("  相邻: " + ", ".join(neighbor_keywords))
+        total += estimate_tokens("  neighbors: " + ", ".join(neighbor_keywords))
     return total
 
 

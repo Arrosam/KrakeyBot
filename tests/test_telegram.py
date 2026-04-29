@@ -138,7 +138,7 @@ async def test_tool_sends_via_client_with_explicit_chat_id():
     stim = await t.execute("hi friend",
                               {"chat_id": 42, "text": "hi friend"})
     assert client.sent == [(42, "hi friend")]
-    assert "sent" in stim.content.lower() or "已发送" in stim.content
+    assert "sent" in stim.content.lower()
 
 
 async def test_tool_uses_default_chat_id_when_param_missing():
@@ -160,7 +160,7 @@ async def test_tool_no_chat_id_returns_error_stimulus():
     t = TelegramReplyTool(client=client)  # no default chat
     stim = await t.execute("hi", {})
     assert client.sent == []
-    assert "no chat" in stim.content.lower() or "缺少" in stim.content
+    assert "no chat" in stim.content.lower()
 
 
 async def test_tool_send_failure_returns_adrenalin_error():

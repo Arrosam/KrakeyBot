@@ -168,7 +168,7 @@ async def test_voluntary_sleep_via_hypothalamus_runs_full_sleep(tmp_path):
     """Self → 'enter sleep' → Hypothalamus sleep:true → enter_sleep_mode
     runs end-to-end; FACT migrates to KB; wake-up stimulus pushed."""
     self_llm = ScriptedLLM([
-        "[DECISION]\n进入睡眠模式\n[HIBERNATE]\n1",
+        "[DECISION]\nenter sleep mode\n[HIBERNATE]\n1",
     ])
     hypo_llm = ScriptedLLM([
         json.dumps({"tool_calls": [], "memory_writes": [],
@@ -213,7 +213,8 @@ async def test_voluntary_sleep_via_hypothalamus_runs_full_sleep(tmp_path):
 
 async def test_force_sleep_when_fatigue_exceeds_threshold(tmp_path):
     """When GM exceeds force_sleep_threshold, runtime triggers sleep
-    immediately and pushes the special '昏睡' stimulus."""
+    immediately and pushes the special 'fell asleep due to fatigue'
+    wake-up stimulus."""
     self_llm = ScriptedLLM([])  # never reached
     hypo_llm = ScriptedLLM([])
     sleep_llm = ScriptedLLM(["summary"] * 10)
@@ -237,11 +238,11 @@ async def test_force_sleep_when_fatigue_exceeds_threshold(tmp_path):
 
     # Self LLM should have NOT been called (force-sleep short-circuited)
     assert self_llm.calls == []
-    # Wake-up stimulus is the special '昏睡' message
+    # Wake-up stimulus is the fatigue-induced wake-up message
     drained = runtime.buffer.drain()
     wake = [s for s in drained if s.source == "system:sleep"]
     assert len(wake) == 1
-    assert "昏睡" in wake[0].content
+    assert "fatigue" in wake[0].content.lower() or "fell asleep" in wake[0].content.lower()
     # FACTs migrated
     assert await runtime.gm.list_nodes(category="FACT") == []
     await runtime.close()
@@ -528,7 +529,7 @@ async def test_batch_complete_stimulus_wakes_next_heartbeat():
 async def test_explicit_write_from_hypothalamus_memory_writes():
     """Hypothalamus memory_writes trigger GM.explicit_write."""
     self_llm = ScriptedLLM([
-        "[DECISION]\n记住: 用户偏好详细解释\n[HIBERNATE]\n1",
+        "[DECISION]\nremember: user prefers detailed answers\n[HIBERNATE]\n1",
     ])
     hypo_llm = ScriptedLLM([
         json.dumps({

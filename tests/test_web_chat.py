@@ -125,7 +125,7 @@ async def test_channel_push_appends_attachment_notices(tmp_path):
     )
     s = pushed[0]
     assert "see file" in s.content
-    assert "[附件: a.png" in s.content
+    assert "[attachment: a.png" in s.content
     assert s.metadata["attachments"][0]["name"] == "a.png"
 
 
@@ -166,7 +166,7 @@ async def test_tool_send_appends_to_history(tmp_path):
     msgs = h.all_messages()
     assert msgs[0]["sender"] == "krakey"
     assert msgs[0]["content"] == "hello world"
-    assert "sent" in stim.content.lower() or "已发送" in stim.content
+    assert "sent" in stim.content.lower()
 
 
 async def test_tool_intent_used_when_no_text_param(tmp_path):
@@ -181,7 +181,7 @@ async def test_tool_empty_text_returns_clear_msg(tmp_path):
     t = WebChatTool(history=h)
     stim = await t.execute("", {"text": "   "})
     assert h.all_messages() == []
-    assert "empty" in stim.content.lower() or "空" in stim.content
+    assert "empty" in stim.content.lower()
 
 
 async def test_tool_history_failure_returns_adrenalin_error(tmp_path):

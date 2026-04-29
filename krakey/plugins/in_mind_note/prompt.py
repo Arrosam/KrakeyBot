@@ -16,28 +16,30 @@ from __future__ import annotations
 from krakey.plugins.in_mind_note.state import InMindState
 
 
-IN_MIND_INSTRUCTIONS_LAYER = """# [IN MIND — 操作约束]
-你的"心智状态" (Thoughts / Mood / Focus) 是别的系统读取你"现在心里在
-想什么"的唯一来源, 持续显示在 [HISTORY] 头部 "Heartbeat #now (in mind)"
-块里。
+IN_MIND_INSTRUCTIONS_LAYER = """# [IN MIND — operating constraint]
+Your "mental state" (Thoughts / Mood / Focus) is the single source
+other systems read for "what is on your mind right now"; it shows up
+continuously at the top of [HISTORY] inside the
+"Heartbeat #now (in mind)" block.
 
-每当下列任一情况发生, 你必须立刻调用 update_in_mind tool 更新对应
-字段:
+Whenever ANY of the following happens, you must immediately call the
+update_in_mind tool to update the corresponding field:
 
-- 你的思考焦点切换 (新话题 / 新问题 / 新线索)
-- 情绪明显变化
-- 专注的事改变
+- Your thinking focus shifts (new topic / new question / new lead)
+- Your mood changes meaningfully
+- What you are concretely focused on changes
 
-只更新变化的字段。三个参数都是可选的:
+Only update the fields that changed. All three parameters are optional:
 
-  thoughts: 当前心头最重要的事 (一句话即可)
-  mood:     当前情绪 + 简短原因
-  focus:    正在专注的具体事
+  thoughts: the most important thing on your mind (one sentence is fine)
+  mood:     current mood + brief reason
+  focus:    the concrete thing you are focused on
 
-不传一个字段 = 该字段不动; 传空字符串 = 显式清空该字段。
+Omit a field = leave it unchanged; pass an empty string = explicit clear.
 
-不更新 = 别的系统看到的是过期信息, 会做错决策。这是常驻指令, 每跳都
-适用, 不需要等被提醒。"""
+Not updating = other systems see stale info and make wrong decisions.
+This is a standing instruction; it applies every beat — no need to wait
+for a reminder."""
 
 
 def render_virtual_round(state: InMindState) -> str | None:

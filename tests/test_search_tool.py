@@ -53,14 +53,13 @@ async def test_query_param_overrides_intent():
 async def test_empty_results_returns_clear_message():
     t = SearchTool(backend=FakeBackend(results=[]))
     stim = await t.execute("nothing matches", {})
-    assert ("no results" in stim.content.lower()
-            or "无结果" in stim.content)
+    assert "no results" in stim.content.lower()
 
 
 async def test_backend_failure_returns_error_stimulus():
     t = SearchTool(backend=FakeBackend(raises=RuntimeError("net down")))
     stim = await t.execute("query", {})
-    assert "search failed" in stim.content.lower() or "失败" in stim.content
+    assert "search failed" in stim.content.lower()
     assert "net down" in stim.content
 
 

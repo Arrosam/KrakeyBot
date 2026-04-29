@@ -14,17 +14,17 @@ def test_dna_has_all_sections():
                 "[GRAPH MEMORY]", "[HISTORY]", "[STIMULUS]",
                 "[THINKING]", "[DECISION]", "[NOTE]", "[HIBERNATE]"]:
         assert tag in DNA, f"DNA missing section: {tag}"
-    assert "Caveman" in DNA or "精简" in DNA
+    assert "Caveman" in DNA
 
 
 def test_dna_disambiguates_sleep_and_hibernate():
     """Regression: DNA must teach that Sleep and Hibernate are different
-    mechanisms + warn against ambiguous 'rest/休息' wording that would
+    mechanisms + warn against ambiguous 'rest' wording that would
     otherwise slip past the Hypothalamus as a sleep trigger."""
     assert "Hibernate" in DNA and "Sleep" in DNA
-    assert "休息" in DNA or "rest" in DNA.lower()
+    assert "rest" in DNA.lower()
     # The explicit trigger phrase the Hypothalamus recognises must be stated
-    assert "进入睡眠" in DNA or "enter sleep mode" in DNA.lower()
+    assert "enter sleep mode" in DNA.lower()
 
 
 def test_dna_mentions_active_memory_recall():
@@ -36,9 +36,9 @@ def test_dna_mentions_active_memory_recall():
     recall and point Self at [CAPABILITIES] to find the actual name.
     """
     d = DNA.lower()
-    assert "proactive" in d or "主动" in DNA or "explicit" in d
+    assert "proactive" in d or "explicit" in d
     assert "recall" in d
-    assert "modifier" in d or "反思" in DNA
+    assert "modifier" in d
     assert "[capabilities]" in d
 
 
@@ -47,10 +47,10 @@ def test_dna_warns_about_self_vs_external_signals():
     replied' bug. DNA must explain that tool_feedback in [STIMULUS]
     is the bot's own action, not user input.
     """
-    assert "INCOMING" in DNA or "外部" in DNA
-    assert "tool_feedback" in DNA.lower() or "你自己" in DNA or "YOUR" in DNA
+    assert "INCOMING" in DNA
+    assert "tool_feedback" in DNA.lower() or "YOUR" in DNA
     # Must explicitly warn against the self-echo loop
-    assert "自言自语" in DNA or "self-echo" in DNA.lower() or "不是用户" in DNA
+    assert "self-echo" in DNA.lower()
 
 
 def test_dna_points_tool_lookup_at_capabilities_not_status():
@@ -102,7 +102,7 @@ def test_builder_assembles_all_layers():
     assert "# [CAPABILITIES]" in prompt
     assert "# [STIMULUS]" in prompt
     assert "# [STATUS]" in prompt
-    assert "当前时间: 2026-04-24 15:32:47" in prompt
+    assert "current time: 2026-04-24 15:32:47" in prompt
 
 
 def test_builder_layer_order_is_cache_optimal():
@@ -134,7 +134,7 @@ def test_builder_layer_order_is_cache_optimal():
 
 def test_builder_stimulus_has_no_per_stim_timestamps():
     """Per-stim ISO timestamps were removed for cache stability. Only
-    the single trailer '当前时间' survives in [STIMULUS]."""
+    the single trailer 'current time' survives in [STIMULUS]."""
     stim_ts = datetime(2026, 4, 24, 12, 34, 56)
     stimuli = [
         Stimulus(type="user_message", source="channel:cli", content="hi",
@@ -152,7 +152,7 @@ def test_builder_stimulus_has_no_per_stim_timestamps():
     assert "2026-04-24T12:34:56" not in stim_block
     assert "12:34:56" not in stim_block
     # the single "current time" trailer is present, seconds precision
-    assert "当前时间: 2026-04-24 13:00:00" in stim_block
+    assert "current time: 2026-04-24 13:00:00" in stim_block
 
 
 def test_builder_current_time_present_even_on_empty_stimulus():
@@ -164,7 +164,7 @@ def test_builder_current_time_present_even_on_empty_stimulus():
         current_time=datetime(2026, 4, 24, 9, 15, 3),
     )
     assert "(no new signals)" in p
-    assert "当前时间: 2026-04-24 09:15:03" in p
+    assert "current time: 2026-04-24 09:15:03" in p
 
 
 def test_builder_capabilities_layer_renders_tools():
@@ -218,14 +218,12 @@ def test_builder_splits_stimulus_by_source_type():
     # Scope search to the [STIMULUS] block (DNA also mentions these names).
     stim_block = p[p.rindex("# [STIMULUS]"):p.index("# [GRAPH MEMORY]")]
 
-    assert "INCOMING" in stim_block or "用户/外部输入" in stim_block
-    assert "YOUR RECENT ACTIONS" in stim_block or "你自己刚才行动的结果" in stim_block
-    assert "SYSTEM" in stim_block or "系统事件" in stim_block
+    assert "INCOMING" in stim_block
+    assert "YOUR RECENT ACTIONS" in stim_block
+    assert "SYSTEM" in stim_block
 
-    incoming_idx = max(stim_block.find("INCOMING"),
-                        stim_block.find("用户/外部输入"))
-    own_idx = max(stim_block.find("YOUR RECENT ACTIONS"),
-                   stim_block.find("你自己刚才行动的结果"))
+    incoming_idx = stim_block.find("INCOMING")
+    own_idx = stim_block.find("YOUR RECENT ACTIONS")
     user_pos = stim_block.find("hello bot")
     bot_pos = stim_block.find("hi user!")
     assert incoming_idx >= 0 and own_idx >= 0
@@ -267,13 +265,13 @@ def test_builder_marks_recall_retry_stimuli():
         stim_block[fresh_idx:next_sep] if next_sep != -1
         else stim_block[fresh_idx:]
     )
-    assert "未召回" not in fresh_chunk
+    assert "no related graph memory recalled" not in fresh_chunk
 
     # Retried stimulus has the marker (with retry count)
     retried_idx = stim_block.find("lonely message")
     assert retried_idx >= 0
-    assert "未召回到与本条相关的图记忆" in stim_block[retried_idx:]
-    assert "重试第 1 次" in stim_block[retried_idx:]
+    assert "no related graph memory recalled" in stim_block[retried_idx:]
+    assert "retry #1" in stim_block[retried_idx:]
 
 
 def test_builder_omits_empty_subsections():
@@ -288,9 +286,9 @@ def test_builder_omits_empty_subsections():
         current_time=datetime(2026, 4, 24),
     )
     stim_block = p[p.rindex("# [STIMULUS]"):p.index("# [GRAPH MEMORY]")]
-    assert "你自己刚才行动的结果" in stim_block
-    assert "用户/外部输入" not in stim_block
-    assert "系统事件" not in stim_block
+    assert "YOUR RECENT ACTIONS" in stim_block
+    assert "INCOMING" not in stim_block
+    assert "SYSTEM" not in stim_block
 
 
 def test_builder_handles_empty_recall_and_window():

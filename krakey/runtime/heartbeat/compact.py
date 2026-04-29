@@ -14,22 +14,22 @@ from krakey.memory.graph_memory import GraphMemory
 from krakey.runtime.heartbeat.sliding_window import SlidingWindow, SlidingWindowRound
 
 
-COMPACT_PROMPT = """整理一段过去的对话记忆，提取需要记住的信息。
+COMPACT_PROMPT = """Distill a past conversation segment, extracting information worth remembering.
 
-## 内容
+## Content
 Stimulus: {stimulus}
 Decision: {decision}
 Note: {note}
 
-## 已有节点 (参考；尽量复用以避免重复)
+## Existing nodes (for reference; reuse them to avoid duplicates)
 {existing_nodes}
 
-## 输出 (strict JSON, 只输出 JSON)
+## Output (strict JSON; output JSON only)
 {{
   "nodes": [
-    {{"name": "短标签",
+    {{"name": "short label",
       "category": "FACT|RELATION|KNOWLEDGE|TARGET|FOCUS",
-      "description": "简要描述"}}
+      "description": "brief description"}}
   ],
   "edges": [
     {{"source_name": "name", "target_name": "name",
@@ -38,11 +38,11 @@ Note: {note}
   ]
 }}
 
-## 规则
-1. 只提取值得记住的。日常寒暄不提取。
-2. 与已有节点重叠 → 不建新节点，用 edges 连接。
-3. 遵循边类型约束。
-4. 图必须无环。
+## Rules
+1. Only extract things worth remembering. Skip small talk.
+2. If overlapping with an existing node → do not create a new node; connect via edges instead.
+3. Respect the edge-type constraints.
+4. The graph must be acyclic.
 """
 
 
