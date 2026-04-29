@@ -717,14 +717,12 @@ const SCHEMAS = {
   ],
 };
 
+// Live load report (loaded ✓ / failed ✗) sourced from /api/plugins.
+// The unified Plugins panel surfaces this as a per-row status badge —
+// edits are NOT made through this object; per-plugin config edits live
+// in modifierConfigEdits, enable/disable lives in cfgState.{modifiers,
+// plugins}.
 let pluginReport = { tools: [], channels: [] };
-// Dirty-tracking target for plugin edits. One entry per project, shape:
-//   { enabled: bool, ...schemaFields }
-// Populated on each render from /api/plugins `values`; re-built from
-// scratch so stale projects fall off. Saved via
-// POST /api/plugins/<project>/config (NOT /api/settings — plugin
-// configs live in their own per-plugin YAML files now).
-let pluginEdits = {};
 
 // Config-schema introspection cache. Populated on loadSettings() from
 // GET /api/config/schema. The LLM role params UI reads this instead of
@@ -777,8 +775,12 @@ function renderSettingsForm() {
   ensure(llm, "core_purposes", () => ({}));
   settingsForm.appendChild(renderLLMSection(llm));
 
-  // Modifiers — list available + enable/order/configure
-  settingsForm.appendChild(renderModifiersSection());
+  // Plugins — single unified panel covering modifiers, tools, and
+  // channels (a plugin is the on-disk meta.yaml unit; its
+  // ``components`` array carries one or more of those kinds). One
+  // row per plugin: enable checkbox, kind badges, live load status,
+  // expandable per-plugin config_schema + LLM purpose bindings.
+  settingsForm.appendChild(renderPluginsSection());
 
   // Generic sections (each seeded from SECTION_DEFAULTS so missing fields
   // pre-populate to runtime defaults instead of looking "off"/empty)
@@ -798,13 +800,6 @@ function renderSettingsForm() {
   ensureSection("knowledge_base");
   settingsForm.appendChild(renderGenericSection("knowledge_base", "Knowledge Base",
     cfgState.knowledge_base, SCHEMAS.knowledge_base));
-
-  // Plugins — one card per component (tool / channel) known to
-  // the runtime RIGHT NOW. Components from the same project share one
-  // config_schema; edits land in pluginEdits[<project>] and are
-  // persisted per-project via POST /api/plugins/<project>/config.
-  pluginEdits = {};  // rebuild each render so removed projects fall off
-  settingsForm.appendChild(renderPluginsSection());
 
   ensureSection("sleep");
   settingsForm.appendChild(renderGenericSection("sleep", "Sleep",
@@ -1546,16 +1541,38 @@ function renderModelSlotBlock(llm, fieldName, helpText) {
 // Reset-to-defaults dropped because tags have no per-purpose defaults
 // any more; LLMParams field defaults are the only baseline.)
 
-// ---------------- Modifiers section ----------------
+// ---------------- Unified Plugins section ----------------
+//
+// One section, one row per plugin (modifiers + tools + channels are
+// just component kinds inside a plugin's meta.yaml). Source of truth
+// for the row list is the disk catalogue endpoint
+// /api/modifiers/available — that endpoint returns plugin metadata
+// (description + config_schema + components[] with kind, plus any
+// llm_purposes), already grouped by plugin folder.
+//
+// Live load status (loaded ✓ / error ✗) comes from /api/plugins,
+// which is the runtime-observation snapshot and is keyed by component
+// project — we aggregate per plugin name for the badge.
+//
+// Enable/disable is owned by central config.yaml's two flat lists:
+//   * cfgState.modifiers — ordered list (order = heartbeat chain
+//     execution order); a plugin's name lands here when it has at
+//     least one component of kind="modifier".
+//   * cfgState.plugins   — set-style list; a plugin's name lands here
+//     when it has at least one tool/channel component.
+// A plugin with both kinds shows up in both lists.
 
-// Cache of {name → metadata} from /api/modifiers/available. Populated
-// alongside configSchema during loadSettings(). Drives the
-// "Available Modifiers" UI.
+// Plugin metadata snapshot: [{name, description, config_schema,
+// components:[{kind,role}], llm_purposes}]. Rebuilt each
+// loadSettings() call via /api/modifiers/available.
 let availableModifiers = [];
 
-// Cache of per-Modifier config (workspace/modifiers/<name>/config.yaml).
-// Keyed by Modifier name. Loaded lazily when the user expands a
-// Modifier's row, persisted via POST /api/modifiers/<name>/config.
+// Per-plugin config-edit cache (mirrors workspace/plugins/<name>/
+// config.yaml). Keyed by plugin name. Loaded lazily when the user
+// expands a plugin row; the global #settings-save handler POSTs each
+// dirty entry to /api/modifiers/<name>/config. (The endpoint name
+// retains the legacy "modifiers" prefix from before the unified
+// plugin model — see MEMORY.md.)
 let modifierConfigEdits = {};
 
 async function loadAvailableModifiers() {
@@ -1572,122 +1589,306 @@ async function loadAvailableModifiers() {
   }
 }
 
-function renderModifiersSection() {
-  const sec = makeSection("Modifiers");
+function _pluginKinds(plugin) {
+  const out = new Set();
+  for (const c of (plugin.components || [])) {
+    if (c && c.kind) out.add(c.kind);
+  }
+  return out;
+}
+
+function _hasModifierKind(plugin) {
+  return _pluginKinds(plugin).has("modifier");
+}
+
+function _hasServiceKind(plugin) {
+  const kinds = _pluginKinds(plugin);
+  return kinds.has("tool") || kinds.has("channel");
+}
+
+// Live load status aggregated per plugin name from /api/plugins
+// (which lists tools + channels separately). Returns
+// {loaded:boolean, error:string|null} or undefined when the plugin
+// isn't loaded yet.
+function _liveStatusByName() {
+  const out = {};
+  for (const kind of ["tools", "channels"]) {
+    const items = (pluginReport && pluginReport[kind]) || [];
+    for (const entry of items) {
+      const proj = entry.project || entry.name;
+      if (!proj) continue;
+      const cur = out[proj] || { loaded: true, error: null };
+      cur.loaded = cur.loaded && !!entry.loaded;
+      if (entry.error && !cur.error) cur.error = entry.error;
+      out[proj] = cur;
+    }
+  }
+  return out;
+}
+
+function _setPluginEnabled(plugin, enabled) {
+  cfgState.modifiers = cfgState.modifiers || [];
+  cfgState.plugins = cfgState.plugins || [];
+  const name = plugin.name;
+  const inMods = cfgState.modifiers.includes(name);
+  const inPlugs = cfgState.plugins.includes(name);
+  if (enabled) {
+    if (_hasModifierKind(plugin) && !inMods) {
+      cfgState.modifiers.push(name);
+    }
+    if (_hasServiceKind(plugin) && !inPlugs) {
+      cfgState.plugins.push(name);
+    }
+  } else {
+    if (inMods) {
+      cfgState.modifiers = cfgState.modifiers.filter(n => n !== name);
+    }
+    if (inPlugs) {
+      cfgState.plugins = cfgState.plugins.filter(n => n !== name);
+    }
+  }
+}
+
+function _isPluginEnabled(plugin) {
+  const name = plugin.name;
+  const mods = cfgState.modifiers || [];
+  const plugs = cfgState.plugins || [];
+  return mods.includes(name) || plugs.includes(name);
+}
+
+function renderPluginsSection() {
+  const sec = makeSection("Plugins");
   const body = sec.querySelector(".body");
 
-  // Top: explainer
-  const intro = document.createElement("div");
-  intro.style.cssText = "font-size:11px;color:var(--muted);margin-bottom:8px";
-  intro.textContent =
-    "Modifiers are deeper-than-tool plugins that hook into the " +
-    "heartbeat. The list below is what's installed on disk; check the " +
-    "ones you want loaded. Order in the list = chain execution order.";
+  const intro = document.createElement("p");
+  intro.className = "hint";
+  intro.style.margin = "0 0 8px";
+  intro.innerHTML =
+    "Every plugin discovered in <code>workspace/plugins/</code> and " +
+    "in-tree builtins. A plugin bundles any combination of " +
+    "<em>modifiers</em> (heartbeat hooks), <em>tools</em> (action " +
+    "verbs), and <em>channels</em> (stimulus sources) — one row each. " +
+    "Tick to enable; expand to edit per-plugin config and bind LLM " +
+    "purposes to tags. Order among modifier-bearing plugins = " +
+    "heartbeat chain order.";
   body.appendChild(intro);
 
   cfgState.modifiers = cfgState.modifiers || [];
-  // Only treat as "user explicitly disabled" when the field is an
-  // empty array; null/undefined means "unconfigured" — render with
-  // the available list so the user can opt in.
-  const enabledList = Array.isArray(cfgState.modifiers)
-    ? cfgState.modifiers.slice() : [];
+  cfgState.plugins = cfgState.plugins || [];
 
-  // Modifiers available on disk that the user hasn't enabled yet.
-  const enabledSet = new Set(enabledList);
-  const knownNames = new Set(availableModifiers.map(m => m.name));
+  const live = _liveStatusByName();
+  const byName = new Map(availableModifiers.map(p => [p.name, p]));
 
-  // Render the user's enabled list first, in the user-declared order.
-  // Each enabled Modifier can be expanded for purpose mapping.
-  for (let i = 0; i < enabledList.length; i++) {
-    const name = enabledList[i];
-    const meta = availableModifiers.find(m => m.name === name);
-    body.appendChild(renderModifierCard(name, meta, true, i, enabledList));
+  // Render order:
+  //   1. enabled modifier-bearing plugins, in cfgState.modifiers order
+  //      (so the user-visible reorder ↑↓ matches heartbeat chain order)
+  //   2. other enabled plugins (tool/channel only), name-sorted
+  //   3. disabled-but-available plugins, name-sorted
+  const modifierOrder = cfgState.modifiers.slice();
+  const renderedModifierPlugins = [];
+  const seenInModifierBlock = new Set();
+  for (const n of modifierOrder) {
+    const plugin = byName.get(n);
+    if (!plugin || !_hasModifierKind(plugin)) continue;
+    renderedModifierPlugins.push(plugin);
+    seenInModifierBlock.add(n);
   }
 
-  // Then disabled (available but not in user list)
-  const disabled = availableModifiers.filter(m => !enabledSet.has(m.name));
+  const otherEnabled = availableModifiers
+    .filter(p => !seenInModifierBlock.has(p.name) && _isPluginEnabled(p))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const disabled = availableModifiers
+    .filter(p => !seenInModifierBlock.has(p.name) && !_isPluginEnabled(p))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  for (let i = 0; i < renderedModifierPlugins.length; i++) {
+    body.appendChild(_renderPluginCard(
+      renderedModifierPlugins[i], true, live, i, modifierOrder.length,
+    ));
+  }
+  for (const p of otherEnabled) {
+    body.appendChild(_renderPluginCard(p, true, live, -1, 0));
+  }
   if (disabled.length) {
     const head = document.createElement("h4");
     head.style.cssText = "color:var(--muted);font-size:11px;margin:12px 0 6px";
     head.textContent = "Available (disabled)";
     body.appendChild(head);
-    for (const meta of disabled) {
-      body.appendChild(renderModifierCard(meta.name, meta, false, -1,
-                                          enabledList));
+    for (const p of disabled) {
+      body.appendChild(_renderPluginCard(p, false, live, -1, 0));
     }
   }
 
-  // Detect orphan names — in user's modifiers list but not on disk.
-  const orphans = enabledList.filter(n => !knownNames.has(n));
+  // Orphans: enable lists that mention a plugin not on disk.
+  const known = new Set(availableModifiers.map(p => p.name));
+  const seenOrphan = new Set();
+  const orphans = [];
+  for (const n of cfgState.modifiers.concat(cfgState.plugins)) {
+    if (!known.has(n) && !seenOrphan.has(n)) {
+      seenOrphan.add(n);
+      orphans.push(n);
+    }
+  }
   if (orphans.length) {
     const warn = document.createElement("div");
     warn.style.cssText = "color:var(--red);font-size:11px;margin-top:8px";
     warn.textContent =
-      `Unknown modifier names in config: ${orphans.join(", ")} — these will ` +
-      "be skipped at startup with a warning.";
+      "Unknown plugin names in config: " + orphans.join(", ") +
+      " — these will be skipped at startup with a warning.";
     body.appendChild(warn);
   }
   return sec;
 }
 
-function renderModifierCard(name, meta, enabled, index, enabledList) {
+const _KIND_BADGE_COLOR = {
+  modifier: "var(--magenta)",
+  tool: "var(--cyan)",
+  channel: "var(--yellow)",
+};
+
+function _renderKindBadge(kind) {
+  const span = document.createElement("span");
+  const color = _KIND_BADGE_COLOR[kind] || "var(--muted)";
+  span.style.cssText =
+    "font-size:10px;padding:1px 6px;border-radius:3px;border:1px solid;" +
+    "color:" + color + ";border-color:" + color + ";";
+  span.textContent = kind;
+  return span;
+}
+
+function _renderStatusBadge(status) {
+  const span = document.createElement("span");
+  span.style.cssText =
+    "font-size:10px;padding:1px 6px;border-radius:3px;border:1px solid;";
+  if (!status) {
+    span.textContent = "not loaded";
+    span.style.color = "var(--muted)";
+    span.style.borderColor = "var(--border)";
+  } else if (status.error) {
+    span.textContent = "error";
+    span.style.color = "var(--red)";
+    span.style.borderColor = "var(--red)";
+  } else if (status.loaded) {
+    span.textContent = "loaded";
+    span.style.color = "var(--green)";
+    span.style.borderColor = "var(--green)";
+  } else {
+    span.textContent = "pending";
+    span.style.color = "var(--muted)";
+    span.style.borderColor = "var(--muted)";
+  }
+  return span;
+}
+
+function _renderPluginCard(plugin, enabled, liveByName, modIdx, modCount) {
   const card = document.createElement("div");
   card.className = "subblock";
-  card.style.cssText = "margin:6px 0";
+  card.style.margin = "6px 0";
 
   const head = document.createElement("div");
-  head.style.cssText = "display:flex;align-items:center;gap:8px";
+  head.style.cssText =
+    "display:flex;align-items:center;gap:8px;flex-wrap:wrap";
 
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
   checkbox.checked = enabled;
   checkbox.addEventListener("change", () => {
-    cfgState.modifiers = cfgState.modifiers || [];
-    if (checkbox.checked) {
-      if (!cfgState.modifiers.includes(name)) cfgState.modifiers.push(name);
-    } else {
-      cfgState.modifiers = cfgState.modifiers.filter(n => n !== name);
-    }
+    _setPluginEnabled(plugin, checkbox.checked);
     renderSettingsForm();
   });
   head.appendChild(checkbox);
 
   const title = document.createElement("strong");
-  title.textContent = name;
+  title.textContent = plugin.name;
   head.appendChild(title);
 
-  if (meta) {
-    const kindBadge = document.createElement("span");
-    kindBadge.style.cssText =
-      "font-size:10px;color:var(--muted);background:var(--panel-2);" +
-      "padding:1px 6px;border-radius:3px";
-    kindBadge.textContent = meta.kind;
-    head.appendChild(kindBadge);
+  for (const kind of _pluginKinds(plugin)) {
+    head.appendChild(_renderKindBadge(kind));
   }
 
-  // Reorder buttons (only show when enabled and there's something to swap with)
-  if (enabled && enabledList.length > 1) {
-    const upBtn = mkBtn("↑", () => _reorderEnabled(index, -1));
-    const dnBtn = mkBtn("↓", () => _reorderEnabled(index, +1));
-    upBtn.disabled = (index === 0);
-    dnBtn.disabled = (index === enabledList.length - 1);
+  // Live load status: only meaningful for enabled plugins (disabled
+  // ones aren't expected to appear in the runtime registry).
+  if (enabled) {
+    head.appendChild(_renderStatusBadge(liveByName[plugin.name]));
+  }
+
+  // Reorder ↑↓ — only relevant when the plugin participates in the
+  // ordered modifiers list. modIdx === -1 means "not in modifier
+  // block" (tool/channel-only plugin or disabled).
+  if (enabled && _hasModifierKind(plugin) && modIdx >= 0 && modCount > 1) {
+    const upBtn = mkBtn("↑", () => _reorderEnabled(modIdx, -1));
+    const dnBtn = mkBtn("↓", () => _reorderEnabled(modIdx, +1));
+    upBtn.disabled = (modIdx === 0);
+    dnBtn.disabled = (modIdx === modCount - 1);
     head.appendChild(upBtn);
     head.appendChild(dnBtn);
   }
 
   card.appendChild(head);
 
-  if (meta && meta.description) {
+  if (plugin.description) {
     const desc = document.createElement("div");
-    desc.style.cssText = "font-size:11px;color:var(--muted);margin:4px 0";
-    desc.textContent = meta.description;
+    desc.style.cssText =
+      "font-size:11px;color:var(--muted);margin:4px 0";
+    desc.textContent = plugin.description;
     card.appendChild(desc);
   }
 
-  // LLM purposes editor — only if the plugin declares any
-  if (meta && enabled && meta.llm_purposes && meta.llm_purposes.length) {
-    card.appendChild(renderModifierLLMPurposes(name, meta));
+  // Live error pre-block, when /api/plugins surfaced one for this
+  // plugin. Render even if checkbox ends up unchecked next save —
+  // an error means runtime tried and failed, which is worth seeing.
+  const status = liveByName[plugin.name];
+  if (status && status.error) {
+    const err = document.createElement("pre");
+    err.style.cssText =
+      "color:var(--red);font-size:10px;background:var(--bg);" +
+      "padding:4px 6px;border-radius:3px;max-height:120px;" +
+      "overflow:auto;margin:4px 0";
+    err.textContent = status.error;
+    card.appendChild(err);
   }
+
+  if (!enabled) return card;
+
+  // Lazy-load this plugin's per-folder config the first time we
+  // render it expanded. Subsequent renders use the cached/edited copy.
+  if (!modifierConfigEdits[plugin.name]) {
+    modifierConfigEdits[plugin.name] = {};
+    fetch(`/api/modifiers/${encodeURIComponent(plugin.name)}/config`)
+      .then(r => r.ok ? r.json() : { config: {} })
+      .then(body => {
+        modifierConfigEdits[plugin.name] = body.config || {};
+        renderSettingsForm();
+      })
+      .catch(() => {});
+  }
+  const cfg = modifierConfigEdits[plugin.name];
+
+  if (plugin.config_schema && plugin.config_schema.length) {
+    const cfgBlock = document.createElement("div");
+    cfgBlock.style.cssText = "margin:8px 0 4px";
+    const cfgHead = document.createElement("div");
+    cfgHead.style.cssText =
+      "font-size:11px;color:var(--muted);margin-bottom:4px";
+    cfgHead.textContent = "Config";
+    cfgBlock.appendChild(cfgHead);
+    for (const fdef of plugin.config_schema) {
+      const fname = fdef.field;
+      const type = fdef.type || "text";
+      const helpPath = `plugin.${plugin.name}.${fname}`;
+      if (fdef.help) HELP[helpPath] = fdef.help;
+      if (cfg[fname] == null && fdef.default != null) {
+        cfg[fname] = fdef.default;
+      }
+      cfgBlock.appendChild(renderRow(fname, cfg, fname, type, helpPath));
+    }
+    card.appendChild(cfgBlock);
+  }
+
+  if (plugin.llm_purposes && plugin.llm_purposes.length) {
+    card.appendChild(_renderLLMPurposesEditor(plugin, cfg));
+  }
+
   return card;
 }
 
@@ -1702,32 +1903,19 @@ function _reorderEnabled(index, delta) {
   renderSettingsForm();
 }
 
-function renderModifierLLMPurposes(name, meta) {
-  // Lazy-load this plugin's per-folder config.yaml the first time
-  // we need it; subsequent renders use the cached/edited copy.
-  if (!modifierConfigEdits[name]) {
-    modifierConfigEdits[name] = { llm_purposes: {} };
-    fetch(`/api/modifiers/${encodeURIComponent(name)}/config`)
-      .then(r => r.ok ? r.json() : { config: {} })
-      .then(body => {
-        modifierConfigEdits[name] = body.config || {};
-        if (!modifierConfigEdits[name].llm_purposes)
-          modifierConfigEdits[name].llm_purposes = {};
-        renderSettingsForm();
-      })
-      .catch(() => {});
-  }
-  const cfg = modifierConfigEdits[name];
-
+function _renderLLMPurposesEditor(plugin, cfg) {
+  cfg.llm_purposes = cfg.llm_purposes || {};
   const block = document.createElement("div");
-  block.style.cssText = "margin:8px 0 4px;padding:6px;background:rgba(0,0,0,0.02)";
+  block.style.cssText =
+    "margin:8px 0 4px;padding:6px;background:rgba(0,0,0,0.02)";
   const head = document.createElement("div");
-  head.style.cssText = "font-size:11px;color:var(--muted);margin-bottom:4px";
+  head.style.cssText =
+    "font-size:11px;color:var(--muted);margin-bottom:4px";
   head.textContent = "LLM purpose bindings (tag picker)";
   block.appendChild(head);
 
   const tagNames = Object.keys((cfgState.llm || {}).tags || {});
-  for (const purpose of meta.llm_purposes) {
+  for (const purpose of plugin.llm_purposes) {
     const row = document.createElement("div");
     row.className = "cfg-row";
     const lab = document.createElement("label");
@@ -1753,181 +1941,7 @@ function renderModifierLLMPurposes(name, meta) {
     row.appendChild(sel);
     block.appendChild(row);
   }
-
-  // Save button — writes this plugin's config to its folder
-  const saveBtn = mkBtn("save plugin config", async () => {
-    try {
-      const r = await fetch(`/api/modifiers/${encodeURIComponent(name)}/config`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ config: cfg }),
-      });
-      if (!r.ok) {
-        const err = await r.text();
-        alert(`save failed: ${err}`);
-        return;
-      }
-      alert(`${name} config saved (restart required to apply)`);
-    } catch (e) {
-      alert(`save failed: ${e}`);
-    }
-  });
-  block.appendChild(saveBtn);
   return block;
-}
-
-// ---------------- Generic dict section (channel / tool) ----------------
-
-// ---------------- Plugins section (auto-discovered) ----------------
-
-// Per-render guard so a multi-component project's config_schema
-// appears on only the first component rendered, not duplicated on
-// every member.
-let _pluginSchemaSeen = null;
-
-function renderPluginsSection() {
-  const sec = makeSection("Plugins (auto-discovered)");
-  const body = sec.querySelector(".body");
-  const hint = document.createElement("p");
-  hint.className = "hint";
-  hint.style.margin = "0 0 8px";
-  hint.innerHTML =
-    "Tools + channels registered this run — built-ins plus anything " +
-    "dropped into <code>workspace/plugins/</code>. A project can carry " +
-    "multiple components (channel + tool) that share config. See " +
-    "<code>PLUGINS.md</code> for the contract.";
-  body.appendChild(hint);
-
-  _pluginSchemaSeen = new Set();
-  body.appendChild(_renderPluginGroup("Tools",
-    pluginReport.tools || [], "tool"));
-  body.appendChild(_renderPluginGroup("Channels",
-    pluginReport.channels || [], "channel"));
-  return sec;
-}
-
-function _renderPluginGroup(title, items, kindKey) {
-  const block = document.createElement("div");
-  block.className = "subblock";
-  const h = document.createElement("h4");
-  h.textContent = `${title} (${items.length})`;
-  block.appendChild(h);
-  if (!items.length) {
-    const empty = document.createElement("div");
-    empty.style.cssText = "color:var(--muted);font-size:11px;padding:4px 0";
-    empty.textContent = "(none)";
-    block.appendChild(empty);
-    return block;
-  }
-  for (const p of items) {
-    block.appendChild(_renderPluginCard(p, kindKey));
-  }
-  return block;
-}
-
-function _renderPluginCard(p, kindKey) {
-  const card = document.createElement("div");
-  card.className = "subblock";
-  card.style.margin = "6px 0";
-  const header = document.createElement("h4");
-  header.style.fontSize = "11px";
-  const nameSpan = document.createElement("span");
-  nameSpan.textContent = p.name;
-  const badge = document.createElement("span");
-  badge.style.cssText = "margin-left:8px;font-size:10px;padding:1px 6px;" +
-    "border-radius:3px;border:1px solid;";
-  if (p.source === "builtin") {
-    badge.textContent = "builtin";
-    badge.style.borderColor = "var(--cyan)";
-    badge.style.color = "var(--cyan)";
-  } else {
-    badge.textContent = p.loaded ? "plugin ✓" : (p.error ? "plugin ✗" : "plugin ○");
-    badge.style.borderColor = p.error ? "var(--red)" : "var(--magenta)";
-    badge.style.color = p.error ? "var(--red)" : "var(--magenta)";
-  }
-  header.appendChild(nameSpan);
-  header.appendChild(badge);
-  if (p.is_internal) {
-    const int = document.createElement("span");
-    int.style.cssText = "margin-left:6px;font-size:10px;color:var(--muted)";
-    int.textContent = "internal";
-    header.appendChild(int);
-  }
-  card.appendChild(header);
-
-  if (p.description) {
-    const d = document.createElement("div");
-    d.style.cssText = "color:var(--muted);font-size:11px;margin:2px 0 6px";
-    d.textContent = p.description;
-    card.appendChild(d);
-  }
-  if (p.error) {
-    const err = document.createElement("pre");
-    err.style.cssText = "color:var(--red);font-size:10px;background:var(--bg);" +
-      "padding:4px 6px;border-radius:3px;max-height:120px;overflow:auto;margin:4px 0";
-    err.textContent = p.error;
-    card.appendChild(err);
-    return card;
-  }
-
-  // Config is keyed by project name (one project = one config dict,
-  // shared across its components). Render the `enabled` toggle and the
-  // schema on the FIRST component of each project only; siblings get
-  // a "shared" note.
-  const projectKey = p.project || p.name;
-  const firstOfProject = _pluginSchemaSeen && !_pluginSchemaSeen.has(projectKey);
-  if (_pluginSchemaSeen) _pluginSchemaSeen.add(projectKey);
-
-  if (p.source === "core") {
-    // Core items are always on; no enabled toggle, no schema.
-    return card;
-  }
-
-  if (!firstOfProject) {
-    const note = document.createElement("div");
-    note.style.cssText = "color:var(--muted);font-size:10px;font-style:italic";
-    note.textContent = `(config shared with project ${projectKey} — edit there)`;
-    card.appendChild(note);
-    return card;
-  }
-
-  // Flat edit target: {enabled, ...schemaFields}. Seeded from the
-  // authoritative values reported by /api/plugins (which come from
-  // the per-plugin YAML file). renderRow mutates this object in-place
-  // as the user edits, and the Save handler splits it back into
-  // {enabled, values} before POSTing.
-  const edit = ensure(pluginEdits, projectKey, () => ({
-    enabled: !!p.enabled,
-    ...(p.values || {}),
-  }));
-
-  // Loader-owned `enabled` toggle — rendered separately from the
-  // plugin's own config_schema. Default: false. The loader strips
-  // any user-declared "enabled" field from config_schema so a plugin
-  // author can't override the default or the widget.
-  const enabledHelpPath = `plugin.${projectKey}.enabled`;
-  HELP[enabledHelpPath] = "Master switch for this plugin project. " +
-    "Default OFF — the factory never runs until you set this to true.";
-  card.appendChild(renderRow("enabled", edit, "enabled", "bool",
-                                 enabledHelpPath));
-
-  if (p.config_schema && p.config_schema.length) {
-    for (const fdef of p.config_schema) {
-      const type = fdef.type || "text";
-      const helpPath = `plugin.${projectKey}.${fdef.field}`;
-      if (fdef.help) HELP[helpPath] = fdef.help;
-      if (edit[fdef.field] == null && fdef.default != null) {
-        edit[fdef.field] = fdef.default;
-      }
-      card.appendChild(renderRow(fdef.field, edit, fdef.field, type, helpPath));
-    }
-  } else {
-    const note = document.createElement("div");
-    note.style.cssText = "color:var(--muted);font-size:10px;font-style:italic";
-    note.textContent = "(no configurable parameters — only the toggle above)";
-    card.appendChild(note);
-  }
-  return card;
 }
 
 function showToast(text, ok = true) {
@@ -1939,17 +1953,15 @@ function showToast(text, ok = true) {
 $("#settings-save").addEventListener("click", async () => {
   if (cfgState == null) { showToast("✗ nothing to save", false); return; }
   try {
-    // Plugin configs now live in their own per-plugin YAML files —
-    // strip `plugins` from the core config.yaml payload so it stops
-    // accumulating stale state. The backend still tolerates it for
-    // backwards compat, but new saves shouldn't touch it.
-    const corePayload = { ...cfgState };
-    delete corePayload.plugins;
-
+    // Central config.yaml carries the two enable lists
+    // (cfgState.modifiers, cfgState.plugins); the unified panel's
+    // checkboxes mutate them in-place during the session. Per-plugin
+    // config_schema values live in their own files, written below
+    // via /api/modifiers/<name>/config — they don't ride along here.
     const r = await fetch("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ parsed: corePayload }),
+      body: JSON.stringify({ parsed: cfgState }),
     });
     const body = await r.json();
     if (!r.ok) {
@@ -1957,27 +1969,26 @@ $("#settings-save").addEventListener("click", async () => {
       return;
     }
 
-    // Persist each dirty plugin project to its own file. Errors are
-    // collected but don't abort — we still report the core save.
+    // Persist each dirty plugin's config to workspace/plugins/<name>/
+    // config.yaml. Errors are collected but don't abort — the core
+    // save already succeeded by this point.
     const pluginErrs = [];
-    for (const [project, edit] of Object.entries(pluginEdits)) {
-      const enabled = !!edit.enabled;
-      const values = {};
-      for (const [k, v] of Object.entries(edit)) {
-        if (k !== "enabled") values[k] = v;
-      }
+    for (const [name, cfg] of Object.entries(modifierConfigEdits)) {
       try {
-        const pr = await fetch(`/api/plugins/${encodeURIComponent(project)}/config`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ enabled, values }),
-        });
+        const pr = await fetch(
+          `/api/modifiers/${encodeURIComponent(name)}/config`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ config: cfg }),
+          },
+        );
         if (!pr.ok) {
           const pb = await pr.json().catch(() => ({}));
-          pluginErrs.push(`${project}: ${pb.detail || pr.statusText}`);
+          pluginErrs.push(`${name}: ${pb.detail || pr.statusText}`);
         }
       } catch (e) {
-        pluginErrs.push(`${project}: ${e}`);
+        pluginErrs.push(`${name}: ${e}`);
       }
     }
 
