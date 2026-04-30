@@ -951,6 +951,10 @@ function makeSection(title) {
   if (isCollapsed) sec.classList.add("collapsed");
 
   const h = document.createElement("h3");
+  // Title carried as a data attribute so the delegated click handler
+  // on #settings-form (see _wireSectionToggle below) can identify
+  // which section was clicked without needing per-section closures.
+  h.setAttribute("data-section-title", title);
 
   // Insert the icon SVG directly as a flex child so the h3's
   // align-items:center positions it on the same cross-axis line as
@@ -978,17 +982,35 @@ function makeSection(title) {
     }
   }
 
-  h.addEventListener("click", () => {
-    if (collapsedSections.has(title)) collapsedSections.delete(title);
-    else collapsedSections.add(title);
-    renderSettingsForm();
-  });
-
   const body = document.createElement("div");
   body.className = "body";
   sec.appendChild(h); sec.appendChild(body);
   return sec;
 }
+
+// One-shot delegated click handler for cfg-section h3s. Bound once
+// to #settings-form, which keeps its identity across the
+// `settingsForm.innerHTML = ""` wipes that renderSettingsForm()
+// performs every render. Per-h3 addEventListener calls were
+// dropping clicks intermittently — likely a browser-specific quirk
+// where clicks on the inline <svg> child weren't bubbling reliably
+// to the h3. Delegation sidesteps the bubble path entirely.
+let _sectionToggleWired = false;
+function _wireSectionToggle() {
+  if (_sectionToggleWired) return;
+  _sectionToggleWired = true;
+  settingsForm.addEventListener("click", (ev) => {
+    const target = ev.target;
+    if (!target || !target.closest) return;
+    const h = target.closest("h3[data-section-title]");
+    if (!h || !settingsForm.contains(h)) return;
+    const title = h.getAttribute("data-section-title");
+    if (collapsedSections.has(title)) collapsedSections.delete(title);
+    else collapsedSections.add(title);
+    renderSettingsForm();
+  });
+}
+_wireSectionToggle();
 
 function renderGenericSection(key, title, target, schema) {
   const sec = makeSection(title);
