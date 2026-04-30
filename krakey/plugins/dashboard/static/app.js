@@ -938,6 +938,12 @@ const SECTION_ICONS = {
 // state survives renderSettingsForm() rebuilds within a session.
 let collapsedSections = new Set();
 
+function _svgFromBiHtml(html) {
+  const tpl = document.createElement("template");
+  tpl.innerHTML = html;
+  return tpl.content.firstElementChild;
+}
+
 function makeSection(title) {
   const sec = document.createElement("div");
   sec.className = "cfg-section";
@@ -946,22 +952,31 @@ function makeSection(title) {
 
   const h = document.createElement("h3");
 
+  // Insert the icon SVG directly as a flex child so the h3's
+  // align-items:center positions it on the same cross-axis line as
+  // the title text and the trailing caret. Wrapping the SVG in a
+  // span added an extra layout layer where the SVG and the text
+  // ended up vertically offset by ~1-2px in some browsers.
   const iconName = SECTION_ICONS[title];
   if (iconName && window.biIcon) {
-    const ico = document.createElement("span");
-    ico.style.cssText = "display:inline-flex;align-items:center";
-    ico.innerHTML = window.biIcon(iconName, 14);
-    h.appendChild(ico);
+    const svg = _svgFromBiHtml(window.biIcon(iconName, 14));
+    if (svg) h.appendChild(svg);
   }
-  h.appendChild(document.createTextNode(title));
 
-  const caret = document.createElement("span");
-  caret.className = "section-caret";
-  caret.style.cssText = "display:inline-flex;align-items:center";
-  caret.innerHTML = window.biIcon
-    ? window.biIcon(isCollapsed ? "chevron-right" : "chevron-down", 12)
-    : "";
-  h.appendChild(caret);
+  const titleSpan = document.createElement("span");
+  titleSpan.className = "section-title";
+  titleSpan.textContent = title;
+  h.appendChild(titleSpan);
+
+  if (window.biIcon) {
+    const caret = _svgFromBiHtml(
+      window.biIcon(isCollapsed ? "chevron-right" : "chevron-down", 12),
+    );
+    if (caret) {
+      caret.classList.add("section-caret");
+      h.appendChild(caret);
+    }
+  }
 
   h.addEventListener("click", () => {
     if (collapsedSections.has(title)) collapsedSections.delete(title);

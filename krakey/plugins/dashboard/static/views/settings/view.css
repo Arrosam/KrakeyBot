@@ -20,6 +20,7 @@
   margin: 0;
   padding: 6px 10px;
   font-size: 12px;
+  line-height: 1;
   color: var(--text);
   font-weight: bold;
   border-bottom: 1px solid var(--border);
@@ -30,7 +31,12 @@
   gap: 6px;
   user-select: none;
 }
-.cfg-section > h3 .section-caret { margin-left: auto; color: var(--muted); }
+/* SVGs inside a section heading are inserted as direct flex children
+   so the h3's align-items:center is what positions them — neutralise
+   the global .bi { vertical-align: -2px } nudge that would otherwise
+   shift them off the cross-axis centre. */
+.cfg-section > h3 > svg { vertical-align: middle; display: block; }
+.cfg-section > h3 > .section-caret { margin-left: auto; color: var(--muted); }
 .cfg-section.collapsed > h3 { border-bottom: none; }
 .cfg-section.collapsed > .body { display: none; }
 .cfg-section > .body { padding: 10px; }
