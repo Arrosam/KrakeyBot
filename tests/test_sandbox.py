@@ -6,10 +6,14 @@ import time
 
 import pytest
 
-from krakey.sandbox.agent import AgentState, AgentHandler
-from krakey.sandbox.backend import (
-    SandboxConfig, SandboxRunner, SandboxUnavailableError, preflight,
+from krakey.environment.sandbox.agent import AgentState, AgentHandler
+from krakey.environment.sandbox import (
+    SandboxConfig, SandboxEnvironment, SandboxUnavailableError, preflight,
 )
+
+# Old name stayed at the import site; bind it locally for the
+# legacy assertions until commit 5 rewrites them against the Router.
+SandboxRunner = SandboxEnvironment
 
 
 # ---------------- real agent, loopback ----------------
