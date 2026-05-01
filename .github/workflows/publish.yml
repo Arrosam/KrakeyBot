@@ -1,0 +1,48 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Verify wheel ships static assets
+        run: |
+          python - <<'PY'
+          import zipfile, glob, sys
+          whl = glob.glob("dist/krakey-*.whl")[0]
+          names = zipfile.ZipFile(whl).namelist()
+          required = [
+              "krakey/memory/schemas.sql",
+              "krakey/prompt/dna.txt",
+              "krakey/plugins/dashboard/meta.yaml",
+              "krakey/plugins/dashboard/static/index.template.html",
+              "krakey/plugins/dashboard/static/app.js",
+          ]
+          missing = [r for r in required if r not in names]
+          if missing:
+              print("MISSING from wheel:", missing, file=sys.stderr)
+              sys.exit(1)
+          print("wheel contents OK")
+          PY
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

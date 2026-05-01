@@ -1,0 +1,34 @@
+    <!-- INNER THOUGHTS -->
+    <section id="tab-thoughts" class="tab-panel active">
+      <div class="thoughts-grid">
+        <div class="panel cyan">
+          <h3>Thinking (inner monologue)</h3>
+          <div class="scroll" id="thinking-stream"></div>
+        </div>
+        <div class="panel magenta">
+          <h3>Decision</h3>
+          <div class="scroll" id="decision-stream"></div>
+        </div>
+      </div>
+      <div class="thoughts-grid">
+        <div class="panel yellow">
+          <h3>Hypothalamus (dispatch)</h3>
+          <div class="scroll small" id="hypo-stream"></div>
+        </div>
+        <!-- Bottom-right cell is split: Pending Stimuli on the left,
+             live Status on the right. Status renders GM counts,
+             fatigue, heartbeat id, sleep bookkeeping — what the top
+             status-bar already tracks but in a persistent readable
+             block inside the Inner Thoughts view. -->
+        <div class="thoughts-bottom-right">
+          <div class="panel white">
+            <h3>Pending Stimuli</h3>
+            <ul id="stim-list" class="scroll small"></ul>
+          </div>
+          <div class="panel">
+            <h3>Status (runtime state)</h3>
+            <dl id="status-panel" class="scroll small status-dl"></dl>
+          </div>
+        </div>
+      </div>
+    </section>

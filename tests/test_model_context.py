@@ -1,6 +1,6 @@
 """Tests for the known-model context-window lookup
 (src/utils/model_context.py)."""
-from src.utils.model_context import (
+from krakey.utils.model_context import (
     DEFAULT_CONTEXT_WINDOW, resolve_max_input_tokens,
 )
 

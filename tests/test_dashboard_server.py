@@ -4,8 +4,8 @@ import asyncio
 import httpx
 import pytest
 
-from src.plugins.dashboard.app_factory import create_app
-from src.plugins.dashboard.server import DashboardServer
+from krakey.plugins.dashboard.app_factory import create_app
+from krakey.plugins.dashboard.server import DashboardServer
 
 
 def test_app_factory_returns_fastapi_instance():
@@ -73,12 +73,12 @@ def test_threaded_server_stop_terminates_thread_and_frees_port():
     """The plugin uses ThreadedDashboardServer (not DashboardServer)
     because its server starts during synchronous plugin construction,
     before any asyncio loop is running. stop() must signal uvicorn to
-    exit and join the daemon thread so WebChatSensory.stop() (called
+    exit and join the daemon thread so WebChatChannel.stop() (called
     on runtime shutdown) can hand control back to the runtime once the
     server is actually down — not just rely on daemon-thread death at
     process exit."""
     import socket
-    from src.plugins.dashboard.threaded_server import ThreadedDashboardServer
+    from krakey.plugins.dashboard.threaded_server import ThreadedDashboardServer
 
     server = ThreadedDashboardServer(
         create_app(runtime=None), host="127.0.0.1", port=0,
@@ -102,9 +102,9 @@ def test_threaded_server_stop_terminates_thread_and_frees_port():
 
 def test_threaded_server_stop_idempotent_when_never_started():
     """stop() on a never-started server must be a no-op (safe to call
-    from WebChatSensory.stop() in the port=0 / dashboard-disabled
+    from WebChatChannel.stop() in the port=0 / dashboard-disabled
     path, even though the factory already short-circuits there)."""
-    from src.plugins.dashboard.threaded_server import ThreadedDashboardServer
+    from krakey.plugins.dashboard.threaded_server import ThreadedDashboardServer
 
     server = ThreadedDashboardServer(
         create_app(runtime=None), host="127.0.0.1", port=0,

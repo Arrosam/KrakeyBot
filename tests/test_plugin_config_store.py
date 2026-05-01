@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import yaml
 
-from src.plugin_system.config import FilePluginConfigStore
+from krakey.plugin_system.config import FilePluginConfigStore
 
 
 def test_path_for_uses_in_folder_layout(tmp_path):

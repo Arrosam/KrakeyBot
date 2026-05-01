@@ -1,7 +1,7 @@
 """Slash-commands: /status /memory_stats /sleep /kill."""
 import pytest
 
-from src.runtime.commands.commands import (
+from krakey.runtime.commands.commands import (
     KNOWN_COMMANDS, CommandAction, parse_command,
 )
 

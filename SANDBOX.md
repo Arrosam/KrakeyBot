@@ -3,11 +3,11 @@
 Krakey routes every non-idempotent / privacy-touching operation
 (coding, CLI, file I/O, GUI control, browser) through a guest VM so
 the host is insulated from anything she does. This is **default-on**;
-the runtime will refuse to start if you enable a sandboxed tentacle
+the runtime will refuse to start if you enable a sandboxed tool
 without configuring the VM.
 
-**Scope of Phase S1 (this release):** `coding` tentacle only. Other
-sandboxed tentacles land in S2–S3.
+**Scope of Phase S1 (this release):** `coding` tool only. Other
+sandboxed tools land in S2–S3.
 
 ---
 
@@ -16,7 +16,7 @@ sandboxed tentacles land in S2–S3.
 ```
 ┌─ HOST (Krakey runtime, dashboard, GM/KB) ──────────────┐
 │                                                        │
-│   CodingTentacle ──► SandboxRunner ─── HTTP/RPC ─┐     │
+│   CodingTool ──► SandboxRunner ─── HTTP/RPC ─┐     │
 │                                                  │     │
 │   ┌──────────────── GUEST VM ───────────────┐   │     │
 │   │  krakey-agent (HTTP server)             │◄──┘     │
@@ -61,7 +61,7 @@ Minimum resources: 2 vCPU, 4 GB RAM, 40 GB disk.
 - **headless** — VM runs with no display. Cheaper resources, less
   noise, but you cannot watch or help interactively. Launch QEMU
   with `-display none` (or `-nographic`). Coding-only sandboxes
-  generally want this; GUI-tentacle sandboxes need headed.
+  generally want this; GUI-tool sandboxes need headed.
 
 The `sandbox.display` config field is **declarative only** — the
 runtime does not start the VM for you. Set it to the mode you
@@ -201,7 +201,7 @@ sandbox:
   network_mode: nat_allowlist         # documentation; enforced in guest fw
   allowlist_domains: []               # not yet enforced
 
-tentacle:
+tool:
   coding:
     enabled: true
     sandbox: true                     # default; routes exec via agent
@@ -257,10 +257,10 @@ Recommended ritual:
 ## Opting Out (Unsafe)
 
 If you want to test without a VM, set `sandbox: false` on the
-tentacle (defaults to true):
+tool (defaults to true):
 
 ```yaml
-tentacle:
+tool:
   coding: { enabled: true, sandbox: false }
 ```
 

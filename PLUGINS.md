@@ -4,9 +4,9 @@ Plugins extend Krakey by contributing one or more **components**:
 
 | Component | Purpose | Examples |
 |---|---|---|
-| `reflect` | Heartbeat hook — claims a role string the runtime queries by | hypothalamus, recall_anchor, in_mind |
-| `tentacle` | Outbound action Self can dispatch | search, telegram_reply, update_in_mind |
-| `sensory`  | Inbound stimulus producer | telegram, dashboard web chat |
+| `modifier` | Heartbeat hook — claims a role string the runtime queries by | hypothalamus, recall_anchor, in_mind |
+| `tool` | Outbound action Self can dispatch | search, telegram_reply, update_in_mind |
+| `channel`  | Inbound stimulus producer | telegram, dashboard web chat |
 
 Plugins are **strictly additive**: disabling or removing any plugin must
 not break the runtime's core loop. Every plugin call site has a
@@ -26,7 +26,7 @@ Each folder contains:
 
 - `meta.yaml` (required) — manifest read by both the runtime loader and
   the dashboard catalogue scanner without importing plugin code.
-- Component code (`reflect.py`, `tentacle.py`, `sensory.py`, or a flat
+- Component code (`modifier.py`, `tool.py`, `channel.py`, or a flat
   `__init__.py`) exposing one factory per component.
 
 User-editable per-plugin config goes in `workspace/plugins/<name>/config.yaml`
@@ -44,22 +44,22 @@ config_schema: []          # plugin-level config fields (UI hints only)
 requires_sandbox: false    # set true if any component touches the sandbox VM
 
 components:
-  - kind: reflect
-    role: my_role          # required for kind=reflect; must be unique
-    factory_module: src.plugins.my_plugin.reflect
-    factory_attr: build_reflect
+  - kind: modifier
+    role: my_role          # required for kind=modifier; must be unique
+    factory_module: src.plugins.my_plugin.modifier
+    factory_attr: build_modifier
     llm_purposes:          # optional
       - name: translator
         description: "..."
         suggested_tag: fast_generation
 
-  - kind: tentacle
-    factory_module: src.plugins.my_plugin.tentacle
-    factory_attr: build_tentacle
+  - kind: tool
+    factory_module: src.plugins.my_plugin.tool
+    factory_attr: build_tool
 
-  - kind: sensory
-    factory_module: src.plugins.my_plugin.sensory
-    factory_attr: build_sensory
+  - kind: channel
+    factory_module: src.plugins.my_plugin.channel
+    factory_attr: build_channel
 ```
 
 A plugin can ship any combination of components. Enabling a plugin in
@@ -97,16 +97,16 @@ same registry.
 
 ## Examples in-tree
 
-- **Single-component tentacle**: [`src/plugins/duckduckgo_search/`](src/plugins/duckduckgo_search/)
-  — flat `__init__.py` with backend Protocol, tentacle, factory.
+- **Single-component tool**: [`src/plugins/duckduckgo_search/`](src/plugins/duckduckgo_search/)
+  — flat `__init__.py` with backend Protocol, tool, factory.
 - **Multi-component sharing a client**: [`src/plugins/telegram/`](src/plugins/telegram/)
-  — sensory + tentacle share an `HttpTelegramClient` via `ctx.plugin_cache`.
-- **Multi-component sharing a reflect**: [`src/plugins/in_mind_note/`](src/plugins/in_mind_note/)
-  — reflect owns state, tentacle mutates it; both wired through
+  — channel + tool share an `HttpTelegramClient` via `ctx.plugin_cache`.
+- **Multi-component sharing a modifier**: [`src/plugins/in_mind_note/`](src/plugins/in_mind_note/)
+  — modifier owns state, tool mutates it; both wired through
   `ctx.plugin_cache`.
 - **Multi-component as a pipeline**: [`src/plugins/recall/`](src/plugins/recall/)
-  — passive reflect (auto-recall, claims `recall_anchor` role) +
-  active tentacle (`memory_recall`, Self drills into noticed nodes).
+  — passive modifier (auto-recall, claims `recall_anchor` role) +
+  active tool (`memory_recall`, Self drills into noticed nodes).
   Two halves of one discovery flow; ship together so the pipeline
   enables/disables atomically. Shared GM-query primitive in
   `gm_query.py`.

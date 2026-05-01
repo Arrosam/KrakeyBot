@@ -1,14 +1,14 @@
-"""Phase 1.5: BatchTrackerSensory — fires adrenalin stimulus when dispatched
+"""Phase 1.5: BatchTrackerChannel — fires adrenalin stimulus when dispatched
 batch drains."""
 import pytest
 
-from src.runtime.stimuli.batch_tracker import BatchTrackerSensory
-from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
+from krakey.runtime.stimuli.batch_tracker import BatchTrackerChannel
+from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
 async def _tracker(buffer=None):
     buf = buffer or StimulusBuffer()
-    t = BatchTrackerSensory()
+    t = BatchTrackerChannel()
     await t.start(buf.push)
     return t, buf
 
@@ -30,7 +30,7 @@ async def test_complete_last_triggers_adrenalin_stimulus():
     stims = buf.drain()
     assert len(stims) == 1
     assert stims[0].type == "batch_complete"
-    assert stims[0].source == "sensory:batch_tracker"
+    assert stims[0].source == "channel:batch_tracker"
     assert stims[0].adrenalin is True
 
 
@@ -66,8 +66,8 @@ async def test_mark_unknown_id_ignored():
     assert len(buf.drain()) == 1
 
 
-async def test_sensory_interface():
-    t = BatchTrackerSensory()
+async def test_channel_interface():
+    t = BatchTrackerChannel()
     assert t.name == "batch_tracker"
     assert t.default_adrenalin is True
     buf = StimulusBuffer()

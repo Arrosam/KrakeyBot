@@ -9,8 +9,8 @@ import tempfile
 from pathlib import Path
 from typing import Protocol
 
-from src.main import Runtime, RuntimeDeps
-from src.memory.recall import Reranker
+from krakey.main import Runtime, RuntimeDeps
+from krakey.memory.recall import Reranker
 
 
 class ChatLike(Protocol):
@@ -46,19 +46,19 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
                               gm_path: str = ":memory:",
                               kb_dir: str | None = None,
                               skip_bootstrap: bool = True,
-                              reflects: list[str] | None = None) -> Runtime:
-    """In-memory Runtime with injectable doubles. CLI sensory disabled.
+                              modifiers: list[str] | None = None) -> Runtime:
+    """In-memory Runtime with injectable doubles. CLI channel disabled.
 
     `kb_dir` defaults to a fresh `tempfile.mkdtemp()` so KB files written
     during sleep migration never touch the production workspace.
 
-    `reflects` is the ordered list of Reflect names to register at
+    `modifiers` is the ordered list of Modifier names to register at
     startup. ``None`` (the default) opts the test helper into the two
-    in-tree Reflects that almost every existing test expects to be
+    in-tree Modifiers that almost every existing test expects to be
     available — preserves the historical "Hypothalamus translates,
     recall populates [GRAPH MEMORY]" assumption without forcing every
     test to opt in. Tests exercising the zero-plugin path pass
-    ``reflects=[]`` explicitly. This default is a TEST convenience
+    ``modifiers=[]`` explicitly. This default is a TEST convenience
     only; production config defaults to registering nothing per the
     "all plugins default off" architectural rule.
     """
@@ -76,14 +76,14 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     # rewrite it. Without an override, concurrent test writes trample
     # the production workspace/self_model.yaml.
     self_model_path = f"{tempfile.mkdtemp(prefix='krakey_test_sm_')}/self_model.yaml"
-    # And the in_mind Reflect's state file. Tests that enable
+    # And the in_mind Modifier's state file. Tests that enable
     # in_mind_note would otherwise dispatch update_in_mind into
     # the production workspace/data/in_mind.json — same class of
     # leak as the web_chat history bug.
     in_mind_state_path = (
         f"{tempfile.mkdtemp(prefix='krakey_test_im_')}/in_mind.json"
     )
-    from src.models.config import (
+    from krakey.models.config import (
         Config, FatigueSection, GraphMemorySection,
         HibernateSection, KnowledgeBaseSection, LLMParams, LLMSection,
         Provider, SafetySection, SleepSection, TagBinding,
@@ -114,15 +114,15 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
                                 thresholds={}),
         # Test convenience: opt into the historical default plugin set
         # when the caller didn't say otherwise. Tests on the zero-plugin
-        # path pass ``reflects=[]`` to opt out explicitly.
+        # path pass ``modifiers=[]`` to opt out explicitly.
         #
         # The dashboard plugin is included so the web_chat_reply
-        # tentacle is registered (existing tests dispatch to it). Its
+        # tool is registered (existing tests dispatch to it). Its
         # per-plugin config (planted below) sets port=0 so the Web UI
-        # server never binds — only the sensory + tentacle live.
+        # server never binds — only the channel + tool live.
         plugins=(
-            list(reflects)
-            if reflects is not None
+            list(modifiers)
+            if modifiers is not None
             else [
                 "hypothalamus",
                 "recall",
@@ -142,7 +142,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     # Pre-cache the LLMClient slots that plugins will resolve through
     # ctx.get_llm_for_tag. We point the helper's "_test_default" tag at
     # the caller's hypo_llm (ScriptedLLM in most tests) so the
-    # hypothalamus Reflect's `translator` purpose lands on the
+    # hypothalamus Modifier's `translator` purpose lands on the
     # scripted fake instead of trying to make a real HTTP call.
     llm_clients_by_tag: dict = {"_test_default": hypo_llm}
 
@@ -151,7 +151,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     # plugin's factory reads no purposes from ctx.config,
     # ctx.get_llm_for_tag(None) returns None, and the factory skips
     # registration (correct behavior, but would break tests that
-    # expect the Reflect to be registered).
+    # expect the Modifier to be registered).
     Path(plugin_configs_dir, "hypothalamus").mkdir(
         parents=True, exist_ok=True,
     )
@@ -162,7 +162,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     # config that:
     #   * points history at a tmpdir so tests don't pollute
     #     workspace/data/web_chat.jsonl
-    #   * sets port=0 so the dashboard's sensory.start() short-circuits
+    #   * sets port=0 so the dashboard's channel.start() short-circuits
     #     before binding a port (no flaky port conflicts in tests)
     Path(plugin_configs_dir, "dashboard").mkdir(
         parents=True, exist_ok=True,
@@ -189,7 +189,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     )
     # Stash a copy of the resolved test paths + LLM cache so test
     # helpers (e.g. _minimal_deps_for_runtime) can reconstruct an
-    # equivalent deps when re-invoking _register_reflects_from_config.
-    runtime._test_reflect_configs_root = plugin_configs_dir
+    # equivalent deps when re-invoking _register_modifiers_from_config.
+    runtime._test_modifier_configs_root = plugin_configs_dir
     runtime._test_llm_clients_by_tag = llm_clients_by_tag
     return runtime

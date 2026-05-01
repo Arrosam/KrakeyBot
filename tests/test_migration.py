@@ -1,10 +1,10 @@
 """Phase 2.3b: migrate FACT/RELATION/KNOWLEDGE GM nodes into KBs by community."""
 import pytest
 
-from src.memory.graph_memory import GraphMemory
-from src.memory.knowledge_base import KBRegistry
-from src.memory.sleep.clustering import run_leiden_clustering
-from src.memory.sleep.migration import migrate_gm_to_kb
+from krakey.memory.graph_memory import GraphMemory
+from krakey.memory.knowledge_base import KBRegistry
+from krakey.memory.sleep.clustering import run_leiden_clustering
+from krakey.memory.sleep.migration import migrate_gm_to_kb
 
 
 class FixedEmbed:
@@ -45,7 +45,7 @@ async def test_fact_node_migrated_to_kb_and_removed_from_gm(tmp_path):
     await gm.insert_edge_with_cycle_check(a, b, "RELATED_TO")
 
     await run_leiden_clustering(gm, llm=CountingLLM(), embedder=FixedEmbed())
-    result = await migrate_gm_to_kb(gm, reg)
+    result = await migrate_gm_to_kb(gm, reg, llm=CountingLLM())
 
     assert result["migrated_nodes"] == 2
     # GM should no longer have those FACT nodes
@@ -69,7 +69,7 @@ async def test_intra_community_edges_migrated_to_kb(tmp_path):
     await gm.insert_edge_with_cycle_check(a, b, "CAUSES")
 
     await run_leiden_clustering(gm, llm=CountingLLM(), embedder=FixedEmbed())
-    await migrate_gm_to_kb(gm, reg)
+    await migrate_gm_to_kb(gm, reg, llm=CountingLLM())
 
     kbs = await reg.list_kbs()
     kb = await reg.open_kb(kbs[0]["kb_id"])
@@ -95,7 +95,7 @@ async def test_two_communities_yield_two_kbs(tmp_path):
     await gm.insert_edge_with_cycle_check(c, d, "RELATED_TO")
 
     await run_leiden_clustering(gm, llm=CountingLLM(), embedder=FixedEmbed())
-    await migrate_gm_to_kb(gm, reg)
+    await migrate_gm_to_kb(gm, reg, llm=CountingLLM())
 
     kbs = await reg.list_kbs()
     assert len(kbs) == 2
@@ -115,7 +115,7 @@ async def test_target_and_focus_not_migrated(tmp_path):
                                     embedding=[1.0, 0.0])
 
     await run_leiden_clustering(gm, llm=CountingLLM(), embedder=FixedEmbed())
-    await migrate_gm_to_kb(gm, reg)
+    await migrate_gm_to_kb(gm, reg, llm=CountingLLM())
 
     targets = await gm.list_nodes(category="TARGET")
     focuses = await gm.list_nodes(category="FOCUS")
@@ -134,7 +134,7 @@ async def test_node_without_community_skipped(tmp_path):
     # Insert a FACT but skip clustering — no community membership.
     await gm.insert_node(name="orphan", category="FACT", description="",
                             embedding=[1.0, 0.0])
-    result = await migrate_gm_to_kb(gm, reg)
+    result = await migrate_gm_to_kb(gm, reg, llm=CountingLLM())
     assert result["migrated_nodes"] == 0
     assert result["skipped_no_community"] == 1
     # Still in GM
@@ -153,7 +153,7 @@ async def test_singleton_skipped_when_min_size_2(tmp_path):
                                 description="alone", embedding=[1.0, 0.0])
     await run_leiden_clustering(gm, llm=CountingLLM(), embedder=FixedEmbed())
 
-    stats = await migrate_gm_to_kb(gm, reg, min_community_size=2)
+    stats = await migrate_gm_to_kb(gm, reg, llm=CountingLLM(), min_community_size=2)
     assert stats["migrated_nodes"] == 0
     assert stats["skipped_small_community"] == 1
     # Node still in GM (NOT migrated)
@@ -165,7 +165,7 @@ async def test_singleton_migrated_when_min_size_1(tmp_path):
     await gm.insert_node(name="lone", category="FACT",
                             description="alone", embedding=[1.0, 0.0])
     await run_leiden_clustering(gm, llm=CountingLLM(), embedder=FixedEmbed())
-    stats = await migrate_gm_to_kb(gm, reg, min_community_size=1)
+    stats = await migrate_gm_to_kb(gm, reg, llm=CountingLLM(), min_community_size=1)
     assert stats["migrated_nodes"] == 1
     assert stats["skipped_small_community"] == 0
 
@@ -187,7 +187,7 @@ async def test_migration_revives_archived_kb_on_summary_cosine_match(tmp_path):
     # 2) Stage a community whose summary_embedding is highly similar.
     #    Easiest path: insert a community row directly + map a node to it.
     db = gm._require()  # noqa: SLF001
-    from src.memory._db import encode_embedding
+    from krakey.memory._db import encode_embedding
     cur = await db.execute(
         "INSERT INTO gm_communities(name, summary, summary_embedding, "
         "member_count) VALUES(?, ?, ?, 1)",
@@ -204,7 +204,7 @@ async def test_migration_revives_archived_kb_on_summary_cosine_match(tmp_path):
     )
     await db.commit()
 
-    stats = await migrate_gm_to_kb(gm, reg, min_community_size=1,
+    stats = await migrate_gm_to_kb(gm, reg, llm=CountingLLM(), min_community_size=1,
                                        revive_threshold=0.95)
     assert stats["kbs_revived"] == 1
     assert stats["kbs_created"] == 0
@@ -224,7 +224,7 @@ async def test_migration_creates_new_kb_when_no_archive_matches(tmp_path):
 
     # New community embedding is orthogonal → no match
     db = gm._require()  # noqa: SLF001
-    from src.memory._db import encode_embedding
+    from krakey.memory._db import encode_embedding
     cur = await db.execute(
         "INSERT INTO gm_communities(name, summary, summary_embedding, "
         "member_count) VALUES(?, ?, ?, 1)",
@@ -239,9 +239,148 @@ async def test_migration_creates_new_kb_when_no_archive_matches(tmp_path):
     )
     await db.commit()
 
-    stats = await migrate_gm_to_kb(gm, reg, min_community_size=1,
+    stats = await migrate_gm_to_kb(gm, reg, llm=CountingLLM(), min_community_size=1,
                                        revive_threshold=0.95)
     assert stats["kbs_revived"] == 0
     assert stats["kbs_created"] == 1
     active_ids = {k["kb_id"] for k in await reg.list_kbs()}
     assert f"community_{cid}" in active_ids
+
+
+# ---------------- semantic dedup ----------------
+
+
+class ScriptedLLM:
+    """LLM judge returning a fixed string per call (cycled if multiple)."""
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls: list[list[dict]] = []
+
+    async def chat(self, messages, **kwargs):
+        self.calls.append(messages)
+        if not self._responses:
+            return "NONE"
+        return self._responses.pop(0)
+
+
+class FailingJudgeLLM:
+    """Used only for dedup judge calls. The clustering summary path uses a
+    separate CountingLLM, so this can raise unconditionally."""
+    async def chat(self, messages, **kwargs):
+        raise ConnectionError("LLM down")
+
+
+async def _two_near_duplicate_facts(tmp_path):
+    """Setup: two FACT nodes with near-identical embeddings, edge between
+    them so Leiden puts them in the same community."""
+    gm, reg = await _setup(tmp_path)
+    a = await gm.insert_node(name="apple", category="FACT",
+                                description="red round fruit",
+                                embedding=[1.0, 0.0], importance=2.0)
+    b = await gm.insert_node(name="apple_v2", category="FACT",
+                                description="red round fruit",
+                                embedding=[0.999, 0.045], importance=1.5)
+    await gm.insert_edge_with_cycle_check(a, b, "RELATED_TO")
+    await run_leiden_clustering(gm, llm=CountingLLM(), embedder=FixedEmbed())
+    return gm, reg
+
+
+async def test_dedup_judge_yes_merges_into_existing_entry(tmp_path):
+    gm, reg = await _two_near_duplicate_facts(tmp_path)
+
+    # Migration first node alone (no candidates → fresh write); for the
+    # second, judge says "1" → merge into entry 1.
+    judge = ScriptedLLM(responses=["1"])  # second node's judge call
+    stats = await migrate_gm_to_kb(gm, reg, llm=judge)
+
+    assert stats["migrated_nodes"] == 2
+    assert stats["merged_entries"] == 1
+
+    kbs = await reg.list_kbs()
+    assert len(kbs) == 1
+    kb = await reg.open_kb(kbs[0]["kb_id"])
+    assert await kb.count_entries() == 1
+    # Importance summed: 2.0 + 1.5 = 3.5
+    entries = await kb.list_active_entries(limit=10)
+    assert entries[0]["importance"] == pytest.approx(3.5)
+    await reg.close_all()
+    await gm.close()
+
+
+async def test_dedup_judge_none_writes_separate_entries(tmp_path):
+    gm, reg = await _two_near_duplicate_facts(tmp_path)
+
+    judge = ScriptedLLM(responses=["NONE"])  # rejects merge
+    stats = await migrate_gm_to_kb(gm, reg, llm=judge)
+
+    assert stats["migrated_nodes"] == 2
+    assert stats["merged_entries"] == 0
+
+    kbs = await reg.list_kbs()
+    kb = await reg.open_kb(kbs[0]["kb_id"])
+    assert await kb.count_entries() == 2
+    await reg.close_all()
+    await gm.close()
+
+
+async def test_dedup_judge_raises_falls_back_to_fresh_writes(tmp_path):
+    gm, reg = await _two_near_duplicate_facts(tmp_path)
+
+    stats = await migrate_gm_to_kb(gm, reg, llm=FailingJudgeLLM())
+
+    # No crash; both nodes migrated as separate fresh entries.
+    assert stats["migrated_nodes"] == 2
+    assert stats["merged_entries"] == 0
+    kbs = await reg.list_kbs()
+    kb = await reg.open_kb(kbs[0]["kb_id"])
+    assert await kb.count_entries() == 2
+    await reg.close_all()
+    await gm.close()
+
+
+class InvertingReranker:
+    """Returns scores that reverse the input order — proves the dedup
+    pass actually consumes reranker output."""
+    def __init__(self):
+        self.calls = []
+
+    async def rerank(self, query, docs):
+        self.calls.append((query, list(docs)))
+        n = len(docs)
+        return [float(i) for i in range(n)]   # ascending → original is reverse-best
+
+
+async def test_dedup_uses_reranker_to_reorder_candidates(tmp_path):
+    """Two entries already in KB; new node gets vec_search top-K + reranker.
+    Reranker inverts cosine order; LLM picks "1" which is now the *cosine-worst*
+    candidate. Merge into that, proving reranker actually moved the choice."""
+    gm, reg = await _setup(tmp_path)
+    # Pre-populate KB with 2 entries
+    kb = await reg.create_kb("community_pre", name="pre", description="seed")
+    e_close = await kb.write_entry(
+        "very near", embedding=[1.0, 0.0], importance=10.0,
+    )
+    e_far = await kb.write_entry(
+        "less near", embedding=[0.9, 0.4], importance=1.0,
+    )
+
+    # New GM FACT in a community whose KB will be reused by id collision —
+    # for this test we exercise dedup directly via _dedup_or_write.
+    from krakey.memory.sleep.migration import _dedup_or_write
+    judge = ScriptedLLM(responses=["1"])
+    rer = InvertingReranker()
+
+    node = {"id": 999, "name": "n", "category": "FACT",
+              "description": "near fruit",
+              "embedding": [1.0, 0.0], "importance": 5.0}
+    entry_id, merged = await _dedup_or_write(
+        kb, node, judge_llm=judge, reranker=rer, top_k=5,
+    )
+
+    assert merged is True
+    # Reranker inverted cosine order, so [1] in the LLM listing is the
+    # *cosine-worst* candidate (e_far). Merge should land on e_far, not e_close.
+    assert entry_id == e_far
+    assert rer.calls, "reranker should have been called"
+    await reg.close_all()
+    await gm.close()

@@ -1,7 +1,7 @@
 import pytest
 
-from src.llm.client import LLMClient, TransportError
-from src.models.config import LLMParams, Provider
+from krakey.llm.client import LLMClient, TransportError
+from krakey.models.config import LLMParams, Provider
 
 
 class FakeTransport:
@@ -253,7 +253,7 @@ async def test_default_params_when_none_supplied():
 def _fast_retries(monkeypatch):
     """asyncio.sleep in the retry loop would make these tests slow.
     Patch it to a no-op for the client module only."""
-    import src.llm.client as client_mod
+    import krakey.llm.client as client_mod
 
     async def _noop(_):
         return None
