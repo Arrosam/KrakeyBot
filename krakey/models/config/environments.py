@@ -76,35 +76,41 @@ class EnvironmentsSection:
     sandbox: SandboxEnvironmentConfig | None = None
 
 
+def _coerce_mapping(value: Any, ctx: str) -> dict[str, Any]:
+    """Return ``value`` if it's a dict (or empty dict for None);
+    otherwise warn + return empty dict.
+
+    Used at every YAML-mapping boundary in this module — top-level
+    ``environments:``, the ``local`` / ``sandbox`` sub-blocks, and
+    the deeper ``sandbox.resources`` / ``sandbox.agent`` blocks.
+    A non-mapping anywhere in the chain (failed env-var template
+    leaving a literal string, user wrote a list by mistake, etc.)
+    must not hard-fail boot — degrade with a warning so the rest
+    of the config can still load.
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        print(
+            f"warning: `{ctx}` should be a mapping; got "
+            f"{type(value).__name__}; treating as empty.",
+            file=sys.stderr,
+        )
+        return {}
+    return value
+
+
 def _build_environments(
     raw: dict[str, Any] | None,
 ) -> EnvironmentsSection:
     """Parse the ``environments:`` mapping. Missing / null blocks
     fall back to defaults (empty allow-list for local; no sandbox).
 
-    Non-mapping top-level values (a stray list, a string from
-    failed templating, ``environments: 42``) get a warning and are
-    treated as absent. The same forgiving pattern that
-    ``environments.local`` / ``environments.sandbox`` already use —
-    a config typo at this level shouldn't hard-fail boot.
+    Non-mapping values at any level get a warning and are treated
+    as absent — a config typo shouldn't hard-fail boot.
     """
-    if raw is None:
-        raw = {}
-    elif not isinstance(raw, dict):
-        print(
-            f"warning: top-level `environments:` should be a mapping; "
-            f"got {type(raw).__name__}; treating as absent.",
-            file=sys.stderr,
-        )
-        raw = {}
-    local_raw = raw.get("local") or {}
-    if not isinstance(local_raw, dict):
-        print(
-            f"warning: environments.local should be a mapping; got "
-            f"{type(local_raw).__name__}; treating as empty.",
-            file=sys.stderr,
-        )
-        local_raw = {}
+    raw = _coerce_mapping(raw, "environments")
+    local_raw = _coerce_mapping(raw.get("local"), "environments.local")
     local_cfg = LocalEnvironmentConfig(
         allowed_plugins=_clean_allowed(
             local_raw.get("allowed_plugins"), "environments.local",
@@ -117,8 +123,8 @@ def _build_environments(
         sandbox_cfg = None
     elif not isinstance(sandbox_raw, dict):
         print(
-            f"warning: environments.sandbox should be a mapping; got "
-            f"{type(sandbox_raw).__name__}; treating as absent.",
+            f"warning: `environments.sandbox` should be a mapping; "
+            f"got {type(sandbox_raw).__name__}; treating as absent.",
             file=sys.stderr,
         )
         sandbox_cfg = None
@@ -130,8 +136,12 @@ def _build_environments(
 
 def _build_sandbox_env(raw: dict[str, Any]) -> SandboxEnvironmentConfig:
     d = SandboxEnvironmentConfig()
-    res_raw = raw.get("resources") or {}
-    agent_raw = raw.get("agent") or {}
+    res_raw = _coerce_mapping(
+        raw.get("resources"), "environments.sandbox.resources",
+    )
+    agent_raw = _coerce_mapping(
+        raw.get("agent"), "environments.sandbox.agent",
+    )
     display = str(raw.get("display", d.display)).lower()
     if display not in ("headed", "headless"):
         print(

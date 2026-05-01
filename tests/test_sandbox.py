@@ -203,6 +203,74 @@ def test_build_environments_tolerates_non_mapping_top_level(bad, capsys):
     assert "mapping" in err
 
 
+@pytest.mark.parametrize("bad_subblock", [
+    {"resources": [1, 2]},   # list where dict expected
+    {"agent": "oops"},       # string where dict expected
+    {"resources": 42},       # scalar where dict expected
+])
+def test_build_sandbox_env_tolerates_non_mapping_subblocks(bad_subblock, capsys):
+    """Same non-mapping-input class of bug as the top-level fix —
+    apply consistently to environments.sandbox.resources +
+    environments.sandbox.agent so a typo in either sub-block warns
+    rather than crashing AttributeError at startup."""
+    from krakey.models.config.environments import _build_sandbox_env
+
+    sb = _build_sandbox_env(bad_subblock)
+    # Defaults survive — resources/agent fall back to their dataclass
+    # defaults rather than crashing.
+    assert sb.resources.cpu == 2
+    assert sb.agent.url == ""
+    err = capsys.readouterr().err.lower()
+    assert "mapping" in err
+
+
+# ---------------- preflight error wrapping ----------------
+
+async def test_preflight_wraps_aiohttp_timeout_as_sandbox_error(tmp_path):
+    """ClientTimeout exhaustion against a slow-but-alive agent
+    raises bare asyncio.TimeoutError out of aiohttp — NOT a
+    subclass of aiohttp.ClientError. Without an explicit catch the
+    Router's preflight_all aggregator sees an unexpected exception
+    type and bypasses the "collect all failures" pattern.
+    """
+    import asyncio as _asyncio
+    import threading
+    import time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from krakey.environment.sandbox import (
+        SandboxConfig, SandboxUnavailableError,
+    )
+    from krakey.environment.sandbox.preflight import preflight as _preflight
+
+    class _SlowHandler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            time.sleep(20)  # > 5s ClientTimeout
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *a, **k):  # silence
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _SlowHandler)
+    port = srv.server_address[1]
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        cfg = SandboxConfig(
+            agent_url=f"http://127.0.0.1:{port}",
+            agent_token="x", guest_os="linux",
+        )
+        with pytest.raises(SandboxUnavailableError) as ei:
+            await _preflight(cfg)
+        # Helpful message naming the timeout cause, not bare TimeoutError.
+        assert "timeout" in str(ei.value).lower()
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 # ---------------- old top-level sandbox: deprecation ----------------
 
 def test_old_top_level_sandbox_block_emits_deprecation(tmp_path, capsys):
