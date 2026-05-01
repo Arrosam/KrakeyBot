@@ -106,9 +106,9 @@ port 8765 — the agent's HTTP endpoint.
 
 ## 2. Install the Guest Agent
 
-Inside the VM, copy `src/sandbox/agent.py` from this repo onto the
-guest (any path — e.g. `/opt/krakey/agent.py`) and run it under
-systemd so it restarts if the VM reboots.
+Inside the VM, copy `krakey/environment/sandbox/agent.py` from this
+repo onto the guest (any path — e.g. `/opt/krakey/agent.py`) and run
+it under systemd so it restarts if the VM reboots.
 
 ```bash
 # On the guest:
@@ -186,26 +186,32 @@ you confirmed.
 Edit `config.yaml`:
 
 ```yaml
-sandbox:
-  guest_os: linux                     # or macos / windows
-  provider: qemu
-  vm_name: krakey-sandbox
-  display: headed                     # headed | headless (your choice)
-  resources:
-    cpu: 2
-    memory_mb: 4096
-    disk_gb: 40
-  agent:
-    url: "http://127.0.0.1:18765"     # matches hostfwd above
-    token: "${SANDBOX_AGENT_TOKEN}"   # env-substituted
-  network_mode: nat_allowlist         # documentation; enforced in guest fw
-  allowlist_domains: []               # not yet enforced
-
-tool:
-  coding:
-    enabled: true
-    sandbox: true                     # default; routes exec via agent
+environments:
+  local:
+    # Plugins allow-listed for direct host execution. Leave empty if
+    # every code-running plugin should go through the sandbox.
+    allowed_plugins: []
+  sandbox:
+    # Plugins allow-listed for VM-isolated execution.
+    allowed_plugins: [coding]
+    guest_os: linux                     # or macos / windows
+    provider: qemu
+    vm_name: krakey-sandbox
+    display: headed                     # headed | headless (your choice)
+    resources:
+      cpu: 2
+      memory_mb: 4096
+      disk_gb: 40
+    agent:
+      url: "http://127.0.0.1:18765"     # matches hostfwd above
+      token: "${SANDBOX_AGENT_TOKEN}"   # env-substituted
+    network_mode: nat_allowlist         # documentation; enforced in guest fw
+    allowlist_domains: []               # not yet enforced
 ```
+
+The plugin gets the env via `ctx.environment("sandbox").run(...)`;
+the Router refuses if the plugin is not on the `allowed_plugins`
+list above.
 
 Export the token on the host:
 
@@ -256,12 +262,14 @@ Recommended ritual:
 
 ## Opting Out (Unsafe)
 
-If you want to test without a VM, set `sandbox: false` on the
-tool (defaults to true):
+If you want to test without a VM, assign the plugin to the `local`
+env instead of `sandbox`:
 
 ```yaml
-tool:
-  coding: { enabled: true, sandbox: false }
+environments:
+  local:
+    allowed_plugins: [coding]    # runs in host process — UNSAFE
+  # Omit the `sandbox:` block entirely; nothing else needs changing.
 ```
 
 **This runs the subprocess directly on your host with your user's
