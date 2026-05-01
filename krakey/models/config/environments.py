@@ -81,8 +81,22 @@ def _build_environments(
 ) -> EnvironmentsSection:
     """Parse the ``environments:`` mapping. Missing / null blocks
     fall back to defaults (empty allow-list for local; no sandbox).
+
+    Non-mapping top-level values (a stray list, a string from
+    failed templating, ``environments: 42``) get a warning and are
+    treated as absent. The same forgiving pattern that
+    ``environments.local`` / ``environments.sandbox`` already use —
+    a config typo at this level shouldn't hard-fail boot.
     """
-    raw = raw or {}
+    if raw is None:
+        raw = {}
+    elif not isinstance(raw, dict):
+        print(
+            f"warning: top-level `environments:` should be a mapping; "
+            f"got {type(raw).__name__}; treating as absent.",
+            file=sys.stderr,
+        )
+        raw = {}
     local_raw = raw.get("local") or {}
     if not isinstance(local_raw, dict):
         print(

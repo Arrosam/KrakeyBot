@@ -180,6 +180,29 @@ def test_sandbox_display_invalid_falls_back_to_headed(capsys):
     assert "display" in capsys.readouterr().err.lower()
 
 
+# ---------------- environments: top-level shape guard ----------------
+
+@pytest.mark.parametrize("bad", [
+    "just_a_string",       # failed env-var template, etc.
+    [1, 2, 3],             # user wrote a list by mistake
+    ["local", "sandbox"],  # confused list-of-keys form
+    42,                    # YAML scalar instead of mapping
+])
+def test_build_environments_tolerates_non_mapping_top_level(bad, capsys):
+    """A typo in ``environments:`` shouldn't hard-fail boot. Warn,
+    fall back to defaults — same forgiving pattern as
+    environments.local / environments.sandbox at the inner level."""
+    from krakey.models.config.environments import _build_environments
+
+    out = _build_environments(bad)
+    # Defaults — Local present with empty allow-list, no sandbox.
+    assert out.sandbox is None
+    assert out.local.allowed_plugins == []
+    err = capsys.readouterr().err.lower()
+    assert "environments" in err
+    assert "mapping" in err
+
+
 # ---------------- old top-level sandbox: deprecation ----------------
 
 def test_old_top_level_sandbox_block_emits_deprecation(tmp_path, capsys):
