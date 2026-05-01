@@ -1,0 +1,34 @@
+name: dashboard
+description: >
+  Web UI bundle: config editor + runtime observation + embedded web
+  chat. One uvicorn server hosts everything (editor pages on /,
+  runtime events on /ws/events, chat WS on /ws/chat). Disable by
+  removing 'dashboard' from config.yaml's plugins: list — runtime
+  continues without any web surface.
+
+  This plugin is special only in that it ships with Krakey itself
+  and pulls a runtime reference via ctx.services["runtime"]. From
+  the runtime's view it's a normal channel + tool plugin: no
+  hardcoded "dashboard" name in any core code.
+
+config_schema:
+  - field: host
+    type: text
+    default: 127.0.0.1
+    help: bind address for the Web UI server
+  - field: port
+    type: number
+    default: 8765
+    help: bind port for the Web UI server
+  - field: history_path
+    type: text
+    default: workspace/data/web_chat.jsonl
+    help: where the embedded chat's JSONL log is persisted
+
+components:
+  - kind: channel
+    factory_module: krakey.plugins.dashboard
+    factory_attr: build_channel
+  - kind: tool
+    factory_module: krakey.plugins.dashboard
+    factory_attr: build_tool

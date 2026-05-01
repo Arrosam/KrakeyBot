@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from src.memory.graph_memory import GraphMemory
-from src.memory.knowledge_base import KBRegistry, KnowledgeBase
+from krakey.memory.graph_memory import GraphMemory
+from krakey.memory.knowledge_base import KBRegistry, KnowledgeBase
 
 
 class FixedEmbed:

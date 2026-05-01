@@ -1,6 +1,6 @@
 import pytest
 
-from src.self_agent import ParsedSelfOutput, parse_self_output
+from krakey.self_agent import ParsedSelfOutput, parse_self_output
 
 
 def test_parses_all_four_sections():

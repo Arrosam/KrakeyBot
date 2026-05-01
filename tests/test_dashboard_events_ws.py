@@ -6,10 +6,10 @@ from collections import deque
 import pytest
 from fastapi.testclient import TestClient
 
-from src.plugins.dashboard.app_factory import create_app
-from src.plugins.dashboard.events import EventBroadcaster, serialize_event
-from src.runtime.events.event_types import DecisionEvent, GMStatsEvent, ThinkingEvent
-from src.runtime.events.event_bus import EventBus
+from krakey.plugins.dashboard.app_factory import create_app
+from krakey.plugins.dashboard.events import EventBroadcaster, serialize_event
+from krakey.runtime.events.event_types import DecisionEvent, GMStatsEvent, ThinkingEvent
+from krakey.runtime.events.event_bus import EventBus
 
 
 def test_serialize_event_includes_kind_and_fields():

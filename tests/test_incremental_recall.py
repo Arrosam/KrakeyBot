@@ -4,10 +4,10 @@ from datetime import datetime
 
 import pytest
 
-from src.memory.graph_memory import GraphMemory
-from src.memory.recall import RecallResult, ScoringWeights
-from src.plugins.recall.incremental import IncrementalRecall
-from src.models.stimulus import Stimulus
+from krakey.memory.graph_memory import GraphMemory
+from krakey.memory.recall import RecallResult, ScoringWeights
+from krakey.plugins.recall.incremental import IncrementalRecall
+from krakey.models.stimulus import Stimulus
 
 
 class MappingEmbedder:

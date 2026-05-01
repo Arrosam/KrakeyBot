@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src.bootstrap import (
+from krakey.bootstrap import (
     BOOTSTRAP_PROMPT, detect_bootstrap_complete, load_genesis,
     load_self_model_or_default, parse_self_model_update,
 )
@@ -65,7 +65,7 @@ def test_load_genesis_existing_file(tmp_path):
 def test_load_genesis_missing_file_returns_placeholder(tmp_path):
     text = load_genesis(tmp_path / "missing.md")
     assert text  # non-empty placeholder
-    assert "blank" in text.lower() or "白板" in text or "blank" in text.lower() or "GENESIS" in text
+    assert "blank" in text.lower() or "GENESIS" in text
 
 
 # ---------------- self-model loader ----------------

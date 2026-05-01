@@ -7,10 +7,10 @@ import asyncio
 
 import pytest
 
-from src.runtime.events.event_types import (
-    DecisionEvent, HeartbeatStartEvent, DecisionExecutedEvent, PromptBuiltEvent, StimuliQueuedEvent, TentacleResultEvent, ThinkingEvent,
+from krakey.runtime.events.event_types import (
+    DecisionEvent, HeartbeatStartEvent, DecisionExecutedEvent, PromptBuiltEvent, StimuliQueuedEvent, ToolResultEvent, ThinkingEvent,
 )
-from src.runtime.events.event_bus import EventBus
+from krakey.runtime.events.event_bus import EventBus
 
 
 def test_event_dataclasses_carry_typed_fields():
@@ -18,10 +18,10 @@ def test_event_dataclasses_carry_typed_fields():
     assert e.heartbeat_id == 3
     assert e.text == "thinking text"
 
-    h = DecisionExecutedEvent(heartbeat_id=3, tentacle_calls_count=2,
+    h = DecisionExecutedEvent(heartbeat_id=3, tool_calls_count=2,
                             memory_writes_count=1, memory_updates_count=0,
                             sleep_requested=False)
-    assert h.tentacle_calls_count == 2 and h.sleep_requested is False
+    assert h.tool_calls_count == 2 and h.sleep_requested is False
 
 
 def test_publish_dispatches_to_all_subscribers():
@@ -78,7 +78,7 @@ async def test_async_subscriber_scheduled_as_task():
 async def test_runtime_publishes_phase_events():
     """Integration: a single heartbeat publishes lifecycle events to the
     bus so a Dashboard subscriber sees them."""
-    from src.runtime.events.event_bus import EventBus
+    from krakey.runtime.events.event_bus import EventBus
     from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
 
     bus = EventBus()
@@ -99,12 +99,12 @@ async def test_runtime_publishes_phase_events():
 
 def test_event_kind_property_for_serialization():
     """UI WS layer needs a string kind discriminator."""
-    from src.runtime.events.event_types import GMStatsEvent
+    from krakey.runtime.events.event_types import GMStatsEvent
     assert ThinkingEvent(1, "x").kind == "thinking"
     assert DecisionEvent(1, "x").kind == "decision"
     assert HeartbeatStartEvent(1, 0).kind == "heartbeat_start"
     assert PromptBuiltEvent(1, {}).kind == "prompt_built"
     assert StimuliQueuedEvent([]).kind == "stimuli_queued"
-    assert TentacleResultEvent("action", "x").kind == "tentacle_result"
+    assert ToolResultEvent("action", "x").kind == "tool_result"
     # Acronym run preserved as one token
     assert GMStatsEvent(1, 0, 0, 0).kind == "gm_stats"

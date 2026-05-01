@@ -1,5 +1,5 @@
 """ANSI color helpers — wrap when enabled, pass through when disabled."""
-from src.runtime.console import colors
+from krakey.runtime.console import colors
 
 
 def test_cyan_wraps_when_enabled(monkeypatch):

@@ -1,7 +1,7 @@
 """Phase 3 / G: GM perf benchmark — measure + recommend soft_limit."""
 import pytest
 
-from src.tools.perf_bench import measure_at, recommend_soft_limit
+from krakey.tools.perf_bench import measure_at, recommend_soft_limit
 
 
 async def test_measure_at_returns_expected_keys(tmp_path):

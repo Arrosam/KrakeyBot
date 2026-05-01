@@ -1,6 +1,6 @@
 """Live-reload server for the architecture graph.
 
-Watches ``src/`` for changes (mtime polling, no extra dependencies),
+Watches ``krakey/`` for changes (mtime polling, no extra dependencies),
 rebuilds the dependency graph in-process, and pushes Server-Sent
 Events to connected browsers. The page-side JS (in
 ``docs/scripts/build_arch_graph.py``) listens for those events,
@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import build_arch_graph as bag  # noqa: E402
 
-SRC = ROOT / "src"
+SRC = ROOT / "krakey"
 SKIP_DIRS = {"__pycache__", ".pytest_cache"}
 
 # ---- shared state ----

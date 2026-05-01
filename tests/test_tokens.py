@@ -1,6 +1,6 @@
 """Tests for the token-estimation utility (src/utils/tokens.py)."""
-import src.utils.tokens as tokens_mod
-from src.utils.tokens import estimate_tokens, estimate_tokens_many
+import krakey.utils.tokens as tokens_mod
+from krakey.utils.tokens import estimate_tokens, estimate_tokens_many
 
 
 def test_empty_string_is_zero():

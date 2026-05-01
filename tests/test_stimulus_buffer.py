@@ -3,8 +3,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from src.models.stimulus import Stimulus
-from src.runtime.stimuli.stimulus_buffer import StimulusBuffer
+from krakey.models.stimulus import Stimulus
+from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
 def _s(content, *, adrenalin=False, offset_seconds=0):

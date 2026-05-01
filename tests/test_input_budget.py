@@ -11,9 +11,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.memory.recall import RecallResult
-from src.models.stimulus import Stimulus
-from src.runtime.heartbeat.sliding_window import SlidingWindowRound
+from krakey.memory.recall import RecallResult
+from krakey.models.stimulus import Stimulus
+from krakey.runtime.heartbeat.sliding_window import SlidingWindowRound
 from tests._runtime_helpers import (
     NullEmbedder, ScriptedLLM, build_runtime_with_fakes,
 )

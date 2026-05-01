@@ -1,6 +1,6 @@
 import pytest
 
-from src.models.self_model import SelfModelStore, default_self_model
+from krakey.models.self_model import SelfModelStore, default_self_model
 
 
 def test_load_missing_returns_default(tmp_path):

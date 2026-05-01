@@ -3,9 +3,9 @@ import json
 
 import pytest
 
-from src.memory.graph_memory import GraphMemory
-from src.memory.knowledge_base import KBRegistry
-from src.memory.sleep.index_rebuild import rebuild_index_graph
+from krakey.memory.graph_memory import GraphMemory
+from krakey.memory.knowledge_base import KBRegistry
+from krakey.memory.sleep.index_rebuild import rebuild_index_graph
 
 
 class FixedEmbed:

@@ -1,23 +1,23 @@
 import pytest
 
-from src.runtime.heartbeat.fatigue import calculate_fatigue, fatigue_hint
+from krakey.runtime.heartbeat.fatigue import calculate_fatigue, fatigue_hint
 
 
 THRESHOLDS = {
-    50: "（不繁忙时可以睡眠）",
-    75: "（疲劳，需要主动睡眠）",
-    100: "（非常疲劳，需要立即找到睡眠的机会）",
+    50: "(may sleep when not busy)",
+    75: "(fatigued; should proactively sleep)",
+    100: "(very fatigued; find an opportunity to sleep immediately)",
 }
 
 
 def test_zero_fatigue_shows_low_hint():
     hint = fatigue_hint(0, THRESHOLDS)
-    assert "精力充沛" in hint or "无需" in hint
+    assert "energy" in hint or "no need" in hint
 
 
 def test_below_smallest_threshold_shows_low_hint():
     hint = fatigue_hint(30, THRESHOLDS)
-    assert "精力充沛" in hint or "无需" in hint
+    assert "energy" in hint or "no need" in hint
 
 
 def test_matches_50_threshold_exactly():
@@ -47,7 +47,7 @@ def test_empty_thresholds_returns_empty_string():
 
 def test_unordered_dict_still_works():
     d = {100: "c", 50: "a", 75: "b"}
-    assert fatigue_hint(0, d).startswith("（")  # low hint
+    assert fatigue_hint(0, d).startswith("(")  # low hint
     assert fatigue_hint(60, d) == "a"
     assert fatigue_hint(80, d) == "b"
     assert fatigue_hint(200, d) == "c"
@@ -59,7 +59,7 @@ def test_calculate_fatigue_zero_nodes():
     pct, hint = calculate_fatigue(node_count=0, soft_limit=200,
                                      thresholds=THRESHOLDS)
     assert pct == 0
-    assert "精力充沛" in hint
+    assert "energy" in hint
 
 
 def test_calculate_fatigue_scales_with_node_count():

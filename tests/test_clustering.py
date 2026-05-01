@@ -1,8 +1,8 @@
 """Phase 2.3a: Leiden clustering + community summarization."""
 import pytest
 
-from src.memory.graph_memory import GraphMemory
-from src.memory.sleep.clustering import run_leiden_clustering
+from krakey.memory.graph_memory import GraphMemory
+from krakey.memory.sleep.clustering import run_leiden_clustering
 
 
 class FixedEmbed:

@@ -1,4 +1,4 @@
-"""Phase 3.F.3: web chat history + tentacle + WS endpoint."""
+"""Phase 3.F.3: web chat history + tool + WS endpoint."""
 import asyncio
 import json
 from datetime import datetime
@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from src.plugins.dashboard.app_factory import create_app
-from src.plugins.dashboard.web_chat import WebChatHistory
-from src.plugins.dashboard.tentacle import WebChatReplyTentacle as WebChatTentacle
+from krakey.plugins.dashboard.app_factory import create_app
+from krakey.plugins.dashboard.web_chat import WebChatHistory
+from krakey.plugins.dashboard.tool import WebChatReplyTool as WebChatTool
 
 
 # ---------------- WebChatHistory ----------------
@@ -85,38 +85,38 @@ async def test_unsubscribe_stops_delivery(tmp_path):
     assert len(seen) == 1
 
 
-# ---------------- WebChatSensory ----------------
+# ---------------- WebChatChannel ----------------
 
 
-async def test_sensory_push_creates_user_message_stimulus(tmp_path):
-    from src.plugins.dashboard.sensory import WebChatSensory
+async def test_channel_push_creates_user_message_stimulus(tmp_path):
+    from krakey.plugins.dashboard.channel import WebChatChannel
 
     pushed = []
 
     class _Buf:
         async def push(self, s): pushed.append(s)
 
-    sens = WebChatSensory()
+    sens = WebChatChannel()
     await sens.start(_Buf().push)
     await sens.push_user_message("hello krakey")
     assert len(pushed) == 1
     s = pushed[0]
     assert s.type == "user_message"
-    assert s.source == "sensory:web_chat"
+    assert s.source == "channel:web_chat"
     assert s.content == "hello krakey"
     assert s.adrenalin is True
     assert s.metadata["channel"] == "web_chat"
 
 
-async def test_sensory_push_appends_attachment_notices(tmp_path):
-    from src.plugins.dashboard.sensory import WebChatSensory
+async def test_channel_push_appends_attachment_notices(tmp_path):
+    from krakey.plugins.dashboard.channel import WebChatChannel
 
     pushed = []
 
     class _Buf:
         async def push(self, s): pushed.append(s)
 
-    sens = WebChatSensory()
+    sens = WebChatChannel()
     await sens.start(_Buf().push)
     await sens.push_user_message(
         "see file",
@@ -125,71 +125,71 @@ async def test_sensory_push_appends_attachment_notices(tmp_path):
     )
     s = pushed[0]
     assert "see file" in s.content
-    assert "[附件: a.png" in s.content
+    assert "[attachment: a.png" in s.content
     assert s.metadata["attachments"][0]["name"] == "a.png"
 
 
-async def test_sensory_push_before_start_silently_drops():
-    from src.plugins.dashboard.sensory import WebChatSensory
+async def test_channel_push_before_start_silently_drops():
+    from krakey.plugins.dashboard.channel import WebChatChannel
 
-    sens = WebChatSensory()
+    sens = WebChatChannel()
     # No start() — buffer is None. Must not raise.
     await sens.push_user_message("dropped")
 
 
-async def test_sensory_push_after_stop_silently_drops():
-    from src.plugins.dashboard.sensory import WebChatSensory
+async def test_channel_push_after_stop_silently_drops():
+    from krakey.plugins.dashboard.channel import WebChatChannel
 
     pushed = []
 
     class _Buf:
         async def push(self, s): pushed.append(s)
 
-    sens = WebChatSensory()
+    sens = WebChatChannel()
     await sens.start(_Buf().push)
     await sens.stop()
     await sens.push_user_message("dropped")
     assert pushed == []
 
 
-# ---------------- WebChatTentacle ----------------
+# ---------------- WebChatTool ----------------
 
-def test_tentacle_metadata():
-    t = WebChatTentacle(history=None)  # noqa
+def test_tool_metadata():
+    t = WebChatTool(history=None)  # noqa
     assert t.name == "web_chat_reply"
 
 
-async def test_tentacle_send_appends_to_history(tmp_path):
+async def test_tool_send_appends_to_history(tmp_path):
     h = WebChatHistory(tmp_path / "chat.jsonl")
-    t = WebChatTentacle(history=h)
+    t = WebChatTool(history=h)
     stim = await t.execute("hello world", {"text": "hello world"})
     msgs = h.all_messages()
     assert msgs[0]["sender"] == "krakey"
     assert msgs[0]["content"] == "hello world"
-    assert "sent" in stim.content.lower() or "已发送" in stim.content
+    assert "sent" in stim.content.lower()
 
 
-async def test_tentacle_intent_used_when_no_text_param(tmp_path):
+async def test_tool_intent_used_when_no_text_param(tmp_path):
     h = WebChatHistory(tmp_path / "chat.jsonl")
-    t = WebChatTentacle(history=h)
+    t = WebChatTool(history=h)
     await t.execute("free-form intent", {})
     assert h.all_messages()[0]["content"] == "free-form intent"
 
 
-async def test_tentacle_empty_text_returns_clear_msg(tmp_path):
+async def test_tool_empty_text_returns_clear_msg(tmp_path):
     h = WebChatHistory(tmp_path / "chat.jsonl")
-    t = WebChatTentacle(history=h)
+    t = WebChatTool(history=h)
     stim = await t.execute("", {"text": "   "})
     assert h.all_messages() == []
-    assert "empty" in stim.content.lower() or "空" in stim.content
+    assert "empty" in stim.content.lower()
 
 
-async def test_tentacle_history_failure_returns_adrenalin_error(tmp_path):
+async def test_tool_history_failure_returns_adrenalin_error(tmp_path):
     class BrokenHistory:
         async def append(self, sender, content):
             raise RuntimeError("disk full")
 
-    t = WebChatTentacle(history=BrokenHistory())
+    t = WebChatTool(history=BrokenHistory())
     stim = await t.execute("hi", {"text": "hi"})
     assert stim.adrenalin is True
     assert "disk full" in stim.content
@@ -238,7 +238,7 @@ def test_ws_chat_krakey_messages_broadcast_to_clients(tmp_path):
     client = TestClient(app)
     with client.websocket_connect("/ws/chat") as ws:
         ws.receive_json()  # initial history (empty)
-        # Tentacle writes to history → all subscribed sockets receive
+        # Tool writes to history → all subscribed sockets receive
         asyncio.run(h.append("krakey", "from server"))
         msg = ws.receive_json()
         assert msg["kind"] == "message"
