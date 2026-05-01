@@ -100,38 +100,44 @@ async def test_runner_reports_timeout(live_agent):
 # ---------------- runtime preflight integration ----------------
 
 
-async def test_runtime_refuses_start_when_sandbox_required_but_missing(tmp_path):
-    """If coding has sandbox=true (default) but the sandbox config block
-    is empty, Runtime._build_code_runner must raise."""
+def test_router_build_refuses_when_sandbox_partially_configured(tmp_path):
+    """Half-filled sandbox block (guest_os without agent fields, or
+    vice versa) is the most common config typo — silently downgrading
+    to "no sandbox" would leave the user wondering why their plugin
+    can't reach the env. Construction-time refusal forces them to
+    fix it on the spot."""
     from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
 
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
     )
-    # leave runtime.config.sandbox blank — guest_os / agent.url / token
-    # all empty strings; _build_code_runner must refuse.
+    # Partial: guest_os set, agent fields still empty — Router build
+    # should refuse on the next compose attempt.
+    runtime.config.sandbox.guest_os = "linux"
     with pytest.raises(RuntimeError) as ei:
-        runtime._build_code_runner({"sandbox": True})
+        runtime._build_environment_router()
     msg = str(ei.value)
     assert "sandbox" in msg.lower()
-    assert "guest_os" in msg or "agent" in msg
+    assert "agent" in msg
 
 
-async def test_runtime_allows_subprocess_when_sandbox_false(tmp_path):
-    """Opting OUT of sandbox (sandbox=false) must be explicitly allowed
-    so users can run coding directly on the host if they want."""
+async def test_router_local_always_present_even_with_no_sandbox(tmp_path):
+    """LocalEnvironment has no config and no failure mode — the
+    Router always exposes it so plugins that don't need isolation
+    can run regardless of sandbox VM state."""
     from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
-    from krakey.sandbox.subprocess_runner import SubprocessRunner
 
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
     )
-    runner = runtime._build_code_runner({"sandbox": False})
-    assert isinstance(runner, SubprocessRunner)
+    # Default: no sandbox config → only Local env registered.
+    assert runtime.environment_router.env_names() == ["local"]
 
 
-async def test_runtime_builds_sandbox_runner_with_complete_config(tmp_path):
-    """sandbox=true + complete sandbox config → SandboxRunner instance."""
+async def test_router_registers_sandbox_env_when_config_complete(tmp_path):
+    """Complete sandbox config → Router exposes both 'local' and
+    'sandbox'. Allow-list is empty until config.environments lands;
+    that's fine — no plugin asks for either env yet."""
     from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
 
     runtime = build_runtime_with_fakes(
@@ -140,8 +146,8 @@ async def test_runtime_builds_sandbox_runner_with_complete_config(tmp_path):
     runtime.config.sandbox.guest_os = "linux"
     runtime.config.sandbox.agent.url = "http://10.0.2.10:8765"
     runtime.config.sandbox.agent.token = "tok"
-    runner = runtime._build_code_runner({"sandbox": True})
-    assert isinstance(runner, SandboxRunner)
+    rebuilt = runtime._build_environment_router()
+    assert set(rebuilt.env_names()) == {"local", "sandbox"}
 
 
 # ---------------- display mode config ----------------

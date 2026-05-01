@@ -28,10 +28,13 @@ from krakey.models.config_backup import backup_config
 from krakey.prompt.builder import PromptBuilder
 from krakey.runtime.stimuli.batch_tracker import BatchTrackerChannel
 from krakey.runtime.events.event_bus import EventBus
+from krakey.environment.local import LocalEnvironment
+from krakey.environment.router import EnvironmentRouter
+from krakey.environment.sandbox import SandboxConfig, SandboxEnvironment
+from krakey.interfaces.environment import Environment
 from krakey.runtime.console.heartbeat_logger import HeartbeatLogger
 from krakey.runtime.heartbeat.sliding_window import SlidingWindow
 from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
-from krakey.sandbox.policy import build_code_runner, preflight_if_required
 
 
 @dataclass
@@ -70,6 +73,12 @@ class RuntimeDeps:
     # map to the same tag share one client (saves connections + keeps
     # rate-limit accounting consistent).
     llm_clients_by_tag: dict[str, Any] = field(default_factory=dict)
+    # EnvironmentRouter — central dispatch for plugin → environment
+    # requests. ``None`` means Runtime will build one from
+    # ``config.sandbox`` (and, after commit 6, ``config.environments``)
+    # at construction time. Tests pass a pre-built Router (or leave
+    # this None for the default empty-allow-list build).
+    environment_router: EnvironmentRouter | None = None
 
 
 class Runtime:
@@ -160,6 +169,21 @@ class Runtime:
         # dashboard owns its own per-plugin config.
         self._prompt_log: deque[dict[str, Any]] = deque(maxlen=50)
 
+        # Environment Router. Accept a caller-provided Router (tests
+        # pre-build a custom allow-list) or build one from
+        # ``config.sandbox`` here. Always-on Local + optional
+        # Sandbox-when-configured. Allow-list stays empty until the
+        # next commit lands the ``config.environments`` schema; no
+        # in-tree plugin currently asks for an env so an empty
+        # allow-list does not block any test path.
+        if deps.environment_router is not None:
+            self.environment_router = deps.environment_router
+        else:
+            self.environment_router = self._build_environment_router()
+        # Re-bind onto deps so PluginContext can reach the Router via
+        # ``ctx.deps.environment_router`` (ctx.environment(...) wrapper).
+        deps.environment_router = self.environment_router
+
         from krakey.runtime.plugin_register.loader import PluginLoader
         self._plugin_loader = PluginLoader(
             config=self.config,
@@ -175,7 +199,6 @@ class Runtime:
                 "buffer": self.buffer,
                 "events": self.events,
                 "config": self.config,
-                "build_code_runner": self._build_code_runner,
             },
         )
         self._plugin_loader.register_from_config(deps)
@@ -306,7 +329,7 @@ class Runtime:
 
     async def run(self, iterations: int | None = None) -> None:
         await self.gm.initialize()
-        await self._preflight_sandbox()
+        await self._preflight_environments()
         await self._refine_bootstrap_from_data()
         # buffer.start_all() walks every registered channel and calls its
         # start(); the dashboard plugin's channel uses that hook to spin
@@ -366,11 +389,46 @@ class Runtime:
         build the ``/api/plugins`` payload."""
         return self._plugin_observer.loaded_report()
 
-    def _build_code_runner(self, coding_cfg: dict):
-        # Facade — sandbox vs subprocess policy lives in
-        # src.sandbox.policy. Kept as a method so the services dict
-        # can hand a bound callable to the coding plugin.
-        return build_code_runner(coding_cfg, self.config.sandbox)
+    def _build_environment_router(self) -> EnvironmentRouter:
+        """Compose Local + Sandbox-if-configured into a Router with an
+        empty allow-list.
+
+        Local is always available — it has no config and never fails
+        to start. Sandbox is registered only when the user has a
+        ``sandbox:`` block with at least one of the load-bearing
+        fields set; partial config raises so a typo doesn't silently
+        downgrade to "no sandbox available". Allow-list stays empty
+        here; it's populated from ``config.environments`` once that
+        schema lands in the next commit. With an empty allow-list
+        every plugin's ``ctx.environment(...)`` call raises
+        ``EnvironmentDenied`` — which is correct for now since no
+        in-tree plugin asks for an env.
+        """
+        envs: dict[str, Environment] = {"local": LocalEnvironment()}
+        sb = self.config.sandbox
+        sb_present = bool(sb.guest_os or sb.agent.url or sb.agent.token)
+        if sb_present:
+            missing: list[str] = []
+            if not sb.guest_os:
+                missing.append("sandbox.guest_os")
+            if not sb.agent.url:
+                missing.append("sandbox.agent.url")
+            if not sb.agent.token:
+                missing.append("sandbox.agent.token")
+            if missing:
+                raise RuntimeError(
+                    "sandbox config is partial. Missing: "
+                    + ", ".join(missing)
+                    + ". Either complete the `sandbox:` block in "
+                    "config.yaml or remove all of guest_os/agent.url/"
+                    "agent.token to disable the sandbox env."
+                )
+            envs["sandbox"] = SandboxEnvironment(SandboxConfig(
+                agent_url=sb.agent.url,
+                agent_token=sb.agent.token,
+                guest_os=sb.guest_os,
+            ))
+        return EnvironmentRouter(envs=envs, allow_list={})
 
     def _record_prompt(self, heartbeat_id: int, prompt: str) -> None:
         # Facade — heartbeat algorithm lives in HeartbeatOrchestrator.
@@ -385,18 +443,19 @@ class Runtime:
             items = items[:limit]
         return [dict(p) for p in items]
 
-    async def _preflight_sandbox(self) -> None:
-        # Facade — preflight scan logic lives in src.sandbox.policy.
-        # Wrapper keeps the success log line attached to the heartbeat
-        # log instead of stderr from a free function.
-        info = await preflight_if_required(
-            self.config, plugin_configs_root=self._plugin_configs_root,
-        )
-        if info is not None:
-            self.log.hb(
-                f"sandbox preflight ok: guest_os={info.get('guest_os')} "
-                f"agent_version={info.get('agent_version')}"
+    async def _preflight_environments(self) -> None:
+        """Walk the Router's envs that have at least one allow-listed
+        plugin and confirm each is reachable. Wrapper keeps the
+        success log line attached to the heartbeat log; the Router
+        itself stays IO-pattern-agnostic.
+        """
+        infos = await self.environment_router.preflight_all()
+        for info in infos:
+            env_name = info.get("env", "?")
+            details = " ".join(
+                f"{k}={v}" for k, v in info.items() if k != "env"
             )
+            self.log.hb(f"{env_name} preflight ok: {details}")
 
     async def _refine_bootstrap_from_data(self) -> None:
         """Thin wrapper around ``BootstrapCoordinator.refine_from_data``
