@@ -1,59 +1,35 @@
-"""Local subprocess runner — used when `coding.sandbox` is false.
+"""Back-compat shim — the host-local runner moved.
 
-Defines the `CodeRunner` Protocol (also implemented by
-`sandbox.backend.SandboxRunner` for the VM case) and the plain
-`SubprocessRunner` that shells out on the host. Lives in `krakey/sandbox/`
-because that's where all code-execution backends live, even though
-`SubprocessRunner` doesn't sandbox anything.
+``SubprocessRunner`` is now ``LocalEnvironment`` under
+``krakey/environment/local/``. This module re-exports the new class
+under the old name for one release window so callers (mostly tests)
+keep working while the refactor lands. Removed in the final commit
+of the environment-extraction series — at that point this whole
+``krakey/sandbox/`` package goes away.
 
-Runtime picks one of the two at plugin-load time via
-`Runtime._build_code_runner(coding_cfg)` and hands the result to the
-coding plugin's factory.
+The old ``CodeRunner`` Protocol is preserved here as a type alias
+for the same reason; new code should import ``Environment`` from
+``krakey.interfaces.environment`` instead.
 """
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
 from typing import Protocol
+
+from krakey.environment.local import LocalEnvironment
 
 
 class CodeRunner(Protocol):
-    async def run(self, cmd: list[str], *, cwd: Path,
-                    timeout: float, stdin: str | None = None
-                    ) -> tuple[int, str, str]: ...
+    """Deprecated — use ``krakey.interfaces.environment.Environment``."""
+
+    async def run(self, cmd, *, cwd, timeout, stdin=None) -> tuple[int, str, str]: ...
 
 
-class SubprocessRunner:
-    """Host-local runner using `asyncio.create_subprocess_exec`.
+# Drop-in alias. Tests + the still-extant policy.build_code_runner
+# look up ``SubprocessRunner`` by name; making it the new class
+# means callers transparently get the new shape (which is a
+# superset — adds ``name`` + ``preflight`` — so it satisfies the
+# old Protocol too).
+SubprocessRunner = LocalEnvironment
 
-    Honest disclosure: this is NOT a sandbox. The child inherits the
-    parent's privileges. Use `SandboxRunner` (krakey/sandbox/backend.py)
-    when you actually need isolation.
-    """
 
-    async def run(self, cmd: list[str], *, cwd: Path,
-                    timeout: float, stdin: str | None = None
-                    ) -> tuple[int, str, str]:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=str(cwd),
-            stdin=asyncio.subprocess.PIPE if stdin is not None else None,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            out_b, err_b = await asyncio.wait_for(
-                proc.communicate(input=stdin.encode() if stdin else None),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError:
-            proc.kill()
-            try:
-                await proc.communicate()
-            except Exception:  # noqa: BLE001
-                pass
-            raise
-        rc = proc.returncode if proc.returncode is not None else -1
-        out = out_b.decode("utf-8", errors="replace")
-        err = err_b.decode("utf-8", errors="replace")
-        return rc, out, err
+__all__ = ["CodeRunner", "SubprocessRunner"]
