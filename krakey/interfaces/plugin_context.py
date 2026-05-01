@@ -16,6 +16,11 @@ Passed to ``build_<component>(ctx)`` for every plugin kind
     client object.
   * ``ctx.services`` — Runtime-built resources whitelisted for
     plugin use (gm, kb_registry, embedder, runtime, ...).
+  * ``ctx.environment(env_name)`` — resolve an Environment by
+    name. Returns the env instance if the calling plugin is
+    allow-listed for it, otherwise raises ``EnvironmentDenied``.
+    Always lazy-call-time: don't invoke from a factory; only from
+    actual run-time code paths inside the plugin.
   * ``ctx.plugin_cache`` — per-plugin scratch dict for sharing
     instances across multi-component plugins (e.g. telegram's
     channel + tool share an HttpTelegramClient via this).
@@ -48,9 +53,10 @@ class PluginContext:
     plugin_name: str
     config: dict[str, Any] = field(default_factory=dict)
     # Whitelisted Runtime-built resources (gm, kb_registry, embedder,
-    # buffer, runtime, build_code_runner, ...). Populated by
-    # Runtime when building the ctx so plugins don't have to grab
-    # unrestricted Runtime references.
+    # buffer, runtime, ...). Populated by Runtime when building the
+    # ctx so plugins don't have to grab unrestricted Runtime
+    # references. Environment access is NOT in this dict — use the
+    # typed ``ctx.environment(env_name)`` accessor instead.
     services: dict[str, Any] = field(default_factory=dict)
     # Shared mutable storage scoped to a single plugin (NOT across
     # plugins). Components of the same plugin (e.g. telegram's
@@ -79,6 +85,29 @@ class PluginContext:
         return resolve_llm_for_tag(
             self.deps.config, tag_name, self.deps.llm_clients_by_tag,
         )
+
+    def environment(self, env_name: str):
+        """Resolve a named ``Environment`` for this plugin.
+
+        Returns the env if the plugin is allow-listed in
+        ``config.environments.<env_name>.allowed_plugins``, otherwise
+        raises ``EnvironmentDenied`` (subclass of ``RuntimeError``).
+        Lazy-call-time only — invoke from plugin code paths that
+        actually need to dispatch a CLI command, not from the
+        component factory.
+        """
+        from krakey.interfaces.environment import EnvironmentDenied
+        router = self.deps.environment_router
+        if router is None:
+            # Defensive: should never happen in production (Runtime
+            # always builds a Router) but tests may construct a bare
+            # PluginContext. Treat absence as denial — same observable
+            # behavior as an empty Router.
+            raise EnvironmentDenied(
+                f"plugin {self.plugin_name!r} requested environment "
+                f"{env_name!r}, but no EnvironmentRouter is bound."
+            )
+        return router.for_plugin(self.plugin_name, env_name)
 
 
 def load_plugin_config(plugin_name: str, root: Path | str) -> dict[str, Any]:

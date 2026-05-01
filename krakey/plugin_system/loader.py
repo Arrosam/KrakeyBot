@@ -94,16 +94,18 @@ class ComponentMetadata:
 @dataclass
 class PluginMetadata:
     """Parsed contents of a single ``meta.yaml`` file (unified
-    plugin format, Samuel 2026-04-26)."""
+    plugin format, Samuel 2026-04-26).
+
+    The old ``requires_sandbox: bool`` flag was removed when the
+    Environment Router landed. Sandbox preflighting is now driven
+    by ``config.environments`` allow-lists (the runtime preflights
+    every env that has at least one assigned plugin), not by a
+    self-declared flag in meta.yaml.
+    """
     name: str
     description: str
     components: list[ComponentMetadata] = field(default_factory=list)
     config_schema: list[dict[str, Any]] = field(default_factory=list)
-    # Plugin self-declares whether it depends on the sandbox VM. When
-    # True and the user has the plugin enabled, Runtime preflights the
-    # guest agent at startup. Lets us drop the hardcoded plugin-name
-    # list that used to live in main._preflight_sandbox.
-    requires_sandbox: bool = False
     source_path: Path | None = None
 
 
@@ -159,12 +161,22 @@ def parse_meta(path: Path) -> PluginMetadata:
     schema = raw.get("config_schema") or []
     if not isinstance(schema, list):
         raise ValueError("meta.yaml `config_schema:` must be a list")
+    if "requires_sandbox" in raw:
+        # Quietly tolerated for one release window — old plugin
+        # meta.yamls in the wild had this field. Drop it from yours
+        # at next edit.
+        import sys as _sys
+        print(
+            f"meta.yaml {path}: `requires_sandbox` is no longer read; "
+            "sandbox usage is now opt-in via config.environments.sandbox."
+            "allowed_plugins. Remove the field to silence this warning.",
+            file=_sys.stderr,
+        )
     return PluginMetadata(
         name=str(raw["name"]),
         description=str(raw.get("description", "")),
         components=components,
         config_schema=list(schema),
-        requires_sandbox=bool(raw.get("requires_sandbox", False)),
         source_path=path,
     )
 

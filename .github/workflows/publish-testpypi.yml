@@ -2,11 +2,17 @@ name: Publish to TestPyPI
 
 on:
   push:
+    # Match any version-shaped tag; the job-level `if:` below restricts
+    # to pre-release tags (those containing a `-`). Same portability
+    # reasoning as publish.yml: avoid `+` as a glob quantifier.
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+-rc*"
+      - "v[0-9]*"
 
 jobs:
   build-and-publish:
+    # Only fire on pre-release tags — production tags (v0.1.0 with no
+    # suffix) are published by publish.yml.
+    if: ${{ contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     environment: testpypi
     permissions:

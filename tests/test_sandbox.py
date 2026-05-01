@@ -6,10 +6,14 @@ import time
 
 import pytest
 
-from krakey.sandbox.agent import AgentState, AgentHandler
-from krakey.sandbox.backend import (
-    SandboxConfig, SandboxRunner, SandboxUnavailableError, preflight,
+from krakey.environment.sandbox.agent import AgentState, AgentHandler
+from krakey.environment.sandbox import (
+    SandboxConfig, SandboxEnvironment, SandboxUnavailableError, preflight,
 )
+
+# Old name stayed at the import site; bind it locally for the
+# legacy assertions until commit 5 rewrites them against the Router.
+SandboxRunner = SandboxEnvironment
 
 
 # ---------------- real agent, loopback ----------------
@@ -96,66 +100,198 @@ async def test_runner_reports_timeout(live_agent):
 # ---------------- runtime preflight integration ----------------
 
 
-async def test_runtime_refuses_start_when_sandbox_required_but_missing(tmp_path):
-    """If coding has sandbox=true (default) but the sandbox config block
-    is empty, Runtime._build_code_runner must raise."""
+def test_router_build_refuses_when_sandbox_partially_configured(tmp_path):
+    """Half-filled environments.sandbox block (guest_os without
+    agent fields, or vice versa) is the most common config typo —
+    silently downgrading to "no sandbox" would leave the user
+    wondering why their plugin can't reach the env. Construction-
+    time refusal forces them to fix it on the spot."""
     from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
+    from krakey.models.config import SandboxEnvironmentConfig
 
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
     )
-    # leave runtime.config.sandbox blank — guest_os / agent.url / token
-    # all empty strings; _build_code_runner must refuse.
+    # Partial: guest_os set, agent fields still empty.
+    runtime.config.environments.sandbox = SandboxEnvironmentConfig(
+        guest_os="linux",
+    )
     with pytest.raises(RuntimeError) as ei:
-        runtime._build_code_runner({"sandbox": True})
+        runtime._build_environment_router()
     msg = str(ei.value)
     assert "sandbox" in msg.lower()
-    assert "guest_os" in msg or "agent" in msg
+    assert "agent" in msg
 
 
-async def test_runtime_allows_subprocess_when_sandbox_false(tmp_path):
-    """Opting OUT of sandbox (sandbox=false) must be explicitly allowed
-    so users can run coding directly on the host if they want."""
-    from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
-    from krakey.sandbox.subprocess_runner import SubprocessRunner
-
-    runtime = build_runtime_with_fakes(
-        self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
-    )
-    runner = runtime._build_code_runner({"sandbox": False})
-    assert isinstance(runner, SubprocessRunner)
-
-
-async def test_runtime_builds_sandbox_runner_with_complete_config(tmp_path):
-    """sandbox=true + complete sandbox config → SandboxRunner instance."""
+async def test_router_local_always_present_even_with_no_sandbox(tmp_path):
+    """LocalEnvironment has no config and no failure mode — the
+    Router always exposes it so plugins that don't need isolation
+    can run regardless of sandbox VM state."""
     from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
 
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
     )
-    runtime.config.sandbox.guest_os = "linux"
-    runtime.config.sandbox.agent.url = "http://10.0.2.10:8765"
-    runtime.config.sandbox.agent.token = "tok"
-    runner = runtime._build_code_runner({"sandbox": True})
-    assert isinstance(runner, SandboxRunner)
+    # Default: no environments.sandbox → only Local env registered.
+    assert runtime.environment_router.env_names() == ["local"]
+
+
+async def test_router_registers_sandbox_env_when_config_complete(tmp_path):
+    """Complete environments.sandbox → Router exposes both 'local'
+    and 'sandbox', and the allow-list reflects the configured
+    plugin assignments."""
+    from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
+    from krakey.models.config import SandboxAgentSection, SandboxEnvironmentConfig
+
+    runtime = build_runtime_with_fakes(
+        self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
+    )
+    runtime.config.environments.sandbox = SandboxEnvironmentConfig(
+        allowed_plugins=["coding"],
+        guest_os="linux",
+        agent=SandboxAgentSection(
+            url="http://10.0.2.10:8765", token="tok",
+        ),
+    )
+    rebuilt = runtime._build_environment_router()
+    assert set(rebuilt.env_names()) == {"local", "sandbox"}
+    # Allow-list flows through from config.environments.
+    assert rebuilt.for_plugin("coding", "sandbox") is rebuilt._envs["sandbox"]
 
 
 # ---------------- display mode config ----------------
 
 def test_sandbox_display_defaults_to_headed():
-    from krakey.models.config import _build_sandbox
-    sb = _build_sandbox({})
+    from krakey.models.config.environments import _build_sandbox_env
+    sb = _build_sandbox_env({})
     assert sb.display == "headed"
 
 
 def test_sandbox_display_honors_user_choice():
-    from krakey.models.config import _build_sandbox
-    assert _build_sandbox({"display": "headless"}).display == "headless"
-    assert _build_sandbox({"display": "HEADED"}).display == "headed"
+    from krakey.models.config.environments import _build_sandbox_env
+    assert _build_sandbox_env({"display": "headless"}).display == "headless"
+    assert _build_sandbox_env({"display": "HEADED"}).display == "headed"
 
 
 def test_sandbox_display_invalid_falls_back_to_headed(capsys):
-    from krakey.models.config import _build_sandbox
-    sb = _build_sandbox({"display": "weird"})
+    from krakey.models.config.environments import _build_sandbox_env
+    sb = _build_sandbox_env({"display": "weird"})
     assert sb.display == "headed"
     assert "display" in capsys.readouterr().err.lower()
+
+
+# ---------------- environments: top-level shape guard ----------------
+
+@pytest.mark.parametrize("bad", [
+    "just_a_string",       # failed env-var template, etc.
+    [1, 2, 3],             # user wrote a list by mistake
+    ["local", "sandbox"],  # confused list-of-keys form
+    42,                    # YAML scalar instead of mapping
+])
+def test_build_environments_tolerates_non_mapping_top_level(bad, capsys):
+    """A typo in ``environments:`` shouldn't hard-fail boot. Warn,
+    fall back to defaults — same forgiving pattern as
+    environments.local / environments.sandbox at the inner level."""
+    from krakey.models.config.environments import _build_environments
+
+    out = _build_environments(bad)
+    # Defaults — Local present with empty allow-list, no sandbox.
+    assert out.sandbox is None
+    assert out.local.allowed_plugins == []
+    err = capsys.readouterr().err.lower()
+    assert "environments" in err
+    assert "mapping" in err
+
+
+@pytest.mark.parametrize("bad_subblock", [
+    {"resources": [1, 2]},   # list where dict expected
+    {"agent": "oops"},       # string where dict expected
+    {"resources": 42},       # scalar where dict expected
+])
+def test_build_sandbox_env_tolerates_non_mapping_subblocks(bad_subblock, capsys):
+    """Same non-mapping-input class of bug as the top-level fix —
+    apply consistently to environments.sandbox.resources +
+    environments.sandbox.agent so a typo in either sub-block warns
+    rather than crashing AttributeError at startup."""
+    from krakey.models.config.environments import _build_sandbox_env
+
+    sb = _build_sandbox_env(bad_subblock)
+    # Defaults survive — resources/agent fall back to their dataclass
+    # defaults rather than crashing.
+    assert sb.resources.cpu == 2
+    assert sb.agent.url == ""
+    err = capsys.readouterr().err.lower()
+    assert "mapping" in err
+
+
+# ---------------- preflight error wrapping ----------------
+
+async def test_preflight_wraps_aiohttp_timeout_as_sandbox_error(tmp_path):
+    """ClientTimeout exhaustion against a slow-but-alive agent
+    raises bare asyncio.TimeoutError out of aiohttp — NOT a
+    subclass of aiohttp.ClientError. Without an explicit catch the
+    Router's preflight_all aggregator sees an unexpected exception
+    type and bypasses the "collect all failures" pattern.
+    """
+    import asyncio as _asyncio
+    import threading
+    import time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from krakey.environment.sandbox import (
+        SandboxConfig, SandboxUnavailableError,
+    )
+    from krakey.environment.sandbox.preflight import preflight as _preflight
+
+    class _SlowHandler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            time.sleep(20)  # > 5s ClientTimeout
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *a, **k):  # silence
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _SlowHandler)
+    port = srv.server_address[1]
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        cfg = SandboxConfig(
+            agent_url=f"http://127.0.0.1:{port}",
+            agent_token="x", guest_os="linux",
+        )
+        with pytest.raises(SandboxUnavailableError) as ei:
+            await _preflight(cfg)
+        # Helpful message naming the timeout cause, not bare TimeoutError.
+        assert "timeout" in str(ei.value).lower()
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+# ---------------- old top-level sandbox: deprecation ----------------
+
+def test_old_top_level_sandbox_block_emits_deprecation(tmp_path, capsys):
+    """A user upgrading carries the old `sandbox:` block in their
+    config.yaml. We don't auto-translate (the new shape adds an
+    allow-list concept the old shape doesn't have); just nudge with
+    a single stderr line so the upgrade is visible."""
+    from krakey.models.config import load_config
+
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        "llm:\n  providers: {}\n  tags: {}\n  core_purposes: {}\n"
+        "plugins: []\n"
+        "graph_memory:\n  db_path: ':memory:'\n"
+        "sandbox:\n"
+        "  guest_os: linux\n"
+        "  agent:\n    url: http://x\n    token: t\n",
+        encoding="utf-8",
+    )
+    load_config(str(cfg_path))
+    err = capsys.readouterr().err.lower()
+    assert "deprecated" in err
+    assert "sandbox" in err
+    assert "environments.sandbox" in err
