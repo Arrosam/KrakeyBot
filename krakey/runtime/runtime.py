@@ -171,11 +171,9 @@ class Runtime:
 
         # Environment Router. Accept a caller-provided Router (tests
         # pre-build a custom allow-list) or build one from
-        # ``config.sandbox`` here. Always-on Local + optional
-        # Sandbox-when-configured. Allow-list stays empty until the
-        # next commit lands the ``config.environments`` schema; no
-        # in-tree plugin currently asks for an env so an empty
-        # allow-list does not block any test path.
+        # ``config.environments`` here. Always-on Local + optional
+        # Sandbox-when-configured; allow-list comes straight from
+        # the ``allowed_plugins`` lists in the same config block.
         if deps.environment_router is not None:
             self.environment_router = deps.environment_router
         else:
@@ -390,45 +388,46 @@ class Runtime:
         return self._plugin_observer.loaded_report()
 
     def _build_environment_router(self) -> EnvironmentRouter:
-        """Compose Local + Sandbox-if-configured into a Router with an
-        empty allow-list.
+        """Compose Local + Sandbox-if-configured into a Router whose
+        allow-list comes straight from ``config.environments``.
 
-        Local is always available — it has no config and never fails
-        to start. Sandbox is registered only when the user has a
-        ``sandbox:`` block with at least one of the load-bearing
-        fields set; partial config raises so a typo doesn't silently
-        downgrade to "no sandbox available". Allow-list stays empty
-        here; it's populated from ``config.environments`` once that
-        schema lands in the next commit. With an empty allow-list
-        every plugin's ``ctx.environment(...)`` call raises
-        ``EnvironmentDenied`` — which is correct for now since no
-        in-tree plugin asks for an env.
+        Local is always registered — it's zero-config and never
+        fails to start. Its allow-list is whatever the user put in
+        ``environments.local.allowed_plugins`` (default empty).
+
+        Sandbox is registered only when ``environments.sandbox`` is
+        set AND fully configured. Partial config raises so a typo
+        doesn't silently downgrade to "no sandbox available".
         """
         envs: dict[str, Environment] = {"local": LocalEnvironment()}
-        sb = self.config.sandbox
-        sb_present = bool(sb.guest_os or sb.agent.url or sb.agent.token)
-        if sb_present:
+        envs_cfg = self.config.environments
+        allow_list: dict[str, list[str]] = {
+            "local": list(envs_cfg.local.allowed_plugins),
+        }
+        sb = envs_cfg.sandbox
+        if sb is not None:
             missing: list[str] = []
             if not sb.guest_os:
-                missing.append("sandbox.guest_os")
+                missing.append("environments.sandbox.guest_os")
             if not sb.agent.url:
-                missing.append("sandbox.agent.url")
+                missing.append("environments.sandbox.agent.url")
             if not sb.agent.token:
-                missing.append("sandbox.agent.token")
+                missing.append("environments.sandbox.agent.token")
             if missing:
                 raise RuntimeError(
-                    "sandbox config is partial. Missing: "
+                    "sandbox env config is partial. Missing: "
                     + ", ".join(missing)
-                    + ". Either complete the `sandbox:` block in "
-                    "config.yaml or remove all of guest_os/agent.url/"
-                    "agent.token to disable the sandbox env."
+                    + ". Either complete the `environments.sandbox:` "
+                    "block in config.yaml or remove the section "
+                    "entirely to disable the sandbox env."
                 )
             envs["sandbox"] = SandboxEnvironment(SandboxConfig(
                 agent_url=sb.agent.url,
                 agent_token=sb.agent.token,
                 guest_os=sb.guest_os,
             ))
-        return EnvironmentRouter(envs=envs, allow_list={})
+            allow_list["sandbox"] = list(sb.allowed_plugins)
+        return EnvironmentRouter(envs=envs, allow_list=allow_list)
 
     def _record_prompt(self, heartbeat_id: int, prompt: str) -> None:
         # Facade — heartbeat algorithm lives in HeartbeatOrchestrator.

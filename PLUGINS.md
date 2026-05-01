@@ -41,7 +41,6 @@ Minimal example:
 name: my_plugin
 description: "..."
 config_schema: []          # plugin-level config fields (UI hints only)
-requires_sandbox: false    # set true if any component touches the sandbox VM
 
 components:
   - kind: modifier

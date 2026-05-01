@@ -40,11 +40,15 @@ from krakey.models.config.heartbeat import (  # noqa: F401
     _build_hibernate,
     _validate_fatigue_thresholds,
 )
+from krakey.models.config.environments import (  # noqa: F401
+    EnvironmentsSection,
+    LocalEnvironmentConfig,
+    SandboxEnvironmentConfig,
+    _build_environments,
+)
 from krakey.models.config.infra import (  # noqa: F401
     SandboxAgentSection,
     SandboxResourcesSection,
-    SandboxSection,
-    _build_sandbox,
 )
 from krakey.models.config.llm import (  # noqa: F401
     LLMParams,
@@ -103,7 +107,9 @@ class Config:
     plugins: list[str] | None = None
     sleep: SleepSection = field(default_factory=SleepSection)
     safety: SafetySection = field(default_factory=SafetySection)
-    sandbox: SandboxSection = field(default_factory=SandboxSection)
+    environments: EnvironmentsSection = field(
+        default_factory=EnvironmentsSection
+    )
 
 
 # ---------------- env substitution ----------------
@@ -202,7 +208,7 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         plugins=_build_plugins(raw),
         sleep=_build_sleep(raw.get("sleep") or {}),
         safety=_build_safety(raw.get("safety") or {}),
-        sandbox=_build_sandbox(raw.get("sandbox")),
+        environments=_build_environments(raw.get("environments")),
     )
 
 
@@ -296,6 +302,17 @@ def _warn_about_removed_sections(raw: dict[str, Any]) -> None:
             "read.\n  The dashboard is now a regular plugin: add "
             "'dashboard' to your `plugins:` list, and put host/port/"
             "history_path in `workspace/plugins/dashboard/config.yaml`.\n"
+            "  Your previous values are being ignored.",
+            file=sys.stderr,
+        )
+    if "sandbox" in raw:
+        print(
+            "deprecated: top-level `sandbox:` section is no longer "
+            "read.\n  Sandbox is now an Environment under the new "
+            "top-level `environments:` block. Move your guest_os / "
+            "agent.url / agent.token (and any other fields) under "
+            "`environments.sandbox`, and add an `allowed_plugins:` "
+            "list naming each plugin that may dispatch through it.\n"
             "  Your previous values are being ignored.",
             file=sys.stderr,
         )
