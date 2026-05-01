@@ -2,11 +2,18 @@ name: Publish to PyPI
 
 on:
   push:
+    # Match any tag that starts with `v` and a digit; the job-level
+    # `if:` below filters out pre-release tags (rc / alpha / beta / dev).
+    # Using `*` rather than `[0-9]+...` keeps the pattern portable
+    # across glob implementations that don't support `+` as a quantifier.
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]*"
 
 jobs:
   build-and-publish:
+    # Skip pre-release tags (handled by publish-testpypi.yml) — they all
+    # contain a `-` per semver, e.g. v0.1.0-rc1, v1.0.0-beta.
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
