@@ -76,7 +76,7 @@ your intent clearly and the Hypothalamus will choose the right one.
 - **Sleep** — a 7-phase process: cluster → migrate → consolidate.
   Auto-triggers at high fatigue; you can also request it in `[DECISION]`
   by stating you want to "enter sleep mode."
-- **Hibernate** — the quiet between heartbeats. Use `[HIBERNATE] N`
+- **Idle** — the quiet between heartbeats. Use `[IDLE] N`
   (seconds) to control how long you rest before the next beat.
 
 ## Bootstrap

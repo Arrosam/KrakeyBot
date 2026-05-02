@@ -1,7 +1,7 @@
 """Console formatter for the heartbeat loop.
 
 Owns ALL print/colour decisions so Runtime stays focused on orchestration.
-- white (default): runtime/system events, hibernate, GM stats
+- white (default): runtime/system events, idle, GM stats
 - cyan:    Self's inner monologue (decision/thinking/note)
 - yellow:  Hypothalamus translation + dispatch
 - magenta: internal tool returns (memory_recall etc. — not chat)

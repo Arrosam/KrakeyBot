@@ -4,7 +4,7 @@ Phase-2 first-boot flow:
   1. runtime loads self_model.yaml; if missing or `bootstrap_complete=False`,
      enter Bootstrap mode.
   2. in Bootstrap mode the builder injects BOOTSTRAP_PROMPT (with GENESIS)
-     high in the Self prompt, and hibernate is forced to 10s.
+     high in the Self prompt, and idle is forced to 10s.
   3. Self writes self-model updates inside [NOTE] wrapped in
      <self-model>{...}</self-model> tags; runtime deep-merges them.
   4. when Self writes the phrase "bootstrap complete" in [NOTE], runtime
@@ -56,9 +56,9 @@ never changes for the rest of your life.
 
 Write `bootstrap complete` (case-insensitive) anywhere in [NOTE]; runtime will
 set `state.bootstrap_complete` to true, after which you control the heartbeat
-yourself via [HIBERNATE].
+yourself via [IDLE].
 
-**During Bootstrap the heartbeat is fixed at 10s; do not write [HIBERNATE].**
+**During Bootstrap the heartbeat is fixed at 10s; do not write [IDLE].**
 """
 
 

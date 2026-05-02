@@ -30,7 +30,7 @@ async def test_single_iteration_user_message_triggers_tool_dispatch():
     self_llm = ScriptedLLM([
         "[THINKING]\nuser said hello. reply.\n"
         "[DECISION]\nUse web_chat_reply to greet the user.\n"
-        "[HIBERNATE]\n1"
+        "[IDLE]\n1"
     ])
     hypo_llm = ScriptedLLM([json.dumps({
         "tool_calls": [{"tool": "web_chat_reply",
@@ -59,7 +59,7 @@ async def test_single_iteration_user_message_triggers_tool_dispatch():
 
 async def test_no_action_decision_runs_no_tool():
     self_llm = ScriptedLLM([
-        "[DECISION]\nNo action.\n[HIBERNATE]\n1"
+        "[DECISION]\nNo action.\n[IDLE]\n1"
     ])
     hypo_llm = ScriptedLLM([json.dumps({
         "tool_calls": [], "memory_writes": [], "memory_updates": [],
@@ -78,7 +78,7 @@ async def test_hypothalamus_error_pushes_system_event_stimulus():
     still learn about it via a system_event stimulus on the next heartbeat,
     otherwise failed dispatches look like silent successes."""
     self_llm = ScriptedLLM([
-        "[DECISION]\nDo something real.\n[HIBERNATE]\n1",
+        "[DECISION]\nDo something real.\n[IDLE]\n1",
     ])
     # Invalid JSON → Hypothalamus._parse_json raises → caught → pushed
     hypo_llm = ScriptedLLM(["not json at all"])
@@ -98,11 +98,11 @@ async def test_hypothalamus_error_pushes_system_event_stimulus():
 async def test_tool_feedback_does_not_inherit_adrenalin_from_hypothalamus():
     """Successful tool_feedback is low-priority by design. Even when
     the Hypothalamus flags the dispatch as adrenalin=True (upstream urgency),
-    the resulting feedback receipt should NOT wake Self out of hibernate —
+    the resulting feedback receipt should NOT wake Self out of idle —
     Self has already reacted to the urgent upstream stimulus; the echo is
     just bookkeeping."""
     self_llm = ScriptedLLM([
-        "[DECISION]\nAct fast, user waiting.\n[HIBERNATE]\n1"
+        "[DECISION]\nAct fast, user waiting.\n[IDLE]\n1"
     ])
     hypo_llm = ScriptedLLM([json.dumps({
         "tool_calls": [{"tool": "web_chat_reply",
@@ -128,7 +128,7 @@ async def test_heartbeat_with_connected_recall_nodes_does_not_crash():
     must render them without raising KeyError.
     """
     self_llm = ScriptedLLM([
-        "[DECISION]\nNo action.\n[HIBERNATE]\n1",
+        "[DECISION]\nNo action.\n[IDLE]\n1",
     ])
     hypo_llm = ScriptedLLM([])
 
@@ -168,7 +168,7 @@ async def test_voluntary_sleep_via_hypothalamus_runs_full_sleep(tmp_path):
     """Self → 'enter sleep' → Hypothalamus sleep:true → enter_sleep_mode
     runs end-to-end; FACT migrates to KB; wake-up stimulus pushed."""
     self_llm = ScriptedLLM([
-        "[DECISION]\nenter sleep mode\n[HIBERNATE]\n1",
+        "[DECISION]\nenter sleep mode\n[IDLE]\n1",
     ])
     hypo_llm = ScriptedLLM([
         json.dumps({"tool_calls": [], "memory_writes": [],
@@ -285,7 +285,7 @@ async def test_bootstrap_self_model_update_and_completion(tmp_path):
     runtime.bootstrap._store = runtime._self_model_store
     runtime.self_model = default_self_model()
     runtime.is_bootstrap = True
-    # Tighten hibernate so the test isn't slow (bootstrap forces 10s default,
+    # Tighten idle so the test isn't slow (bootstrap forces 10s default,
     # but max_interval=5 from fakes already clamps it).
     runtime._max = 0.1
 
@@ -302,7 +302,7 @@ async def test_bootstrap_self_model_update_and_completion(tmp_path):
 async def test_command_kill_stops_runtime():
     self_llm = ScriptedLLM([
         # Heartbeat 1 should hit /kill before reaching Self.
-        "[DECISION]\nNo action.\n[HIBERNATE]\n1",
+        "[DECISION]\nNo action.\n[IDLE]\n1",
     ])
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
@@ -320,8 +320,8 @@ async def test_command_kill_stops_runtime():
 async def test_command_status_pushes_system_event_for_self(tmp_path):
     """Command result lands in buffer, visible on the *next* heartbeat."""
     self_llm = ScriptedLLM([
-        "[DECISION]\nNo action.\n[HIBERNATE]\n1",  # HB #1: handles /status
-        "[DECISION]\nNo action.\n[HIBERNATE]\n1",  # HB #2: sees system_event
+        "[DECISION]\nNo action.\n[IDLE]\n1",  # HB #1: handles /status
+        "[DECISION]\nNo action.\n[IDLE]\n1",  # HB #2: sees system_event
     ])
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
@@ -367,7 +367,7 @@ async def test_command_sleep_triggers_full_sleep(tmp_path):
 async def test_normal_text_passes_through_to_self():
     """Sanity: non-/cmd messages still reach Self normally."""
     self_llm = ScriptedLLM([
-        "[DECISION]\nNo action.\n[HIBERNATE]\n1",
+        "[DECISION]\nNo action.\n[IDLE]\n1",
     ])
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
@@ -388,9 +388,9 @@ async def test_self_can_dispatch_memory_recall_and_see_feedback():
     tool → tool_feedback in next heartbeat's stimuli."""
     self_llm = ScriptedLLM([
         # HB #1: Self decides to recall
-        "[DECISION]\nRecall what I know about apple.\n[HIBERNATE]\n1",
+        "[DECISION]\nRecall what I know about apple.\n[IDLE]\n1",
         # HB #2: see recall result, take no further action
-        "[DECISION]\nNo action.\n[HIBERNATE]\n1",
+        "[DECISION]\nNo action.\n[IDLE]\n1",
     ])
     hypo_llm = ScriptedLLM([
         json.dumps({
@@ -434,9 +434,9 @@ async def test_uncovered_stimulus_push_back_capped_at_one_retry():
     dropped — otherwise it loops every heartbeat forever.
     """
     self_llm = ScriptedLLM([
-        "[DECISION]\nNo action.\n[HIBERNATE]\n1",  # HB #1
-        "[DECISION]\nNo action.\n[HIBERNATE]\n1",  # HB #2
-        "[DECISION]\nNo action.\n[HIBERNATE]\n1",  # HB #3
+        "[DECISION]\nNo action.\n[IDLE]\n1",  # HB #1
+        "[DECISION]\nNo action.\n[IDLE]\n1",  # HB #2
+        "[DECISION]\nNo action.\n[IDLE]\n1",  # HB #3
     ])
     hypo_llm = ScriptedLLM([])
     runtime = build_runtime_with_fakes(
@@ -462,8 +462,8 @@ async def test_tool_feedback_auto_ingested_to_gm():
     """Phase 1: tool_feedback stimuli seen on next heartbeat get
     auto_ingested into Graph Memory."""
     self_llm = ScriptedLLM([
-        "[DECISION]\nUse web_chat_reply to greet.\n[HIBERNATE]\n1",
-        "[DECISION]\nNo action.\n[HIBERNATE]\n1",
+        "[DECISION]\nUse web_chat_reply to greet.\n[IDLE]\n1",
+        "[DECISION]\nNo action.\n[IDLE]\n1",
     ])
     hypo_llm = ScriptedLLM([
         json.dumps({"tool_calls": [{
@@ -497,8 +497,8 @@ async def test_batch_complete_stimulus_wakes_next_heartbeat():
     """After dispatch, BatchTracker fires a batch_complete adrenalin
     stimulus that Self sees on the subsequent heartbeat."""
     self_llm = ScriptedLLM([
-        "[DECISION]\nUse web_chat_reply.\n[HIBERNATE]\n60",  # long interval
-        "[DECISION]\nNo action.\n[HIBERNATE]\n1",
+        "[DECISION]\nUse web_chat_reply.\n[IDLE]\n60",  # long interval
+        "[DECISION]\nNo action.\n[IDLE]\n1",
     ])
     hypo_llm = ScriptedLLM([
         json.dumps({"tool_calls": [{"tool": "web_chat_reply",
@@ -512,7 +512,7 @@ async def test_batch_complete_stimulus_wakes_next_heartbeat():
     ])
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=hypo_llm,
-        hibernate_min=0.01, hibernate_max=5.0,
+        idle_min=0.01, idle_max=5.0,
     )
 
     await runtime.buffer.push(Stimulus(
@@ -529,7 +529,7 @@ async def test_batch_complete_stimulus_wakes_next_heartbeat():
 async def test_explicit_write_from_hypothalamus_memory_writes():
     """Hypothalamus memory_writes trigger GM.explicit_write."""
     self_llm = ScriptedLLM([
-        "[DECISION]\nremember: user prefers detailed answers\n[HIBERNATE]\n1",
+        "[DECISION]\nremember: user prefers detailed answers\n[IDLE]\n1",
     ])
     hypo_llm = ScriptedLLM([
         json.dumps({
@@ -563,10 +563,10 @@ async def test_explicit_write_from_hypothalamus_memory_writes():
     assert "user pref verbose" in names
 
 
-async def test_hibernate_interrupts_on_adrenalin_stimulus():
+async def test_idle_interrupts_on_adrenalin_stimulus():
     self_llm = ScriptedLLM([
-        "[DECISION]\nNo action.\n[HIBERNATE]\n5",  # long interval
-        "[DECISION]\nNo action.\n[HIBERNATE]\n1",
+        "[DECISION]\nNo action.\n[IDLE]\n5",  # long interval
+        "[DECISION]\nNo action.\n[IDLE]\n1",
     ])
     hypo_llm = ScriptedLLM([
         json.dumps({"tool_calls": [], "memory_writes": [],
@@ -576,9 +576,9 @@ async def test_hibernate_interrupts_on_adrenalin_stimulus():
     ])
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=hypo_llm,
-        hibernate_min=0.01, hibernate_max=5.0)
+        idle_min=0.01, idle_max=5.0)
 
-    # Push adrenalin stimulus just after first iteration enters hibernate
+    # Push adrenalin stimulus just after first iteration enters idle
     async def shouter():
         await asyncio.sleep(0.05)
         await runtime.buffer.push(Stimulus(

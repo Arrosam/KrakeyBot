@@ -1,6 +1,6 @@
 """Self output parser (DevSpec §3.3).
 
-Regex extracts [THINKING] / [DECISION] / [NOTE] / [HIBERNATE].
+Regex extracts [THINKING] / [DECISION] / [NOTE] / [IDLE].
 If no markers present, the whole text fills both thinking and decision
 so Hypothalamus still receives something to translate.
 """
@@ -15,7 +15,7 @@ class ParsedSelfOutput:
     thinking: str = ""
     decision: str = ""
     note: str = ""
-    hibernate_seconds: int | None = None
+    idle_seconds: int | None = None
     # Full unparsed response. Kept so the tool-call parser
     # (default-off path) can locate ``<tool_call>...</tool_call>``
     # blocks wherever Self placed them in the response, not just
@@ -23,7 +23,7 @@ class ParsedSelfOutput:
     raw: str = ""
 
 
-_TAGS = ("THINKING", "DECISION", "NOTE", "HIBERNATE")
+_TAGS = ("THINKING", "DECISION", "NOTE", "IDLE")
 _TAG_PATTERN = re.compile(r"\[(" + "|".join(_TAGS) + r")\]", re.IGNORECASE)
 _INT_PATTERN = re.compile(r"-?\d+")
 
@@ -40,7 +40,7 @@ def parse_self_output(raw: str) -> ParsedSelfOutput:
         thinking=sections.get("THINKING", "").strip(),
         decision=sections.get("DECISION", "").strip(),
         note=sections.get("NOTE", "").strip(),
-        hibernate_seconds=_parse_int(sections.get("HIBERNATE", "")),
+        idle_seconds=_parse_int(sections.get("IDLE", "")),
         raw=raw,
     )
 

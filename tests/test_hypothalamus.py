@@ -138,8 +138,8 @@ async def test_system_prompt_includes_tool_list():
     assert "action" in joined
 
 
-async def test_system_prompt_disambiguates_sleep_vs_hibernate():
-    """Regression: prompt must tell LLM that 'rest / hibernate' != sleep mode."""
+async def test_system_prompt_disambiguates_sleep_vs_idle():
+    """Regression: prompt must tell LLM that 'rest / idle' != sleep mode."""
     llm = MockLLM(json.dumps({
         "tool_calls": [], "memory_writes": [], "memory_updates": [],
         "sleep": False,
@@ -147,7 +147,7 @@ async def test_system_prompt_disambiguates_sleep_vs_hibernate():
     await Hypothalamus(llm=llm).translate("anything", _tools())
     system_content = llm.last_messages[0]["content"]
     # Must mention the distinction and the dangerous near-synonyms
-    assert "hibernate" in system_content.lower()
+    assert "idle" in system_content.lower()
     assert "sleep" in system_content.lower()
     # Must explicitly list ambiguous phrases to exclude
     low = system_content.lower()

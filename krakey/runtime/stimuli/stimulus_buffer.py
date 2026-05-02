@@ -6,7 +6,7 @@ fused so the dependency direction stays clean:
 
   * **Queue** — ``push`` (channel → buffer), ``drain`` (buffer →
     heartbeat), ``peek_unrecalled`` (incremental recall scans),
-    ``wait_for_*`` (hibernate wake-up).
+    ``wait_for_*`` (idle wake-up).
 
   * **Channel ownership** — ``register`` / ``start_all`` /
     ``pause_non_urgent`` / ``resume_all`` / ``stop_all``. Used to

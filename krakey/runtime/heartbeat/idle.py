@@ -1,4 +1,4 @@
-"""Hibernate — wait + adrenalin break (DevSpec §6.3).
+"""Idle — wait + adrenalin break (DevSpec §6.3).
 
 Adrenalin only interrupts hibernation, never LLM inference.
 Preloads recall during the wait so the next heartbeat's prompt
@@ -16,7 +16,7 @@ def clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
 
-async def hibernate_with_recall(
+async def idle_with_recall(
     interval: float, buffer: StimulusBuffer,
     recall: RecallLike, *,
     min_interval: float, max_interval: float,

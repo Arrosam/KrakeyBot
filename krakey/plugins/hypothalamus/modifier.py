@@ -51,15 +51,15 @@ decisions into structured instructions.
 3. "goal achieved" / "task done" / "completed" → memory_updates (TARGET→FACT)
 4. Urgency ("quick", "urgent", "someone is waiting") → adrenalin: true
 5. "No action" → empty tool_calls
-6. **sleep vs. hibernate (important; do not confuse)**:
+6. **sleep vs. idle (important; do not confuse)**:
    - **sleep: true** only when Self explicitly asks to enter the
      "full sleep mode" / "7-phase sleep" / "enter sleep mode" — this is
      a **major action** that triggers clustering + KB migration + FOCUS
      wipe + index rebuild.
    - **sleep: false** even when Self says "rest a bit" / "sleep for N
-     seconds" / "hibernate longer" / "pause" / "wait" / "take a break"
-     / "idle" — those are hibernate-interval adjustments, **not** sleep
-     mode. Hibernate length is controlled by Self via the [HIBERNATE]
+     seconds" / "idle longer" / "pause" / "wait" / "take a break"
+     / "idle" — those are idle-interval adjustments, **not** sleep
+     mode. Idle length is controlled by Self via the [IDLE]
      tag directly and does not go through translation.
    - When in doubt → sleep: false. Only set sleep: true on **explicit,
      complete** wording like "enter sleep" / "sleep mode".

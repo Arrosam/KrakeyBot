@@ -133,7 +133,7 @@ class DecisionDispatcher:
 
         # Tool-feedback stimuli are low-priority receipts by design.
         # The tool itself decides whether its outcome is worth
-        # interrupting Self's hibernate (failures typically set
+        # interrupting Self's idle (failures typically set
         # adrenalin=True in their own return). Do NOT inherit adrenalin
         # from the dispatch: by the time feedback arrives Self has
         # already acted on the urgent upstream signal, and re-waking

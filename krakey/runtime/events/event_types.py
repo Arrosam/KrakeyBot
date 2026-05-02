@@ -104,7 +104,7 @@ class ToolResultEvent(_BaseEvent):
 
 
 @dataclass
-class HibernateEvent(_BaseEvent):
+class IdleEvent(_BaseEvent):
     heartbeat_id: int
     interval_seconds: float
 

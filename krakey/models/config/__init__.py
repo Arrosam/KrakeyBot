@@ -14,7 +14,7 @@ Submodule layout (split out of the original 872-line monolith):
 
   * ``llm``       — providers / tags / core_purposes / embedding /
                     reranker. Largest section by far.
-  * ``heartbeat`` — hibernate cadence + fatigue thresholds.
+  * ``heartbeat`` — idle cadence + fatigue thresholds.
   * ``memory``    — graph_memory + knowledge_base + sleep + safety.
   * ``infra``     — dashboard + sandbox.
 
@@ -35,9 +35,9 @@ import yaml
 # Re-exports: every dataclass + builder the rest of the codebase uses.
 from krakey.models.config.heartbeat import (  # noqa: F401
     FatigueSection,
-    HibernateSection,
+    IdleSection,
     _build_fatigue,
-    _build_hibernate,
+    _build_idle,
     _validate_fatigue_thresholds,
 )
 from krakey.models.config.environments import (  # noqa: F401
@@ -81,7 +81,7 @@ _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 @dataclass
 class Config:
     llm: LLMSection = field(default_factory=LLMSection)
-    hibernate: HibernateSection = field(default_factory=HibernateSection)
+    idle: IdleSection = field(default_factory=IdleSection)
     fatigue: FatigueSection = field(default_factory=FatigueSection)
     # `sliding_window` removed in the prompt-budget refactor — the
     # window's size is now derived from the Self role's LLMParams
@@ -201,7 +201,7 @@ def load_config(path: str | Path = "config.yaml") -> Config:
 
     return Config(
         llm=_build_llm(raw.get("llm") or {}),
-        hibernate=_build_hibernate(raw.get("hibernate") or {}),
+        idle=_build_idle(raw.get("idle") or {}),
         fatigue=fatigue,
         graph_memory=_build_graph_memory(raw.get("graph_memory") or {}),
         knowledge_base=_build_kb(raw.get("knowledge_base") or {}),

@@ -82,8 +82,8 @@ class RuntimeDeps:
 
 
 class Runtime:
-    def __init__(self, deps: RuntimeDeps, *, hibernate_min: float | None = None,
-                 hibernate_max: float | None = None,
+    def __init__(self, deps: RuntimeDeps, *, idle_min: float | None = None,
+                 idle_max: float | None = None,
                  logger: HeartbeatLogger | None = None,
                  is_bootstrap_override: bool | None = None,
                  event_bus: EventBus | None = None):
@@ -214,7 +214,7 @@ class Runtime:
         self._self_model_store = SelfModelStore(sm_path)
         self.self_model, detected_bootstrap = load_self_model_or_default(sm_path)
         # Bootstrap-mode state lives in a dedicated coordinator so the
-        # three behaviors it gates (intro-prompt injection, hibernate
+        # three behaviors it gates (intro-prompt injection, idle
         # cadence, NOTE-signal parsing) don't have to be expressed as
         # scattered ``if self.is_bootstrap`` checks. The provisional
         # value here gets re-derived once gm.initialize() lets us
@@ -240,8 +240,8 @@ class Runtime:
         # totals weren't actually used by any product feature.
         self._sleep_cycles = 0
         self._stop = False
-        self._min = hibernate_min if hibernate_min is not None else self.config.hibernate.min_interval
-        self._max = hibernate_max if hibernate_max is not None else self.config.hibernate.max_interval
+        self._min = idle_min if idle_min is not None else self.config.idle.min_interval
+        self._max = idle_max if idle_max is not None else self.config.idle.max_interval
 
         self._recall: RecallLike | None = None
         self._classify_tasks: list[asyncio.Task] = []

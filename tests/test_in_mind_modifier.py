@@ -313,7 +313,7 @@ async def test_self_can_dispatch_update_in_mind_via_action_executor(
         '{"name": "update_in_mind", "arguments": '
         '{"focus": "debug recall regression", "mood": "curious"}}\n'
         '</tool_call>\n'
-        '[HIBERNATE]\n1'
+        '[IDLE]\n1'
     ])
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),

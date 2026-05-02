@@ -1,4 +1,4 @@
-"""Heartbeat-tuning sections: hibernate cadence + fatigue thresholds."""
+"""Heartbeat-tuning sections: idle cadence + fatigue thresholds."""
 from __future__ import annotations
 
 import sys
@@ -7,7 +7,7 @@ from typing import Any
 
 
 @dataclass
-class HibernateSection:
+class IdleSection:
     min_interval: int = 2
     max_interval: int = 300
     default_interval: int = 10
@@ -24,9 +24,9 @@ class FatigueSection:
     })
 
 
-def _build_hibernate(raw: dict[str, Any]) -> HibernateSection:
-    d = HibernateSection()
-    return HibernateSection(
+def _build_idle(raw: dict[str, Any]) -> IdleSection:
+    d = IdleSection()
+    return IdleSection(
         min_interval=int(raw.get("min_interval", d.min_interval)),
         max_interval=int(raw.get("max_interval", d.max_interval)),
         default_interval=int(raw.get("default_interval",

@@ -74,7 +74,7 @@ def test_loader_parses_tags_and_core_purposes(tmp_path):
             self_thinking: heavy
             compact: fast
           embedding: fast
-        hibernate: {min_interval: 2, max_interval: 300, default_interval: 30}
+        idle: {min_interval: 2, max_interval: 300, default_interval: 30}
         fatigue: {gm_node_soft_limit: 200, force_sleep_threshold: 120, thresholds: {}}
         graph_memory: {db_path: "x", auto_ingest_similarity_threshold: 0.9, recall_per_stimulus_k: 5, neighbor_expand_depth: 1}
         knowledge_base: {dir: "kb"}
@@ -108,7 +108,7 @@ def test_loader_resolves_max_input_tokens_from_model_lookup(tmp_path):
           tags:
             heavy:
               provider: "Anthropic/claude-sonnet-4-5"
-        hibernate: {min_interval: 1, max_interval: 60, default_interval: 1}
+        idle: {min_interval: 1, max_interval: 60, default_interval: 1}
         fatigue: {gm_node_soft_limit: 100, force_sleep_threshold: 60, thresholds: {}}
         graph_memory: {db_path: "x", auto_ingest_similarity_threshold: 0.9, recall_per_stimulus_k: 5, neighbor_expand_depth: 1}
         knowledge_base: {dir: "kb"}
@@ -130,7 +130,7 @@ def test_loader_old_roles_shape_exits_with_migration_message(
           providers: {}
           roles:
             self: {provider: "X", model: "Y", params: {}}
-        hibernate: {min_interval: 1, max_interval: 60, default_interval: 1}
+        idle: {min_interval: 1, max_interval: 60, default_interval: 1}
         fatigue: {gm_node_soft_limit: 100, force_sleep_threshold: 60, thresholds: {}}
         graph_memory: {db_path: "x", auto_ingest_similarity_threshold: 0.9, recall_per_stimulus_k: 5, neighbor_expand_depth: 1}
         knowledge_base: {dir: "kb"}

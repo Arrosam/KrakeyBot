@@ -12,16 +12,16 @@ from krakey.prompt.views import CapabilityView, SlidingWindowRound, StatusSnapsh
 def test_dna_has_all_sections():
     for tag in ["[SELF-MODEL]", "[CAPABILITIES]", "[STATUS]",
                 "[GRAPH MEMORY]", "[HISTORY]", "[STIMULUS]",
-                "[THINKING]", "[DECISION]", "[NOTE]", "[HIBERNATE]"]:
+                "[THINKING]", "[DECISION]", "[NOTE]", "[IDLE]"]:
         assert tag in DNA, f"DNA missing section: {tag}"
     assert "Caveman" in DNA
 
 
-def test_dna_disambiguates_sleep_and_hibernate():
-    """Regression: DNA must teach that Sleep and Hibernate are different
+def test_dna_disambiguates_sleep_and_idle():
+    """Regression: DNA must teach that Sleep and Idle are different
     mechanisms + warn against ambiguous 'rest' wording that would
     otherwise slip past the Hypothalamus as a sleep trigger."""
-    assert "Hibernate" in DNA and "Sleep" in DNA
+    assert "Idle" in DNA and "Sleep" in DNA
     assert "rest" in DNA.lower()
     # The explicit trigger phrase the Hypothalamus recognises must be stated
     assert "enter sleep mode" in DNA.lower()

@@ -13,14 +13,14 @@ Reply user with hello.
 [NOTE]
 remember to be polite.
 
-[HIBERNATE]
+[IDLE]
 30
 """
     p = parse_self_output(raw)
     assert "internal monologue" in p.thinking
     assert "Reply user with hello" in p.decision
     assert "polite" in p.note
-    assert p.hibernate_seconds == 30
+    assert p.idle_seconds == 30
 
 
 def test_sections_are_trimmed():
@@ -36,13 +36,13 @@ def test_fallback_no_markers_treats_whole_as_thinking_and_decision():
     assert p.thinking == "Just some free text without markers."
     assert p.decision == "Just some free text without markers."
     assert p.note == ""
-    assert p.hibernate_seconds is None
+    assert p.idle_seconds is None
 
 
-def test_hibernate_accepts_suffix():
-    raw = "[DECISION]\nx\n[HIBERNATE]\n15 seconds"
+def test_idle_accepts_suffix():
+    raw = "[DECISION]\nx\n[IDLE]\n15 seconds"
     p = parse_self_output(raw)
-    assert p.hibernate_seconds == 15
+    assert p.idle_seconds == 15
 
 
 def test_missing_optional_sections_default_empty():
@@ -51,7 +51,7 @@ def test_missing_optional_sections_default_empty():
     assert p.decision == "Act now."
     assert p.note == ""
     assert p.thinking == ""
-    assert p.hibernate_seconds is None
+    assert p.idle_seconds is None
 
 
 def test_sections_out_of_order_still_parses():
@@ -71,6 +71,6 @@ def test_fallback_requires_missing_decision():
 
 
 def test_parsed_self_output_dataclass_shape():
-    p = ParsedSelfOutput(thinking="a", decision="b", note="c", hibernate_seconds=10)
+    p = ParsedSelfOutput(thinking="a", decision="b", note="c", idle_seconds=10)
     assert p.thinking == "a" and p.decision == "b" and p.note == "c"
-    assert p.hibernate_seconds == 10
+    assert p.idle_seconds == 10
