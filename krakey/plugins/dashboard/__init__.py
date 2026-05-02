@@ -52,16 +52,28 @@ def build_channel(ctx: "PluginContext"):
 
 
 def build_tool(ctx: "PluginContext"):
-    """Reply tool — shares the WebChatHistory the sibling channel
-    factory built."""
+    """Reply tool — shares the ``WebChatHistory`` the sibling channel
+    factory built. If the channel didn't run (disabled in central
+    config, or load order shuffled), build a fresh ``WebChatHistory``
+    pointed at the same JSONL: the file is the single source of
+    truth, so a second instance reading it stays consistent. Cache
+    it so a later channel-factory call sees the same instance.
+
+    Per CLAUDE.md the runtime must keep working with any plugin /
+    component disabled — this branch is the additive-fallback for
+    "channel disabled but tool enabled".
+    """
     from krakey.plugins.dashboard.tool import WebChatReplyTool
+    from krakey.plugins.dashboard.web_chat.history import WebChatHistory
 
     history = ctx.plugin_cache.get(_HISTORY_CACHE_KEY)
     if history is None:
-        raise RuntimeError(
-            "dashboard.build_tool: WebChatHistory not in plugin_cache. "
-            "build_channel must run first (meta.yaml component order)."
+        cfg = ctx.config or {}
+        history_path = cfg.get(
+            "history_path", "workspace/data/web_chat.jsonl",
         )
+        history = WebChatHistory(history_path)
+        ctx.plugin_cache[_HISTORY_CACHE_KEY] = history
     return WebChatReplyTool(history=history)
 
 
@@ -78,10 +90,17 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
 
     runtime = ctx.services.get("runtime")
     if runtime is None:
-        raise RuntimeError(
-            "dashboard plugin needs services['runtime']; the runtime "
-            "must expose itself in PluginContext.services."
+        # Per CLAUDE.md the runtime must keep working with any plugin
+        # missing or partially loaded. We can't bring up the dashboard
+        # without a runtime to introspect, but we shouldn't take the
+        # rest of the runtime down with us — the channel + tool stay
+        # registered, we just skip the HTTP UI.
+        import logging
+        logging.getLogger(__name__).warning(
+            "dashboard plugin: services['runtime'] missing; skipping "
+            "dashboard server start (channel + tool register without UI)"
         )
+        return
 
     config_path = getattr(ctx.deps, "config_path", None)
     plugin_configs_root = (
