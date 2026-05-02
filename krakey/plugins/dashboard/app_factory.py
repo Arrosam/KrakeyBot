@@ -24,6 +24,7 @@ from typing import Any, Awaitable, Callable
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from krakey.plugins.dashboard.auth import attach_token_auth
 from krakey.plugins.dashboard.events.ws_route import register as _register_events_ws
 from krakey.plugins.dashboard.middleware import attach_no_cache
 from krakey.plugins.dashboard.routes import (
@@ -64,6 +65,7 @@ def create_app(
     config_path: Path | None = None,
     on_restart: Callable[[], None] | None = None,
     plugin_configs_root: Path | str = "workspace/plugins",
+    auth_token: str | None = None,
     # --- overrides for unit tests (pass a fake instead of a real service) ---
     memory_service: MemoryService | None = None,
     prompts_service: PromptsService | None = None,
@@ -83,6 +85,10 @@ def create_app(
     )
 
     attach_no_cache(app)
+    # Auth gate covers /api/* and /ws/* — static UI shell stays open
+    # so the paste-token form can render when the browser tab has no
+    # token yet. No-op when ``auth_token`` is None (tests).
+    attach_token_auth(app, auth_token)
 
     # Static assets (logo, app.js, upload pass-through).
     if _STATIC_DIR.exists():
@@ -118,9 +124,11 @@ def create_app(
             web_chat_history, on_user_message,
         )
     if web_chat_service is not None:
-        _register_chat_ws(app, service=web_chat_service)
+        _register_chat_ws(app, service=web_chat_service, auth_token=auth_token)
 
     if event_broadcaster is not None:
-        _register_events_ws(app, broadcaster=event_broadcaster)
+        _register_events_ws(
+            app, broadcaster=event_broadcaster, auth_token=auth_token,
+        )
 
     return app

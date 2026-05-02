@@ -72,6 +72,7 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
     from krakey.plugins.dashboard.app_factory import (
         create_app as create_dashboard_app,
     )
+    from krakey.plugins.dashboard.auth import load_or_create_token
     from krakey.plugins.dashboard.events import EventBroadcaster
     from krakey.plugins.dashboard.threaded_server import ThreadedDashboardServer
 
@@ -91,6 +92,14 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
         runtime.log.hb("restart requested via dashboard — re-execing")
         os.execv(sys.executable, [sys.executable, *sys.argv])
 
+    # Token sits next to the chat history on disk so the dashboard's
+    # data files share a directory and `history_path` overrides naturally
+    # carry the token with them.
+    cfg = ctx.config or {}
+    history_path = cfg.get("history_path", "workspace/data/web_chat.jsonl")
+    token_path = Path(history_path).parent / "dashboard.token"
+    auth_token = load_or_create_token(token_path)
+
     try:
         broadcaster = EventBroadcaster(runtime.events)
         app = create_dashboard_app(
@@ -101,6 +110,7 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
             config_path=Path(config_path) if config_path else None,
             on_restart=on_restart,
             plugin_configs_root=Path(plugin_configs_root),
+            auth_token=auth_token,
         )
         server = ThreadedDashboardServer(app, host=host, port=port)
         server.start()
@@ -111,6 +121,13 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
         channel.attach_server(server)
         runtime.log.hb(
             f"dashboard listening on http://{host}:{server.port}"
+        )
+        # Print the one-click URL with token query so the user can
+        # copy-paste straight into a browser. The browser auto-strips
+        # the token from the address bar after first load (see app.js).
+        runtime.log.hb(
+            f"dashboard URL (one-click): "
+            f"http://{host}:{server.port}/?token={auth_token}"
         )
     except OSError as e:
         runtime.log.runtime_error(

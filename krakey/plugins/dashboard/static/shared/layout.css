@@ -143,6 +143,53 @@ main {
    by shared/bi.js). Inherits surrounding text colour via fill. */
 .bi { vertical-align: -2px; flex-shrink: 0; }
 
+/* Paste-token modal — full-viewport overlay with a centred card. */
+.auth-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.auth-modal.hidden { display: none; }
+.auth-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px 20px;
+  width: 360px;
+  max-width: 90vw;
+  font-size: 12px;
+  color: var(--text);
+}
+.auth-card h3 { margin: 0 0 8px; color: var(--cyan); font-size: 14px; }
+.auth-card p { margin: 0 0 10px; color: var(--text); }
+.auth-card .hint { color: var(--muted); font-size: 11px; margin-top: 8px; }
+.auth-card input {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  box-sizing: border-box;
+  margin-bottom: 8px;
+}
+.auth-card button {
+  padding: 6px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--cyan);
+  color: var(--cyan);
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+}
+
 /* Generic panel primitive — used by multiple views. */
 .panel {
   background: var(--panel);

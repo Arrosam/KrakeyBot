@@ -39,6 +39,24 @@
     <!-- @@view:settings@@ -->
   </main>
 
+  <!-- Paste-token modal: shown by app.js when /api/* returns 401 or
+       a WebSocket closes with code 1008 (no/bad token). Hidden by
+       default; the dashboard URL printed at runtime startup carries
+       the token as ?token=… so most users never see this. -->
+  <div id="auth-modal" class="auth-modal hidden">
+    <div class="auth-card">
+      <h3>Dashboard token required</h3>
+      <p>This dashboard requires a token. Paste it below, or re-open
+        the one-click URL printed in the runtime log when Krakey
+        started.</p>
+      <input type="password" placeholder="dashboard token"
+             autocomplete="off" spellcheck="false">
+      <button>Save and reload</button>
+      <p class="hint">Token is stored in this browser's localStorage
+        for this origin only.</p>
+    </div>
+  </div>
+
   <script src="/static/shared/bi.js"></script>
   <!-- Cytoscape powers the Memory tab's graph browser (pan/zoom/drag).
        Same CDN+version pinning the docs/ arch-graph tool uses, so the

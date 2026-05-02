@@ -14,16 +14,24 @@ import logging
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
+from krakey.plugins.dashboard.auth import ws_check_token
 from krakey.plugins.dashboard.services.web_chat import WebChatService
 
 
 _log = logging.getLogger(__name__)
 
 
-def register(app: FastAPI, *, service: WebChatService) -> None:
+def register(
+    app: FastAPI,
+    *,
+    service: WebChatService,
+    auth_token: str | None = None,
+) -> None:
 
     @app.websocket("/ws/chat")
     async def chat_ws(ws: WebSocket):  # noqa: ANN201
+        if not await ws_check_token(ws, auth_token):
+            return
         await ws.accept()
         history = service.history
         await ws.send_json(

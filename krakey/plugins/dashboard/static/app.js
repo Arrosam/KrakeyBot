@@ -3,6 +3,83 @@
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
+// ============== AUTH (bearer token) ==============
+//
+// The server gates /api/* and /ws/* on a per-installation token. Three
+// places it can come from:
+//   1. ?token=<T> in the URL — captured here on first load, persisted
+//      to localStorage, then stripped from the address bar so it
+//      doesn't leak into the user's browser history / referer.
+//   2. localStorage (after step 1, or the paste-token modal).
+//   3. The paste-token modal — shown when fetch returns 401 or the
+//      events WS closes with code 1008.
+const _TOKEN_KEY = "krakey-dash-token";
+(function captureTokenFromUrl() {
+  const u = new URL(location.href);
+  const t = u.searchParams.get("token");
+  if (t) {
+    try { localStorage.setItem(_TOKEN_KEY, t); } catch (e) { /* private mode */ }
+    u.searchParams.delete("token");
+    history.replaceState({}, "", u.pathname + u.search + u.hash);
+  }
+})();
+
+function _authToken() {
+  try { return localStorage.getItem(_TOKEN_KEY) || ""; }
+  catch (e) { return ""; }
+}
+
+// Wrap fetch to attach the bearer header for same-origin URLs and
+// surface 401s to the paste-token modal. Cross-origin URLs (none
+// today, but safe by default) are passed through untouched so we
+// don't leak the token to other servers.
+const _origFetch = window.fetch.bind(window);
+window.fetch = function (url, opts) {
+  const o = Object.assign({}, opts || {});
+  const headers = new Headers(o.headers || {});
+  const isLocal = typeof url === "string" && url.startsWith("/");
+  const t = _authToken();
+  if (isLocal && t && !headers.has("Authorization")) {
+    headers.set("Authorization", "Bearer " + t);
+  }
+  o.headers = headers;
+  return _origFetch(url, o).then((r) => {
+    if (isLocal && r.status === 401) _showAuthModal();
+    return r;
+  });
+};
+
+// WS URL helper — append ?token=<T> so the server's WS guard accepts.
+function _wsUrl(path) {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const u = new URL(`${proto}//${location.host}${path}`);
+  const t = _authToken();
+  if (t) u.searchParams.set("token", t);
+  return u.toString();
+}
+
+let _authModalShown = false;
+function _showAuthModal() {
+  if (_authModalShown) return;
+  _authModalShown = true;
+  const modal = document.getElementById("auth-modal");
+  if (!modal) return;
+  modal.classList.remove("hidden");
+  const input = modal.querySelector("input");
+  const btn = modal.querySelector("button");
+  if (input) input.focus();
+  function submit() {
+    const v = (input && input.value || "").trim();
+    if (!v) return;
+    try { localStorage.setItem(_TOKEN_KEY, v); } catch (e) { /* */ }
+    location.reload();
+  }
+  if (btn) btn.addEventListener("click", submit, { once: true });
+  if (input) input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") submit();
+  });
+}
+
 // ============== TAB SWITCHING ==============
 
 $$(".tab-btn").forEach((btn) => {
@@ -267,17 +344,19 @@ function handleEvent(e) {
 }
 
 function connectEvents() {
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  eventsWS = new WebSocket(`${proto}//${location.host}/ws/events`);
+  eventsWS = new WebSocket(_wsUrl("/ws/events"));
   eventsWS.onopen = () => {
     eventsWSOpenedAt = Date.now();
     lastHeartbeatTs = 0;  // require a fresh heartbeat post-reconnect
     setStatus();
   };
-  eventsWS.onclose = () => {
+  eventsWS.onclose = (ev) => {
     eventsWSOpenedAt = 0;
     lastHeartbeatTs = 0;
     setStatus();
+    // 1008 = policy violation = bad/missing token. Stop reconnect-
+    // looping and surface the modal so the user can paste a token.
+    if (ev && ev.code === 1008) { _showAuthModal(); return; }
     setTimeout(connectEvents, 2000);
   };
   eventsWS.onerror = setStatus;
@@ -347,12 +426,14 @@ function formatBytes(n) {
 }
 
 function connectChat() {
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  chatWS = new WebSocket(`${proto}//${location.host}/ws/chat`);
+  chatWS = new WebSocket(_wsUrl("/ws/chat"));
   chatWS.onopen = () => { chatMeta.textContent = "connected"; setStatus(); };
-  chatWS.onclose = () => {
+  chatWS.onclose = (ev) => {
     chatMeta.textContent = "disconnected — reconnecting...";
     setStatus();
+    // 1008 → bad/missing token; let the events-WS handler surface
+    // the modal (it'll call _showAuthModal too) and stop looping.
+    if (ev && ev.code === 1008) { _showAuthModal(); return; }
     setTimeout(connectChat, 2000);
   };
   chatWS.onerror = () => { chatMeta.textContent = "error"; setStatus(); };
