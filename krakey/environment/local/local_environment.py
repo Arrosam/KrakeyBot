@@ -45,8 +45,17 @@ class LocalEnvironment:
             stderr=asyncio.subprocess.PIPE,
         )
         try:
+            # Use ``is not None`` so ``stdin=""`` still encodes as
+            # ``b""`` rather than collapsing to ``None``. The earlier
+            # truthy check happened to produce the right observable
+            # behavior (asyncio's ``communicate(input=None)`` with
+            # ``stdin=PIPE`` set up still closes the pipe → child
+            # sees EOF), but the intent was muddled and relied on
+            # an asyncio internal — ``is not None`` makes the
+            # EOF-only-stdin contract explicit.
+            stdin_bytes = stdin.encode() if stdin is not None else None
             out_b, err_b = await asyncio.wait_for(
-                proc.communicate(input=stdin.encode() if stdin else None),
+                proc.communicate(input=stdin_bytes),
                 timeout=timeout,
             )
         except asyncio.TimeoutError:
