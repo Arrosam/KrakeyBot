@@ -86,7 +86,7 @@ def _install_pidfile_cleanup(pidfile: Path) -> None:
 def _has_chat_llm_configured(repo: Path) -> bool:
     """Cheap config peek — true iff `core_purposes.self_thinking` maps
     to a tag that has a binding. Used by the CLI to print a friendly
-    "configure LLM" prompt before starting the runtime in idle mode."""
+    "configure LLM" prompt before starting the runtime in pause mode."""
     cfg_path = repo / "config.yaml"
     if not cfg_path.exists():
         return False
@@ -106,7 +106,7 @@ def _exec_runtime(repo: Path) -> int:
     if not _has_chat_llm_configured(repo):
         print(
             "\nkrakey: no chat LLM configured — runtime will start in "
-            "IDLE mode (no heartbeat).\n"
+            "PAUSE mode (no heartbeat).\n"
             "        Open the dashboard's LLM tab (default "
             "http://127.0.0.1:8765) and add a provider + tag, or run\n"
             "        `krakey onboard` to redo setup. Restart krakey "

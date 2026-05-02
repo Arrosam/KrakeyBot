@@ -1,0 +1,15 @@
+name: cli_exec
+description: >
+  Run a CLI command in a target Environment (``local`` or
+  ``sandbox``) and return ``(exit_code, stdout, stderr)`` to Self as
+  a tool_feedback Stimulus. Self picks the env per call via the
+  ``env`` parameter; the plugin must be allow-listed in
+  ``config.environments.<env>.allowed_plugins`` for every env it
+  should be able to use. No inner LLM — pure scripted dispatch.
+
+config_schema: []
+
+components:
+  - kind: tool
+    factory_module: krakey.plugins.cli_exec.tool
+    factory_attr: build_tool

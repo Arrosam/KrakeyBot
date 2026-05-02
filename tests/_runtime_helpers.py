@@ -41,8 +41,8 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
                               classify_llm: ChatLike | None = None,
                               embedder: AsyncEmbedder | None = None,
                               reranker: Reranker | None = None,
-                              hibernate_min: float = 0.01,
-                              hibernate_max: float = 5.0,
+                              idle_min: float = 0.01,
+                              idle_max: float = 5.0,
                               gm_path: str = ":memory:",
                               kb_dir: str | None = None,
                               skip_bootstrap: bool = True,
@@ -85,7 +85,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     )
     from krakey.models.config import (
         Config, FatigueSection, GraphMemorySection,
-        HibernateSection, KnowledgeBaseSection, LLMParams, LLMSection,
+        IdleSection, KnowledgeBaseSection, LLMParams, LLMSection,
         Provider, SafetySection, SleepSection, TagBinding,
     )
 
@@ -107,7 +107,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
             )},
             core_purposes={"self_thinking": "_test_default"},
         ),
-        hibernate=HibernateSection(min_interval=1, max_interval=60,
+        idle=IdleSection(min_interval=1, max_interval=60,
                                     default_interval=1),
         fatigue=FatigueSection(gm_node_soft_limit=200,
                                 force_sleep_threshold=120,
@@ -184,7 +184,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         llm_clients_by_tag=llm_clients_by_tag,
     )
     runtime = Runtime(
-        deps, hibernate_min=hibernate_min, hibernate_max=hibernate_max,
+        deps, idle_min=idle_min, idle_max=idle_max,
         is_bootstrap_override=False if skip_bootstrap else None,
     )
     # Stash a copy of the resolved test paths + LLM cache so test

@@ -2,7 +2,7 @@
 
 Owns the orchestration of one heartbeat: phase ordering, sleep
 short-circuits, command consumption, the prompt-build / Self-call /
-decision-dispatch / hibernate flow.
+decision-dispatch / idle flow.
 
 Composition over inheritance: takes a ``Runtime`` reference and reads
 state through it (``rt.gm``, ``rt.window``, ``rt.heartbeat_count``,
@@ -34,12 +34,12 @@ from krakey.models.stimulus import Stimulus
 from krakey.prompt.views import SlidingWindowRound
 from krakey.runtime.heartbeat.compact import compact_if_needed
 from krakey.runtime.events.event_types import (
-    DecisionEvent, GMStatsEvent, HeartbeatStartEvent, HibernateEvent,
+    DecisionEvent, GMStatsEvent, HeartbeatStartEvent, IdleEvent,
     NoteEvent, PromptBuiltEvent, SleepDoneEvent, SleepStartEvent,
     StimuliQueuedEvent, ThinkingEvent,
 )
 from krakey.runtime.heartbeat.fatigue import calculate_fatigue
-from krakey.runtime.heartbeat.hibernate import hibernate_with_recall
+from krakey.runtime.heartbeat.idle import idle_with_recall
 from krakey.memory.sleep.sleep_manager import enter_sleep_mode
 from krakey.runtime.commands.commands import (
     CommandAction, handle_command, parse_command,
@@ -150,7 +150,7 @@ class HeartbeatOrchestrator:
             )
             return
         self._phase_schedule_classify()
-        await self._phase_hibernate(parsed, recall_result)
+        await self._phase_idle(parsed, recall_result)
 
     # ---- phases --------------------------------------------------------
 
@@ -392,23 +392,23 @@ class HeartbeatOrchestrator:
             asyncio.create_task(rt.gm.classify_and_link_pending()),
         )
 
-    async def _phase_hibernate(self, parsed, recall_result) -> None:
+    async def _phase_idle(self, parsed, recall_result) -> None:
         rt = self._rt
         if recall_result.uncovered_stimuli:
-            base = rt.config.hibernate.min_interval
+            base = rt.config.idle.min_interval
         else:
-            base = (parsed.hibernate_seconds
-                    or rt.config.hibernate.default_interval)
+            base = (parsed.idle_seconds
+                    or rt.config.idle.default_interval)
         # Bootstrap-mode cadence (DevSpec §12.2) — coordinator returns
         # the bootstrap-fixed value when active, else passes ``base``
         # through unchanged.
-        interval = rt.bootstrap.hibernate_interval(default=base)
-        rt.log.hb(f"hibernate {interval}s")
-        rt.events.publish(HibernateEvent(
+        interval = rt.bootstrap.idle_interval(default=base)
+        rt.log.hb(f"idle {interval}s")
+        rt.events.publish(IdleEvent(
             heartbeat_id=rt.heartbeat_count, interval_seconds=interval,
         ))
         rt._recall = self.new_recall()
-        await hibernate_with_recall(
+        await idle_with_recall(
             interval, rt.buffer, rt._recall,
             min_interval=rt._min, max_interval=rt._max,
         )

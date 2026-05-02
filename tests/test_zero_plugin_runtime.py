@@ -59,7 +59,7 @@ async def test_runtime_heartbeat_survives_all_modifiers_unregistered(tmp_path):
     breathe in vacuum.
     """
     self_llm = ScriptedLLM([
-        "[THINKING]\nQuiet beat.\n[DECISION]\nNo action.\n[HIBERNATE]\n1",
+        "[THINKING]\nQuiet beat.\n[DECISION]\nNo action.\n[IDLE]\n1",
     ])
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
@@ -81,7 +81,7 @@ async def test_runtime_heartbeat_with_no_tools_emits_unknown_tool(tmp_path):
         '[THINKING]\nlet me reply.\n'
         '[DECISION]\nGreet.\n'
         '<tool_call>\n{"name": "nonexistent_tool", "arguments": {}}\n</tool_call>\n'
-        '[HIBERNATE]\n1'
+        '[IDLE]\n1'
     ])
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),

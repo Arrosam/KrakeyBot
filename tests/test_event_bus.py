@@ -85,7 +85,7 @@ async def test_runtime_publishes_phase_events():
     received = []
     bus.subscribe(received.append)
 
-    self_llm = ScriptedLLM(["[DECISION]\nNo action.\n[HIBERNATE]\n1"])
+    self_llm = ScriptedLLM(["[DECISION]\nNo action.\n[IDLE]\n1"])
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
     )
@@ -94,7 +94,7 @@ async def test_runtime_publishes_phase_events():
     await runtime.close()
 
     kinds = {e.kind for e in received}
-    assert {"heartbeat_start", "gm_stats", "decision", "hibernate"} <= kinds
+    assert {"heartbeat_start", "gm_stats", "decision", "idle"} <= kinds
 
 
 def test_event_kind_property_for_serialization():

@@ -32,7 +32,7 @@ Most AI assistants are vending machines: insert a question, get an
 answer, machine goes back to sleep. Krakey runs on a **heartbeat**.
 Every few seconds it wakes up, looks at what's new, recalls what
 it knows, decides what to do, and either acts, takes a note, or
-hibernates a little longer. It's always there, always ticking,
+idles a little longer. It's always there, always ticking,
 never waiting for you to push a button.
 
 That tiny shift changes everything downstream.
@@ -130,7 +130,7 @@ You'll see Krakey's heartbeat scrolling by:
 ```
 [HB #1] stimuli=0 (thinking...)
 [HB #1] decision: (none)
-[HB #1] hibernate 30s
+[HB #1] idle 30s
 ```
 
 That's it. Krakey is alive.

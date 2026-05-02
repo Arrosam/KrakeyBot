@@ -167,7 +167,7 @@ I should reply and then search.
 </tool_call>
 [NOTE]
 will check in next beat
-[HIBERNATE]
+[IDLE]
 30
 """
     calls = parse_tool_calls(text)

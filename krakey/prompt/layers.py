@@ -28,7 +28,7 @@ Fields:
 - name (str, required): pick a tool name from [CAPABILITIES]
 - arguments (object, optional): the tool's parameters; omit = {} (empty)
 - adrenalin (bool, optional): urgency flag; omit = false. Set true only
-  when you want this action's feedback to interrupt the next hibernate.
+  when you want this action's feedback to interrupt the next idle.
 
 Heartbeats with no tool to call (e.g. pure thinking or writing [NOTE])
 just omit the tool_call block. tool_call blocks can appear inside
@@ -39,5 +39,5 @@ A parse failure in one tag does not affect the others."""
 HEARTBEAT_QUESTION = (
     "# [HEARTBEAT]\n"
     "What do you notice? What matters? What do you do?\n"
-    "Respond using [THINKING] / [DECISION] / [NOTE] / [HIBERNATE]."
+    "Respond using [THINKING] / [DECISION] / [NOTE] / [IDLE]."
 )

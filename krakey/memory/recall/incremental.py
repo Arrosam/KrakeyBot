@@ -6,7 +6,7 @@ What lives here:
   * ``RecallLike``     — Protocol the runtime types ``self._recall``
                          against. Captures the duck-typed surface
                          consumed by Runtime + HeartbeatOrchestrator
-                         + hibernate (``processed_stimuli`` attr,
+                         + idle (``processed_stimuli`` attr,
                          ``add_stimuli``, ``finalize``). Any plugin
                          that implements this Protocol can claim the
                          ``recall_anchor`` Modifier role.
@@ -52,7 +52,7 @@ class RecallLike(Protocol):
 
     A read-only ``processed_stimuli`` list is exposed because the
     heartbeat's drain phase uses it to dedup stimuli already fed
-    into recall during the prior hibernate's preheat pass.
+    into recall during the prior idle's preheat pass.
     """
     processed_stimuli: list[Any]
 

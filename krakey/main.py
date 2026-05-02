@@ -58,7 +58,7 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
 
     # Core purposes (Self / compact / classifier ...). Self is what
     # makes the heartbeat fire; if it isn't bound the runtime starts
-    # in **idle mode** — channels run (so the dashboard is reachable
+    # in **pause mode** — channels run (so the dashboard is reachable
     # for the user to fix providers), but the heartbeat doesn't tick
     # until the user restarts after configuring. Surfacing this as a
     # crash on startup (the old behavior) was hostile to first-run
@@ -71,7 +71,7 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
     )
     if compact_llm is None:
         # Sleep + classify still need *something* callable; reuse Self
-        # if available, else leave None — the idle-mode runtime never
+        # if available, else leave None — the pause-mode runtime never
         # invokes either path.
         compact_llm = self_llm
 

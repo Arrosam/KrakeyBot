@@ -6,8 +6,8 @@ active it changes three behaviors:
 
   1. **Prompt injection**     — BOOTSTRAP_PROMPT (incl. GENESIS text)
                                  prepends every Self prompt.
-  2. **Hibernate cadence**    — fixed 10s heartbeat regardless of
-                                 Self's [HIBERNATE] tag.
+  2. **Idle cadence**    — fixed 10s heartbeat regardless of
+                                 Self's [IDLE] tag.
   3. **NOTE-signal parsing**  — Self's [NOTE] is scanned for
                                  ``self_model_update`` JSON and the
                                  ``bootstrap complete`` marker.
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 # Bootstrap-mode heartbeat cadence (DevSpec §12.2). Constant; kept
 # here so a hypothetical "slower bootstrap" never has to touch
 # Runtime to override it — a future BootstrapCoordinator subclass
-# can simply override ``hibernate_interval``.
+# can simply override ``idle_interval``.
 _BOOTSTRAP_HEARTBEAT_SECONDS = 10
 
 
@@ -76,7 +76,7 @@ class BootstrapCoordinator:
         """True when the prompt builder should prepend BOOTSTRAP_PROMPT."""
         return self._active
 
-    def hibernate_interval(self, default: int) -> int:
+    def idle_interval(self, default: int) -> int:
         """Return the bootstrap-cadence override when active, else
         ``default`` (passed in so the caller stays in control of what
         the non-bootstrap fallback is)."""

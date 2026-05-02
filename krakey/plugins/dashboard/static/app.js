@@ -274,7 +274,7 @@ function handleEvent(e) {
       lastStats.last_sleep = new Date().toISOString();
       setStatus();
       break;
-    case "hibernate":
+    case "idle":
       // could render but it's noisy; skip in UI
       break;
   }
@@ -926,7 +926,7 @@ let cfgState = null;
 // Defaults to seed missing sections so toggles/numbers don't read as
 // "unset" and mislead the user into thinking the runtime is off.
 const SECTION_DEFAULTS = {
-  hibernate: { min_interval: 2, max_interval: 300, default_interval: 10 },
+  idle: { min_interval: 2, max_interval: 300, default_interval: 10 },
   fatigue: { gm_node_soft_limit: 1000, force_sleep_threshold: 1200, thresholds: {} },
   // `sliding_window` section removed — history budget is now derived
   // from Self role's max_input_tokens × history_token_fraction (see
@@ -951,9 +951,9 @@ const SECTION_DEFAULTS = {
 
 // Hover tooltip text per "section.field" key.
 const HELP = {
-  "hibernate.min_interval": "Minimum hibernate interval (seconds). Self uses [HIBERNATE] N to control each beat, but it will never go below this value.",
-  "hibernate.max_interval": "Maximum hibernate interval (seconds). Even if Self requests a longer hibernate, it will not exceed this value.",
-  "hibernate.default_interval": "Default hibernate interval (seconds) when Self does not specify one.",
+  "idle.min_interval": "Minimum idle interval (seconds). Self uses [IDLE] N to control each beat, but it will never go below this value.",
+  "idle.max_interval": "Maximum idle interval (seconds). Even if Self requests a longer idle, it will not exceed this value.",
+  "idle.default_interval": "Default idle interval (seconds) when Self does not specify one.",
   "fatigue.gm_node_soft_limit": "Soft upper bound on GM nodes. fatigue% = nodes / soft_limit * 100. Self uses fatigue% to decide whether to sleep proactively.",
   "fatigue.force_sleep_threshold": "Force-sleep threshold (fatigue%). Above this, runtime enters sleep without waiting for Self's consent.",
   "graph_memory.db_path": "Path to the GM SQLite file.",
@@ -973,7 +973,7 @@ const HELP = {
   "role.provider": "Pick a provider for this role.",
   "role.model": "Pick a model under the chosen provider.",
   "channel.enabled": "Whether this channel is enabled.",
-  "channel.default_adrenalin": "Whether stimuli pushed by this channel default to adrenalin=true (interrupting hibernate).",
+  "channel.default_adrenalin": "Whether stimuli pushed by this channel default to adrenalin=true (interrupting idle).",
   "tool.enabled": "Whether to register this tool for Hypothalamus to use.",
   "tool.max_results": "Maximum number of search results.",
   "tool.sandbox_dir": "Working directory for code / file operations.",
@@ -996,7 +996,7 @@ const HELP = {
 
 // Fixed numeric/string dataclass schemas — drives generic renderer.
 const SCHEMAS = {
-  hibernate: [
+  idle: [
     ["min_interval", "number"],
     ["max_interval", "number"],
     ["default_interval", "number"],
@@ -1107,9 +1107,9 @@ function renderSettingsForm() {
 
   // Generic sections (each seeded from SECTION_DEFAULTS so missing fields
   // pre-populate to runtime defaults instead of looking "off"/empty)
-  ensureSection("hibernate");
-  settingsForm.appendChild(renderGenericSection("hibernate", "Hibernate",
-    cfgState.hibernate, SCHEMAS.hibernate));
+  ensureSection("idle");
+  settingsForm.appendChild(renderGenericSection("idle", "Idle",
+    cfgState.idle, SCHEMAS.idle));
 
   ensureSection("fatigue");
   const fatSec = renderGenericSection("fatigue", "Fatigue",
@@ -1180,7 +1180,7 @@ function ensureSection(key) {
 const SECTION_ICONS = {
   "LLM": "cpu",
   "Plugins": "gear",
-  "Hibernate": "moon",
+  "Idle": "moon",
   "Fatigue": "bar-chart",
   "Graph Memory": "geo-alt",
   "Knowledge Base": "book",
