@@ -556,6 +556,11 @@ let currentMemView = "graph";
 // when the user switches sub-views (otherwise its event listeners +
 // internal canvas leak across re-renders).
 let _gmCy = null;
+// Last view that was actually rendered into #mem-content. Switching
+// to the memory tab while we're already showing this view is a no-op
+// — fetches + cytoscape rebuild are both expensive (especially with
+// the no-truncation node count).
+let _lastRenderedMemView = null;
 
 $$(".mem-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -572,8 +577,10 @@ function _disposeMemView() {
   }
 }
 
-async function loadMemory(view) {
+async function loadMemory(view, opts) {
+  const force = !!(opts && opts.force);
   const target = $("#mem-content");
+  if (!force && view === _lastRenderedMemView) return;
   _disposeMemView();
   target.classList.toggle("graph-mode", view === "graph");
   target.textContent = "loading...";
@@ -587,8 +594,10 @@ async function loadMemory(view) {
         btn.addEventListener("click", () => loadKBEntries(btn.dataset.kbid));
       });
     }
+    _lastRenderedMemView = view;
   } catch (e) {
     target.textContent = "error: " + e;
+    _lastRenderedMemView = null;
   }
 }
 
@@ -636,9 +645,13 @@ async function renderGraph(target) {
   wrap.appendChild(inspect);
   target.appendChild(wrap);
 
+  // Render the full GM — no truncation. The server's auth gate keeps
+  // these big queries off the open Internet; a million is a generous
+  // ceiling that's still finite enough that a runaway integer
+  // overflow in the route can't happen.
   const [nodesRes, edgesRes, statsRes] = await Promise.all([
-    fetch("/api/gm/nodes?limit=500").then((r) => r.json()),
-    fetch("/api/gm/edges?limit=1000").then((r) => r.json()),
+    fetch("/api/gm/nodes?limit=1000000").then((r) => r.json()),
+    fetch("/api/gm/edges?limit=1000000").then((r) => r.json()),
     fetch("/api/gm/stats").then((r) => r.json()),
   ]);
   _renderGraphStats(stats, statsRes);
