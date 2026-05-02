@@ -118,10 +118,6 @@ header {
 .status-bar .conn { display: inline-flex; align-items: center; gap: 3px; }
 .status-bar .conn.ok { color: var(--green); }
 .status-bar .conn.off { color: var(--red); }
-/* Tertiary state: WS is connected but no useful traffic has flowed
-   recently (e.g. no LLM configured so the runtime isn't heartbeating).
-   Distinguish from a hard disconnect — different actionable signal. */
-.status-bar .conn.stale { color: var(--yellow); }
 
 main {
   flex: 1;
