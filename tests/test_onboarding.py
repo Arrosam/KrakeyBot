@@ -657,6 +657,50 @@ def test_module_exports_run_wizard():
     assert callable(imported)
 
 
+def test_wizard_populates_provider_models_list(tmp_path):
+    """The model name the user types during onboarding must end up
+    in the provider's `models:` list (not just baked into the tag's
+    `provider/model` string). Otherwise the dashboard Settings page
+    renders the provider with '(no models)' even though the wizard
+    asked the user for one."""
+    cfg_path = tmp_path / "config.yaml"
+    catalogue = _fake_catalogue("dashboard")
+    answers = [
+        "1",                              # chat type: openai_compatible
+        "OpenAI",                         # provider label
+        "https://api.example.com",        # base url
+        "sk-test",                        # api key
+        "gpt-4o-mini",                    # model name
+        "n",                              # skip embedding
+        "n",                              # skip reranker
+        "done",                           # plugin picker
+        "",                               # dashboard port default
+    ]
+    _, out = _capture_output()
+    run_wizard(
+        config_path=cfg_path,
+        backup_dir=str(tmp_path / "backups"),
+        plugin_configs_root=str(tmp_path / "plugins"),
+        input_fn=_stub_inputs(answers),
+        output_fn=out,
+        list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
+        list_models_fn=_no_models,
+        bench_fn=_skip_bench,
+    )
+    cfg = load_config(cfg_path)
+    prov = cfg.llm.providers["OpenAI"]
+    # The model the user typed must be present in the provider's
+    # models list with the right capability — that's what the
+    # dashboard's settings UI reads from.
+    names = [m.name for m in prov.models]
+    assert "gpt-4o-mini" in names
+    entry = next(m for m in prov.models if m.name == "gpt-4o-mini")
+    assert "chat" in entry.capabilities
+    # And the tag still references the same model.
+    assert cfg.llm.tags["self_main"].provider == "OpenAI/gpt-4o-mini"
+
+
 def test_wizard_writes_dashboard_port_to_per_plugin_config(tmp_path):
     """When dashboard is selected, the wizard writes the chosen port
     to ``<plugin_configs_root>/dashboard/config.yaml`` — the same

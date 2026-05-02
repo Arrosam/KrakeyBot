@@ -167,7 +167,22 @@
   grid-template-columns: 1fr 1fr auto;
   gap: 6px;
   margin-bottom: 4px;
-  align-items: start;
+  /* Centre the delete X with the surrounding inputs/chip-picker —
+     start-alignment was leaving it floating high while the
+     cap-multi container expanded below it. */
+  align-items: center;
+}
+/* Square delete button on each model row — visually balances the
+   inputs it sits next to (the default .btn-mini is too narrow). */
+.model-row > .btn-mini.danger {
+  min-width: 28px;
+  height: 26px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .cap-multi {

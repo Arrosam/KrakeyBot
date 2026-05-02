@@ -42,6 +42,7 @@ from krakey.models.config import (
     TagBinding,
     dump_config,
 )
+from krakey.models.config.llm import ModelEntry
 from krakey.models.config_backup import backup_config
 from krakey.onboarding import _ui
 from krakey.plugin_system.catalogue import list_available_plugins
@@ -739,6 +740,23 @@ def _ask_bench(
     return rec
 
 
+def _ensure_model_entry(provider: Provider, model_name: str, capability: str) -> None:
+    """Add a ``ModelEntry`` to ``provider.models`` for ``model_name``,
+    or merge ``capability`` into an existing entry. Without this the
+    Settings page renders the provider with "(no models)" because the
+    model name only ever lived inside the tag's ``provider/model``
+    string — the dashboard's models picker reads from
+    ``Provider.models``."""
+    if not model_name:
+        return
+    for m in provider.models:
+        if m.name == model_name:
+            if capability not in m.capabilities:
+                m.capabilities.append(capability)
+            return
+    provider.models.append(ModelEntry(name=model_name, capabilities=[capability]))
+
+
 def _build_config(
     chat: tuple[str, Provider, str] | None,
     embed: tuple[str, Provider, str] | None,
@@ -752,6 +770,7 @@ def _build_config(
     if chat is not None:
         chat_name, chat_provider, chat_model = chat
         providers[chat_name] = chat_provider
+        _ensure_model_entry(chat_provider, chat_model, "chat")
         tags["self_main"] = TagBinding(
             provider=f"{chat_name}/{chat_model}",
             params=LLMParams(),
@@ -766,6 +785,7 @@ def _build_config(
         emb_name, emb_provider, emb_model = embed
         if emb_name not in providers:
             providers[emb_name] = emb_provider
+        _ensure_model_entry(providers[emb_name], emb_model, "embedding")
         tags["embed"] = TagBinding(
             provider=f"{emb_name}/{emb_model}",
             params=LLMParams(),
@@ -776,6 +796,7 @@ def _build_config(
         rer_name, rer_provider, rer_model = rerank_cfg
         if rer_name not in providers:
             providers[rer_name] = rer_provider
+        _ensure_model_entry(providers[rer_name], rer_model, "rerank")
         tags["rerank"] = TagBinding(
             provider=f"{rer_name}/{rer_model}",
             params=LLMParams(),
