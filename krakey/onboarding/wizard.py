@@ -106,6 +106,7 @@ def run_wizard(
     *,
     config_path: Path | str = "config.yaml",
     backup_dir: str = "workspace/backups",
+    plugin_configs_root: Path | str = "workspace/plugins",
     input_fn: InputFn = input,
     output_fn: OutputFn = print,
     list_plugins_fn: ListPluginsFn = list_available_plugins,
@@ -117,6 +118,12 @@ def run_wizard(
 
     If the user declines at the final confirm prompt, no file is
     written and the existing config.yaml (if any) is left untouched.
+
+    ``plugin_configs_root`` is where per-plugin yaml files live (the
+    dashboard's port is written to ``<root>/dashboard/config.yaml`` —
+    same path the dashboard reads at runtime + edits via its Settings
+    page). Tests inject a tmp_path so they don't clobber the real
+    workspace dir.
     """
     cfg_path = Path(config_path)
     verify = verify_fn or _default_verify
@@ -145,6 +152,14 @@ def run_wizard(
             )
             plugins = ["dashboard"] + plugins
 
+    # Per-plugin config: ask for the dashboard's listening port when
+    # dashboard is enabled. Persisted after the central config write
+    # below so a wizard run is the single point where both files land.
+    dashboard_port: int | None = None
+    if "dashboard" in plugins:
+        _section(output_fn, "Dashboard port")
+        dashboard_port = _ask_dashboard_port(input_fn, output_fn)
+
     gm_soft_limit = bench(input_fn, output_fn)
 
     cfg = _build_config(chat, embed, rerank_cfg, plugins, gm_soft_limit)
@@ -160,6 +175,15 @@ def run_wizard(
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     cfg_path.write_text(dump_config(cfg), encoding="utf-8")
     output_fn(_ui.green(f"  [ok] wrote {cfg_path}"))
+
+    if dashboard_port is not None:
+        from krakey.plugin_system.config import FilePluginConfigStore
+        store = FilePluginConfigStore(plugin_configs_root)
+        existing = store.read("dashboard")
+        existing["port"] = dashboard_port
+        written_path = store.write("dashboard", existing)
+        output_fn(_ui.green(f"  [ok] wrote {written_path}"))
+
     return cfg_path
 
 
@@ -774,6 +798,31 @@ def _prompt(input_fn: InputFn, label: str, *, default: str = "") -> str:
     suffix = f" [{default}]" if default else ""
     raw = input_fn(f"{label}{suffix}: ").strip()
     return raw or default
+
+
+def _ask_dashboard_port(
+    input_fn: InputFn, output_fn: OutputFn, *, default: int = 8765,
+) -> int:
+    """Prompt for the dashboard's listening port.
+
+    Blank input → ``default``. Re-prompts on non-int / out-of-range
+    so a typo doesn't end up in the config file. The dashboard binds
+    127.0.0.1 by default, so any free port 1–65535 is fine; the
+    common defaults clash with nothing typical on Windows.
+    """
+    while True:
+        raw = _prompt(
+            input_fn, "Dashboard port", default=str(default),
+        ).strip()
+        try:
+            port = int(raw)
+        except ValueError:
+            output_fn(f"  ? port must be an integer (got {raw!r})")
+            continue
+        if not 1 <= port <= 65535:
+            output_fn(f"  ? port out of range 1-65535 (got {port})")
+            continue
+        return port
 
 
 def _prompt_yes_no(
