@@ -1700,7 +1700,10 @@ let modifierConfigEdits = {};
 // panel. Default-collapsed so the section stays scannable; the user
 // expands a row to edit its config or LLM-purpose bindings. Survives
 // renderSettingsForm() rebuilds (the Set is module-scoped).
-let pluginExpanded = new Set();
+// Seeded with "dashboard" so the running dashboard's host/port/
+// history_path are visible at first paint — this IS the dashboard's
+// own settings page, so its own row is the natural entry point.
+let pluginExpanded = new Set(["dashboard"]);
 
 async function loadAvailableModifiers() {
   try {
