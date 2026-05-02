@@ -501,7 +501,11 @@ chatForm.addEventListener("submit", (ev) => {
 
 // ============== MEMORY ==============
 
-let currentMemView = "stats";
+let currentMemView = "graph";
+// Hold onto the active cytoscape instance so we can destroy it cleanly
+// when the user switches sub-views (otherwise its event listeners +
+// internal canvas leak across re-renders).
+let _gmCy = null;
 
 $$(".mem-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -511,19 +515,21 @@ $$(".mem-btn").forEach((btn) => {
   });
 });
 
+function _disposeMemView() {
+  if (_gmCy) {
+    try { _gmCy.destroy(); } catch (e) { /* already gone */ }
+    _gmCy = null;
+  }
+}
+
 async function loadMemory(view) {
   const target = $("#mem-content");
+  _disposeMemView();
+  target.classList.toggle("graph-mode", view === "graph");
   target.textContent = "loading...";
   try {
-    if (view === "stats") {
-      const r = await fetch("/api/gm/stats").then((r) => r.json());
-      target.innerHTML = renderStats(r);
-    } else if (view === "nodes") {
-      const r = await fetch("/api/gm/nodes?limit=500").then((r) => r.json());
-      target.innerHTML = renderNodes(r);
-    } else if (view === "edges") {
-      const r = await fetch("/api/gm/edges?limit=500").then((r) => r.json());
-      target.innerHTML = renderEdges(r);
+    if (view === "graph") {
+      await renderGraph(target);
     } else if (view === "kbs") {
       const r = await fetch("/api/kbs").then((r) => r.json());
       target.innerHTML = renderKBs(r);
@@ -542,46 +548,235 @@ function escapeHtml(s) {
   }[c]));
 }
 
-function renderStats(s) {
-  const cats = Object.entries(s.by_category || {})
-    .map(([k, v]) => `<span class="cat-${k}">${k}=${v}</span>`).join("&nbsp;&nbsp;");
-  const srcs = Object.entries(s.by_source || {})
-    .map(([k, v]) => `${k}=${v}`).join("&nbsp;&nbsp;");
-  return `<h3>Graph Memory Stats</h3>
-    <p>Total: <b>${s.total_nodes}</b> nodes, <b>${s.total_edges}</b> edges</p>
-    <p>By category: ${cats}</p>
-    <p>By source: ${srcs}</p>`;
+// ----- GM Graph view (cytoscape) -----
+
+// Map gm category → fill colour, mirroring the cat-* classes in
+// memory/view.css. Pre-resolved hex so we don't have to read computed
+// CSS vars per-node.
+const _CAT_COLORS = {
+  FACT: "#7ec77e",
+  RELATION: "#c585c5",
+  KNOWLEDGE: "#6cd5d5",
+  TARGET: "#e8c060",
+  FOCUS: "#d27575",
+};
+const _CAT_DEFAULT = "#6b7280";
+
+async function renderGraph(target) {
+  // Build the shell first so the canvas + inspector + stats overlay
+  // exist before cytoscape mounts. _disposeMemView() above already
+  // tore down any previous cytoscape instance.
+  target.innerHTML = "";
+  const wrap = document.createElement("div");
+  wrap.className = "gm-graph-wrap";
+  const canvas = document.createElement("div");
+  canvas.id = "gm-graph";
+  const hint = document.createElement("div");
+  hint.className = "gm-graph-hint";
+  hint.textContent = "drag to pan · scroll to zoom · drag a node to move it";
+  const stats = document.createElement("div");
+  stats.className = "gm-graph-stats";
+  stats.innerHTML = "<i>loading stats…</i>";
+  canvas.appendChild(hint);
+  canvas.appendChild(stats);
+  const inspect = document.createElement("div");
+  inspect.className = "gm-graph-inspect";
+  inspect.innerHTML = "<h4>Inspector</h4><p style='color:var(--muted)'>Click a node or edge.</p>";
+  wrap.appendChild(canvas);
+  wrap.appendChild(inspect);
+  target.appendChild(wrap);
+
+  const [nodesRes, edgesRes, statsRes] = await Promise.all([
+    fetch("/api/gm/nodes?limit=500").then((r) => r.json()),
+    fetch("/api/gm/edges?limit=1000").then((r) => r.json()),
+    fetch("/api/gm/stats").then((r) => r.json()),
+  ]);
+  _renderGraphStats(stats, statsRes);
+
+  if (typeof cytoscape === "undefined") {
+    canvas.removeChild(hint);
+    canvas.removeChild(stats);
+    canvas.innerHTML =
+      "<p style='padding:12px;color:var(--muted)'>" +
+      "graph library failed to load (CDN blocked?). Refresh the " +
+      "page when you have connectivity, or switch to KBs." +
+      "</p>";
+    return;
+  }
+  if (!nodesRes.nodes.length) {
+    canvas.removeChild(hint);
+    canvas.removeChild(stats);
+    canvas.innerHTML =
+      "<p style='padding:12px;color:var(--muted)'>(no nodes — GM is empty)</p>";
+    return;
+  }
+
+  // Cytoscape needs name-based ids since edges are name triples (see
+  // gm.list_edges_named). Drop edges whose endpoints we didn't fetch
+  // (limit cap can leave dangling references).
+  const cyNodes = nodesRes.nodes.map((n) => ({
+    data: {
+      id: n.name,
+      label: n.name,
+      raw: n,
+      color: _CAT_COLORS[n.category] || _CAT_DEFAULT,
+      size: 16 + Math.min(20, Math.max(0, (n.importance || 0)) * 2),
+    },
+  }));
+  const known = new Set(cyNodes.map((n) => n.data.id));
+  const cyEdges = edgesRes.edges
+    .filter((e) => known.has(e.source) && known.has(e.target))
+    .map((e, i) => ({
+      data: {
+        id: `e${i}`,
+        source: e.source,
+        target: e.target,
+        label: e.predicate || "",
+        raw: e,
+      },
+    }));
+
+  _gmCy = cytoscape({
+    container: canvas,
+    elements: { nodes: cyNodes, edges: cyEdges },
+    minZoom: 0.1,
+    maxZoom: 4,
+    wheelSensitivity: 0.3,
+    style: [
+      {
+        selector: "node",
+        style: {
+          "background-color": "data(color)",
+          label: "data(label)",
+          color: "#d8dee9",
+          "font-size": 9,
+          "text-valign": "center",
+          "text-halign": "center",
+          "text-wrap": "ellipsis",
+          "text-max-width": 80,
+          "text-outline-color": "#0d0f12",
+          "text-outline-width": 2,
+          width: "data(size)",
+          height: "data(size)",
+          "border-width": 1,
+          "border-color": "#262c34",
+        },
+      },
+      {
+        selector: "node:selected",
+        style: { "border-color": "#6cd5d5", "border-width": 2 },
+      },
+      {
+        selector: "edge",
+        style: {
+          width: 1,
+          "line-color": "#3a4250",
+          "target-arrow-color": "#3a4250",
+          "target-arrow-shape": "triangle",
+          "curve-style": "bezier",
+          label: "data(label)",
+          "font-size": 8,
+          color: "#6b7280",
+          "text-rotation": "autorotate",
+          "text-background-color": "#0d0f12",
+          "text-background-opacity": 0.6,
+          "text-background-padding": 1,
+        },
+      },
+      {
+        selector: "edge:selected",
+        style: { "line-color": "#6cd5d5", "target-arrow-color": "#6cd5d5" },
+      },
+    ],
+    layout: {
+      name: "cose",
+      animate: false,
+      idealEdgeLength: 80,
+      nodeRepulsion: 8000,
+      gravity: 0.25,
+      numIter: 1500,
+    },
+  });
+
+  _gmCy.on("tap", "node", (ev) => _showNodeInspect(inspect, ev.target.data("raw")));
+  _gmCy.on("tap", "edge", (ev) => _showEdgeInspect(inspect, ev.target.data("raw")));
+  _gmCy.on("tap", (ev) => {
+    if (ev.target === _gmCy) _showInspectEmpty(inspect);
+  });
 }
 
-function renderNodes(r) {
-  if (!r.nodes.length) return "<p>no nodes</p>";
-  const rows = r.nodes.map((n) => {
-    const cls = n.classified ? "✓" : "";
-    return `<tr>
-      <td>${n.id}</td>
-      <td><span class="cat-${n.category}">${n.category}</span></td>
-      <td>${n.source_type}</td>
-      <td>${n.importance.toFixed(1)}</td>
-      <td>${escapeHtml(n.name)}</td>
-      <td class="muted">${escapeHtml((n.description || "").slice(0, 80))}</td>
-    </tr>`;
-  }).join("");
-  return `<h3>${r.count} nodes</h3>
-    <table class="mem-table">
-      <thead><tr><th>id</th><th>cat</th><th>src</th><th>imp</th><th>name</th><th>desc</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
+function _renderGraphStats(host, s) {
+  host.innerHTML = "";
+  const total = document.createElement("div");
+  total.className = "row";
+  total.innerHTML =
+    `<span class="label">total</span>` +
+    `<span><b>${s.total_nodes ?? 0}</b> nodes · ` +
+    `<b>${s.total_edges ?? 0}</b> edges</span>`;
+  host.appendChild(total);
+  const cats = s.by_category || {};
+  if (Object.keys(cats).length) {
+    const catsRow = document.createElement("div");
+    catsRow.className = "cats";
+    for (const [k, v] of Object.entries(cats)) {
+      const span = document.createElement("span");
+      span.className = "cat-" + k;
+      span.textContent = `${k}=${v}`;
+      catsRow.appendChild(span);
+    }
+    host.appendChild(catsRow);
+  }
 }
 
-function renderEdges(r) {
-  if (!r.edges.length) return "<p>no edges</p>";
-  const rows = r.edges.map((e) => `<tr>
-    <td>${escapeHtml(e.source)}</td>
-    <td><b>${e.predicate}</b></td>
-    <td>${escapeHtml(e.target)}</td>
-  </tr>`).join("");
-  return `<h3>${r.count} edges</h3>
-    <table class="mem-table"><tbody>${rows}</tbody></table>`;
+// Inspector helpers — build via DOM + textContent so node/edge data
+// (which can include LLM-generated text) can't inject markup.
+function _kvList(host, pairs) {
+  host.innerHTML = "";
+  const h4 = document.createElement("h4");
+  h4.textContent = pairs._title || "Detail";
+  host.appendChild(h4);
+  const dl = document.createElement("dl");
+  for (const [k, v] of pairs._rows) {
+    const dt = document.createElement("dt");
+    dt.textContent = k;
+    const dd = document.createElement("dd");
+    dd.textContent = v == null ? "—" : String(v);
+    dl.appendChild(dt);
+    dl.appendChild(dd);
+  }
+  host.appendChild(dl);
+}
+
+function _showNodeInspect(host, n) {
+  if (!n) return;
+  _kvList(host, {
+    _title: "Node",
+    _rows: [
+      ["id", n.id],
+      ["name", n.name],
+      ["category", n.category],
+      ["source", n.source_type],
+      ["importance", n.importance != null ? Number(n.importance).toFixed(2) : "—"],
+      ["description", (n.description || "").slice(0, 400)],
+    ],
+  });
+}
+
+function _showEdgeInspect(host, e) {
+  if (!e) return;
+  _kvList(host, {
+    _title: "Edge",
+    _rows: [
+      ["source", e.source],
+      ["predicate", e.predicate],
+      ["target", e.target],
+    ],
+  });
+}
+
+function _showInspectEmpty(host) {
+  host.innerHTML =
+    "<h4>Inspector</h4><p style='color:var(--muted)'>Click a node or edge.</p>";
 }
 
 function renderKBs(r) {
@@ -612,7 +807,7 @@ async function loadKBEntries(kbid) {
   }
 }
 
-loadMemory("stats");
+loadMemory("graph");
 
 // ============== PROMPTS ==============
 

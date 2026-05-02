@@ -66,3 +66,77 @@ table.mem-table th { color: var(--cyan); font-weight: normal; }
   font-size: 11px;
 }
 .kb-entry .tags { color: var(--magenta); margin-right: 6px; }
+
+/* Graph browser: cytoscape canvas on the left, inspector on the right.
+   The wrap fills #mem-content; we kill its padding for this view so
+   the canvas can run edge-to-edge. The inspector takes a fixed-ish
+   column on the right and shows whatever node/edge the user clicked. */
+#mem-content.graph-mode { padding: 0; }
+.gm-graph-wrap {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  height: 100%;
+  min-height: 400px;
+}
+#gm-graph {
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  /* Cytoscape needs a sized container; the grid + min-height above
+     handles width/height, but explicit `position: relative` lets
+     cytoscape's internal absolute-positioned canvas anchor. */
+  position: relative;
+}
+.gm-graph-inspect {
+  padding: 10px 12px;
+  font-size: 11px;
+  overflow: auto;
+  background: var(--panel-2);
+}
+.gm-graph-inspect h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--cyan);
+}
+.gm-graph-inspect dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 2px 8px;
+}
+.gm-graph-inspect dt { color: var(--muted); }
+.gm-graph-inspect dd {
+  margin: 0;
+  word-break: break-word;
+}
+.gm-graph-hint {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  color: var(--muted);
+  font-size: 10px;
+  pointer-events: none;
+  background: rgba(20, 24, 29, 0.6);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+/* Stats overlay: pinned to the graph canvas bottom-left so the user
+   gets node/edge counts + category breakdown without leaving the
+   graph view. Translucent panel that doesn't intercept mouse so the
+   user can still drag through it. */
+.gm-graph-stats {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  pointer-events: none;
+  font-size: 10px;
+  color: var(--text);
+  background: rgba(20, 24, 29, 0.7);
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  border-radius: 4px;
+  max-width: 240px;
+  line-height: 1.4;
+}
+.gm-graph-stats .row { display: flex; gap: 6px; }
+.gm-graph-stats .label { color: var(--muted); }
+.gm-graph-stats .cats { margin-top: 3px; display: flex; flex-wrap: wrap; gap: 6px; }
