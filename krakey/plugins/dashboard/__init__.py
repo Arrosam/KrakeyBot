@@ -122,13 +122,24 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
         runtime.log.hb(
             f"dashboard listening on http://{host}:{server.port}"
         )
-        # Print the one-click URL with token query so the user can
-        # copy-paste straight into a browser. The browser auto-strips
-        # the token from the address bar after first load (see app.js).
-        runtime.log.hb(
-            f"dashboard URL (one-click): "
-            f"http://{host}:{server.port}/?token={auth_token}"
-        )
+        # Print the one-click URL with the token only when stderr is a
+        # real TTY — that way we don't paint the bearer token into log
+        # files when stdout/stderr is captured (systemd, supervisord,
+        # `python -m krakey > log`, log aggregators). When captured,
+        # we tell the user where the token file lives instead.
+        url_redacted = f"http://{host}:{server.port}/?token=<see {token_path}>"
+        url_full = f"http://{host}:{server.port}/?token={auth_token}"
+        if sys.stderr.isatty():
+            print(
+                f"[dashboard] URL (one-click): {url_full}",
+                file=sys.stderr, flush=True,
+            )
+        else:
+            runtime.log.hb(f"dashboard URL: {url_redacted}")
+            runtime.log.hb(
+                "dashboard token redacted from logs; read the file or "
+                "set ?token=<contents> manually"
+            )
     except OSError as e:
         runtime.log.runtime_error(
             f"dashboard failed to start (port {port} in use? {e}); "
