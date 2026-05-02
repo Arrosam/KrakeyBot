@@ -1901,8 +1901,7 @@ function _renderStatusBadge(status) {
 
 function _renderPluginCard(plugin, enabled, liveByName, modIdx, modCount) {
   const card = document.createElement("div");
-  card.className = "subblock";
-  card.style.margin = "6px 0";
+  card.className = enabled ? "plugin-card" : "plugin-card disabled";
 
   const isExpanded = enabled && pluginExpanded.has(plugin.name);
 

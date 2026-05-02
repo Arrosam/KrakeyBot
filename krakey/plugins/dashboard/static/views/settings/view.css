@@ -119,6 +119,25 @@
 }
 .subblock > h4 .actions { margin-left: auto; display: flex; gap: 4px; }
 
+/* Plugin row in the unified Plugins panel. Enabled rows get a full
+   box so the boundary between adjacent plugins (especially when the
+   top one is expanded with a config body) is unambiguous. Disabled
+   rows under "Available (disabled)" keep a quieter look — they're
+   collapsed-only and already visually grouped under that subhead. */
+.plugin-card {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  margin: 6px 0;
+  background: var(--panel);
+}
+.plugin-card.disabled {
+  border-color: transparent;
+  background: transparent;
+  padding: 2px 0;
+  margin: 0;
+}
+
 .model-row {
   display: grid;
   grid-template-columns: 1fr 1fr auto;
