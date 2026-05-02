@@ -1,0 +1,17 @@
+name: gui_exec
+description: >
+  Perform a GUI operation (click / right_click / double_click /
+  drag / type / key / screenshot) in a target Environment by
+  serializing the action into a ``pyautogui`` Python snippet and
+  dispatching as ``[python, "-c", snippet]`` to env.run. Self picks
+  the env per call (``env`` parameter); the plugin must be
+  allow-listed in ``config.environments.<env>.allowed_plugins``.
+  The target env's Python interpreter must have ``pyautogui``
+  installed. No inner LLM.
+
+config_schema: []
+
+components:
+  - kind: tool
+    factory_module: krakey.plugins.gui_exec.tool
+    factory_attr: build_tool
