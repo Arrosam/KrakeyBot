@@ -100,12 +100,21 @@ def attach_token_auth(app: FastAPI, token: str | None) -> None:
 
 
 async def ws_check_token(ws: WebSocket, token: str | None) -> bool:
-    """Verify a WebSocket carries the right token before ``accept``.
+    """Verify a WebSocket carries the right token.
 
-    Returns True when the caller should proceed; on False the socket
-    has already been closed with policy-violation (1008) and the
-    caller MUST ``return`` immediately. ``token=None`` is the
-    auth-disabled path (tests).
+    Returns True when the caller should proceed (and is responsible
+    for ``await ws.accept()``); on False the helper has accepted +
+    immediately closed with policy-violation (1008) and the caller
+    MUST ``return`` immediately. ``token=None`` is the auth-disabled
+    path (tests).
+
+    Why accept first on the failure path: ``ws.close(code=1008)``
+    *before* ``accept`` works in starlette's TestClient but in real
+    browsers under uvicorn it surfaces as an HTTP 403 — the JS
+    ``onclose`` then fires with code 1006 (no close frame) instead
+    of 1008. Completing the handshake first guarantees the close
+    frame, and with it the 1008 code, reaches the browser so the
+    SPA's auth-modal trigger fires.
     """
     if not token:
         return True
@@ -118,6 +127,10 @@ async def ws_check_token(ws: WebSocket, token: str | None) -> bool:
     if provided is None:
         provided = ws.query_params.get("token") or None
     if not provided or not secrets.compare_digest(provided, token):
+        try:
+            await ws.accept()
+        except Exception:  # noqa: BLE001 — already torn down by client
+            return False
         await ws.close(code=1008)
         return False
     return True
