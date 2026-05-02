@@ -27,25 +27,56 @@ $$(".tab-btn").forEach((btn) => {
 
 const statusBar = $("#status-bar");
 let lastStats = {};
+// Time of the last heartbeat_start event we saw; 0 means none since
+// the events WS last opened. Drives the events-segment "stale" state
+// — WS open but no heartbeats arriving (typically: no Self LLM
+// configured, so runtime hasn't started its loop).
+let lastHeartbeatTs = 0;
+let eventsWSOpenedAt = 0;
+// How long after the WS opens we wait for a first heartbeat before
+// flagging the indicator as stale. Default heartbeat cadence is a
+// few seconds; 10s is comfortably above that without keeping a
+// silent-but-actually-broken indicator green for long.
+const EVENTS_FRESH_GRACE_MS = 10_000;
+const EVENTS_FRESH_WINDOW_MS = 30_000;
+
+function _eventsState() {
+  if (!eventsWS || eventsWS.readyState !== 1) return "off";
+  const now = Date.now();
+  if (lastHeartbeatTs === 0) {
+    return (now - eventsWSOpenedAt > EVENTS_FRESH_GRACE_MS)
+      ? "stale" : "ok";
+  }
+  return (now - lastHeartbeatTs > EVENTS_FRESH_WINDOW_MS)
+    ? "stale" : "ok";
+}
+
 // Connection-state segment: label + Bootstrap-Icons SVG. Built as
 // HTML so the SVG renders (textContent would print escape-decoded
 // markup). All inputs here are static strings, no XSS surface.
-function _connSegment(label, ok) {
-  const icon = window.biIcon(
-    ok ? "check-circle-fill" : "x-circle-fill", 11,
-  );
-  return `<span class="conn ${ok ? "ok" : "off"}">${label} ${icon}</span>`;
+function _connSegment(label, state) {
+  const icon = window.biIcon({
+    ok: "check-circle-fill",
+    stale: "exclamation-circle-fill",
+    off: "x-circle-fill",
+  }[state], 11);
+  return `<span class="conn ${state}">${label} ${icon}</span>`;
 }
 function setStatus() {
   const parts = [];
   if (lastStats.heartbeat_id != null) parts.push(`HB #${lastStats.heartbeat_id}`);
   if (lastStats.node_count != null) parts.push(`gm=${lastStats.node_count}n/${lastStats.edge_count}e`);
   if (lastStats.fatigue_pct != null) parts.push(`fatigue=${lastStats.fatigue_pct}%`);
-  parts.push(_connSegment("events", !!(eventsWS && eventsWS.readyState === 1)));
-  parts.push(_connSegment("chat", !!(chatWS && chatWS.readyState === 1)));
+  parts.push(_connSegment("events", _eventsState()));
+  parts.push(_connSegment(
+    "chat", chatWS && chatWS.readyState === 1 ? "ok" : "off",
+  ));
   statusBar.innerHTML = parts.join("  |  ");
   renderStatusPanel();
 }
+// Re-evaluate freshness on a low-frequency timer so the indicator
+// flips to "stale" without needing a triggering event.
+setInterval(setStatus, 2000);
 
 // Format helpers for the big Status panel in the Inner Thoughts view.
 // Renders the same data as the top-bar but as a persistent readable
@@ -178,6 +209,7 @@ function handleEvent(e) {
   switch (e.kind) {
     case "heartbeat_start":
       lastStats.heartbeat_id = e.heartbeat_id;
+      lastHeartbeatTs = Date.now();
       setStatus();
       break;
     case "gm_stats":
@@ -237,8 +269,17 @@ function handleEvent(e) {
 function connectEvents() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   eventsWS = new WebSocket(`${proto}//${location.host}/ws/events`);
-  eventsWS.onopen = setStatus;
-  eventsWS.onclose = () => { setStatus(); setTimeout(connectEvents, 2000); };
+  eventsWS.onopen = () => {
+    eventsWSOpenedAt = Date.now();
+    lastHeartbeatTs = 0;  // require a fresh heartbeat post-reconnect
+    setStatus();
+  };
+  eventsWS.onclose = () => {
+    eventsWSOpenedAt = 0;
+    lastHeartbeatTs = 0;
+    setStatus();
+    setTimeout(connectEvents, 2000);
+  };
   eventsWS.onerror = setStatus;
   eventsWS.onmessage = (msg) => {
     const data = JSON.parse(msg.data);
