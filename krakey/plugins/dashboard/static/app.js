@@ -27,14 +27,23 @@ $$(".tab-btn").forEach((btn) => {
 
 const statusBar = $("#status-bar");
 let lastStats = {};
+// Connection-state segment: label + Bootstrap-Icons SVG. Built as
+// HTML so the SVG renders (textContent would print escape-decoded
+// markup). All inputs here are static strings, no XSS surface.
+function _connSegment(label, ok) {
+  const icon = window.biIcon(
+    ok ? "check-circle-fill" : "x-circle-fill", 11,
+  );
+  return `<span class="conn ${ok ? "ok" : "off"}">${label} ${icon}</span>`;
+}
 function setStatus() {
   const parts = [];
   if (lastStats.heartbeat_id != null) parts.push(`HB #${lastStats.heartbeat_id}`);
   if (lastStats.node_count != null) parts.push(`gm=${lastStats.node_count}n/${lastStats.edge_count}e`);
   if (lastStats.fatigue_pct != null) parts.push(`fatigue=${lastStats.fatigue_pct}%`);
-  parts.push(eventsWS && eventsWS.readyState === 1 ? "events✓" : "events✗");
-  parts.push(chatWS && chatWS.readyState === 1 ? "chat✓" : "chat✗");
-  statusBar.textContent = parts.join("  |  ");
+  parts.push(_connSegment("events", !!(eventsWS && eventsWS.readyState === 1)));
+  parts.push(_connSegment("chat", !!(chatWS && chatWS.readyState === 1)));
+  statusBar.innerHTML = parts.join("  |  ");
   renderStatusPanel();
 }
 

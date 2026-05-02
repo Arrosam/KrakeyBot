@@ -112,6 +112,12 @@ header {
   border: 1px solid var(--border);
   border-radius: 4px;
 }
+/* Per-WS connection segment in the status bar — label + a filled
+   check / x icon. Colour the segment as a whole so both label and
+   icon shift together (the SVG inherits via fill: currentColor). */
+.status-bar .conn { display: inline-flex; align-items: center; gap: 3px; }
+.status-bar .conn.ok { color: var(--green); }
+.status-bar .conn.off { color: var(--red); }
 
 main {
   flex: 1;
