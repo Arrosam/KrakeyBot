@@ -1,4 +1,4 @@
-"""Idle runtime: Runtime starts cleanly when self_llm is None.
+"""Pause-mode runtime: Runtime starts cleanly when self_llm is None.
 
 User-facing requirement (Samuel 2026-04-29): a fresh install with no
 chat LLM configured should NOT crash on `krakey run`. The runtime
@@ -19,7 +19,7 @@ from tests._runtime_helpers import (
 )
 
 
-async def test_runtime_idle_mode_skips_heartbeat(monkeypatch):
+async def test_runtime_pause_mode_skips_heartbeat(monkeypatch):
     """When self_llm is None the run loop never invokes _heartbeat."""
     rt = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]),
@@ -38,7 +38,7 @@ async def test_runtime_idle_mode_skips_heartbeat(monkeypatch):
 
     rt._heartbeat = _track   # type: ignore[assignment]
 
-    # Make the idle-mode sleep return faster so the test doesn't drag.
+    # Make the pause-mode sleep return faster so the test doesn't drag.
     real_sleep = asyncio.sleep
 
     async def _fast_sleep(_delay):
@@ -54,7 +54,7 @@ async def test_runtime_idle_mode_skips_heartbeat(monkeypatch):
 async def test_build_runtime_from_config_allows_no_chat_tag(tmp_path):
     """`build_runtime_from_config` no longer raises when
     `core_purposes.self_thinking` is unbound — it returns a Runtime
-    with `self_llm=None` so the CLI can start the idle loop."""
+    with `self_llm=None` so the CLI can start the pause loop."""
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         "llm:\n"

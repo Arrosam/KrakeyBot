@@ -41,7 +41,7 @@ from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
 class RuntimeDeps:
     config: Config
     # ``self_llm`` is the only LLM whose presence is load-bearing
-    # for the heartbeat. ``None`` is allowed (idle mode) so the
+    # for the heartbeat. ``None`` is allowed (pause mode) so the
     # runtime can still come up — channels/sensories/dashboard
     # all start, the heartbeat loop just doesn't tick. Useful when
     # the user installs Krakey and skips chat config in onboarding,
@@ -337,14 +337,14 @@ class Runtime:
 
         self._recall = self._new_recall()
 
-        # Idle mode: no Self LLM bound (user skipped chat in onboarding,
+        # Pause mode: no Self LLM bound (user skipped chat in onboarding,
         # plans to fix in dashboard). Channels are alive — the dashboard
         # is up — but the heartbeat doesn't fire. Park here until stop
         # is signalled. Periodic-ish console reminder so an attached
         # terminal doesn't look frozen.
         if self.self_llm is None:
             self.log.hb_warn(
-                "no chat LLM configured — heartbeat is idle. "
+                "no chat LLM configured — heartbeat is paused. "
                 "Configure providers in the dashboard's LLM tab "
                 "(or re-run `krakey onboard`), then restart."
             )
