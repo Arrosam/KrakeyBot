@@ -3,81 +3,43 @@
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
-// ============== AUTH (bearer token) ==============
+// ============== AUTH (cookie session) ==============
 //
-// The server gates /api/* and /ws/* on a per-installation token. Three
-// places it can come from:
-//   1. ?token=<T> in the URL — captured here on first load, persisted
-//      to localStorage, then stripped from the address bar so it
-//      doesn't leak into the user's browser history / referer.
-//   2. localStorage (after step 1, or the paste-token modal).
-//   3. The paste-token modal — shown when fetch returns 401 or the
-//      events WS closes with code 1008.
-const _TOKEN_KEY = "krakey-dash-token";
-(function captureTokenFromUrl() {
+// The server gates the entire app on a per-installation token, set
+// as an HttpOnly+SameSite=Strict cookie on first valid auth. The
+// browser attaches the cookie automatically to fetches and to the
+// WebSocket handshake — no JS-level plumbing required.
+//
+// The one-click URL the runtime prints (?token=<T>) lands on "/",
+// the middleware validates the query param and sets the cookie in
+// the same response. We then strip the token from the address bar
+// here so it doesn't sit in the user's browser history.
+(function stripTokenFromUrl() {
   const u = new URL(location.href);
-  const t = u.searchParams.get("token");
-  if (t) {
-    try { localStorage.setItem(_TOKEN_KEY, t); } catch (e) { /* private mode */ }
+  if (u.searchParams.has("token")) {
     u.searchParams.delete("token");
     history.replaceState({}, "", u.pathname + u.search + u.hash);
   }
 })();
 
-function _authToken() {
-  try { return localStorage.getItem(_TOKEN_KEY) || ""; }
-  catch (e) { return ""; }
-}
-
-// Wrap fetch to attach the bearer header for same-origin URLs and
-// surface 401s to the paste-token modal. Cross-origin URLs (none
-// today, but safe by default) are passed through untouched so we
-// don't leak the token to other servers.
+// 401 from a fetch means the cookie is gone or invalid — reload so
+// the server-rendered auth page replaces the SPA. We can't render a
+// JS modal inside this page since the SPA shouldn't be running with
+// a stale session anyway.
 const _origFetch = window.fetch.bind(window);
 window.fetch = function (url, opts) {
-  const o = Object.assign({}, opts || {});
-  const headers = new Headers(o.headers || {});
-  const isLocal = typeof url === "string" && url.startsWith("/");
-  const t = _authToken();
-  if (isLocal && t && !headers.has("Authorization")) {
-    headers.set("Authorization", "Bearer " + t);
-  }
-  o.headers = headers;
-  return _origFetch(url, o).then((r) => {
-    if (isLocal && r.status === 401) _showAuthModal();
+  return _origFetch(url, opts).then((r) => {
+    if (r.status === 401 && typeof url === "string" && url.startsWith("/")) {
+      location.reload();
+    }
     return r;
   });
 };
 
-// WS URL helper — append ?token=<T> so the server's WS guard accepts.
+// WS URL helper — same-origin, no token in URL (cookie carries it).
 function _wsUrl(path) {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const u = new URL(`${proto}//${location.host}${path}`);
-  const t = _authToken();
-  if (t) u.searchParams.set("token", t);
-  return u.toString();
-}
-
-let _authModalShown = false;
-function _showAuthModal() {
-  if (_authModalShown) return;
-  _authModalShown = true;
-  const modal = document.getElementById("auth-modal");
-  if (!modal) return;
-  modal.classList.remove("hidden");
-  const input = modal.querySelector("input");
-  const btn = modal.querySelector("button");
-  if (input) input.focus();
-  function submit() {
-    const v = (input && input.value || "").trim();
-    if (!v) return;
-    try { localStorage.setItem(_TOKEN_KEY, v); } catch (e) { /* */ }
-    location.reload();
-  }
-  if (btn) btn.addEventListener("click", submit, { once: true });
-  if (input) input.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") submit();
-  });
+  return `${proto}//${location.host}${path}`;
 }
 
 // ============== TAB SWITCHING ==============
@@ -323,9 +285,10 @@ function connectEvents() {
   eventsWS.onopen = setStatus;
   eventsWS.onclose = (ev) => {
     setStatus();
-    // 1008 = policy violation = bad/missing token. Stop reconnect-
-    // looping and surface the modal so the user can paste a token.
-    if (ev && ev.code === 1008) { _showAuthModal(); return; }
+    // 1008 = policy violation = expired/invalid session cookie.
+    // Reload so the server renders the auth page in place of the
+    // (now stale) SPA. Don't reconnect-loop in the meantime.
+    if (ev && ev.code === 1008) { location.reload(); return; }
     setTimeout(connectEvents, 2000);
   };
   eventsWS.onerror = setStatus;
@@ -400,9 +363,8 @@ function connectChat() {
   chatWS.onclose = (ev) => {
     chatMeta.textContent = "disconnected — reconnecting...";
     setStatus();
-    // 1008 → bad/missing token; let the events-WS handler surface
-    // the modal (it'll call _showAuthModal too) and stop looping.
-    if (ev && ev.code === 1008) { _showAuthModal(); return; }
+    // 1008 → expired session; events-WS handler also reloads.
+    if (ev && ev.code === 1008) { location.reload(); return; }
     setTimeout(connectChat, 2000);
   };
   chatWS.onerror = () => { chatMeta.textContent = "error"; setStatus(); };
