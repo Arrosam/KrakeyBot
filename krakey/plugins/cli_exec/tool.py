@@ -69,7 +69,11 @@ class CliExecTool(Tool):
             "directory inside the env. `timeout_s` (optional, default "
             f"{int(DEFAULT_TIMEOUT_S)}) caps wall-clock time. `stdin` "
             "(optional) is piped to the process's stdin. Returns "
-            "exit_code + stdout + stderr; long output is truncated."
+            "exit_code + stdout + stderr; each stream is truncated "
+            f"at {OUTPUT_TRUNCATE_CHARS} chars (a marker line names "
+            "the original length). Redirect to a file (e.g. "
+            "[\"bash\", \"-c\", \"cmd > out.txt\"]) and read it "
+            "back if you need the full output."
         )
 
     @property

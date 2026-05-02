@@ -266,3 +266,7 @@ def test_static_tool_metadata():
     # Description mentions both env names so Self can pick.
     assert "local" in tool.description
     assert "sandbox" in tool.description
+    # Description names the truncation cap (4000 chars per stream)
+    # so Self can decide whether to redirect output to a file
+    # instead of expecting full capture from this tool.
+    assert str(OUTPUT_TRUNCATE_CHARS) in tool.description
