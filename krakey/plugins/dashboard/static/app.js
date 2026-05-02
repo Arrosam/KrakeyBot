@@ -672,7 +672,6 @@ const SECTION_DEFAULTS = {
   knowledge_base: { dir: "workspace/data/knowledge_bases" },
   sleep: { max_duration_seconds: 7200 },
   safety: { gm_node_hard_limit: 1200, max_consecutive_no_action: 100 },
-  dashboard: { enabled: true, host: "127.0.0.1", port: 8765, prompt_log_size: 20 },
   sandbox: {
     guest_os: "", provider: "qemu", vm_name: "",
     display: "headed",
@@ -696,10 +695,6 @@ const HELP = {
   "sleep.max_duration_seconds": "Maximum allowed duration for a single sleep (seconds), to prevent sleep from hanging.",
   "safety.gm_node_hard_limit": "Hard upper bound on GM nodes. Above this, sleep refuses to add more nodes (prevents runaway growth).",
   "safety.max_consecutive_no_action": "After this many consecutive 'No action' beats, runtime considers Self stuck and triggers a self-rescue sleep.",
-  "dashboard.enabled": "Master switch for the web UI. Off = next launch has no browser UI, only logs.",
-  "dashboard.host": "Listening address. 127.0.0.1 = local only; 0.0.0.0 = LAN-accessible (insecure).",
-  "dashboard.port": "Listening port.",
-  "dashboard.prompt_log_size": "The Prompts tab keeps the last N fully-built heartbeat prompts. In-memory ring buffer, not persisted, cleared on restart. Default 20.",
   "provider.type": "Provider implementation type. Currently only openai_compatible is supported.",
   "provider.base_url": "API root URL (without trailing /v1 etc.; LLMClient appends it automatically).",
   "provider.api_key": "API key. Supports a ${ENV_VAR} placeholder to read from environment variables.",
@@ -756,12 +751,6 @@ const SCHEMAS = {
   safety: [
     ["gm_node_hard_limit", "number"],
     ["max_consecutive_no_action", "number"],
-  ],
-  dashboard: [
-    ["enabled", "bool"],
-    ["host", "text"],
-    ["port", "number"],
-    ["prompt_log_size", "number"],
   ],
   sandbox_scalars: [
     ["guest_os", "text"],
@@ -871,9 +860,6 @@ function renderSettingsForm() {
   ensureSection("safety");
   settingsForm.appendChild(renderGenericSection("safety", "Safety",
     cfgState.safety, SCHEMAS.safety));
-  ensureSection("dashboard");
-  settingsForm.appendChild(renderGenericSection("dashboard", "Dashboard",
-    cfgState.dashboard, SCHEMAS.dashboard));
 
   // Sandbox — composite (scalars + resources sub-block + agent sub-block).
   ensureSection("sandbox");
@@ -930,7 +916,6 @@ const SECTION_ICONS = {
   "Knowledge Base": "book",
   "Sleep": "moon",
   "Safety": "shield-check",
-  "Dashboard": "speedometer2",
   "Sandbox VM": "hdd",
 };
 
@@ -1021,10 +1006,7 @@ function renderGenericSection(key, title, target, schema) {
   return sec;
 }
 
-const SAFETY_CONFIRMS = {
-  "dashboard.enabled":
-    "Turning this off means no web UI on next restart — only logs. Continue?",
-};
+const SAFETY_CONFIRMS = {};
 
 function renderRow(label, target, key, type, helpPath) {
   const row = document.createElement("div");
