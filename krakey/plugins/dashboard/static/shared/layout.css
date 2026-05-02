@@ -139,17 +139,17 @@ main {
    by shared/bi.js). Inherits surrounding text colour via fill. */
 .bi { vertical-align: -2px; flex-shrink: 0; }
 
-/* Paste-token modal — full-viewport overlay with a centred card. */
-.auth-modal {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.7);
+/* Server-rendered auth-required page. Shown by the auth middleware
+   when no valid cookie / token / Bearer header is present, in place
+   of the SPA shell. The form submits as GET to /?token=<value> so
+   the middleware sees the query, validates, sets the cookie, and
+   the next request renders the SPA. */
+.auth-page {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
 }
-.auth-modal.hidden { display: none; }
 .auth-card {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -160,7 +160,7 @@ main {
   font-size: 12px;
   color: var(--text);
 }
-.auth-card h3 { margin: 0 0 8px; color: var(--cyan); font-size: 14px; }
+.auth-card h2 { margin: 0 0 8px; color: var(--cyan); font-size: 14px; }
 .auth-card p { margin: 0 0 10px; color: var(--text); }
 .auth-card .hint { color: var(--muted); font-size: 11px; margin-top: 8px; }
 .auth-card input {
