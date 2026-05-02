@@ -15,7 +15,11 @@ def register(app: FastAPI, *, memory: MemoryService) -> None:
     @app.get("/api/gm/nodes")
     async def gm_nodes(
         category: str | None = None,
-        limit: int = Query(default=200, ge=1, le=2000),
+        # No upper bound — the graph browser asks for all nodes so the
+        # canvas isn't a misleading slice of GM. The endpoint is gated
+        # by the auth token, so denial-of-service via huge limits would
+        # require an authenticated client (== the user themselves).
+        limit: int = Query(default=200, ge=1),
     ):  # noqa: ANN201
         try:
             nodes = await memory.list_gm_nodes(category=category,
@@ -26,7 +30,8 @@ def register(app: FastAPI, *, memory: MemoryService) -> None:
 
     @app.get("/api/gm/edges")
     async def gm_edges(
-        limit: int = Query(default=500, ge=1, le=5000),
+        # See gm_nodes for the rationale on dropping the upper bound.
+        limit: int = Query(default=500, ge=1),
     ):  # noqa: ANN201
         try:
             edges = await memory.list_gm_edges(limit=limit)

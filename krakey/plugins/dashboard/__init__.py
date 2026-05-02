@@ -52,16 +52,28 @@ def build_channel(ctx: "PluginContext"):
 
 
 def build_tool(ctx: "PluginContext"):
-    """Reply tool — shares the WebChatHistory the sibling channel
-    factory built."""
+    """Reply tool — shares the ``WebChatHistory`` the sibling channel
+    factory built. If the channel didn't run (disabled in central
+    config, or load order shuffled), build a fresh ``WebChatHistory``
+    pointed at the same JSONL: the file is the single source of
+    truth, so a second instance reading it stays consistent. Cache
+    it so a later channel-factory call sees the same instance.
+
+    Per CLAUDE.md the runtime must keep working with any plugin /
+    component disabled — this branch is the additive-fallback for
+    "channel disabled but tool enabled".
+    """
     from krakey.plugins.dashboard.tool import WebChatReplyTool
+    from krakey.plugins.dashboard.web_chat.history import WebChatHistory
 
     history = ctx.plugin_cache.get(_HISTORY_CACHE_KEY)
     if history is None:
-        raise RuntimeError(
-            "dashboard.build_tool: WebChatHistory not in plugin_cache. "
-            "build_channel must run first (meta.yaml component order)."
+        cfg = ctx.config or {}
+        history_path = cfg.get(
+            "history_path", "workspace/data/web_chat.jsonl",
         )
+        history = WebChatHistory(history_path)
+        ctx.plugin_cache[_HISTORY_CACHE_KEY] = history
     return WebChatReplyTool(history=history)
 
 
@@ -72,15 +84,23 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
     from krakey.plugins.dashboard.app_factory import (
         create_app as create_dashboard_app,
     )
+    from krakey.plugins.dashboard.auth import load_or_create_token
     from krakey.plugins.dashboard.events import EventBroadcaster
     from krakey.plugins.dashboard.threaded_server import ThreadedDashboardServer
 
     runtime = ctx.services.get("runtime")
     if runtime is None:
-        raise RuntimeError(
-            "dashboard plugin needs services['runtime']; the runtime "
-            "must expose itself in PluginContext.services."
+        # Per CLAUDE.md the runtime must keep working with any plugin
+        # missing or partially loaded. We can't bring up the dashboard
+        # without a runtime to introspect, but we shouldn't take the
+        # rest of the runtime down with us — the channel + tool stay
+        # registered, we just skip the HTTP UI.
+        import logging
+        logging.getLogger(__name__).warning(
+            "dashboard plugin: services['runtime'] missing; skipping "
+            "dashboard server start (channel + tool register without UI)"
         )
+        return
 
     config_path = getattr(ctx.deps, "config_path", None)
     plugin_configs_root = (
@@ -90,6 +110,14 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
     def on_restart() -> None:
         runtime.log.hb("restart requested via dashboard — re-execing")
         os.execv(sys.executable, [sys.executable, *sys.argv])
+
+    # Token sits next to the chat history on disk so the dashboard's
+    # data files share a directory and `history_path` overrides naturally
+    # carry the token with them.
+    cfg = ctx.config or {}
+    history_path = cfg.get("history_path", "workspace/data/web_chat.jsonl")
+    token_path = Path(history_path).parent / "dashboard.token"
+    auth_token = load_or_create_token(token_path)
 
     try:
         broadcaster = EventBroadcaster(runtime.events)
@@ -101,6 +129,7 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
             config_path=Path(config_path) if config_path else None,
             on_restart=on_restart,
             plugin_configs_root=Path(plugin_configs_root),
+            auth_token=auth_token,
         )
         server = ThreadedDashboardServer(app, host=host, port=port)
         server.start()
@@ -112,6 +141,24 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
         runtime.log.hb(
             f"dashboard listening on http://{host}:{server.port}"
         )
+        # Print the one-click URL with the token only when stderr is a
+        # real TTY — that way we don't paint the bearer token into log
+        # files when stdout/stderr is captured (systemd, supervisord,
+        # `python -m krakey > log`, log aggregators). When captured,
+        # we tell the user where the token file lives instead.
+        url_redacted = f"http://{host}:{server.port}/?token=<see {token_path}>"
+        url_full = f"http://{host}:{server.port}/?token={auth_token}"
+        if sys.stderr.isatty():
+            print(
+                f"[dashboard] URL (one-click): {url_full}",
+                file=sys.stderr, flush=True,
+            )
+        else:
+            runtime.log.hb(f"dashboard URL: {url_redacted}")
+            runtime.log.hb(
+                "dashboard token redacted from logs; read the file or "
+                "set ?token=<contents> manually"
+            )
     except OSError as e:
         runtime.log.runtime_error(
             f"dashboard failed to start (port {port} in use? {e}); "

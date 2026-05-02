@@ -79,14 +79,15 @@ def test_wizard_writes_minimal_config(tmp_path):
         "n",
         # Step 4: accept default plugin selection (dashboard preselected)
         "done",
-        # Confirm save
-        "y",
+        # Step 5: dashboard port — accept default 8765
+        "",
     ]
     lines, out = _capture_output()
     catalogue = _fake_catalogue("dashboard", "memory", "telegram")
     written = run_wizard(
         config_path=cfg_path,
         backup_dir=str(tmp_path / "backups"),
+        plugin_configs_root=str(tmp_path / "plugins"),
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
@@ -112,7 +113,7 @@ def test_wizard_dashboard_default_recommended_and_first(tmp_path):
         "n",                          # skip embedding
         "n",                          # skip reranker
         "done",                       # accept default
-        "y",                          # save
+        "",                           # dashboard port: default
     ]
     lines, out = _capture_output()
     catalogue = _fake_catalogue(
@@ -121,6 +122,7 @@ def test_wizard_dashboard_default_recommended_and_first(tmp_path):
     run_wizard(
         config_path=cfg_path,
         backup_dir=str(tmp_path / "backups"),
+        plugin_configs_root=str(tmp_path / "plugins"),
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
@@ -154,8 +156,7 @@ def test_wizard_toggle_plugin_selection(tmp_path):
         "1",                          # toggle dashboard OFF
         "3",                          # toggle telegram ON
         "done",
-        "y",                          # confirm: yes continue without dashboard
-        "y",                          # save config
+        "y",                          # nudge: yes continue without dashboard
     ]
     _, out = _capture_output()
     run_wizard(
@@ -183,12 +184,13 @@ def test_wizard_embedding_same_provider_as_chat(tmp_path):
         "ChatCo", "http://x", "k", "chat-model",
         "y", "y", "embed-model",   # embed: yes, same provider, model
         "n",                       # skip reranker
-        "done", "y",
+        "done", "",                # picker done; dashboard port default
     ]
     _, out = _capture_output()
     run_wizard(
         config_path=cfg_path,
         backup_dir=str(tmp_path / "backups"),
+        plugin_configs_root=str(tmp_path / "plugins"),
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
@@ -208,13 +210,14 @@ def test_wizard_backs_up_existing_config(tmp_path):
     cfg_path.write_text("existing: 1\n", encoding="utf-8")
     backup_dir = tmp_path / "backups"
     answers = [
-        "1", "P", "http://x", "k", "m", "n", "n", "done", "y",
+        "1", "P", "http://x", "k", "m", "n", "n", "done", "",
     ]
     catalogue = _fake_catalogue("dashboard")
     lines, out = _capture_output()
     run_wizard(
         config_path=cfg_path,
         backup_dir=str(backup_dir),
+        plugin_configs_root=str(tmp_path / "plugins"),
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
@@ -239,12 +242,13 @@ def test_wizard_reranker_reuses_embedding_provider(tmp_path):
         "y", "n", "1", "EmbedCo", "http://e", "ek", "embed-model",
         # reranker: yes, reuse embedding provider, model
         "y", "y", "rerank-model",
-        "done", "y",
+        "done", "",
     ]
     _, out = _capture_output()
     run_wizard(
         config_path=cfg_path,
         backup_dir=str(tmp_path / "backups"),
+        plugin_configs_root=str(tmp_path / "plugins"),
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
@@ -267,12 +271,13 @@ def test_wizard_skip_reranker_leaves_field_unset(tmp_path):
         "1", "P", "http://x", "k", "m",
         "n",         # skip embedding
         "n",         # skip reranker
-        "done", "y",
+        "done", "",  # picker done; dashboard port default
     ]
     _, out = _capture_output()
     run_wizard(
         config_path=cfg_path,
         backup_dir=str(tmp_path / "backups"),
+        plugin_configs_root=str(tmp_path / "plugins"),
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
@@ -299,12 +304,13 @@ def test_wizard_verify_called_for_each_endpoint(tmp_path):
         "1", "ChatCo", "http://chat", "k1", "chat-model",
         "y", "n", "1", "EmbedCo", "http://embed", "k2", "embed-model",
         "y", "n", "1", "RerankCo", "http://rerank", "k3", "rerank-model",
-        "done", "y",
+        "done", "",
     ]
     _, out = _capture_output()
     run_wizard(
         config_path=cfg_path,
         backup_dir=str(tmp_path / "backups"),
+        plugin_configs_root=str(tmp_path / "plugins"),
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
@@ -332,12 +338,13 @@ def test_wizard_verify_failure_warns_but_does_not_abort(tmp_path):
         "1", "P", "http://x", "k", "m",
         "n",         # skip embedding
         "n",         # skip reranker
-        "done", "y",
+        "done", "",  # picker done; dashboard port default
     ]
     lines, out = _capture_output()
     run_wizard(
         config_path=cfg_path,
         backup_dir=str(tmp_path / "backups"),
+        plugin_configs_root=str(tmp_path / "plugins"),
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
@@ -362,12 +369,13 @@ def test_wizard_anthropic_provider_type(tmp_path):
         "https://api.anthropic.com/v1",   # base
         "sk-ant-test",                    # api key
         "claude-haiku-4-5-20251001",      # model
-        "n", "n", "done", "y",
+        "n", "n", "done", "",
     ]
     _, out = _capture_output()
     run_wizard(
         config_path=cfg_path,
         backup_dir=str(tmp_path / "backups"),
+        plugin_configs_root=str(tmp_path / "plugins"),
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
@@ -391,13 +399,14 @@ def test_wizard_skip_chat_force_enables_dashboard(tmp_path):
         "n",                  # skip reranker
         "1",                  # toggle dashboard OFF (was preselected)
         "done",
-        "y",                  # confirm: yes continue without dashboard
-        "y",                  # save config
+        "y",                  # nudge: yes continue without dashboard
+        "",                   # dashboard port default (auto re-added below)
     ]
     lines, out = _capture_output()
     run_wizard(
         config_path=cfg_path,
         backup_dir=str(tmp_path / "backups"),
+        plugin_configs_root=str(tmp_path / "plugins"),
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
@@ -430,17 +439,19 @@ def test_wizard_model_picker_uses_listed_models(tmp_path):
         "1",                              # chat type
         "OpenAI", "http://x", "k",       # label, base, key
         "2",                              # pick model #2 → gpt-4o
-        "n", "n", "done", "y",
+        "n", "n", "done", "",
     ]
     lines, out = _capture_output()
     run_wizard(
         config_path=cfg_path,
         backup_dir=str(tmp_path / "backups"),
+        plugin_configs_root=str(tmp_path / "plugins"),
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
         verify_fn=_skip_verify,
         list_models_fn=_models,
+        bench_fn=_skip_bench,
     )
     cfg = load_config(cfg_path)
     assert cfg.llm.tags["self_main"].provider == "OpenAI/gpt-4o"
@@ -457,12 +468,13 @@ def test_wizard_model_picker_falls_back_to_text_when_listing_fails(tmp_path):
     answers = [
         "1", "OpenAI", "http://x", "k",
         "my-custom-model",                # plain entry, no picker
-        "n", "n", "done", "y",
+        "n", "n", "done", "",
     ]
     _, out = _capture_output()
     run_wizard(
         config_path=cfg_path,
         backup_dir=str(tmp_path / "backups"),
+        plugin_configs_root=str(tmp_path / "plugins"),
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
@@ -486,13 +498,13 @@ def test_wizard_dashboard_nudge_re_enables_on_no(tmp_path):
         "1",                          # toggle dashboard OFF
         "done",
         "n",                          # nudge: NO, don't continue without dashboard
-        "done",                       # back to plugin loop, accept current
-        "y",                          # save (no second nudge — dashboard now selected)
+        "",                           # dashboard port default (re-enabled by nudge)
     ]
     lines, out = _capture_output()
     run_wizard(
         config_path=cfg_path,
         backup_dir=str(tmp_path / "backups"),
+        plugin_configs_root=str(tmp_path / "plugins"),
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
@@ -514,12 +526,13 @@ def test_wizard_skip_embedding_warns(tmp_path):
         "1", "P", "http://x", "k", "m",
         "n",                  # skip embedding
         "n",                  # skip reranker
-        "done", "y",
+        "done", "",           # picker done; dashboard port default
     ]
     lines, out = _capture_output()
     run_wizard(
         config_path=cfg_path,
         backup_dir=str(tmp_path / "backups"),
+        plugin_configs_root=str(tmp_path / "plugins"),
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
@@ -590,7 +603,7 @@ def test_wizard_bench_writes_soft_limit_into_config(tmp_path):
         "1", "P", "http://x", "k", "m",
         "n",         # skip embedding
         "n",         # skip reranker
-        "done", "y",
+        "done", "",  # picker done; dashboard port default
     ]
     _, out = _capture_output()
 
@@ -600,6 +613,7 @@ def test_wizard_bench_writes_soft_limit_into_config(tmp_path):
     run_wizard(
         config_path=cfg_path,
         backup_dir=str(tmp_path / "backups"),
+        plugin_configs_root=str(tmp_path / "plugins"),
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
@@ -618,12 +632,13 @@ def test_wizard_bench_skipped_keeps_default_soft_limit(tmp_path):
     catalogue = _fake_catalogue("dashboard")
     answers = [
         "1", "P", "http://x", "k", "m",
-        "n", "n", "done", "y",
+        "n", "n", "done", "",
     ]
     _, out = _capture_output()
     run_wizard(
         config_path=cfg_path,
         backup_dir=str(tmp_path / "backups"),
+        plugin_configs_root=str(tmp_path / "plugins"),
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,
@@ -642,6 +657,97 @@ def test_module_exports_run_wizard():
     assert callable(imported)
 
 
+def test_wizard_writes_dashboard_port_to_per_plugin_config(tmp_path):
+    """When dashboard is selected, the wizard writes the chosen port
+    to ``<plugin_configs_root>/dashboard/config.yaml`` — the same
+    file the dashboard reads at runtime."""
+    import yaml
+
+    cfg_path = tmp_path / "config.yaml"
+    plugins_root = tmp_path / "plugins"
+    catalogue = _fake_catalogue("dashboard")
+    answers = [
+        "1", "P", "http://x", "k", "m",
+        "n", "n",
+        "done",
+        "9000",                       # explicit non-default port
+    ]
+    _, out = _capture_output()
+    run_wizard(
+        config_path=cfg_path,
+        backup_dir=str(tmp_path / "backups"),
+        plugin_configs_root=str(plugins_root),
+        input_fn=_stub_inputs(answers),
+        output_fn=out,
+        list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
+        list_models_fn=_no_models,
+        bench_fn=_skip_bench,
+    )
+    port_file = plugins_root / "dashboard" / "config.yaml"
+    assert port_file.exists()
+    written = yaml.safe_load(port_file.read_text(encoding="utf-8"))
+    assert written == {"port": 9000}
+
+
+def test_wizard_skips_dashboard_port_when_dashboard_disabled(tmp_path):
+    """Dashboard off → no per-plugin file is created."""
+    cfg_path = tmp_path / "config.yaml"
+    plugins_root = tmp_path / "plugins"
+    catalogue = _fake_catalogue("dashboard", "telegram")
+    answers = [
+        "1", "P", "http://x", "k", "m",
+        "n", "n",
+        "1",                          # toggle dashboard OFF
+        "3",                          # toggle telegram ON
+        "done",
+        "y",                          # nudge: yes continue without dashboard
+    ]
+    _, out = _capture_output()
+    run_wizard(
+        config_path=cfg_path,
+        backup_dir=str(tmp_path / "backups"),
+        plugin_configs_root=str(plugins_root),
+        input_fn=_stub_inputs(answers),
+        output_fn=out,
+        list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
+        list_models_fn=_no_models,
+        bench_fn=_skip_bench,
+    )
+    assert not (plugins_root / "dashboard" / "config.yaml").exists()
+
+
+def test_wizard_dashboard_port_rejects_garbage_input(tmp_path):
+    """Non-int / out-of-range port input gets re-prompted until valid."""
+    cfg_path = tmp_path / "config.yaml"
+    plugins_root = tmp_path / "plugins"
+    catalogue = _fake_catalogue("dashboard")
+    answers = [
+        "1", "P", "http://x", "k", "m",
+        "n", "n",
+        "done",
+        "not-a-port",                 # invalid → re-prompt
+        "99999",                      # out of range → re-prompt
+        "8765",                       # finally valid
+    ]
+    lines, out = _capture_output()
+    run_wizard(
+        config_path=cfg_path,
+        backup_dir=str(tmp_path / "backups"),
+        plugin_configs_root=str(plugins_root),
+        input_fn=_stub_inputs(answers),
+        output_fn=out,
+        list_plugins_fn=lambda: catalogue,
+        verify_fn=_skip_verify,
+        list_models_fn=_no_models,
+        bench_fn=_skip_bench,
+    )
+    block = "\n".join(lines)
+    assert "must be an integer" in block
+    assert "out of range" in block
+
+
 def test_wizard_handles_unknown_command(tmp_path):
     """Garbage input at the plugin picker is rejected without crashing."""
     cfg_path = tmp_path / "config.yaml"
@@ -651,12 +757,13 @@ def test_wizard_handles_unknown_command(tmp_path):
         "??",       # unknown command
         "999",      # out of range
         "done",
-        "y",
+        "",         # dashboard port default
     ]
     lines, out = _capture_output()
     run_wizard(
         config_path=cfg_path,
         backup_dir=str(tmp_path / "backups"),
+        plugin_configs_root=str(tmp_path / "plugins"),
         input_fn=_stub_inputs(answers),
         output_fn=out,
         list_plugins_fn=lambda: catalogue,

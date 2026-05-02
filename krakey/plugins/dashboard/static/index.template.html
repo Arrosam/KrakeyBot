@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Krakey Dashboard</title>
+  <link rel="icon" type="image/png" href="/static/logo.png">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -39,6 +40,12 @@
   </main>
 
   <script src="/static/shared/bi.js"></script>
+  <!-- Cytoscape powers the Memory tab's graph browser (pan/zoom/drag).
+       Same CDN+version pinning the docs/ arch-graph tool uses, so the
+       dependency story is consistent across the project. Load failure
+       is handled gracefully in app.js (the Graph view shows a hint
+       and the table views still work). -->
+  <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

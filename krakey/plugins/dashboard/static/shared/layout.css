@@ -112,6 +112,12 @@ header {
   border: 1px solid var(--border);
   border-radius: 4px;
 }
+/* Per-WS connection segment in the status bar — label + a filled
+   check / x icon. Colour the segment as a whole so both label and
+   icon shift together (the SVG inherits via fill: currentColor). */
+.status-bar .conn { display: inline-flex; align-items: center; gap: 3px; }
+.status-bar .conn.ok { color: var(--green); }
+.status-bar .conn.off { color: var(--red); }
 
 main {
   flex: 1;
@@ -132,6 +138,53 @@ main {
 /* Bootstrap-Icons inline SVGs (hydrated from <i data-bi> placeholders
    by shared/bi.js). Inherits surrounding text colour via fill. */
 .bi { vertical-align: -2px; flex-shrink: 0; }
+
+/* Server-rendered auth-required page. Shown by the auth middleware
+   when no valid cookie / token / Bearer header is present, in place
+   of the SPA shell. The form submits as GET to /?token=<value> so
+   the middleware sees the query, validates, sets the cookie, and
+   the next request renders the SPA. */
+.auth-page {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.auth-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px 20px;
+  width: 360px;
+  max-width: 90vw;
+  font-size: 12px;
+  color: var(--text);
+}
+.auth-card h2 { margin: 0 0 8px; color: var(--cyan); font-size: 14px; }
+.auth-card p { margin: 0 0 10px; color: var(--text); }
+.auth-card .hint { color: var(--muted); font-size: 11px; margin-top: 8px; }
+.auth-card input {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  box-sizing: border-box;
+  margin-bottom: 8px;
+}
+.auth-card button {
+  padding: 6px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--cyan);
+  color: var(--cyan);
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+}
 
 /* Generic panel primitive — used by multiple views. */
 .panel {

@@ -10,16 +10,24 @@ import logging
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
+from krakey.plugins.dashboard.auth import ws_check_token
 from krakey.plugins.dashboard.services.events import EventBroadcasterService
 
 
 _log = logging.getLogger(__name__)
 
 
-def register(app: FastAPI, *, broadcaster: EventBroadcasterService) -> None:
+def register(
+    app: FastAPI,
+    *,
+    broadcaster: EventBroadcasterService,
+    auth_token: str | None = None,
+) -> None:
 
     @app.websocket("/ws/events")
     async def events_ws(ws: WebSocket):  # noqa: ANN201
+        if not await ws_check_token(ws, auth_token):
+            return
         await ws.accept()
         await ws.send_json({"kind": "history",
                               "events": broadcaster.recent()})
