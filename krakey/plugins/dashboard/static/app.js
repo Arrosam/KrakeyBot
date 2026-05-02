@@ -1445,6 +1445,74 @@ function mkBtn(text, onClick, cls = "") {
 
 // ---------------- LLM section ----------------
 
+// Pending inline-rename target. Set by "+ add provider/tag/purpose"
+// to {scope, name}; the matching editable-key span auto-switches to
+// input mode at render time so the user types the real name in
+// place instead of seeing a prompt() dialog. Cleared after the
+// auto-edit fires so it only triggers once.
+let _pendingNewKey = null;
+
+// Build a span that displays a key (provider name, tag name, etc.)
+// and turns into an inline <input> when clicked. On commit (Enter or
+// blur) it calls onRename(newName); validate(newName) returning a
+// truthy string blocks commit and surfaces the message.
+function _renderEditableKey(currentName, opts) {
+  const span = document.createElement("span");
+  span.className = "editable-key";
+  span.textContent = currentName;
+  span.title = "click to rename";
+
+  function _enterEdit() {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "editable-key-input";
+    input.value = currentName;
+    if (opts.placeholder) input.placeholder = opts.placeholder;
+    let committing = false;
+    function _commit() {
+      if (committing) return;
+      committing = true;
+      const nv = (input.value || "").trim();
+      if (!nv || nv === currentName) { _revert(); return; }
+      const err = opts.validate ? opts.validate(nv) : null;
+      if (err) { alert(err); committing = false; input.focus(); return; }
+      opts.onRename(nv);
+    }
+    function _revert() {
+      span.textContent = currentName;
+      if (input.parentNode) input.replaceWith(span);
+    }
+    input.addEventListener("blur", _commit);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); _commit(); }
+      else if (e.key === "Escape") { e.preventDefault(); _revert(); }
+    });
+    span.replaceWith(input);
+    input.focus();
+    input.select();
+  }
+  span.addEventListener("click", _enterEdit);
+
+  // If this span is the freshly-added "+ add ___" target, auto-enter
+  // edit mode after the DOM is in place (focus needs the element to
+  // be attached). The flag is consumed so a subsequent re-render
+  // doesn't re-trigger.
+  if (_pendingNewKey && _pendingNewKey.scope === opts.scope &&
+      _pendingNewKey.name === currentName) {
+    _pendingNewKey = null;
+    setTimeout(_enterEdit, 0);
+  }
+  return span;
+}
+
+// Find a unique placeholder name for a "+ add" action — keeps the
+// suffix incrementing until the dict has no entry with that key.
+function _uniqueDraftName(dict, base) {
+  let n = 1;
+  while (dict[`${base}_${n}`]) n++;
+  return `${base}_${n}`;
+}
+
 // Shape (post tag-based refactor 2026-04-26):
 //   llm.providers     : dict of provider connections (with API keys)
 //   llm.tags          : dict of named (provider/model + params)
@@ -1469,13 +1537,13 @@ function renderLLMSection(llm) {
   provHead.style.cssText = "color:var(--text);font-weight:bold;font-size:11px;margin:0 0 6px";
   provHead.appendChild(document.createTextNode("Providers"));
   const addProv = mkBtn("+ add provider", () => {
-    let name = prompt("Provider name (unique key):");
-    if (!name) return;
-    name = name.trim();
-    if (!name || llm.providers[name]) { alert("invalid or exists"); return; }
+    // Add directly with a placeholder name; the heading enters
+    // edit-mode on render so the user types the real name inline.
+    const name = _uniqueDraftName(llm.providers, "provider");
     llm.providers[name] = {
       type: "openai_compatible", base_url: "", api_key: "", models: [],
     };
+    _pendingNewKey = { scope: "provider", name };
     renderSettingsForm();
   });
   const headWrap = document.createElement("div");
@@ -1493,19 +1561,17 @@ function renderLLMSection(llm) {
   tagsHead.style.cssText = "color:var(--text);font-weight:bold;font-size:11px;margin:12px 0 6px";
   tagsHead.appendChild(document.createTextNode("Tags"));
   const addTag = mkBtn("+ add tag", () => {
-    const name = prompt("Tag name (e.g. fast_generation):");
-    if (!name) return;
-    if (llm.tags[name]) { alert("exists"); return; }
     const provNames = Object.keys(llm.providers || {});
     if (!provNames.length) { alert("add a provider first"); return; }
-    // First model of first provider as a starting point
     const firstProv = llm.providers[provNames[0]];
     const firstModel = (firstProv.models && firstProv.models[0]
                           && firstProv.models[0].name) || "";
+    const name = _uniqueDraftName(llm.tags, "tag");
     llm.tags[name] = {
       provider: `${provNames[0]}/${firstModel}`,
       params: {},
     };
+    _pendingNewKey = { scope: "tag", name };
     renderSettingsForm();
   });
   const tagsHeadWrap = document.createElement("div");
@@ -1536,27 +1602,35 @@ function renderProviderBlock(pname, prov, llm) {
   const block = document.createElement("div");
   block.className = "subblock";
   const h = document.createElement("h4");
-  h.appendChild(document.createTextNode(pname));
+  // Inline-editable name. Click the heading → it turns into an
+  // input. Replaces the old "rename" prompt() flow.
+  h.appendChild(_renderEditableKey(pname, {
+    scope: "provider",
+    placeholder: "provider name",
+    validate: (nv) => llm.providers[nv] ? "name exists" : null,
+    onRename: (nv) => {
+      llm.providers[nv] = llm.providers[pname];
+      delete llm.providers[pname];
+      // Cascade: tags whose provider field starts with "<pname>/"
+      // need their prefix substituted so they keep pointing at the
+      // same provider object.
+      const prefix = pname + "/";
+      for (const t of Object.values(llm.tags || {})) {
+        if (typeof t.provider === "string" && t.provider.startsWith(prefix)) {
+          t.provider = nv + "/" + t.provider.slice(prefix.length);
+        }
+      }
+      renderSettingsForm();
+    },
+  }));
   const actions = document.createElement("span");
   actions.className = "actions";
-  const renameBtn = mkBtn("rename", () => {
-    const nn = prompt("New name:", pname);
-    if (!nn || nn === pname) return;
-    if (llm.providers[nn]) { alert("exists"); return; }
-    llm.providers[nn] = llm.providers[pname];
-    delete llm.providers[pname];
-    // Update roles referencing old name
-    for (const r of Object.values(llm.roles || {})) {
-      if (r.provider === pname) r.provider = nn;
-    }
-    renderSettingsForm();
-  });
   const delBtn = mkBtn("delete", () => {
     if (!confirm(`delete provider "${pname}"?`)) return;
     delete llm.providers[pname];
     renderSettingsForm();
   }, "danger");
-  actions.appendChild(renameBtn); actions.appendChild(delBtn);
+  actions.appendChild(delBtn);
   h.appendChild(actions);
   block.appendChild(h);
 
@@ -1687,7 +1761,25 @@ function renderTagRow(tname, tags, providers) {
   const row = document.createElement("div");
   row.className = "cfg-row";
   const lab = document.createElement("label");
-  lab.textContent = tname;
+  // Inline-editable tag name. Click → input → commit on blur/Enter.
+  lab.appendChild(_renderEditableKey(tname, {
+    scope: "tag",
+    placeholder: "tag name",
+    validate: (nv) => tags[nv] ? "name exists" : null,
+    onRename: (nv) => {
+      tags[nv] = tags[tname];
+      delete tags[tname];
+      // Cascade: any core_purpose / embedding / reranker that
+      // referenced the old name needs to follow.
+      const llm = cfgState.llm || {};
+      for (const [purp, t] of Object.entries(llm.core_purposes || {})) {
+        if (t === tname) llm.core_purposes[purp] = nv;
+      }
+      if (llm.embedding === tname) llm.embedding = nv;
+      if (llm.reranker === tname) llm.reranker = nv;
+      renderSettingsForm();
+    },
+  }));
   row.appendChild(lab);
 
   const wrap = document.createElement("div");
@@ -1841,9 +1933,9 @@ function renderCorePurposesBlock(llm) {
   }
 
   const addBtn = mkBtn("+ add purpose", () => {
-    const name = prompt("Custom core purpose name:");
-    if (!name || llm.core_purposes[name]) return;
+    const name = _uniqueDraftName(llm.core_purposes, "purpose");
     llm.core_purposes[name] = "";
+    _pendingNewKey = { scope: "purpose", name };
     renderSettingsForm();
   });
   sub.appendChild(addBtn);
@@ -1854,7 +1946,25 @@ function _purposeRow(llm, purp, tagNames, helpText) {
   const row = document.createElement("div");
   row.className = "cfg-row";
   const lab = document.createElement("label");
-  lab.textContent = purp;
+  // Well-known purposes (self_thinking / compact / classifier) drive
+  // runtime behaviour by name — renaming would silently break
+  // dispatch — so they stay as plain text. User-added purposes are
+  // free-form labels and get inline-rename like providers + tags.
+  const isKnown = KNOWN_CORE_PURPOSES.some(([p]) => p === purp);
+  if (isKnown) {
+    lab.textContent = purp;
+  } else {
+    lab.appendChild(_renderEditableKey(purp, {
+      scope: "purpose",
+      placeholder: "purpose name",
+      validate: (nv) => llm.core_purposes[nv] != null ? "name exists" : null,
+      onRename: (nv) => {
+        llm.core_purposes[nv] = llm.core_purposes[purp];
+        delete llm.core_purposes[purp];
+        renderSettingsForm();
+      },
+    }));
+  }
   if (helpText) lab.title = helpText;
   row.appendChild(lab);
 

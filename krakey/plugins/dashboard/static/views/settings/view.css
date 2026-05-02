@@ -119,6 +119,30 @@
 }
 .subblock > h4 .actions { margin-left: auto; display: flex; gap: 4px; }
 
+/* Click-to-rename label for keyed entries (provider names, tag
+   names, custom core-purpose names). Hover hints that the text is
+   editable; click swaps in an .editable-key-input that commits on
+   blur or Enter. Replaces the old "rename" button + prompt() flow. */
+.editable-key {
+  cursor: text;
+  border-bottom: 1px dashed transparent;
+  padding: 0 1px;
+}
+.editable-key:hover {
+  border-bottom-color: var(--muted);
+}
+.editable-key-input {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--cyan);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  min-width: 120px;
+}
+
 /* Plugin row in the unified Plugins panel. Enabled rows get a full
    box so the boundary between adjacent plugins (especially when the
    top one is expanded with a config body) is unambiguous. Disabled
