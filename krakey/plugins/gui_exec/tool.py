@@ -281,6 +281,17 @@ class GuiExecTool(Tool):
                 raise ValueError(
                     "`key` requires non-empty `combo` (string)",
                 )
+            # Reject combos that collapse to no keys after splitting
+            # on '+' and trimming each part (e.g. "+", "++", " + + ").
+            # Without this check ``snippets.key`` would emit
+            # ``pyautogui.hotkey()`` with zero args — a silent no-op
+            # that returns rc=0 inside the env, and the tool would
+            # report SUCCESS even though no chord was pressed.
+            if not [p.strip() for p in combo.split("+") if p.strip()]:
+                raise ValueError(
+                    "`key` `combo` must contain at least one key "
+                    "(got only separator characters)",
+                )
             return snip.key(combo), f"combo={combo!r}"
         if action == "screenshot":
             out = SCREENSHOT_DIR / f"{_now_ts()}.png"

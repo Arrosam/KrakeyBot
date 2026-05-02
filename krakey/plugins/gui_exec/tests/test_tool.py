@@ -349,6 +349,18 @@ async def test_screenshot_uses_workspace_data_screenshots_path(
          "`key` requires non-empty `combo`"),
         ({"env": "local", "action": "key", "combo": 0},
          "`key` requires non-empty `combo`"),
+        # key combos that collapse to no keys after splitting on '+':
+        # the truthy `combo.strip()` guard above passes them, so the
+        # tool must catch the empty-parts case explicitly to avoid
+        # emitting `pyautogui.hotkey()` with zero args (silent no-op,
+        # returns rc=0 → tool would report SUCCESS while nothing
+        # happened).
+        ({"env": "local", "action": "key", "combo": "+"},
+         "must contain at least one key"),
+        ({"env": "local", "action": "key", "combo": "++"},
+         "must contain at least one key"),
+        ({"env": "local", "action": "key", "combo": " + + "},
+         "must contain at least one key"),
     ],
 )
 async def test_bad_params_return_error_without_calling_env(
