@@ -102,3 +102,76 @@ def test_load_or_create_token_regenerates_when_missing(tmp_path: Path):
     p.unlink()
     t2 = load_or_create_token(p)
     assert t1 != t2  # fresh secret on each absence
+
+
+# ---- WS auth ----
+
+class _FakeBroadcaster:
+    def recent(self): return []
+    def add_socket(self, _): pass
+    def remove_socket(self, _): pass
+
+
+def test_ws_events_blocked_without_token():
+    """No token → handshake completes (accept first), then 1008 close.
+    The disconnect surfaces on the first receive so the browser sees
+    a real close frame with code 1008 (not abnormal-close 1006)."""
+    from starlette.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    app = create_app(
+        runtime=None,
+        event_broadcaster=_FakeBroadcaster(),
+        auth_token="ws-secret",
+    )
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/events") as ws:
+            with pytest.raises(WebSocketDisconnect) as exc:
+                ws.receive_json()
+            assert exc.value.code == 1008
+
+
+def test_ws_events_blocked_with_wrong_token():
+    from starlette.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    app = create_app(
+        runtime=None,
+        event_broadcaster=_FakeBroadcaster(),
+        auth_token="ws-secret",
+    )
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/events?token=wrong") as ws:
+            with pytest.raises(WebSocketDisconnect) as exc:
+                ws.receive_json()
+            assert exc.value.code == 1008
+
+
+def test_ws_events_accepts_with_correct_token():
+    from starlette.testclient import TestClient
+
+    app = create_app(
+        runtime=None,
+        event_broadcaster=_FakeBroadcaster(),
+        auth_token="ws-secret",
+    )
+    with TestClient(app) as client:
+        with client.websocket_connect(
+            "/ws/events?token=ws-secret"
+        ) as ws:
+            msg = ws.receive_json()
+            assert msg["kind"] == "history"
+
+
+def test_ws_events_no_token_means_no_gate():
+    """auth_token=None → WS open is unguarded (test path)."""
+    from starlette.testclient import TestClient
+
+    app = create_app(
+        runtime=None,
+        event_broadcaster=_FakeBroadcaster(),
+    )
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/events") as ws:
+            msg = ws.receive_json()
+            assert msg["kind"] == "history"
