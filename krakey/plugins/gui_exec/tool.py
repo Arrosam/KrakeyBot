@@ -35,10 +35,13 @@ DEFAULT_TIMEOUT_S = 15.0
 longest expected operation (sub-second by default); 15s leaves
 slack for slow guests."""
 
-PYTHON_CMD = "python"
-"""Interpreter name on the env's PATH. Documented assumption: the
-env exposes a ``python`` executable that can ``import pyautogui``.
-The local env inherits the host's PATH; sandbox guests must match."""
+DEFAULT_PYTHON_CMD = "python"
+"""Default interpreter name on the env's PATH. Many Linux distros
+expose only ``python3`` (no bare ``python``); on those, set
+``python_cmd: python3`` (or an absolute path) in
+``workspace/plugins/gui_exec/config.yaml`` so the tool dispatches to
+an interpreter that exists. The local Windows host has ``python`` by
+convention; sandbox guests vary."""
 
 SCREENSHOT_DIR = PurePosixPath("workspace/data/screenshots")
 """Relative path inside the env's filesystem where screenshots
@@ -64,17 +67,28 @@ def _now_ts() -> str:
 
 def build_tool(ctx: "PluginContext") -> "GuiExecTool":
     """Factory for the single ``tool`` component declared in
-    ``meta.yaml``. Captures the per-plugin env resolver."""
-    return GuiExecTool(env_resolver=ctx.environment)
+    ``meta.yaml``. Captures the per-plugin env resolver and reads
+    the optional ``python_cmd`` override from the plugin's
+    ``config.yaml`` (default ``"python"``). A non-string or empty
+    value falls back to the default rather than raising — keeps
+    the additive-plugin invariant."""
+    raw = ctx.config.get("python_cmd")
+    python_cmd = raw if isinstance(raw, str) and raw.strip() else DEFAULT_PYTHON_CMD
+    return GuiExecTool(
+        env_resolver=ctx.environment, python_cmd=python_cmd,
+    )
 
 
 class GuiExecTool(Tool):
     """Self-facing tool that performs one GUI action per call."""
 
     def __init__(
-        self, env_resolver: Callable[[str], "Environment"],
+        self,
+        env_resolver: Callable[[str], "Environment"],
+        python_cmd: str = DEFAULT_PYTHON_CMD,
     ):
         self._env_resolver = env_resolver
+        self._python_cmd = python_cmd
 
     @property
     def name(self) -> str:
@@ -90,7 +104,9 @@ class GuiExecTool(Tool):
             "of: click, right_click, double_click, drag, type, key, "
             "screenshot. Coordinates are pixels relative to the "
             "env's primary display top-left. The env's Python "
-            "interpreter must have pyautogui installed."
+            "interpreter (default \"python\"; configurable via the "
+            "plugin's `python_cmd` config field) must have pyautogui "
+            "installed."
         )
 
     @property
@@ -187,7 +203,7 @@ class GuiExecTool(Tool):
                 f"env resolver error: {type(e).__name__}: {e}",
             )
 
-        cmd = [PYTHON_CMD, "-c", snippet]
+        cmd = [self._python_cmd, "-c", snippet]
         try:
             rc, out, err = await env.run(
                 cmd,

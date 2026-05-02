@@ -20,10 +20,11 @@ from krakey.interfaces.environment import (
 )
 from krakey.plugins.gui_exec import snippets, tool as tool_mod
 from krakey.plugins.gui_exec.tool import (
+    DEFAULT_PYTHON_CMD,
     DEFAULT_TIMEOUT_S,
     GuiExecTool,
-    PYTHON_CMD,
     SCREENSHOT_DIR,
+    build_tool,
 )
 
 
@@ -193,7 +194,7 @@ async def test_click_dispatch_happy():
     assert "action=click" in s.content
     assert "(10,20)" in s.content
     assert env.calls[0]["cmd"] == [
-        PYTHON_CMD, "-c", snippets.click(10, 20, "left"),
+        DEFAULT_PYTHON_CMD, "-c", snippets.click(10, 20, "left"),
     ]
     assert env.calls[0]["timeout"] == DEFAULT_TIMEOUT_S
     assert env.calls[0]["stdin"] is None
@@ -470,3 +471,82 @@ def test_static_tool_metadata():
     }
     # Description names pyautogui so Self knows what backend ships.
     assert "pyautogui" in tool.description
+    # Description names the python_cmd config field so the user
+    # knows the Linux ``python3`` workaround exists.
+    assert "python_cmd" in tool.description
+
+
+# =====================================================================
+# python_cmd config field — Linux portability fix
+# =====================================================================
+
+
+async def test_custom_python_cmd_is_used_in_dispatched_argv():
+    """Constructor accepts an alternative interpreter name and
+    threads it into every env.run call."""
+    env = FakeEnv()
+    tool = GuiExecTool(
+        env_resolver=_resolver_returning(env),
+        python_cmd="python3",
+    )
+    await tool.execute(
+        "x",
+        {"env": "local", "action": "click", "x": 1, "y": 2},
+    )
+    assert env.calls[0]["cmd"][0] == "python3"
+
+
+async def test_default_python_cmd_when_constructor_omits_it():
+    env = FakeEnv()
+    tool = GuiExecTool(env_resolver=_resolver_returning(env))
+    await tool.execute(
+        "x",
+        {"env": "local", "action": "click", "x": 1, "y": 2},
+    )
+    assert env.calls[0]["cmd"][0] == DEFAULT_PYTHON_CMD
+
+
+# build_tool factory tests use a tiny duck-typed PluginContext stand-in
+# rather than constructing a real one (which needs a full RuntimeDeps).
+# The factory only reaches for `.config` and `.environment`, so a
+# minimal namespace is enough to exercise its logic.
+
+
+class _FakeCtx:
+    def __init__(self, config: dict, env: FakeEnv):
+        self.config = config
+        self._env = env
+
+    def environment(self, _name: str) -> FakeEnv:
+        return self._env
+
+
+async def test_build_tool_reads_python_cmd_from_config():
+    env = FakeEnv()
+    tool = build_tool(_FakeCtx(  # type: ignore[arg-type]
+        {"python_cmd": "/opt/python311/bin/python3"}, env,
+    ))
+    assert isinstance(tool, GuiExecTool)
+    await tool.execute(
+        "x",
+        {"env": "local", "action": "click", "x": 1, "y": 2},
+    )
+    assert env.calls[0]["cmd"][0] == "/opt/python311/bin/python3"
+
+
+@pytest.mark.parametrize("config", [
+    {},                         # field absent
+    {"python_cmd": ""},         # empty string
+    {"python_cmd": "   "},      # whitespace-only
+    {"python_cmd": None},       # explicit null
+    {"python_cmd": 42},         # wrong type
+    {"python_cmd": ["python"]},  # wrong type
+])
+async def test_build_tool_falls_back_to_default_on_invalid_config(config):
+    env = FakeEnv()
+    tool = build_tool(_FakeCtx(config, env))  # type: ignore[arg-type]
+    await tool.execute(
+        "x",
+        {"env": "local", "action": "click", "x": 1, "y": 2},
+    )
+    assert env.calls[0]["cmd"][0] == DEFAULT_PYTHON_CMD

@@ -17,4 +17,8 @@ the target env's filesystem, matching the existing
 ``workspace/data/`` convention used by ``in_mind_note``'s state
 file. The path is returned in the success Stimulus so Self can
 reference it later.
+
+The interpreter name is configurable via the plugin's
+``python_cmd`` config field (default ``"python"``) so a Linux env
+that only ships ``python3`` can be supported without code changes.
 """
