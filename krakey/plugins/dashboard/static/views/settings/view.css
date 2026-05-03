@@ -172,9 +172,11 @@
      cap-multi container expanded below it. */
   align-items: center;
 }
-/* Square delete button on each model row — visually balances the
-   inputs it sits next to (the default .btn-mini is too narrow). */
-.model-row > .btn-mini.danger {
+
+/* Unified "×" delete button. One look across the settings panel
+   (model rows, tag rows, custom-purpose rows, fatigue thresholds)
+   so the visual reads as the same affordance everywhere. */
+.btn-mini.btn-x {
   min-width: 28px;
   height: 26px;
   padding: 0;
@@ -183,6 +185,12 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  color: var(--muted);
+  border-color: var(--border);
+}
+.btn-mini.btn-x:hover {
+  color: var(--red);
+  border-color: var(--red);
 }
 
 .cap-multi {

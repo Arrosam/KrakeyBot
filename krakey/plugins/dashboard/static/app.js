@@ -1426,7 +1426,7 @@ function renderFatigueThresholds(fatigue) {
       keyIn.type = "number"; keyIn.value = k; keyIn.style.maxWidth = "80px";
       const valIn = document.createElement("input");
       valIn.type = "text"; valIn.value = fatigue.thresholds[k];
-      const del = mkBtn("×", () => { delete fatigue.thresholds[k]; redraw(); }, "danger");
+      const del = mkBtn("×", () => { delete fatigue.thresholds[k]; redraw(); }, "btn-x");
       keyIn.addEventListener("change", () => {
         const newK = parseInt(keyIn.value, 10);
         if (Number.isNaN(newK) || String(newK) === k) return;
@@ -1685,7 +1685,7 @@ function renderModelRow(prov, idx) {
   nameIn.addEventListener("input", () => { m.name = nameIn.value; });
   row.appendChild(nameIn);
   row.appendChild(renderCapabilitiesMulti(m));
-  const del = mkBtn("×", () => { prov.models.splice(idx, 1); renderSettingsForm(); }, "danger");
+  const del = mkBtn("×", () => { prov.models.splice(idx, 1); renderSettingsForm(); }, "btn-x");
   row.appendChild(del);
   return row;
 }
@@ -1864,7 +1864,7 @@ function renderTagRow(tname, tags, providers) {
     if (llm.embedding === tname) llm.embedding = "";
     if (llm.reranker === tname) llm.reranker = "";
     renderSettingsForm();
-  }, "danger");
+  }, "btn-x");
 
   wrap.appendChild(provSel); wrap.appendChild(modSel); wrap.appendChild(del);
   row.appendChild(wrap);
@@ -2008,7 +2008,7 @@ function _purposeRow(llm, purp, tagNames, helpText) {
   if (!isKnown) {
     const del = mkBtn("×", () => {
       delete llm.core_purposes[purp]; renderSettingsForm();
-    }, "danger");
+    }, "btn-x");
     wrap.appendChild(del);
   } else {
     wrap.appendChild(document.createElement("span"));
