@@ -29,6 +29,57 @@ if TYPE_CHECKING:
 _HISTORY_CACHE_KEY = "web_chat_history"
 
 
+def _restart_self(runtime) -> None:
+    """Spawn a fresh copy of the current process and exit this one.
+
+    Why not ``os.execv``: on Windows, Python implements ``execv`` as
+    spawn-then-exit; the parent dies before the child has fully
+    attached to the console / event loop, and in practice the
+    dashboard-driven restart leaves the user with "Krakey shut down"
+    but no replacement running. ``subprocess.Popen`` followed by
+    ``os._exit`` is reliable on both Windows and POSIX, and
+    ``CREATE_NEW_PROCESS_GROUP`` makes the child independent of the
+    parent's group so a Ctrl+C aimed at the dying parent doesn't
+    propagate to the new instance.
+
+    Launch mode matters: when the user starts with ``python -m
+    krakey`` (the documented entry point), ``sys.argv[0]`` is the
+    resolved path to ``krakey/__main__.py``, but re-running that path
+    directly with the interpreter doesn't restore the package-import
+    machinery. Re-spawn via ``-m`` when we detect that, so things
+    like ``from krakey.runtime import ...`` keep working.
+    """
+    import subprocess
+
+    main = sys.modules.get("__main__")
+    spec = getattr(main, "__spec__", None) if main is not None else None
+    if spec is not None and spec.name:
+        # spec.name looks like "krakey.__main__" when launched via
+        # ``python -m krakey`` — strip the trailing ``.__main__``
+        # so the re-spawn ``-m <pkg>`` matches the original invocation.
+        mod_name = spec.name
+        if mod_name.endswith(".__main__"):
+            mod_name = mod_name[: -len(".__main__")]
+        args = [sys.executable, "-m", mod_name, *sys.argv[1:]]
+    else:
+        args = [sys.executable, *sys.argv]
+
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+    try:
+        subprocess.Popen(args, creationflags=creationflags, close_fds=False)
+    except Exception as e:  # noqa: BLE001
+        runtime.log.runtime_error(f"dashboard: restart spawn failed: {e}")
+        return  # don't kill the parent if the child couldn't start
+    # Tiny pause so the child has time to inherit stdio handles before
+    # the parent tears them down. Empirically 100ms is enough on
+    # Windows; cheap insurance.
+    import time
+    time.sleep(0.1)
+    os._exit(0)
+
+
 def build_channel(ctx: "PluginContext"):
     """Create the chat channel; start the dashboard server in a
     background thread (skipped when port=0)."""
@@ -109,7 +160,7 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
 
     def on_restart() -> None:
         runtime.log.hb("restart requested via dashboard — re-execing")
-        os.execv(sys.executable, [sys.executable, *sys.argv])
+        _restart_self(runtime)
 
     # Token sits next to the chat history on disk so the dashboard's
     # data files share a directory and `history_path` overrides naturally
