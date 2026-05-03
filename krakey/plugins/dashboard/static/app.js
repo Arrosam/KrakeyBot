@@ -2003,8 +2003,8 @@ function _purposeRow(llm, purp, tagNames, helpText) {
   wrap.appendChild(sel);
 
   // Custom (non-known) purposes get a delete button; well-known ones
-  // are persistent.
-  const isKnown = KNOWN_CORE_PURPOSES.some(([p]) => p === purp);
+  // are persistent. (`isKnown` was already computed above to gate
+  // the editable-name path — reuse instead of redeclaring.)
   if (!isKnown) {
     const del = mkBtn("×", () => {
       delete llm.core_purposes[purp]; renderSettingsForm();
