@@ -1213,10 +1213,14 @@ const SECTION_DEFAULTS = {
   knowledge_base: { dir: "workspace/data/knowledge_bases" },
   sleep: { max_duration_seconds: 7200 },
   safety: { gm_node_hard_limit: 1200, max_consecutive_no_action: 100 },
-  sandbox: {
-    guest_os: "", provider: "qemu", vm_name: "",
-    display: "headed",
-    network_mode: "nat_allowlist",
+  // Top-level `environments:` block — replaces the old `sandbox:`
+  // section as of the runtime's environments-refactor. ``local`` is
+  // always present (just an allow-list); ``sandbox`` is optional and
+  // holds the VM connectivity fields the runtime previously read
+  // off the top-level sandbox section.
+  environments: {
+    local: { allowed_plugins: [] },
+    sandbox: null,
   },
 };
 
@@ -1253,16 +1257,19 @@ const HELP = {
   "tool.screenshot_dir": "Directory for GUI screenshots.",
   "tool.history_path": "JSONL persistence path for web chat.",
   "tool.sandbox": "Whether this tool's non-idempotent operations are confined to the sandbox VM. Default true — turning off is dangerous (code / GUI runs on your host).",
-  "sandbox.guest_os": "Sandbox guest OS: linux / macos / windows. Required before any sandboxed tool can be enabled.",
-  "sandbox.provider": "VM manager: qemu (recommended) / virtualbox / utm.",
-  "sandbox.vm_name": "VM instance name (must be pre-provisioned).",
-  "sandbox.display": "headed = VM desktop shown in a window so you can watch / intervene; headless = VM hidden, only the agent interacts. Choose by your usage preference.",
-  "sandbox.resources.cpu": "vCPU count assigned to the VM.",
-  "sandbox.resources.memory_mb": "RAM (MB) assigned to the VM.",
-  "sandbox.resources.disk_gb": "VM disk size (GB).",
-  "sandbox.agent.url": "HTTP URL of the in-VM guest agent, e.g. http://10.0.2.10:8765. Must be on the host-only subnet.",
-  "sandbox.agent.token": "Shared token between host and agent. Use ${ENV_VAR} to read from the environment.",
-  "sandbox.network_mode": "VM network policy: nat_allowlist (egress allow-list) / host_only (no internet) / isolated (no network).",
+  "environments.local.allowed_plugins": "Plugins permitted to use the always-on Local execution env (host-process access). Empty = no plugin can run on the host.",
+  "environments.sandbox.allowed_plugins": "Plugins permitted to use the Sandbox VM env. Empty = sandbox VM is registered but no plugin can drive it.",
+  "environments.sandbox.guest_os": "Sandbox guest OS: linux / macos / windows. Required when the sandbox env is enabled.",
+  "environments.sandbox.provider": "VM manager: qemu (recommended) / virtualbox / utm.",
+  "environments.sandbox.vm_name": "VM instance name (must be pre-provisioned).",
+  "environments.sandbox.display": "headed = VM desktop shown in a window so you can watch / intervene; headless = VM hidden, only the agent interacts. Choose by your usage preference.",
+  "environments.sandbox.resources.cpu": "vCPU count assigned to the VM.",
+  "environments.sandbox.resources.memory_mb": "RAM (MB) assigned to the VM.",
+  "environments.sandbox.resources.disk_gb": "VM disk size (GB).",
+  "environments.sandbox.agent.url": "HTTP URL of the in-VM guest agent, e.g. http://10.0.2.10:8765. Must be on the host-only subnet.",
+  "environments.sandbox.agent.token": "Shared token between host and agent. Use ${ENV_VAR} to read from the environment.",
+  "environments.sandbox.network_mode": "VM network policy: nat_allowlist (egress allow-list) / host_only (no internet) / isolated (no network).",
+  "environments.sandbox.allowlist_domains": "When network_mode=nat_allowlist, the sandbox VM can reach exactly these hostnames. Egress to anything else is dropped.",
 };
 
 // Fixed numeric/string dataclass schemas — drives generic renderer.
@@ -1293,19 +1300,22 @@ const SCHEMAS = {
     ["gm_node_hard_limit", "number"],
     ["max_consecutive_no_action", "number"],
   ],
-  sandbox_scalars: [
+  // Schemas under `environments.sandbox.*`. The top-level sandbox
+  // section is gone in the runtime (rewrites to environments.sandbox),
+  // so the dashboard's sandbox UI is now a sub-block of Environments.
+  env_sandbox_scalars: [
     ["guest_os", "text"],
     ["provider", "text"],
     ["vm_name", "text"],
     ["display", "text"],
     ["network_mode", "text"],
   ],
-  sandbox_resources: [
+  env_sandbox_resources: [
     ["cpu", "number"],
     ["memory_mb", "number"],
     ["disk_gb", "number"],
   ],
-  sandbox_agent: [
+  env_sandbox_agent: [
     ["url", "text"],
     ["token", "password"],
   ],
@@ -1342,6 +1352,24 @@ async function loadSettings() {
     }
     const data = await cfgRes.json();
     cfgState = data.parsed || {};
+    // Migration: the runtime stopped reading top-level `sandbox:` —
+    // see krakey/models/config/__init__.py — and moved every field
+    // under `environments.sandbox`. If the user's on-disk yaml still
+    // has the legacy block, lift its contents into the new shape so
+    // the dashboard renders something instead of an empty toggle.
+    // Drop the legacy key from the edit state so the next save
+    // produces a clean yaml.
+    if (cfgState.sandbox && typeof cfgState.sandbox === "object") {
+      cfgState.environments = cfgState.environments || {};
+      if (cfgState.environments.sandbox == null) {
+        cfgState.environments.sandbox = {
+          allowed_plugins: [],
+          allowlist_domains: [],
+          ...cfgState.sandbox,
+        };
+      }
+      delete cfgState.sandbox;
+    }
     if (pluginRes && pluginRes.ok) {
       pluginReport = await pluginRes.json();
     } else {
@@ -1402,35 +1430,15 @@ function renderSettingsForm() {
   settingsForm.appendChild(renderGenericSection("safety", "Safety",
     cfgState.safety, SCHEMAS.safety));
 
-  // Sandbox — composite (scalars + resources sub-block + agent sub-block).
-  ensureSection("sandbox");
-  const sb = cfgState.sandbox;
-  if (sb.resources == null) sb.resources = { cpu: 2, memory_mb: 4096, disk_gb: 40 };
-  if (sb.agent == null) sb.agent = { url: "", token: "" };
-  const sbSec = renderGenericSection("sandbox", "Sandbox VM",
-    sb, SCHEMAS.sandbox_scalars);
-  const body = sbSec.querySelector(".body");
-  const resBlock = document.createElement("div");
-  resBlock.className = "subblock";
-  const resH = document.createElement("h4");
-  resH.textContent = "resources";
-  resBlock.appendChild(resH);
-  for (const [f, t] of SCHEMAS.sandbox_resources) {
-    resBlock.appendChild(renderRow(f, sb.resources, f, t,
-      `sandbox.resources.${f}`));
-  }
-  body.appendChild(resBlock);
-  const agentBlock = document.createElement("div");
-  agentBlock.className = "subblock";
-  const agH = document.createElement("h4");
-  agH.textContent = "agent";
-  agentBlock.appendChild(agH);
-  for (const [f, t] of SCHEMAS.sandbox_agent) {
-    agentBlock.appendChild(renderRow(f, sb.agent, f, t,
-      `sandbox.agent.${f}`));
-  }
-  body.appendChild(agentBlock);
-  settingsForm.appendChild(sbSec);
+  // Environments — top-level execution-env block. Replaces the old
+  // top-level `sandbox:` section the runtime no longer reads.
+  // Two sub-blocks:
+  //   * Local — always present, just an allow-list of plugins
+  //     permitted to run on the host process.
+  //   * Sandbox VM — optional. Toggle to register/deregister; when
+  //     registered, holds VM connectivity + per-plugin allow-list.
+  ensureSection("environments");
+  settingsForm.appendChild(renderEnvironmentsSection(cfgState.environments));
 }
 
 function ensure(obj, key, factory) {
@@ -1457,7 +1465,7 @@ const SECTION_ICONS = {
   "Knowledge Base": "book",
   "Sleep": "moon",
   "Safety": "shield-check",
-  "Sandbox VM": "hdd",
+  "Environments": "hdd",
 };
 
 // Synthwave-ish accent per section. Renders on the heading icon +
@@ -1473,7 +1481,7 @@ const SECTION_TINT = {
   "Knowledge Base": "green",
   "Sleep": "muted",
   "Safety": "red",
-  "Sandbox VM": "cyan",
+  "Environments": "cyan",
 };
 
 // Titles whose body is currently collapsed. Module-scoped so the
@@ -1562,6 +1570,186 @@ function renderGenericSection(key, title, target, schema) {
   for (const [field, type] of schema) {
     body.appendChild(renderRow(field, target, field, type, `${key}.${field}`));
   }
+  return sec;
+}
+
+// Generic chip-list editor for ``string[]`` config values. Each
+// existing entry is a removable chip; the trailing input adds new
+// entries on Enter / blur. Used for ``allowed_plugins`` and
+// ``allowlist_domains`` under Environments.
+function _renderStringList(arr, opts) {
+  if (!Array.isArray(arr)) {
+    // Caller passed a non-array; coerce to empty so the UI still
+    // renders rather than throwing on .filter() / .push().
+    arr = [];
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "cap-multi";  // re-use existing chip-strip styling
+  function repaint() {
+    wrap.innerHTML = "";
+    for (const v of arr) {
+      const chip = document.createElement("span");
+      chip.className = "cap-chip";
+      chip.appendChild(document.createTextNode(v));
+      const x = document.createElement("span");
+      x.className = "x";
+      x.textContent = "×";
+      x.addEventListener("click", () => {
+        const idx = arr.indexOf(v);
+        if (idx !== -1) arr.splice(idx, 1);
+        repaint();
+      });
+      chip.appendChild(x);
+      wrap.appendChild(chip);
+    }
+    const input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = (opts && opts.placeholder) || "+ add…";
+    input.style.cssText =
+      "border:none;background:transparent;color:var(--text);" +
+      "font-family:inherit;font-size:11px;flex:1;min-width:80px;outline:none";
+    function commit() {
+      const v = input.value.trim();
+      if (!v) return;
+      if (!arr.includes(v)) arr.push(v);
+      input.value = "";
+      repaint();
+      // Re-focus the new input so the user can keep typing names.
+      const newInput = wrap.querySelector("input");
+      if (newInput) newInput.focus();
+    }
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); commit(); }
+    });
+    input.addEventListener("blur", commit);
+    wrap.appendChild(input);
+  }
+  repaint();
+  return wrap;
+}
+
+function _renderListRow(label, arr, helpPath, opts) {
+  const row = document.createElement("div");
+  row.className = "cfg-row";
+  const lab = document.createElement("label");
+  lab.textContent = label;
+  if (helpPath && HELP[helpPath]) lab.title = HELP[helpPath];
+  row.appendChild(lab);
+  row.appendChild(_renderStringList(arr, opts));
+  return row;
+}
+
+function renderEnvironmentsSection(envs) {
+  // Top-level `environments:` block. Maps to runtime's
+  // krakey.models.config.environments.EnvironmentsSection — `local`
+  // is always-on with just an allow-list; `sandbox` is optional and
+  // gated by an enable toggle.
+  const sec = makeSection("Environments");
+  const body = sec.querySelector(".body");
+
+  // Local sub-block.
+  if (!envs.local) envs.local = { allowed_plugins: [] };
+  if (!Array.isArray(envs.local.allowed_plugins)) {
+    envs.local.allowed_plugins = [];
+  }
+  const localBlock = document.createElement("div");
+  localBlock.className = "subblock";
+  const localH = document.createElement("h4");
+  localH.appendChild(document.createTextNode("Local"));
+  localBlock.appendChild(localH);
+  localBlock.appendChild(_renderListRow(
+    "allowed_plugins", envs.local.allowed_plugins,
+    "environments.local.allowed_plugins",
+    { placeholder: "plugin name + Enter" },
+  ));
+  body.appendChild(localBlock);
+
+  // Sandbox sub-block — togglable. When the toggle is off, the
+  // saved config has ``environments.sandbox: null`` (runtime does
+  // not register the sandbox env at all). Flipping it on hydrates
+  // a sandbox object with sensible defaults so all sub-rows
+  // render and the user can edit in place.
+  const sbBlock = document.createElement("div");
+  sbBlock.className = "subblock";
+  const sbHead = document.createElement("h4");
+  sbHead.style.display = "flex";
+  sbHead.style.alignItems = "center";
+  sbHead.style.gap = "8px";
+  sbHead.appendChild(document.createTextNode("Sandbox VM"));
+  const enabled = envs.sandbox != null;
+  const toggle = document.createElement("span");
+  toggle.className = "toggle" + (enabled ? " on" : "");
+  toggle.title = "register a sandbox execution environment";
+  toggle.addEventListener("click", () => {
+    if (envs.sandbox == null) {
+      envs.sandbox = {
+        allowed_plugins: [],
+        guest_os: "",
+        provider: "qemu",
+        vm_name: "",
+        display: "headed",
+        resources: { cpu: 2, memory_mb: 4096, disk_gb: 40 },
+        agent: { url: "", token: "" },
+        network_mode: "nat_allowlist",
+        allowlist_domains: [],
+      };
+    } else {
+      envs.sandbox = null;
+    }
+    renderSettingsForm();
+  });
+  sbHead.appendChild(toggle);
+  sbBlock.appendChild(sbHead);
+
+  if (envs.sandbox != null) {
+    const sb = envs.sandbox;
+    if (!sb.resources) sb.resources = { cpu: 2, memory_mb: 4096, disk_gb: 40 };
+    if (!sb.agent) sb.agent = { url: "", token: "" };
+    if (!Array.isArray(sb.allowed_plugins)) sb.allowed_plugins = [];
+    if (!Array.isArray(sb.allowlist_domains)) sb.allowlist_domains = [];
+
+    sbBlock.appendChild(_renderListRow(
+      "allowed_plugins", sb.allowed_plugins,
+      "environments.sandbox.allowed_plugins",
+      { placeholder: "plugin name + Enter" },
+    ));
+    for (const [f, t] of SCHEMAS.env_sandbox_scalars) {
+      sbBlock.appendChild(renderRow(
+        f, sb, f, t, `environments.sandbox.${f}`,
+      ));
+    }
+    sbBlock.appendChild(_renderListRow(
+      "allowlist_domains", sb.allowlist_domains,
+      "environments.sandbox.allowlist_domains",
+      { placeholder: "domain + Enter" },
+    ));
+
+    const resBlock = document.createElement("div");
+    resBlock.className = "subblock";
+    const resH = document.createElement("h4");
+    resH.textContent = "resources";
+    resBlock.appendChild(resH);
+    for (const [f, t] of SCHEMAS.env_sandbox_resources) {
+      resBlock.appendChild(renderRow(
+        f, sb.resources, f, t, `environments.sandbox.resources.${f}`,
+      ));
+    }
+    sbBlock.appendChild(resBlock);
+
+    const agentBlock = document.createElement("div");
+    agentBlock.className = "subblock";
+    const agH = document.createElement("h4");
+    agH.textContent = "agent";
+    agentBlock.appendChild(agH);
+    for (const [f, t] of SCHEMAS.env_sandbox_agent) {
+      agentBlock.appendChild(renderRow(
+        f, sb.agent, f, t, `environments.sandbox.agent.${f}`,
+      ));
+    }
+    sbBlock.appendChild(agentBlock);
+  }
+  body.appendChild(sbBlock);
+
   return sec;
 }
 
