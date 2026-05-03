@@ -26,9 +26,11 @@ from fastapi.staticfiles import StaticFiles
 
 from krakey.plugins.dashboard.auth import attach_token_auth
 from krakey.plugins.dashboard.events.ws_route import register as _register_events_ws
+from krakey.plugins.dashboard.log_capture import LogCapture
 from krakey.plugins.dashboard.middleware import attach_no_cache
 from krakey.plugins.dashboard.routes import (
     health as _health,
+    logs_ws as _logs_ws,
     memory as _memory,
     plugins as _plugins,
     prompts as _prompts,
@@ -66,6 +68,7 @@ def create_app(
     on_restart: Callable[[], None] | None = None,
     plugin_configs_root: Path | str = "workspace/plugins",
     auth_token: str | None = None,
+    log_capture: LogCapture | None = None,
     # --- overrides for unit tests (pass a fake instead of a real service) ---
     memory_service: MemoryService | None = None,
     prompts_service: PromptsService | None = None,
@@ -129,6 +132,10 @@ def create_app(
     if event_broadcaster is not None:
         _register_events_ws(
             app, broadcaster=event_broadcaster, auth_token=auth_token,
+        )
+    if log_capture is not None:
+        _logs_ws.register(
+            app, capture=log_capture, auth_token=auth_token,
         )
 
     return app

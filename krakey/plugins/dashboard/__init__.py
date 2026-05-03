@@ -137,6 +137,7 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
     )
     from krakey.plugins.dashboard.auth import load_or_create_token
     from krakey.plugins.dashboard.events import EventBroadcaster
+    from krakey.plugins.dashboard.log_capture import LogCapture
     from krakey.plugins.dashboard.threaded_server import ThreadedDashboardServer
 
     runtime = ctx.services.get("runtime")
@@ -170,6 +171,22 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
     token_path = Path(history_path).parent / "dashboard.token"
     auth_token = load_or_create_token(token_path)
 
+    # Capture stdout/stderr so the Log tab can show live runtime output.
+    # Force-enable runtime ANSI colours so the Log tab can render
+    # category-tinted lines even when the daemon's stdout is captured
+    # to a file (the colors helper auto-disables on non-TTY by default).
+    # Side effect: the on-disk daemon log gets ANSI escapes — fine in
+    # any modern terminal (Windows Terminal, cmd with VT enabled,
+    # macOS / Linux). Set NO_COLOR=1 to opt out.
+    if not os.environ.get("NO_COLOR"):
+        try:
+            from krakey.runtime.console import colors as _colors
+            _colors._ENABLED = True
+        except Exception:  # noqa: BLE001
+            pass
+    log_capture = LogCapture()
+    log_capture.install()
+
     try:
         broadcaster = EventBroadcaster(runtime.events)
         app = create_dashboard_app(
@@ -181,6 +198,7 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
             on_restart=on_restart,
             plugin_configs_root=Path(plugin_configs_root),
             auth_token=auth_token,
+            log_capture=log_capture,
         )
         server = ThreadedDashboardServer(app, host=host, port=port)
         server.start()
@@ -192,24 +210,25 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
         runtime.log.hb(
             f"dashboard listening on http://{host}:{server.port}"
         )
-        # Print the one-click URL with the token only when stderr is a
-        # real TTY — that way we don't paint the bearer token into log
-        # files when stdout/stderr is captured (systemd, supervisord,
-        # `python -m krakey > log`, log aggregators). When captured,
-        # we tell the user where the token file lives instead.
-        url_redacted = f"http://{host}:{server.port}/?token=<see {token_path}>"
+        # Always log the one-click URL by default — this is a personal
+        # local daemon and the log file lives on the user's own disk
+        # next to the token file anyway. ``krakey start`` redirects
+        # stdout to that log, so without the URL in the log the user
+        # has no way to see what to open. Set
+        # ``KRAKEY_REDACT_TOKEN_LOG=1`` to opt into redaction (for
+        # shipping logs to a remote aggregator etc.).
         url_full = f"http://{host}:{server.port}/?token={auth_token}"
-        if sys.stderr.isatty():
-            print(
-                f"[dashboard] URL (one-click): {url_full}",
-                file=sys.stderr, flush=True,
+        if os.environ.get("KRAKEY_REDACT_TOKEN_LOG"):
+            url_redacted = (
+                f"http://{host}:{server.port}/?token=<see {token_path}>"
             )
-        else:
             runtime.log.hb(f"dashboard URL: {url_redacted}")
             runtime.log.hb(
-                "dashboard token redacted from logs; read the file or "
-                "set ?token=<contents> manually"
+                "dashboard token redacted from logs (KRAKEY_REDACT_-"
+                "TOKEN_LOG=1); read the token file directly"
             )
+        else:
+            runtime.log.hb(f"dashboard URL (one-click): {url_full}")
     except OSError as e:
         runtime.log.runtime_error(
             f"dashboard failed to start (port {port} in use? {e}); "

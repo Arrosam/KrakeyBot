@@ -849,6 +849,123 @@ async function loadKBEntries(kbid) {
 // for users who never opened Memory, and it could pile on top of a
 // busy runtime (auto-recall + LLM thinking) and stall the dashboard.
 
+// ============== LOG — /ws/logs ==============
+//
+// Live stdout/stderr from the runtime, captured server-side by a tee
+// in log_capture.py. ANSI escape sequences (the runtime's heartbeat
+// logger emits cyan/green/yellow/magenta) are parsed here into
+// CSS-classed spans so the on-screen log feels like a tinted
+// terminal rather than a plain text dump.
+
+const logStream = $("#log-stream");
+const logCount = $("#log-count");
+const logAutoscroll = $("#log-autoscroll");
+const LOG_UI_CAP = 2000;  // cap rendered lines so a long-running tab can't OOM the browser
+let logWS = null;
+let _logLineCount = 0;
+
+// Map ANSI SGR colour codes to the same theme tokens used elsewhere.
+// Only handles foreground colours and reset — that's all the runtime
+// console.colors module emits.
+const _ANSI_CLASS = {
+  "31": "ansi-red",
+  "32": "ansi-green",
+  "33": "ansi-yellow",
+  "34": "ansi-cyan",   // map to cyan; we don't have a real blue token
+  "35": "ansi-magenta",
+  "36": "ansi-cyan",
+  "37": null,           // white = default
+  "0":  null,           // reset → close current span
+};
+
+function _renderAnsiLine(line) {
+  // Escape HTML first so any < > & in log content can't inject markup.
+  let safe = line
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  // Then walk the ANSI codes left-to-right, opening/closing spans as
+  // we see codes. A single \x1b[<n>m sequence either opens a new
+  // colour span (closing any previous) or, for code 0, closes.
+  const re = /\[([0-9;]*)m/g;
+  let out = "";
+  let cursor = 0;
+  let openSpan = false;
+  let m;
+  while ((m = re.exec(safe)) !== null) {
+    out += safe.slice(cursor, m.index);
+    cursor = m.index + m[0].length;
+    // Multi-code sequences (e.g. "\x1b[1;36m") — take the last
+    // colour-meaningful one. The runtime only emits single-code
+    // sequences in practice, but be defensive.
+    const codes = m[1].split(";").filter(Boolean);
+    let cls = null;
+    let isReset = false;
+    for (const c of codes) {
+      if (c === "0" || c === "") { isReset = true; cls = null; continue; }
+      if (_ANSI_CLASS[c] !== undefined) { cls = _ANSI_CLASS[c]; isReset = false; }
+    }
+    if (openSpan) { out += "</span>"; openSpan = false; }
+    if (!isReset && cls) { out += `<span class="${cls}">`; openSpan = true; }
+  }
+  out += safe.slice(cursor);
+  if (openSpan) out += "</span>";
+  return out;
+}
+
+function _appendLogLine(line) {
+  const div = document.createElement("div");
+  div.className = "log-line";
+  // Tag warning-ish lines from stderr-style prefixes so they pop
+  // even when the runtime didn't bother with ANSI codes.
+  if (/\[runtime\]|error|traceback/i.test(line)) {
+    div.classList.add("error");
+  } else if (/\[warn\]|warning/i.test(line)) {
+    div.classList.add("warn");
+  }
+  div.innerHTML = _renderAnsiLine(line);
+  logStream.appendChild(div);
+  while (logStream.children.length > LOG_UI_CAP) {
+    logStream.removeChild(logStream.firstChild);
+  }
+  _logLineCount += 1;
+  if (logCount) logCount.textContent = `${_logLineCount} lines`;
+  if (logAutoscroll && logAutoscroll.checked) {
+    logStream.scrollTop = logStream.scrollHeight;
+  }
+}
+
+function connectLogs() {
+  logWS = new WebSocket(_wsUrl("/ws/logs"));
+  logWS.onopen = () => {
+    if (logStream.textContent === "— connecting —") {
+      logStream.textContent = "";
+    }
+  };
+  logWS.onclose = (ev) => {
+    if (ev && ev.code === 1008) { location.reload(); return; }
+    setTimeout(connectLogs, 2000);
+  };
+  logWS.onmessage = (msg) => {
+    const data = JSON.parse(msg.data);
+    if (data.kind === "history") {
+      logStream.textContent = "";
+      for (const line of data.lines) _appendLogLine(line);
+    } else if (data.kind === "line") {
+      _appendLogLine(data.line);
+    }
+  };
+}
+connectLogs();
+
+if (logStream) {
+  $("#log-clear").addEventListener("click", () => {
+    logStream.innerHTML = "";
+    _logLineCount = 0;
+    if (logCount) logCount.textContent = "0 lines";
+  });
+}
+
 // ============== PROMPTS ==============
 
 const promptsList = $("#prompts-list");

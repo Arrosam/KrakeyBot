@@ -1,0 +1,49 @@
+/* Log view — runtime stdout/stderr streamed via /ws/logs.
+   ANSI escape sequences in the captured lines are parsed client-side
+   into <span class="ansi-*"> wrappers; CSS maps each colour code to
+   the same theme tokens the rest of the dashboard uses, so the Log
+   tab feels like a tinted terminal rather than a plain text dump. */
+
+.log-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.log-toolbar .log-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.log-toolbar #log-count { margin-left: auto; }
+
+.log-stream {
+  flex: 1;
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
+}
+.log-stream .log-line { display: block; }
+.log-stream .log-line.warn { color: var(--yellow); }
+.log-stream .log-line.error { color: var(--red); }
+
+/* ANSI colour spans. Parsed client-side from \x1b[<n>m sequences.
+   Codes match the values emitted by krakey/runtime/console/colors.py. */
+.log-stream .ansi-cyan    { color: var(--cyan); }
+.log-stream .ansi-green   { color: var(--green); }
+.log-stream .ansi-yellow  { color: var(--yellow); }
+.log-stream .ansi-magenta { color: var(--magenta); }
+.log-stream .ansi-red     { color: var(--red); }
