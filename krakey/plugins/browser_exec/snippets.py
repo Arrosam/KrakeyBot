@@ -1,37 +1,60 @@
-"""Pure builders for the ``browser_exec`` Playwright session script.
+"""Pure builders + validators for the ``browser_exec`` plugin.
 
-The tool dispatches one Python source string per call as
-``[python_cmd, "-c", snippet]``. The snippet template is fixed at
-build time; only the JSON-encoded SPEC dict varies per call.
-Selectors / text / URLs from Self travel as JSON string values
-inside the snippet's ``SPEC`` dict — they are NEVER interpolated
-into Python or JS source. This is the load-bearing safety contract.
+The plugin's runtime model (plan v2) is a long-running browser
+RPC server inside the env that survives across heartbeats. Each
+tool call dispatches a small Python *client snippet* via
+``env.run([python_cmd, "-c", snippet])``; the snippet:
+
+  1. Reads ``workspace/data/browser_exec/server.json`` for the
+     server's port + auth token.
+  2. TCP-probes the recorded port. On failure: writes the embedded
+     ``server.py`` source to disk, spawns it as a detached
+     subprocess, polls for ``server.json`` to reappear.
+  3. POSTs ``{op, args}`` to ``http://127.0.0.1:<port>/rpc`` with
+     ``X-Browser-Token: <token>``.
+  4. Prints the response JSON to stdout, exits 0.
 
 Public API:
 
-    build_session_script(spec) -> str
-        Return a self-contained Python source string. Raises
-        nothing; all validation happens at the tool layer before
-        this is called.
+    build_dispatch_script(op, args, *, server_source,
+                          python_cmd, browser, headless,
+                          rpc_timeout_s) -> str
+        Return the client snippet as a Python source string. The
+        op + args dict and the server source are JSON-encoded
+        inside the snippet; selectors / text / URLs from Self
+        travel only as JSON string values, never as bare Python
+        tokens (load-bearing safety contract).
 
     validate_url(url) -> str
-        Reject non-string / non-http(s) URLs. Used by the tool to
-        gate ``start_url`` and per-action ``navigate.url`` BEFORE
-        the snippet is built — deterministic param error, not a
-        runtime subprocess failure.
+        Reject non-string / non-http(s) URLs.
 
     validate_action(action_dict) -> None
-        Validate one action dict's shape (kind + required per-kind
-        fields + types). Raises ``ValueError`` with a precise
-        message; tool layer catches and converts to error Stimulus.
+        Validate one in-tab action dict's shape (kind + required
+        per-kind fields + types).
+
+    SERVER_SOURCE — string holding the full source of
+        ``server.py``, embedded into every dispatched snippet so
+        the env doesn't need a pre-deployed copy.
 
     URL_SCHEMES_ALLOWED, ACTIONS, SCROLL_DIRECTIONS — module-level
         constants reused by the tool layer.
 """
 from __future__ import annotations
 
+import inspect
 import json
 from typing import Any
+
+from krakey.plugins.browser_exec import server as _server_module
+
+
+SERVER_SOURCE = inspect.getsource(_server_module)
+"""Verbatim source of ``server.py``, embedded into every
+dispatched snippet. The snippet writes this to
+``<env-cwd>/workspace/data/browser_exec/server.py`` on first run
+(idempotent — overwrites if the on-disk source differs from the
+embedded copy, so plugin upgrades propagate without operator
+intervention)."""
 
 
 URL_SCHEMES_ALLOWED = ("http://", "https://")
@@ -152,99 +175,196 @@ def validate_action(a: Any, *, index: int = 0) -> None:
             )
 
 
-# The snippet template. Kept as a module-level string so it's
-# easy to inspect and safe-guards against accidental f-string
-# interpolation of caller-controlled values (only ``{spec_literal}``
-# is substituted, and that's already a Python str literal of JSON).
+# The dispatch-client snippet template. All caller-controlled
+# values (``op``, ``args``, server config) travel through three
+# JSON literals — no f-string interpolation, no bare-token leaks.
+# Substitutions: {payload_literal}, {server_source_literal},
+# {browser_literal}, {headless_literal}, {rpc_timeout_s},
+# {python_cmd_literal}.
 #
-# Doubled braces (``{{ ... }}``) survive .format() as single braces
-# in the emitted source.
-_SCRIPT_TEMPLATE = """\
-import json, os, sys
-from playwright.sync_api import sync_playwright
-SPEC = json.loads({spec_literal})
-with sync_playwright() as p:
-    launcher = getattr(p, SPEC['browser'])
-    browser = launcher.launch(headless=SPEC['headless'])
-    completed = 0
+# Doubled braces (``{{ ... }}``) survive ``.format()`` as single
+# braces in the emitted source.
+_DISPATCH_TEMPLATE = """\
+import json, os, socket, subprocess, sys, time
+from pathlib import Path
+
+PAYLOAD = json.loads({payload_literal})
+SERVER_SOURCE = json.loads({server_source_literal})
+BROWSER = {browser_literal}
+HEADLESS = {headless_literal}
+RPC_TIMEOUT_S = {rpc_timeout_s}
+PYTHON_CMD = {python_cmd_literal}
+
+WORKSPACE = Path('workspace')
+DATA_DIR = WORKSPACE / 'data' / 'browser_exec'
+INFO_PATH = DATA_DIR / 'server.json'
+SERVER_PATH = DATA_DIR / 'server.py'
+
+
+def _read_info():
     try:
-        page = browser.new_page()
-        timeout_ms = int(SPEC['timeout_ms'])
-        page.goto(SPEC['start_url'], timeout=timeout_ms)
-        for a in SPEC['actions']:
-            kind = a['action']
-            if kind == 'navigate':
-                page.goto(a['url'], timeout=timeout_ms)
-            elif kind == 'click':
-                page.click(a['selector'], timeout=timeout_ms)
-            elif kind == 'type':
-                page.fill(a['selector'], a['text'], timeout=timeout_ms)
-            elif kind == 'press':
-                page.keyboard.press(a['key'])
-            elif kind == 'scroll':
-                d = a['direction']
-                amt = a['amount']
-                if d == 'down':    dx, dy = 0, amt
-                elif d == 'up':    dx, dy = 0, -amt
-                elif d == 'right': dx, dy = amt, 0
-                else:              dx, dy = -amt, 0
-                page.evaluate('window.scrollBy(arguments[0], arguments[1])', [dx, dy])
-            elif kind == 'wait_for':
-                tm = int(a.get('timeout_ms', timeout_ms))
-                page.wait_for_selector(a['selector'], timeout=tm)
-            elif kind == 'screenshot':
-                sp = SPEC['screenshot_path']
-                os.makedirs(os.path.dirname(sp) or '.', exist_ok=True)
-                page.screenshot(path=sp, full_page=bool(a.get('full_page', False)))
-            else:
-                raise ValueError('unknown action: ' + repr(kind))
-            completed += 1
-        if SPEC['output'] == 'a11y':
-            result = page.accessibility.snapshot()
-        elif SPEC['output'] == 'text':
-            result = page.inner_text('body')
-        elif SPEC['output'] == 'html':
-            result = page.content()
-        else:
-            raise ValueError('unknown output format: ' + repr(SPEC['output']))
+        return json.loads(INFO_PATH.read_text(encoding='utf-8'))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def _server_alive(info):
+    if not info:
+        return False
+    try:
+        with socket.create_connection(
+            ('127.0.0.1', int(info['port'])), timeout=0.5,
+        ):
+            return True
+    except (OSError, ValueError):
+        return False
+
+
+def _write_server_source():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    if SERVER_PATH.exists():
+        try:
+            existing = SERVER_PATH.read_text(encoding='utf-8')
+            if existing == SERVER_SOURCE:
+                return
+        except OSError:
+            pass
+    SERVER_PATH.write_text(SERVER_SOURCE, encoding='utf-8')
+
+
+def _spawn_server():
+    _write_server_source()
+    args = [
+        PYTHON_CMD, str(SERVER_PATH),
+        '--workspace', str(WORKSPACE),
+        '--browser', BROWSER,
+        '--headless', 'true' if HEADLESS else 'false',
+    ]
+    kwargs = {{
+        'stdin': subprocess.DEVNULL,
+        'stdout': subprocess.DEVNULL,
+        'stderr': subprocess.DEVNULL,
+        'cwd': str(Path('.').resolve()),
+        'close_fds': True,
+    }}
+    if os.name == 'nt':
+        # Windows: detach from console + new process group so
+        # the parent's exit doesn't take the child down.
+        DETACHED = 0x00000008  # DETACHED_PROCESS
+        NEW_PG = 0x00000200    # CREATE_NEW_PROCESS_GROUP
+        kwargs['creationflags'] = DETACHED | NEW_PG
+    else:
+        # POSIX: new session reparents to PID 1 when we exit.
+        kwargs['start_new_session'] = True
+    subprocess.Popen(args, **kwargs)
+
+
+def _wait_for_ready(deadline):
+    while time.time() < deadline:
+        info = _read_info()
+        if _server_alive(info):
+            return info
+        time.sleep(0.2)
+    return None
+
+
+def _post_rpc(info, body):
+    import http.client
+    conn = http.client.HTTPConnection(
+        '127.0.0.1', int(info['port']), timeout=RPC_TIMEOUT_S,
+    )
+    raw = json.dumps(body).encode('utf-8')
+    conn.request(
+        'POST', '/rpc', body=raw,
+        headers={{
+            'Content-Type': 'application/json',
+            'Content-Length': str(len(raw)),
+            'X-Browser-Token': info['token'],
+        }},
+    )
+    resp = conn.getresponse()
+    data = resp.read().decode('utf-8', errors='replace')
+    conn.close()
+    return resp.status, data
+
+
+def main():
+    info = _read_info()
+    if not _server_alive(info):
+        try:
+            INFO_PATH.unlink(missing_ok=True)
+        except Exception:
+            pass
+        _spawn_server()
+        info = _wait_for_ready(time.time() + 30.0)
+        if info is None:
+            log_path = DATA_DIR / 'server.log'
+            tail = ''
+            try:
+                tail = '\\n'.join(
+                    log_path.read_text(encoding='utf-8').splitlines()[-40:]
+                )
+            except OSError:
+                tail = '(no server.log yet)'
+            sys.stdout.write(json.dumps({{
+                'ok':    False,
+                'error': 'browser server failed to start within 30s',
+                'tabs':  [],
+                'log_tail': tail,
+            }}))
+            return 0
+
+    status, body = _post_rpc(info, PAYLOAD)
+    if status != 200:
         sys.stdout.write(json.dumps({{
-            'final_url':         page.url,
-            'output_format':     SPEC['output'],
-            'output':            result,
-            'screenshot_path':   SPEC.get('screenshot_path') if SPEC.get('return_screenshot') else None,
-            'actions_completed': completed,
-            'actions_total':     len(SPEC['actions']),
+            'ok':    False,
+            'error': 'rpc http status ' + str(status) + ': ' + body[:400],
+            'tabs':  [],
         }}))
-    finally:
-        browser.close()
+        return 0
+
+    sys.stdout.write(body)
+    return 0
+
+
+sys.exit(main())
 """
 
 
-def build_session_script(spec: dict[str, Any]) -> str:
-    """Build the Python source for one browser session.
+def build_dispatch_script(
+    op: str,
+    args: dict[str, Any],
+    *,
+    python_cmd: str,
+    browser: str,
+    headless: bool,
+    rpc_timeout_s: float = 60.0,
+) -> str:
+    """Build the Python source for one RPC dispatch.
 
-    ``spec`` is expected to already be validated by the tool layer
-    (URLs / action shapes / browser name / output format / etc.).
-    This function does not re-validate; it only encodes ``spec`` as
-    JSON, wraps that JSON inside a Python string literal, and
-    interpolates it into the fixed template.
-
-    Round-trip:
-      1. JSON-encode ``spec`` → JSON string.
-      2. JSON-encode the JSON string → a Python-safe string literal
-         (escapes quotes, backslashes, control chars).
-      3. Substitute that literal into ``_SCRIPT_TEMPLATE`` at
-         ``{spec_literal}``.
-      4. The emitted script does ``json.loads(<literal>)`` to get
-         back the original dict.
-
-    No selector / text / URL value reaches Python source as a bare
-    token — they're all string values inside the JSON dict. This is
-    the safety contract the snippet relies on.
+    The op name + args dict travel as JSON inside the snippet; the
+    server source travels as a JSON-encoded Python string literal.
+    The snippet's only Python-source-level vars are
+    BROWSER / HEADLESS / RPC_TIMEOUT_S / PYTHON_CMD which are tool-
+    layer constants, never Self-controlled. All Self-controlled
+    values (selectors, URLs, text) are inside the PAYLOAD dict.
     """
-    # Outer json.dumps wraps the inner JSON string in valid Python
-    # source (a quoted string literal). The inner json.dumps
-    # produces the JSON document itself.
-    spec_json = json.dumps(spec, ensure_ascii=False)
-    spec_literal = json.dumps(spec_json)
-    return _SCRIPT_TEMPLATE.format(spec_literal=spec_literal)
+    payload = {"op": op, "args": args}
+
+    def _python_str_literal(s: str) -> str:
+        # Outer json.dumps wraps a JSON string in a Python-safe
+        # string literal (escapes quotes, backslashes, control
+        # chars). The emitted snippet does json.loads(<literal>)
+        # to recover the value.
+        return json.dumps(json.dumps(s, ensure_ascii=False))
+
+    payload_json = json.dumps(payload, ensure_ascii=False)
+
+    return _DISPATCH_TEMPLATE.format(
+        payload_literal=json.dumps(payload_json),
+        server_source_literal=_python_str_literal(SERVER_SOURCE),
+        browser_literal=repr(browser),
+        headless_literal=repr(bool(headless)),
+        rpc_timeout_s=float(rpc_timeout_s),
+        python_cmd_literal=repr(python_cmd),
+    )

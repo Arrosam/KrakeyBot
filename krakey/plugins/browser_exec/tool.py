@@ -1,24 +1,27 @@
-"""``browser_exec`` Tool — drive a Playwright browser inside a
-Self-chosen Environment.
+"""``browser_exec`` Tool — drive a persistent Playwright browser
+inside a Self-chosen Environment.
 
-Mirrors ``cli_exec`` and ``gui_exec``'s envelope (capture
-``ctx.environment`` in factory, validate Self params, soft-fail on
-every error path). Each call is one *session script*: the tool
-builds a Python source string from Self's spec, dispatches it as
-``[python, "-c", snippet]`` to ``env.run``, parses one JSON object
-back from stdout, and wraps it as a ``tool_feedback`` Stimulus.
+The plugin's runtime model (plan v2) is a long-running browser
+RPC server inside the env that survives across heartbeats. Each
+tool call dispatches a small Python *client snippet* via
+``env.run([python_cmd, "-c", snippet])``; the snippet talks to
+the server over localhost TCP and prints one JSON envelope to
+stdout. The tool parses that envelope and renders a
+``tool_feedback`` Stimulus.
 
-The script template is fixed (all action dispatch logic lives
-inside the snippet); only the JSON-encoded SPEC varies per call.
-Selectors / text values / URLs travel as JSON string values, never
-interpolated into Python or JS source — this is the safety contract.
+Tool surface is one-tab-per-call:
+  - ``action: "list_tabs"`` — read the live tab map, no browser
+    work beyond querying URLs/titles.
+  - ``action: "new_tab"`` — open a new tab in the persistent
+    browser, navigate to ``start_url``, return its tab_id.
+  - ``action: "close_tab"`` — close a specific tab.
+  - ``action: "operate"`` — run an in-tab action chain
+    (click/type/press/scroll/wait_for/screenshot) on a specific
+    tab. The browser instance and the tab's DOM/JS state survive
+    across calls.
 
-Skeleton: this module currently exposes the factory and the class
-shell. ``execute`` raises ``NotImplementedError``; the dispatch
-body lands in step 3 of the implementation plan once
-``snippets.py`` is in place. The stable surface (name / description /
-parameters_schema) is finalized so the dashboard catalog and the
-hypothalamus translator can pin against it from day one.
+Every successful response includes the current ``tabs`` list so
+Self always knows what's open.
 """
 from __future__ import annotations
 
@@ -71,11 +74,15 @@ OUTPUT_FORMATS = ("a11y", "text", "html")
 tree, token-efficient); ``text`` strips tags; ``html`` returns the
 post-JS rendered HTML verbatim."""
 
+TOP_LEVEL_ACTIONS = ("list_tabs", "new_tab", "close_tab", "operate")
+"""Top-level ``action`` enum. Each call is exactly one of these."""
+
 ACTIONS = (
     "navigate", "click", "type", "press",
     "scroll", "wait_for", "screenshot",
 )
-"""Action kinds Self may include in the ``actions`` array."""
+"""In-tab action kinds Self may include in the ``operate`` action's
+``actions`` array."""
 
 SCROLL_DIRECTIONS = ("up", "down", "left", "right")
 
@@ -88,6 +95,12 @@ SCREENSHOT_DIR = PurePosixPath("workspace/data/screenshots")
 """Relative path inside the env's filesystem where screenshots
 land. ``PurePosixPath`` so the snippet always emits ``/`` joins
 regardless of host OS."""
+
+ENV_RUN_OVERHEAD_S = 60.0
+"""Extra wall-clock budget on top of per-action timeouts to cover
+browser cold-launch (chromium first-run is slow) + RPC overhead
+when the snippet has to spawn the server. Subsequent calls hit a
+warm server and rarely use this much."""
 
 
 def _now_ts() -> str:
@@ -163,21 +176,26 @@ class BrowserExecTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Run a real browser (Playwright) inside a target "
-            "Environment and execute one session script per call: "
-            "`start_url` + an ordered `actions` list "
-            "(navigate / click / type / press / scroll / wait_for / "
-            "screenshot). The browser opens at call start and closes "
-            "at call end — no state survives across calls; pass the "
-            "returned `final_url` as the next call's `start_url` to "
-            "continue from a post-click page. `env` selects the "
-            "Environment by name (e.g. \"local\" or \"sandbox\"); the "
-            "plugin must be allow-listed for that env in config. The "
-            "env's Python interpreter (default \"python\"; configurable "
-            "via the plugin's `python_cmd` config field) must have "
-            "`playwright` installed and bundled browsers downloaded "
-            "via `playwright install`. Default extraction is the "
-            "page's accessibility tree (`output: \"a11y\"`); "
+            "Drive a persistent browser (Playwright) inside a "
+            "target Environment. A long-running browser instance "
+            "lives in the env across heartbeats; each call dispatches "
+            "one tab-management op or one in-tab action chain. "
+            "`env` picks the Environment (e.g. \"local\" or "
+            "\"sandbox\"); the plugin must be allow-listed there. "
+            "`action` is one of: list_tabs, new_tab, close_tab, "
+            "operate. `new_tab` requires `start_url` (http/https only) "
+            "and optional `label`. `close_tab` and `operate` require "
+            "`tab_id` (from a previous response's `tabs` list). "
+            "`operate` takes `actions` (a list of in-tab action "
+            "objects: navigate / click / type / press / scroll / "
+            "wait_for / screenshot) and runs them on the chosen tab. "
+            "Every successful response includes the current `tabs` "
+            "list so you always see what's open. The env's Python "
+            "interpreter (default \"python\"; configurable via the "
+            "plugin's `python_cmd` config field) must have "
+            "`playwright` installed with bundled browsers downloaded "
+            "via `playwright install`. Default extraction format is "
+            "the page's accessibility tree (`output: \"a11y\"`); "
             "`\"text\"` and `\"html\"` are also available."
         )
 
@@ -185,7 +203,7 @@ class BrowserExecTool(Tool):
     def parameters_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
-            "required": ["env", "start_url", "actions"],
+            "required": ["env", "action"],
             "properties": {
                 "env": {
                     "type": "string",
@@ -196,22 +214,51 @@ class BrowserExecTool(Tool):
                         ".allowed_plugins`."
                     ),
                 },
+                "action": {
+                    "type": "string",
+                    "enum": list(TOP_LEVEL_ACTIONS),
+                    "description": (
+                        "Top-level op. `list_tabs` returns the "
+                        "current tab list with no other side effect. "
+                        "`new_tab` opens a fresh tab and navigates "
+                        "to `start_url`. `close_tab` closes the "
+                        "named tab. `operate` runs an in-tab "
+                        "`actions` chain on `tab_id`."
+                    ),
+                },
                 "start_url": {
                     "type": "string",
                     "description": (
-                        "Initial URL to load. Must start with "
+                        "URL to navigate the new tab to (required "
+                        "when `action=new_tab`). Must start with "
                         "`http://` or `https://`; other schemes "
-                        "(`file://`, `data:`, `javascript:`, etc.) "
                         "are rejected at the tool boundary."
+                    ),
+                },
+                "label": {
+                    "type": "string",
+                    "description": (
+                        "Optional human-friendly name for the new "
+                        "tab (used by `action=new_tab`); echoed "
+                        "back in the `tabs` list to help you "
+                        "identify tabs by purpose."
+                    ),
+                },
+                "tab_id": {
+                    "type": "string",
+                    "description": (
+                        "Target tab id from a previous response's "
+                        "`tabs` list. Required when "
+                        "`action ∈ {close_tab, operate}`."
                     ),
                 },
                 "actions": {
                     "type": "array",
                     "description": (
-                        "Ordered list of action objects executed "
-                        "inside the same browser session. Each "
-                        "object has an `action` key plus per-kind "
-                        "fields. Supported kinds: navigate {url}, "
+                        "Required when `action=operate`. Ordered "
+                        "list of in-tab action objects, each with "
+                        "an `action` key plus per-kind fields. "
+                        "Supported kinds: navigate {url}, "
                         "click {selector}, type {selector, text}, "
                         "press {key}, scroll {direction, amount}, "
                         "wait_for {selector, timeout_ms?}, "
@@ -231,33 +278,38 @@ class BrowserExecTool(Tool):
                     "type": "string",
                     "enum": list(OUTPUT_FORMATS),
                     "description": (
-                        "Final-state extraction format. `a11y` "
-                        "(default) returns the page's accessibility "
-                        "tree (semantic, token-efficient). `text` "
-                        "strips tags; `html` returns post-JS HTML."
+                        "Final-state extraction format for "
+                        "`action=operate`. `a11y` (default) returns "
+                        "the page's accessibility tree (semantic, "
+                        "token-efficient). `text` strips tags; "
+                        "`html` returns post-JS HTML."
                     ),
                 },
                 "return_screenshot": {
                     "type": "boolean",
                     "description": (
-                        "When true, append a `screenshot` action at "
-                        "the end of the chain to capture the final "
-                        "page state. Default false."
+                        "When true and `action=operate`, append a "
+                        "`screenshot` action at the end of the chain "
+                        "to capture the final page state. Default "
+                        "false. Path is returned in the response."
                     ),
                 },
                 "headless": {
                     "type": "boolean",
                     "description": (
-                        "Override the configured headless setting "
-                        "for this call only."
+                        "Override the configured headless setting. "
+                        "Note: this is locked in at the server's "
+                        "FIRST launch in the env; subsequent calls' "
+                        "overrides are ignored until the server is "
+                        "restarted (e.g. by env restart)."
                     ),
                 },
                 "browser": {
                     "type": "string",
                     "enum": list(BROWSERS),
                     "description": (
-                        "Override the configured default browser "
-                        "for this call only."
+                        "Override the configured default browser. "
+                        "Same first-launch-wins caveat as `headless`."
                     ),
                 },
             },
@@ -271,24 +323,11 @@ class BrowserExecTool(Tool):
         if not isinstance(env_name, str) or not env_name:
             return self._err("missing or invalid `env` parameter")
 
-        try:
-            start_url = snip.validate_url(
-                params.get("start_url"), field="start_url",
-            )
-        except ValueError as e:
-            return self._err(str(e))
-
-        actions = params.get("actions")
-        if not isinstance(actions, list):
+        action = params.get("action")
+        if action not in TOP_LEVEL_ACTIONS:
             return self._err(
-                "`actions` must be an array (use [] for a "
-                "navigate-only call)",
+                f"`action` must be one of {list(TOP_LEVEL_ACTIONS)}",
             )
-        try:
-            for i, a in enumerate(actions):
-                snip.validate_action(a, index=i)
-        except ValueError as e:
-            return self._err(str(e))
 
         timeout_raw = params.get("timeout_s", self._default_timeout_s)
         if (
@@ -300,18 +339,6 @@ class BrowserExecTool(Tool):
                 "`timeout_s` must be a positive number",
             )
         per_action_s = float(timeout_raw)
-
-        output_fmt = params.get("output", "a11y")
-        if output_fmt not in OUTPUT_FORMATS:
-            return self._err(
-                f"`output` must be one of {list(OUTPUT_FORMATS)}",
-            )
-
-        return_screenshot = params.get("return_screenshot", False)
-        if not isinstance(return_screenshot, bool):
-            return self._err(
-                "`return_screenshot` must be a boolean if provided",
-            )
 
         headless_raw = params.get("headless", self._headless)
         if not isinstance(headless_raw, bool):
@@ -325,9 +352,14 @@ class BrowserExecTool(Tool):
                 f"`browser` must be one of {list(BROWSERS)}",
             )
 
-        # ---- 2. resolve env (catches denial / lookup failures
-        #         BEFORE we go through the trouble of building the
-        #         snippet) ----
+        # ---- 2. per-op validation + args assembly ----
+        try:
+            args = self._build_op_args(action, params, per_action_s)
+        except ValueError as e:
+            return self._err(str(e))
+
+        # ---- 3. resolve env (catches denial / lookup failures BEFORE
+        #         we build the dispatch snippet) ----
         try:
             env = self._env_resolver(env_name)
         except EnvironmentDenied as e:
@@ -339,47 +371,25 @@ class BrowserExecTool(Tool):
                 f"env resolver error: {type(e).__name__}: {e}",
             )
 
-        # ---- 3. assemble SPEC ----
-        # Append a synthetic screenshot action if Self asked for one
-        # at the end of the chain. Validators have already run, so
-        # any prior screenshot action(s) will overwrite the same
-        # path — documented limitation; one screenshot per call is
-        # the supported mode.
-        effective_actions = list(actions)
-        if return_screenshot and not any(
-            a.get("action") == "screenshot" for a in effective_actions
-        ):
-            effective_actions.append({"action": "screenshot"})
-
-        screenshot_path: str | None = None
-        if any(a.get("action") == "screenshot" for a in effective_actions):
-            screenshot_path = str(SCREENSHOT_DIR / f"{_now_ts()}.png")
-
-        spec = {
-            "browser":           browser_name,
-            "headless":          headless_raw,
-            "start_url":         start_url,
-            "timeout_ms":        int(per_action_s * 1000),
-            "output":            output_fmt,
-            "actions":           effective_actions,
-            "return_screenshot": bool(return_screenshot)
-                                 or screenshot_path is not None,
-            "screenshot_path":   screenshot_path,
-        }
-
-        snippet = snip.build_session_script(spec)
-        cmd = [self._python_cmd, "-c", snippet]
-
-        # ---- 4. dispatch through env.run ----
-        # env.run timeout = browser launch (~10–30s for Chromium
-        # cold-start) + per-action cap × (actions + 1 for
-        # initial goto and 1 for final extraction). Bounded above
-        # by ~10× per-action cap to keep a runaway call from
-        # tying up the env indefinitely.
+        # ---- 4. build dispatch snippet + dispatch ----
+        n_actions = len(args.get("actions") or [])
+        # env.run timeout = ENV_RUN_OVERHEAD_S (covers cold-start +
+        # server spawn) + per-action cap × (n_actions + 1).
+        # Capped above so a runaway call doesn't tie up the env.
         env_timeout = min(
-            60.0 + per_action_s * (len(effective_actions) + 2),
+            ENV_RUN_OVERHEAD_S + per_action_s * (n_actions + 1),
             10.0 * per_action_s + 90.0,
         )
+        snippet = snip.build_dispatch_script(
+            action,
+            args,
+            python_cmd=self._python_cmd,
+            browser=browser_name,
+            headless=bool(headless_raw),
+            rpc_timeout_s=env_timeout,
+        )
+        cmd = [self._python_cmd, "-c", snippet]
+
         try:
             rc, out, err = await env.run(
                 cmd,
@@ -389,8 +399,8 @@ class BrowserExecTool(Tool):
             )
         except asyncio.TimeoutError:
             return self._err(
-                f"session timed out after {env_timeout:.1f}s "
-                f"(env={env_name!r}, actions={len(effective_actions)})",
+                f"dispatch timed out after {env_timeout:.1f}s "
+                f"(env={env_name!r}, action={action!r})",
             )
         except EnvironmentUnavailableError as e:
             return self._err(
@@ -401,57 +411,201 @@ class BrowserExecTool(Tool):
                 f"env.run error: {type(e).__name__}: {e}",
             )
 
-        # ---- 5. interpret result ----
+        # ---- 5. parse RPC envelope ----
         if rc != 0:
             return self._err(
-                f"session returned rc={rc} (env={env_name!r}); "
+                f"dispatch returned rc={rc} (env={env_name!r}); "
                 f"stderr: {_truncate(err, OUTPUT_TRUNCATE_CHARS)}",
             )
-
         try:
-            payload = json.loads(out)
+            envelope = json.loads(out)
         except (json.JSONDecodeError, TypeError) as e:
             return self._err(
-                f"could not parse session JSON output: {e}; "
+                f"could not parse dispatch JSON output: {e}; "
                 f"stdout head: {_truncate(out[:400], 400)!r}; "
                 f"stderr: {_truncate(err, OUTPUT_TRUNCATE_CHARS)}",
             )
-
-        if not isinstance(payload, dict) or "final_url" not in payload:
+        if not isinstance(envelope, dict) or "ok" not in envelope:
             return self._err(
-                "session output missing expected keys "
-                "(final_url, output_format, output, "
-                "actions_completed); got: "
-                f"{_truncate(str(payload), 400)!r}",
+                "dispatch output missing expected keys (ok, tabs); "
+                f"got: {_truncate(str(envelope), 400)!r}",
             )
 
-        # Success — render a compact header + the extracted output.
-        # Output value is JSON-serialized in the body so a11y trees
-        # (nested dicts) survive into the prompt without ambiguity.
-        out_str = json.dumps(
-            payload.get("output"), ensure_ascii=False, indent=2,
-        )
-        body = (
-            f"browser_exec env={env_name} "
-            f"final_url={payload.get('final_url')!r} "
-            f"format={payload.get('output_format')} "
-            f"actions={payload.get('actions_completed')}/"
-            f"{payload.get('actions_total')}"
-        )
-        sp = payload.get("screenshot_path")
-        if sp:
-            body += f" screenshot={sp}"
-        body += (
-            "\n--- output ---\n"
-            f"{_truncate(out_str, OUTPUT_TRUNCATE_CHARS)}"
-        )
+        tabs = envelope.get("tabs") or []
+
+        if not envelope.get("ok"):
+            err_msg = envelope.get("error") or "unspecified server error"
+            log_tail = envelope.get("log_tail")
+            content = (
+                f"browser_exec error: env={env_name} "
+                f"action={action} — {err_msg}"
+            )
+            if log_tail:
+                content += (
+                    f"\n--- server.log tail ---\n"
+                    f"{_truncate(log_tail, OUTPUT_TRUNCATE_CHARS)}"
+                )
+            content += "\n" + _format_tabs(tabs)
+            return Stimulus(
+                type="tool_feedback",
+                source=f"tool:{self.name}",
+                content=content,
+                timestamp=datetime.now(),
+                adrenalin=False,
+            )
+
+        # ---- 6. success — per-op rendering ----
+        result = envelope.get("result") or {}
         return Stimulus(
             type="tool_feedback",
             source=f"tool:{self.name}",
-            content=body,
+            content=self._render_success(
+                env_name, action, result, tabs,
+            ),
             timestamp=datetime.now(),
             adrenalin=False,
         )
+
+    # ---- arg assembly per top-level action ----
+
+    def _build_op_args(
+        self,
+        action: str,
+        params: dict[str, Any],
+        per_action_s: float,
+    ) -> dict[str, Any]:
+        """Per-op validation + RPC args assembly. Raises
+        ``ValueError`` on bad input — caller wraps as error
+        Stimulus."""
+        timeout_ms = int(per_action_s * 1000)
+
+        if action == "list_tabs":
+            return {}
+
+        if action == "new_tab":
+            start_url = snip.validate_url(
+                params.get("start_url"), field="start_url",
+            )
+            label = params.get("label", "")
+            if not isinstance(label, str):
+                raise ValueError("`label` must be a string if provided")
+            return {
+                "start_url": start_url,
+                "label":     label,
+                "timeout_ms": timeout_ms,
+            }
+
+        if action == "close_tab":
+            tab_id = params.get("tab_id")
+            if not isinstance(tab_id, str) or not tab_id:
+                raise ValueError(
+                    "`tab_id` must be a non-empty string for "
+                    "action=close_tab",
+                )
+            return {"tab_id": tab_id}
+
+        if action == "operate":
+            tab_id = params.get("tab_id")
+            if not isinstance(tab_id, str) or not tab_id:
+                raise ValueError(
+                    "`tab_id` must be a non-empty string for "
+                    "action=operate",
+                )
+            actions = params.get("actions")
+            if not isinstance(actions, list):
+                raise ValueError(
+                    "`actions` must be an array for action=operate",
+                )
+            for i, a in enumerate(actions):
+                snip.validate_action(a, index=i)
+
+            output_fmt = params.get("output", "a11y")
+            if output_fmt not in OUTPUT_FORMATS:
+                raise ValueError(
+                    f"`output` must be one of {list(OUTPUT_FORMATS)}",
+                )
+
+            return_screenshot = params.get("return_screenshot", False)
+            if not isinstance(return_screenshot, bool):
+                raise ValueError(
+                    "`return_screenshot` must be a boolean "
+                    "if provided",
+                )
+
+            effective_actions = list(actions)
+            if return_screenshot and not any(
+                a.get("action") == "screenshot"
+                for a in effective_actions
+            ):
+                effective_actions.append({"action": "screenshot"})
+
+            screenshot_path: str | None = None
+            if any(
+                a.get("action") == "screenshot"
+                for a in effective_actions
+            ):
+                screenshot_path = str(
+                    SCREENSHOT_DIR / f"{_now_ts()}.png",
+                )
+
+            return {
+                "tab_id":          tab_id,
+                "actions":         effective_actions,
+                "output":          output_fmt,
+                "screenshot_path": screenshot_path,
+                "timeout_ms":      timeout_ms,
+            }
+
+        # Unreachable — top-level validation already gated by
+        # TOP_LEVEL_ACTIONS membership.
+        raise ValueError(f"unknown action {action!r}")
+
+    # ---- success rendering ----
+
+    def _render_success(
+        self,
+        env_name: str,
+        action: str,
+        result: dict[str, Any],
+        tabs: list[dict[str, Any]],
+    ) -> str:
+        header = f"browser_exec env={env_name} action={action} ok"
+        body_parts = [header]
+
+        if action == "new_tab":
+            body_parts.append(
+                f"opened tab_id={result.get('tab_id')!r} "
+                f"url={result.get('url')!r} "
+                f"title={result.get('title')!r}"
+            )
+        elif action == "close_tab":
+            body_parts.append("tab closed")
+        elif action == "operate":
+            sub = (
+                f"tab_id={result.get('_tab_id', '')!r} "
+                if result.get("_tab_id") else ""
+            )
+            body_parts.append(
+                f"{sub}final_url={result.get('final_url')!r} "
+                f"format={result.get('output_format')} "
+                f"actions={result.get('actions_completed')}/"
+                f"{result.get('actions_total')}"
+            )
+            sp = result.get("screenshot_path")
+            if sp:
+                body_parts.append(f"screenshot={sp}")
+            output_str = json.dumps(
+                result.get("output"),
+                ensure_ascii=False,
+                indent=2,
+            )
+            body_parts.append(
+                "--- output ---\n"
+                + _truncate(output_str, OUTPUT_TRUNCATE_CHARS)
+            )
+
+        body_parts.append(_format_tabs(tabs))
+        return "\n".join(body_parts)
 
     def _err(self, msg: str) -> Stimulus:
         return Stimulus(
@@ -461,3 +615,20 @@ class BrowserExecTool(Tool):
             timestamp=datetime.now(),
             adrenalin=False,
         )
+
+
+def _format_tabs(tabs: list[dict[str, Any]]) -> str:
+    """Always-included tab listing in every response. Self uses
+    this to know what's open without an explicit ``list_tabs``
+    call (mirrors how ``in_mind_note`` injects state)."""
+    if not tabs:
+        return "--- tabs ---\n(no tabs open)"
+    lines = ["--- tabs ---"]
+    for t in tabs:
+        label = t.get("label") or ""
+        suffix = f" [{label}]" if label else ""
+        lines.append(
+            f"  {t.get('id')}: {t.get('url')!r} — "
+            f"{t.get('title')!r}{suffix}"
+        )
+    return "\n".join(lines)

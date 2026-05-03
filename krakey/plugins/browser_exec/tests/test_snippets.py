@@ -1,157 +1,214 @@
 """Unit tests for ``browser_exec.snippets`` — pure builders +
-validators. No browser required.
+validators.
 
-Covers:
-  * build_session_script: emitted source compiles, SPEC round-trips,
-    selector / text / URL values do NOT leak into Python source as
-    bare tokens (the load-bearing safety contract).
+Covers (post-v2 redesign):
+  * build_dispatch_script: emitted source compiles, payload
+    (op + args) round-trips through embedded JSON, SERVER_SOURCE
+    is included, Self-controlled values (selectors, URLs, text)
+    travel ONLY as JSON string values inside PAYLOAD, never as
+    bare Python tokens.
+  * SERVER_SOURCE module constant: non-empty, matches the live
+    server.py source so dispatched server source can't drift
+    behind the in-tree server module.
   * validate_url: accepts http/https, rejects file/data/javascript/
     chrome/about/non-string/empty.
   * validate_action: per-kind required-field enforcement, type
-    checks, scroll-direction whitelist, etc. Catches the same shape
+    checks, scroll-direction whitelist. Catches the same shape
     of bug as the gui_exec key-combo collapse — deterministic
     param error at the tool boundary.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import re
 
 import pytest
 
+from krakey.plugins.browser_exec import server as server_module
 from krakey.plugins.browser_exec.snippets import (
     ACTIONS,
     SCROLL_DIRECTIONS,
+    SERVER_SOURCE,
     URL_SCHEMES_ALLOWED,
-    build_session_script,
+    build_dispatch_script,
     validate_action,
     validate_url,
 )
 
 
 # =====================================================================
-# build_session_script — emitted-source contract
+# SERVER_SOURCE module constant
 # =====================================================================
 
 
-def _baseline_spec() -> dict:
-    return {
-        "browser": "chromium",
-        "headless": True,
-        "start_url": "https://example.com",
-        "timeout_ms": 30000,
-        "output": "a11y",
-        "actions": [],
-        "return_screenshot": False,
-        "screenshot_path": None,
-    }
+def test_server_source_is_nonempty_python():
+    """SERVER_SOURCE must contain real server.py source so the
+    dispatch snippet can write it to disk and spawn it. Empty /
+    truncated content would silently break the persistent-server
+    architecture."""
+    assert isinstance(SERVER_SOURCE, str)
+    assert len(SERVER_SOURCE) > 1000
+    # Source compiles as Python.
+    compile(SERVER_SOURCE, "<server.py>", "exec")
+    # Carries the recognizable entry-point markers so we know we
+    # didn't accidentally embed a stale or different module.
+    assert "def serve(" in SERVER_SOURCE
+    assert 'class BrowserWorker' in SERVER_SOURCE
+    assert '/rpc' in SERVER_SOURCE
+
+
+def test_server_source_matches_in_tree_server_module():
+    """If someone edits server.py without re-importing snippets,
+    the cached SERVER_SOURCE could go stale relative to the
+    on-disk module. Pin equality so the test fails first."""
+    assert SERVER_SOURCE == inspect.getsource(server_module)
+
+
+# =====================================================================
+# build_dispatch_script — emitted-source contract
+# =====================================================================
+
+
+def _baseline_args() -> dict:
+    return {"op": "list_tabs", "args": {}}
 
 
 def test_emitted_source_compiles_as_python():
-    """Smoke-check: the generated string is valid Python. Catches
-    template / brace-doubling / format-arg drift."""
-    src = build_session_script(_baseline_spec())
-    # ``compile`` raises ``SyntaxError`` on bad source; success
-    # means the snippet is parseable.
-    compile(src, "<browser_exec_snippet>", "exec")
+    """Smoke-check: the generated string is valid Python."""
+    src = build_dispatch_script(
+        "list_tabs", {},
+        python_cmd="python", browser="chromium", headless=True,
+    )
+    compile(src, "<browser_exec_dispatch>", "exec")
 
 
-def test_emitted_source_contains_no_executable_python_for_user_text():
-    """Safety contract: a Self-controlled selector value containing
-    Python keywords / function calls must NOT appear as Python
-    source — it must live inside a JSON string literal that the
-    snippet's ``json.loads`` decodes at runtime.
+def test_emitted_source_embeds_payload_op_and_args_via_json():
+    """Decode the PAYLOAD JSON literal embedded in the source and
+    confirm it equals the input op + args."""
+    src = build_dispatch_script(
+        "operate",
+        {
+            "tab_id": "tab_abc",
+            "actions": [
+                {"action": "click", "selector": "#btn"},
+            ],
+            "output": "a11y",
+        },
+        python_cmd="python3", browser="chromium", headless=False,
+        rpc_timeout_s=45.0,
+    )
+    m = re.search(r"PAYLOAD = json\.loads\((.*)\)", src)
+    assert m, "could not locate PAYLOAD = json.loads(...) line"
+    decoded = json.loads(json.loads(m.group(1)))
+    assert decoded == {
+        "op": "operate",
+        "args": {
+            "tab_id": "tab_abc",
+            "actions": [{"action": "click", "selector": "#btn"}],
+            "output": "a11y",
+        },
+    }
+
+
+def test_emitted_source_embeds_full_server_source():
+    """The dispatch snippet ships server.py verbatim so the env
+    doesn't need a pre-deployed copy. Pull SERVER_SOURCE out of
+    the snippet and confirm it round-trips."""
+    src = build_dispatch_script(
+        "list_tabs", {},
+        python_cmd="python", browser="chromium", headless=True,
+    )
+    # SERVER_SOURCE = json.loads(<literal>) — pull literal,
+    # double-decode to recover the original source.
+    m = re.search(
+        r"SERVER_SOURCE = json\.loads\((.*?)\)$", src, re.MULTILINE,
+    )
+    assert m, "could not locate SERVER_SOURCE = json.loads(...) line"
+    embedded = json.loads(json.loads(m.group(1)))
+    assert embedded == SERVER_SOURCE
+
+
+def test_emitted_source_threads_constants_into_python_vars():
+    """python_cmd / browser / headless / rpc_timeout_s appear as
+    Python source literals (not Self-controlled). The snippet
+    relies on them being plain Python values, not JSON-decoded."""
+    src = build_dispatch_script(
+        "list_tabs", {},
+        python_cmd="/usr/local/bin/python3.11",
+        browser="firefox", headless=False, rpc_timeout_s=42.5,
+    )
+    assert "PYTHON_CMD = '/usr/local/bin/python3.11'" in src
+    assert "BROWSER = 'firefox'" in src
+    assert "HEADLESS = False" in src
+    assert "RPC_TIMEOUT_S = 42.5" in src
+
+
+def test_self_controlled_payload_does_not_leak_as_bare_python():
+    """Safety contract: a Self-controlled value containing Python
+    code (selector with backticks/quotes/dunder) must travel as a
+    JSON string value inside PAYLOAD, never as a bare Python token.
 
     We embed an obvious payload (``__import__('os').system('rm -rf /')``)
-    as a selector and check the emitted source. The payload IS
-    present (inside the JSON string literal) but never as bare
-    Python tokens — the line containing it must be a quoted string
-    arg to ``json.loads``, not a bare expression.
-    """
+    as a selector. The string IS present in the source (inside the
+    PAYLOAD JSON literal) but ONLY there — never as a bare
+    expression."""
     payload = "__import__('os').system('rm -rf /')"
-    spec = _baseline_spec()
-    spec["actions"] = [{"action": "click", "selector": payload}]
-    src = build_session_script(spec)
-
-    # The payload must appear (as data) somewhere in the emitted
-    # source — but only inside the json.loads(...) literal.
+    src = build_dispatch_script(
+        "operate",
+        {
+            "tab_id": "tab_x",
+            "actions": [{"action": "click", "selector": payload}],
+        },
+        python_cmd="python", browser="chromium", headless=True,
+    )
+    # The payload appears (as data) in the source.
     assert payload in src
-
-    # Stronger: the payload appears EXACTLY ONCE (only inside the
-    # JSON literal). If it leaked elsewhere we'd see it twice.
+    # And ONLY ONCE — the line carrying it must be the
+    # PAYLOAD = json.loads(...) line.
     assert src.count(payload) == 1
-
-    # And: the line carrying the payload starts with ``SPEC =
-    # json.loads(`` — i.e. it's the JSON literal line, not bare
-    # source.
     payload_line = next(
         line for line in src.splitlines() if payload in line
     )
-    assert payload_line.lstrip().startswith("SPEC = json.loads(")
+    assert payload_line.lstrip().startswith("PAYLOAD = json.loads(")
 
 
-def test_emitted_source_round_trips_spec_via_json_loads():
-    """Decode the JSON literal embedded in the emitted source and
-    confirm it equals the input spec. This is the runtime
-    behavior of the script (``json.loads`` recovers the dict)
-    minus actually launching Playwright."""
-    spec = _baseline_spec()
-    spec["actions"] = [
-        {"action": "navigate", "url": "https://example.org/a"},
-        {"action": "click", "selector": "#submit"},
-        {"action": "type", "selector": "input[name='q']",
-         "text": "hello \"world\"\nwith newline"},
-        {"action": "press", "key": "Enter"},
-        {"action": "scroll", "direction": "down", "amount": 500},
-        {"action": "wait_for", "selector": ".results",
-         "timeout_ms": 5000},
-        {"action": "screenshot", "full_page": True},
-    ]
-
-    src = build_session_script(spec)
-
-    # Pull the JSON literal out of the source and decode it.
-    m = re.search(r"SPEC = json\.loads\((.*)\)", src)
-    assert m, "could not locate SPEC = json.loads(...) line"
-    inner_literal = m.group(1)
-    # The literal is itself a JSON-encoded JSON string. Decoding
-    # twice gives back the original dict.
-    decoded = json.loads(json.loads(inner_literal))
-    assert decoded == spec
-
-
-def test_emitted_source_uses_static_dispatch_table_no_eval():
-    """Tighter safety contract: no ``eval(`` or ``exec(`` calls
-    appear in the emitted source. The only ``page.evaluate`` is the
-    fixed scroll call. Verifies via substring check."""
-    src = build_session_script(_baseline_spec())
-    # No bare eval/exec in the snippet (would be a code-injection
-    # vector if Self-controlled values were near them).
+def test_emitted_source_has_no_eval_or_exec_calls():
+    """Tighter safety contract: no bare eval(/exec( in the
+    dispatch snippet. The snippet only TCP-talks to the server."""
+    src = build_dispatch_script(
+        "operate",
+        {"tab_id": "t", "actions": [], "output": "a11y"},
+        python_cmd="python", browser="chromium", headless=True,
+    )
     assert "eval(" not in src
     assert "exec(" not in src
-    # ``page.evaluate`` IS used — but only for the fixed scroll
-    # call; check it appears with the literal scroll JS.
-    assert (
-        "page.evaluate('window.scrollBy(arguments[0], "
-        "arguments[1])'"
-    ) in src
 
 
-def test_emitted_source_specifies_chromium_launcher_via_getattr():
-    """Browser is picked via ``getattr(p, SPEC['browser'])`` — the
-    name comes from the JSON spec, not Python source. Validates the
-    pattern is in place (so a future refactor doesn't accidentally
-    hardcode chromium)."""
-    src = build_session_script(_baseline_spec())
-    assert "getattr(p, SPEC['browser'])" in src
+def test_emitted_source_size_under_argv_limit():
+    """Windows command-line is ~32KB; the snippet (carrying the
+    full server source as data) needs to stay under that. Linux
+    is much larger (~256KB), so this is the binding constraint."""
+    src = build_dispatch_script(
+        "list_tabs", {},
+        python_cmd="python", browser="chromium", headless=True,
+    )
+    assert len(src) < 30_000, (
+        f"snippet too large for Windows argv: {len(src)} bytes"
+    )
 
 
-def test_emitted_source_size_is_reasonable_for_a_typical_call():
-    """Sanity bound: a typical call fits well under the OS argv
-    limit (~256KB on Linux, ~32KB on Windows command line). Default
-    chromium fixture should be << 4KB."""
-    src = build_session_script(_baseline_spec())
-    assert len(src) < 4000  # generous; current is ~2KB
+def test_emitted_source_chooses_detach_flags_per_platform():
+    """Sanity: the snippet must mention BOTH OS-specific spawn
+    paths (Linux: start_new_session; Windows: DETACHED_PROCESS /
+    CREATE_NEW_PROCESS_GROUP). It picks at runtime via os.name,
+    so both branches must be in the source."""
+    src = build_dispatch_script(
+        "list_tabs", {},
+        python_cmd="python", browser="chromium", headless=True,
+    )
+    assert "start_new_session" in src
+    assert "DETACHED_PROCESS" in src or "0x00000008" in src
 
 
 # =====================================================================
@@ -177,7 +234,7 @@ def test_validate_url_accepts_http_and_https(url):
     ("about:blank", "http://"),
     ("ftp://example.com", "http://"),
     ("//example.com", "http://"),
-    ("example.com", "http://"),  # no scheme at all
+    ("example.com", "http://"),
 ])
 def test_validate_url_rejects_non_http_schemes(url, expect_substr):
     with pytest.raises(ValueError) as ei:
@@ -193,8 +250,6 @@ def test_validate_url_rejects_non_string_or_empty(bad):
 
 
 def test_validate_url_field_name_appears_in_error_message():
-    """Self should learn whether the bad URL was ``start_url`` or
-    a per-action ``navigate.url`` so she can fix the right one."""
     with pytest.raises(ValueError) as ei:
         validate_url("file://bad", field="actions[2].url")
     assert "actions[2].url" in str(ei.value)
@@ -222,18 +277,13 @@ def test_validate_action_rejects_unknown_kind(kind):
     assert "must be one of" in str(ei.value)
 
 
-# --- navigate ---------------------------------------------------------
-
 def test_validate_action_navigate_requires_http_url():
     with pytest.raises(ValueError):
         validate_action({"action": "navigate", "url": "file:///x"}, index=0)
     with pytest.raises(ValueError):
         validate_action({"action": "navigate"}, index=0)
-    # Passes:
     validate_action({"action": "navigate", "url": "https://x"}, index=0)
 
-
-# --- click / press / wait_for / type ----------------------------------
 
 @pytest.mark.parametrize("kind, field", [
     ("click", "selector"),
@@ -248,14 +298,10 @@ def test_validate_action_requires_string_field(kind, field):
         validate_action({"action": kind, field: ""}, index=1)
     with pytest.raises(ValueError):
         validate_action({"action": kind, field: 5}, index=1)
-    # Passes:
     validate_action({"action": kind, field: "x"}, index=1)
 
 
 def test_validate_action_type_allows_empty_text_for_clear():
-    """``type`` with text='' is the documented "clear field" use-case
-    (Playwright's ``page.fill(selector, '')`` clears the input).
-    Must NOT be rejected — only None / wrong-type is rejected."""
     validate_action({
         "action": "type", "selector": "#name", "text": "",
     }, index=0)
@@ -272,8 +318,6 @@ def test_validate_action_type_rejects_non_string_text():
         }, index=0)
 
 
-# --- scroll -----------------------------------------------------------
-
 @pytest.mark.parametrize("direction", list(SCROLL_DIRECTIONS))
 def test_validate_action_scroll_accepts_each_direction(direction):
     validate_action({
@@ -282,7 +326,7 @@ def test_validate_action_scroll_accepts_each_direction(direction):
 
 
 @pytest.mark.parametrize("bad_direction", [
-    "diagonal", "", None, 0, "DOWN",  # case-sensitive
+    "diagonal", "", None, 0, "DOWN",
 ])
 def test_validate_action_scroll_rejects_bad_direction(bad_direction):
     with pytest.raises(ValueError) as ei:
@@ -305,14 +349,10 @@ def test_validate_action_scroll_rejects_non_positive_amount(bad_amount):
     assert "amount" in str(ei.value)
 
 
-# --- wait_for timeout_ms ----------------------------------------------
-
 def test_validate_action_wait_for_accepts_optional_timeout():
-    # Without timeout_ms: OK.
     validate_action({
         "action": "wait_for", "selector": ".x",
     }, index=0)
-    # With positive timeout_ms: OK.
     validate_action({
         "action": "wait_for", "selector": ".x",
         "timeout_ms": 1000,
@@ -328,8 +368,6 @@ def test_validate_action_wait_for_rejects_bad_timeout(bad):
         }, index=0)
     assert "timeout_ms" in str(ei.value)
 
-
-# --- screenshot full_page ---------------------------------------------
 
 def test_validate_action_screenshot_default_is_ok():
     validate_action({"action": "screenshot"}, index=0)
@@ -360,9 +398,6 @@ def test_url_schemes_allowed_is_http_and_https_only():
 
 
 def test_actions_constant_matches_validator_branches():
-    """If a new action kind is added to ACTIONS but no validator
-    branch handles it, ``validate_action`` would silently allow
-    malformed payloads. Pin the contract."""
     assert set(ACTIONS) == {
         "navigate", "click", "type", "press",
         "scroll", "wait_for", "screenshot",
