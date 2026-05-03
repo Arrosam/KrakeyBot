@@ -107,6 +107,11 @@ table.mem-table th { color: var(--cyan); font-weight: normal; }
 .gm-graph-inspect dd {
   margin: 0;
   word-break: break-word;
+  /* Preserve newlines in long LLM-generated descriptions while
+     still wrapping at whitespace at the column edge. The inspector
+     panel itself scrolls (overflow:auto on .gm-graph-inspect) so
+     multi-paragraph descriptions stay inside their column. */
+  white-space: pre-wrap;
 }
 .gm-graph-hint {
   position: absolute;

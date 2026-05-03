@@ -931,7 +931,10 @@ function _showNodeInspect(host, n) {
       ["category", n.category],
       ["source", n.source_type],
       ["importance", n.importance != null ? Number(n.importance).toFixed(2) : "—"],
-      ["description", (n.description || "").slice(0, 400)],
+      // Render the full description. The inspector column has its
+      // own overflow / word-break so a long LLM-generated summary
+      // scrolls inside its column instead of being silently elided.
+      ["description", n.description || ""],
     ],
   });
 }
