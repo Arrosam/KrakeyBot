@@ -1,0 +1,48 @@
+name: browser_exec
+description: >
+  Run a real browser instance (Playwright) inside a target
+  Environment and execute one *session script* per tool call:
+  ``start_url`` + an ordered list of typed actions
+  (navigate / click / type / press / scroll / wait_for / screenshot)
+  performed in one Playwright session. Browser opens at call start,
+  closes at call end. Default extraction is the page's accessibility
+  tree. Self picks the env per call (``env`` parameter); the plugin
+  must be allow-listed in ``config.environments.<env>.allowed_plugins``.
+  The target env's Python interpreter must have ``playwright``
+  installed and bundled browsers downloaded. No inner LLM.
+
+config_schema:
+  - field: python_cmd
+    type: text
+    default: python
+    help: >
+      Python interpreter on the env's PATH (must have ``playwright``
+      installed and browsers downloaded via ``playwright install``).
+      Default works on Windows and most distros that keep a
+      ``python`` symlink; set to ``python3`` (or an absolute path)
+      on minimal Linux installs that ship only ``python3``.
+  - field: headless
+    type: boolean
+    default: true
+    help: >
+      Run browsers in headless mode. Operator may flip to false on
+      a sandbox with ``display: headed`` for visible debugging.
+  - field: default_browser
+    type: text
+    default: chromium
+    help: >
+      Default Playwright launcher. One of ``"chromium"``,
+      ``"firefox"``, ``"webkit"`` (the operator must have run
+      ``playwright install <browser>`` for whichever is selected).
+      Self can override per call via the ``browser`` parameter.
+  - field: default_timeout_s
+    type: number
+    default: 30
+    help: >
+      Per-action timeout cap (page.goto, page.click, wait_for, ...).
+      Self can override per call via ``timeout_s``.
+
+components:
+  - kind: tool
+    factory_module: krakey.plugins.browser_exec.tool
+    factory_attr: build_tool
