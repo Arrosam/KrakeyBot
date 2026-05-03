@@ -41,6 +41,26 @@
 .cfg-section.collapsed > .body { display: none; }
 .cfg-section > .body { padding: 10px; }
 
+/* Per-section heading tint. The leading icon + the title text both
+   pick up the colour via inheritance (svg fill: currentColor); the
+   collapse caret keeps its muted grey since it's a navigation
+   affordance, not part of the section identity. The section border
+   gets a subtle tint of the same colour so the panel is still
+   scannable when scrolling past collapsed sections. */
+.cfg-section.tint-cyan    > h3 { color: var(--cyan); }
+.cfg-section.tint-cyan          { border-color: rgba(108, 213, 213, 0.4); }
+.cfg-section.tint-magenta > h3 { color: var(--magenta); }
+.cfg-section.tint-magenta       { border-color: rgba(197, 133, 197, 0.4); }
+.cfg-section.tint-green   > h3 { color: var(--green); }
+.cfg-section.tint-green         { border-color: rgba(126, 199, 126, 0.4); }
+.cfg-section.tint-yellow  > h3 { color: var(--yellow); }
+.cfg-section.tint-yellow        { border-color: rgba(232, 192, 96, 0.4); }
+.cfg-section.tint-red     > h3 { color: var(--red); }
+.cfg-section.tint-red           { border-color: rgba(210, 117, 117, 0.4); }
+.cfg-section.tint-muted   > h3 { color: var(--muted); }
+/* Caret stays neutral regardless of tint. */
+.cfg-section > h3 > .section-caret { color: var(--muted); }
+
 .cfg-row {
   display: grid;
   grid-template-columns: 200px 1fr;
@@ -306,6 +326,15 @@
 #settings-toast {
   font-size: 12px;
   margin-left: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: bold;
 }
-#settings-toast.ok { color: var(--text); font-weight: bold; }
-#settings-toast.err { color: var(--text); font-weight: bold; }
+/* Toast levels — Bootstrap-Icons SVG inherits via fill:currentColor,
+   so we only set `color` on the host and the icon follows. */
+#settings-toast.ok      { color: var(--green); }
+#settings-toast.err     { color: var(--red); }
+#settings-toast.warn    { color: var(--yellow); }
+#settings-toast.info    { color: var(--cyan); }
+#settings-toast.pending { color: var(--cyan); }

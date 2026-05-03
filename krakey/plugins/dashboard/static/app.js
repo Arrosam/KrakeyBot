@@ -1204,6 +1204,22 @@ const SECTION_ICONS = {
   "Sandbox VM": "hdd",
 };
 
+// Synthwave-ish accent per section. Renders on the heading icon +
+// title only — the body keeps the neutral text colour so dense
+// configuration stays readable. Token names match the CSS variables
+// defined in shared/theme.css.
+const SECTION_TINT = {
+  "LLM": "cyan",
+  "Plugins": "magenta",
+  "Idle": "muted",
+  "Fatigue": "yellow",
+  "Graph Memory": "magenta",
+  "Knowledge Base": "green",
+  "Sleep": "muted",
+  "Safety": "red",
+  "Sandbox VM": "cyan",
+};
+
 // Titles whose body is currently collapsed. Module-scoped so the
 // state survives renderSettingsForm() rebuilds within a session.
 let collapsedSections = new Set();
@@ -1217,6 +1233,8 @@ function _svgFromBiHtml(html) {
 function makeSection(title) {
   const sec = document.createElement("div");
   sec.className = "cfg-section";
+  const tint = SECTION_TINT[title];
+  if (tint) sec.classList.add("tint-" + tint);
   const isCollapsed = collapsedSections.has(title);
   if (isCollapsed) sec.classList.add("collapsed");
 
@@ -2480,14 +2498,34 @@ function _renderLLMPurposesEditor(plugin, cfg) {
   return block;
 }
 
-function showToast(text, ok = true) {
-  settingsToast.textContent = text;
-  settingsToast.className = ok ? "ok" : "err";
-  setTimeout(() => { settingsToast.textContent = ""; settingsToast.className = ""; }, 5000);
+// Map toast level → Bootstrap icon. Re-using the existing icons
+// keeps the visual vocabulary consistent with the rest of the SPA
+// (status bar, tabs, etc.).
+const _TOAST_ICON = {
+  ok: "check-circle-fill",
+  err: "x-circle-fill",
+  warn: "exclamation-circle-fill",
+  info: "info-circle-fill",
+  pending: "arrow-clockwise",
+};
+
+function showToast(text, level = "ok") {
+  const icon = window.biIcon(_TOAST_ICON[level] || _TOAST_ICON.info, 13);
+  const t = document.createElement("span");
+  t.className = "toast-text";
+  t.textContent = text;
+  settingsToast.innerHTML = "";
+  settingsToast.insertAdjacentHTML("beforeend", icon);
+  settingsToast.appendChild(t);
+  settingsToast.className = "toast " + level;
+  setTimeout(() => {
+    settingsToast.textContent = "";
+    settingsToast.className = "";
+  }, 5000);
 }
 
 $("#settings-save").addEventListener("click", async () => {
-  if (cfgState == null) { showToast("✗ nothing to save", false); return; }
+  if (cfgState == null) { showToast("nothing to save", "err"); return; }
   try {
     // Central config.yaml carries the two enable lists
     // (cfgState.modifiers, cfgState.plugins); the unified panel's
@@ -2501,7 +2539,7 @@ $("#settings-save").addEventListener("click", async () => {
     });
     const body = await r.json();
     if (!r.ok) {
-      showToast(`✗ save failed: ${body.detail || r.statusText}`, false);
+      showToast(`save failed: ${body.detail || r.statusText}`, "err");
       return;
     }
 
@@ -2529,12 +2567,12 @@ $("#settings-save").addEventListener("click", async () => {
     }
 
     if (pluginErrs.length) {
-      showToast(`✗ plugin saves failed: ${pluginErrs.join(", ")}`, false);
+      showToast(`plugin saves failed: ${pluginErrs.join(", ")}`, "err");
     } else {
-      showToast(`✓ saved (backup: ${body.backup || "n/a"}). Restart for changes to take effect.`);
+      showToast(`saved (backup: ${body.backup || "n/a"}). Restart for changes to take effect.`, "ok");
     }
   } catch (e) {
-    showToast("✗ network: " + e, false);
+    showToast("network: " + e, "err");
   }
 });
 
@@ -2543,13 +2581,13 @@ $("#settings-restart").addEventListener("click", async () => {
   try {
     const r = await fetch("/api/restart", { method: "POST" });
     if (r.ok) {
-      showToast("⏳ restarting...");
+      showToast("restarting...", "pending");
     } else {
       const body = await r.json();
-      showToast(`✗ restart failed: ${body.detail || r.statusText}`, false);
+      showToast(`restart failed: ${body.detail || r.statusText}`, "err");
     }
   } catch (e) {
     // Network error is expected during restart
-    showToast("⏳ restarting (lost connection)...");
+    showToast("restarting (lost connection)...", "pending");
   }
 });
