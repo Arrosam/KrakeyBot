@@ -1452,8 +1452,19 @@ function renderSettingsForm() {
   settingsForm.appendChild(renderGenericSection("sleep", "Sleep",
     cfgState.sleep, SCHEMAS.sleep));
   ensureSection("safety");
-  settingsForm.appendChild(renderGenericSection("safety", "Safety",
-    cfgState.safety, SCHEMAS.safety));
+  const safetySec = renderGenericSection("safety", "Safety",
+    cfgState.safety, SCHEMAS.safety);
+  // Hint at the top of the section body: the SafetySection dataclass
+  // is parsed and persisted but the runtime currently has zero
+  // consumers of config.safety.*. Document the status so users
+  // don't expect their hard-limit to fire.
+  const advisoryHint = document.createElement("p");
+  advisoryHint.className = "section-hint";
+  advisoryHint.textContent =
+    "advisory only — runtime does not yet enforce these limits";
+  const safetyBody = safetySec.querySelector(".body");
+  safetyBody.insertBefore(advisoryHint, safetyBody.firstChild);
+  settingsForm.appendChild(safetySec);
 
   // Environments — top-level execution-env block. Replaces the old
   // top-level `sandbox:` section the runtime no longer reads.

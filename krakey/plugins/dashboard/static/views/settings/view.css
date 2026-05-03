@@ -41,6 +41,19 @@
 .cfg-section.collapsed > .body { display: none; }
 .cfg-section > .body { padding: 10px; }
 
+/* Inline hint under a section heading — used today by Safety to
+   note the fields are advisory-only. Quiet enough not to compete
+   with the actual config rows beneath. */
+.cfg-section .section-hint {
+  margin: 0 0 8px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg);
+  border-left: 2px solid var(--yellow);
+  border-radius: 0 3px 3px 0;
+}
+
 /* Per-section heading tint. The leading icon + the title text both
    pick up the colour via inheritance (svg fill: currentColor); the
    collapse caret keeps its muted grey since it's a navigation
