@@ -258,6 +258,21 @@ main {
   font-size: 10px;
   margin-right: 6px;
 }
+/* Bootstrap-Icons SVG sitting between the .hb-tag and the entry's
+   text body (e.g. dispatch's chevron-right, idle's stopwatch).
+   Same flex alignment as other inline icon hosts; categorical
+   tints flow through .entry.dispatch / .idle / .sleep-* etc. */
+.scroll .entry-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 4px;
+  color: var(--muted);
+}
+.scroll .entry.dispatch    .entry-icon { color: var(--cyan); }
+.scroll .entry.tool-result .entry-icon { color: var(--green); }
+.scroll .entry.idle        .entry-icon { color: var(--muted); }
+.scroll .entry.sleep-start .entry-icon { color: var(--magenta); }
+.scroll .entry.sleep-done  .entry-icon { color: var(--yellow); }
 
 /* Shared hint paragraph (prompts + settings). */
 .hint {

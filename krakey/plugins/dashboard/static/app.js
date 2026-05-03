@@ -225,6 +225,29 @@ function appendEntry(panel, hbId, text) {
   panel.scrollTop = panel.scrollHeight;
 }
 
+// Sibling of appendEntry that prepends a Bootstrap-Icons SVG. Used
+// for stream lines that have a categorical "kind" — dispatch (→ in
+// markup), tool result (chevron-left), idle (stopwatch), sleep (moon /
+// sunrise) etc. No emoji ever; bi.js icons only (per repo memo).
+function appendIconEntry(panel, hbId, iconName, text, extraCls) {
+  const div = document.createElement("div");
+  div.className = "entry" + (extraCls ? " " + extraCls : "");
+  const tag = document.createElement("span");
+  tag.className = "hb-tag";
+  tag.textContent = `#${hbId}`;
+  div.appendChild(tag);
+  if (iconName && window.biIcon) {
+    const ico = document.createElement("span");
+    ico.className = "entry-icon";
+    ico.innerHTML = window.biIcon(iconName, 11);
+    div.appendChild(ico);
+  }
+  div.appendChild(document.createTextNode(" " + text));
+  panel.appendChild(div);
+  while (panel.children.length > 200) panel.removeChild(panel.firstChild);
+  panel.scrollTop = panel.scrollHeight;
+}
+
 function appendStimulusToStream(stims) {
   // Each stimuli_queued event carries the current pending queue.
   // Track fingerprints so we only log each one once across the
@@ -280,24 +303,27 @@ function handleEvent(e) {
       appendEntry(decisionEl, e.heartbeat_id, "[NOTE] " + e.text);
       break;
     case "dispatch":
-      // Tool dispatch — Self decided to call this tool. Logged with
-      // an outbound arrow so the paired result (←, below) reads
-      // chronologically once it lands.
-      appendEntry(toolEl, e.heartbeat_id,
-        `→ ${e.tool} : ${e.intent}${e.adrenalin ? " (adrenalin)" : ""}`);
+      // Tool dispatch — Self decided to call this tool. Outbound
+      // chevron icon so the paired result (chevron-left, below)
+      // reads chronologically once it lands.
+      appendIconEntry(toolEl, e.heartbeat_id, "chevron-right",
+        `${e.tool} : ${e.intent}${e.adrenalin ? " (adrenalin)" : ""}`,
+        "dispatch");
       break;
     case "tool_result":
       // Result returned by the tool. Truncate to keep the panel
       // scannable; full content shows up in the Log tab if needed.
-      appendEntry(toolEl, "—",
-        `← ${e.tool} : ${(e.content || "").slice(0, 200)}`);
+      appendIconEntry(toolEl, "—", "chevron-left",
+        `${e.tool} : ${(e.content || "").slice(0, 200)}`,
+        "tool-result");
       break;
     case "idle":
       // Self decided how long to idle before the next heartbeat.
       // Useful to see the rhythm of the loop alongside the tool
       // calls that fire each beat.
-      appendEntry(toolEl, e.heartbeat_id,
-        `⏱ idle ${Number(e.interval_seconds).toFixed(1)}s`);
+      appendIconEntry(toolEl, e.heartbeat_id, "stopwatch",
+        `idle ${Number(e.interval_seconds).toFixed(1)}s`,
+        "idle");
       break;
     case "prompt_built":
       // Live-append to the Prompts tab cache so users see new beats
@@ -310,12 +336,14 @@ function handleEvent(e) {
       });
       break;
     case "sleep_start":
-      appendEntry(toolEl, "—", "💤 sleep started: " + e.reason);
+      appendIconEntry(toolEl, "—", "moon",
+        "sleep started: " + e.reason, "sleep-start");
       lastStats.mode = "sleeping";
       setStatus();
       break;
     case "sleep_done":
-      appendEntry(toolEl, "—", "🌅 sleep done: " + JSON.stringify(e.stats));
+      appendIconEntry(toolEl, "—", "sunrise",
+        "sleep done: " + JSON.stringify(e.stats), "sleep-done");
       lastStats.mode = "normal";
       lastStats.last_sleep = new Date().toISOString();
       setStatus();
@@ -380,7 +408,10 @@ function renderChatMessage(msg) {
       }
       const link = document.createElement("a");
       link.href = a.url; link.target = "_blank";
-      link.textContent = `📎 ${a.name} (${formatBytes(a.size)})`;
+      // Bootstrap-Icons paperclip + filename + size; no emoji.
+      link.innerHTML =
+        `${window.biIcon("paperclip", 11)} ` +
+        `${escapeHtml(a.name)} (${escapeHtml(formatBytes(a.size))})`;
       wrap.appendChild(link);
     }
     div.appendChild(wrap);
@@ -666,7 +697,12 @@ function renderAttachStrip() {
   pendingAttachments.forEach((a, i) => {
     const chip = document.createElement("span");
     chip.className = "attach-chip";
-    chip.appendChild(document.createTextNode(`📎 ${a.name} (${formatBytes(a.size)})`));
+    // Bootstrap-Icons paperclip + filename; no emoji.
+    chip.insertAdjacentHTML(
+      "beforeend",
+      `${window.biIcon("paperclip", 11)} ` +
+      `${escapeHtml(a.name)} (${escapeHtml(formatBytes(a.size))})`,
+    );
     const x = document.createElement("span");
     x.className = "x"; x.textContent = "×"; x.title = "remove";
     x.addEventListener("click", () => {
@@ -1378,7 +1414,7 @@ const SCHEMAS = {
   ],
 };
 
-// Live load report (loaded ✓ / failed ✗) sourced from /api/plugins.
+// Live load report (loaded / failed) sourced from /api/plugins.
 // The unified Plugins panel surfaces this as a per-row status badge —
 // edits are NOT made through this object; per-plugin config edits live
 // in modifierConfigEdits, enable/disable lives in cfgState.{modifiers,
@@ -2691,7 +2727,7 @@ function renderModelSlotBlock(llm, fieldName, helpText) {
 // (description + config_schema + components[] with kind, plus any
 // llm_purposes), already grouped by plugin folder.
 //
-// Live load status (loaded ✓ / error ✗) comes from /api/plugins,
+// Live load status (loaded / error) comes from /api/plugins,
 // which is the runtime-observation snapshot and is keyed by component
 // project — we aggregate per plugin name for the badge.
 //

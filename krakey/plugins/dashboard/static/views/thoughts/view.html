@@ -12,10 +12,12 @@
       </div>
       <div class="thoughts-grid">
         <!-- Tool Usage replaces the old "Hypothalamus (dispatch)"
-             panel. Logs every tool dispatch (→), tool result (←),
-             idle decision (⏱), and sleep boundary (💤 / 🌅) so the
-             user has a full per-beat record of what Krakey did
-             with her decisions, not just a count. -->
+             panel. Each beat logs dispatch (chevron-right icon),
+             tool result (chevron-left), idle interval (stopwatch),
+             and sleep boundaries (moon / sunrise) so the user has
+             a full per-beat record of what Krakey did with her
+             decisions, not just a count. All icons flow through
+             window.biIcon — no emoji per repo memo. -->
         <div class="panel yellow">
           <h3>Tool Usage</h3>
           <div class="scroll small" id="tool-stream"></div>
