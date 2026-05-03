@@ -11,19 +11,28 @@
         </div>
       </div>
       <div class="thoughts-grid">
+        <!-- Tool Usage replaces the old "Hypothalamus (dispatch)"
+             panel. Logs every tool dispatch (→), tool result (←),
+             idle decision (⏱), and sleep boundary (💤 / 🌅) so the
+             user has a full per-beat record of what Krakey did
+             with her decisions, not just a count. -->
         <div class="panel yellow">
-          <h3>Hypothalamus (dispatch)</h3>
-          <div class="scroll small" id="hypo-stream"></div>
+          <h3>Tool Usage</h3>
+          <div class="scroll small" id="tool-stream"></div>
         </div>
-        <!-- Bottom-right cell is split: Pending Stimuli on the left,
-             live Status on the right. Status renders GM counts,
-             fatigue, heartbeat id, sleep bookkeeping — what the top
+        <!-- Bottom-right cell is split: Stimulus Stream on top,
+             live Status below. Stream is a chronological feed of
+             every stimulus the runtime has received (replaces the
+             old "Pending Stimuli" snapshot — the snapshot only
+             showed what was waiting *now*, not what came in over
+             the session). Status renders GM counts, fatigue,
+             heartbeat id, sleep bookkeeping — what the top
              status-bar already tracks but in a persistent readable
              block inside the Inner Thoughts view. -->
         <div class="thoughts-bottom-right">
           <div class="panel white">
-            <h3>Pending Stimuli</h3>
-            <ul id="stim-list" class="scroll small"></ul>
+            <h3>Stimulus Stream</h3>
+            <div class="scroll small" id="stim-stream"></div>
           </div>
           <div class="panel">
             <h3>Status (runtime state)</h3>

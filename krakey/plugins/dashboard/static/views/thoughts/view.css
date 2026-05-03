@@ -1,4 +1,4 @@
-/* Inner Thoughts view: thinking + decision + hypothalamus + pending stimuli + status. */
+/* Inner Thoughts view: thinking + decision + tool usage + stimulus stream + status. */
 
 .thoughts-grid {
   display: grid;
@@ -10,22 +10,26 @@
 
 #thinking-stream { color: var(--cyan); }
 #decision-stream { color: var(--cyan); }
-#hypo-stream { color: var(--yellow); }
+#tool-stream { color: var(--yellow); padding: 6px 8px; }
 
-#stim-list { list-style: none; padding: 8px 10px; margin: 0; }
-#stim-list li {
-  padding: 4px 6px;
-  margin-bottom: 4px;
+/* Stimulus Stream — chronological feed of stimuli as they enter
+   the runtime queue. Same .entry shape as the other streams so
+   .hb-tag styling carries over for the heartbeat marker. */
+#stim-stream { padding: 6px 8px; }
+#stim-stream .entry {
+  padding: 3px 4px;
+  margin-bottom: 3px;
   background: var(--panel-2);
   border-radius: 3px;
   font-size: 11px;
+  word-break: break-word;
 }
-#stim-list li.adrenalin { border-left: 2px solid var(--red); }
-#stim-list li .src { color: var(--muted); margin-right: 6px; }
+#stim-stream .entry.adrenalin { border-left: 2px solid var(--red); }
+#stim-stream .entry .src { color: var(--muted); margin-right: 4px; }
 
-/* Bottom-right cell: Pending Stimuli + Status share the slot.
-   60/40 split favors Pending Stimuli since it carries more text
-   per item; Status is mostly compact key/value pairs. */
+/* Bottom-right cell: Stimulus Stream + Status share the slot.
+   60/40 split favours the stream since it carries more text per
+   item; Status is mostly compact key/value pairs. */
 .thoughts-bottom-right {
   display: grid;
   grid-template-columns: 3fr 2fr;

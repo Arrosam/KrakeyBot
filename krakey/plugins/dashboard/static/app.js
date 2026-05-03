@@ -176,9 +176,21 @@ function renderStatusPanel() {
 let eventsWS = null;
 const thinkingEl = $("#thinking-stream");
 const decisionEl = $("#decision-stream");
-const hypoEl = $("#hypo-stream");
-const stimList = $("#stim-list");
+// Tool Usage panel — replaces the old "Hypothalamus (dispatch)"
+// stream. Logs dispatch + tool_result + idle + sleep events.
+const toolEl = $("#tool-stream");
+// Stimulus Stream — chronological feed of stimuli as they enter the
+// runtime queue. Replaces the old "Pending Stimuli" snapshot list.
+const stimEl = $("#stim-stream");
 const statusPanel = $("#status-panel");
+
+// Fingerprint set for stimulus-stream dedup. The runtime emits
+// `stimuli_queued` once per heartbeat with the *current* queue
+// snapshot — anything that survived this beat is in there. We only
+// want to log each stimulus once, so we track seen fingerprints
+// (type|source|ts) and append only the unseen.
+const _seenStimuli = new Set();
+const _SEEN_STIMULI_CAP = 1000;
 // Section titles that change every heartbeat — open by default.
 // Anything else (DNA, SELF-MODEL, HEARTBEAT question, BOOTSTRAP) is
 // collapsed since it's noise during normal inspection.
@@ -213,24 +225,33 @@ function appendEntry(panel, hbId, text) {
   panel.scrollTop = panel.scrollHeight;
 }
 
-function renderStimuli(stims) {
-  stimList.innerHTML = "";
-  if (!stims.length) {
-    const li = document.createElement("li");
-    li.textContent = "(empty)";
-    li.style.color = "var(--muted)";
-    stimList.appendChild(li);
-    return;
-  }
-  for (const s of stims) {
-    const li = document.createElement("li");
-    if (s.adrenalin) li.classList.add("adrenalin");
+function appendStimulusToStream(stims) {
+  // Each stimuli_queued event carries the current pending queue.
+  // Track fingerprints so we only log each one once across the
+  // session — the same stimulus survives multiple snapshots until
+  // it gets drained by a heartbeat.
+  for (const s of stims || []) {
+    const fp = `${s.type}|${s.source}|${s.ts}`;
+    if (_seenStimuli.has(fp)) continue;
+    _seenStimuli.add(fp);
+    if (_seenStimuli.size > _SEEN_STIMULI_CAP) {
+      // Set iterator gives oldest-first; drop one to bound memory.
+      const oldest = _seenStimuli.values().next().value;
+      _seenStimuli.delete(oldest);
+    }
+    const div = document.createElement("div");
+    div.className = "entry";
+    if (s.adrenalin) div.classList.add("adrenalin");
     const src = document.createElement("span");
     src.className = "src";
     src.textContent = `[${s.type}] ${s.source}`;
-    li.appendChild(src);
-    li.appendChild(document.createTextNode(s.content.slice(0, 200)));
-    stimList.appendChild(li);
+    div.appendChild(src);
+    div.appendChild(document.createTextNode(
+      " " + (s.content || "").slice(0, 200)
+    ));
+    stimEl.appendChild(div);
+    while (stimEl.children.length > 200) stimEl.removeChild(stimEl.firstChild);
+    stimEl.scrollTop = stimEl.scrollHeight;
   }
 }
 
@@ -247,7 +268,7 @@ function handleEvent(e) {
       setStatus();
       break;
     case "stimuli_queued":
-      renderStimuli(e.stimuli);
+      appendStimulusToStream(e.stimuli);
       break;
     case "thinking":
       appendEntry(thinkingEl, e.heartbeat_id, e.text);
@@ -258,14 +279,25 @@ function handleEvent(e) {
     case "note":
       appendEntry(decisionEl, e.heartbeat_id, "[NOTE] " + e.text);
       break;
-    case "hypothalamus":
-      appendEntry(hypoEl, e.heartbeat_id,
-        `tool_calls=${e.tool_calls_count} writes=${e.memory_writes_count}` +
-        ` updates=${e.memory_updates_count} sleep=${e.sleep_requested}`);
-      break;
     case "dispatch":
-      appendEntry(hypoEl, e.heartbeat_id,
+      // Tool dispatch — Self decided to call this tool. Logged with
+      // an outbound arrow so the paired result (←, below) reads
+      // chronologically once it lands.
+      appendEntry(toolEl, e.heartbeat_id,
         `→ ${e.tool} : ${e.intent}${e.adrenalin ? " (adrenalin)" : ""}`);
+      break;
+    case "tool_result":
+      // Result returned by the tool. Truncate to keep the panel
+      // scannable; full content shows up in the Log tab if needed.
+      appendEntry(toolEl, "—",
+        `← ${e.tool} : ${(e.content || "").slice(0, 200)}`);
+      break;
+    case "idle":
+      // Self decided how long to idle before the next heartbeat.
+      // Useful to see the rhythm of the loop alongside the tool
+      // calls that fire each beat.
+      appendEntry(toolEl, e.heartbeat_id,
+        `⏱ idle ${Number(e.interval_seconds).toFixed(1)}s`);
       break;
     case "prompt_built":
       // Live-append to the Prompts tab cache so users see new beats
@@ -278,18 +310,15 @@ function handleEvent(e) {
       });
       break;
     case "sleep_start":
-      appendEntry(hypoEl, "—", "💤 sleep started: " + e.reason);
+      appendEntry(toolEl, "—", "💤 sleep started: " + e.reason);
       lastStats.mode = "sleeping";
       setStatus();
       break;
     case "sleep_done":
-      appendEntry(hypoEl, "—", "🌅 sleep done: " + JSON.stringify(e.stats));
+      appendEntry(toolEl, "—", "🌅 sleep done: " + JSON.stringify(e.stats));
       lastStats.mode = "normal";
       lastStats.last_sleep = new Date().toISOString();
       setStatus();
-      break;
-    case "idle":
-      // could render but it's noisy; skip in UI
       break;
   }
 }
