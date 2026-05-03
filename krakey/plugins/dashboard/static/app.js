@@ -1211,8 +1211,19 @@ const SECTION_DEFAULTS = {
     // recall_token_budget (absolute token cap, not a node count).
   },
   knowledge_base: { dir: "workspace/data/knowledge_bases" },
-  sleep: { max_duration_seconds: 7200 },
-  safety: { gm_node_hard_limit: 1200, max_consecutive_no_action: 100 },
+  // Defaults mirror SleepSection in krakey/models/config/memory.py —
+  // editing here without keeping the dataclass in sync makes the UI
+  // pre-populate the wrong values on a fresh config.
+  sleep: {
+    max_duration_seconds: 7200,
+    min_community_size: 2,
+    kb_consolidation_threshold: 0.85,
+    kb_index_max: 30,
+    kb_archive_pct: 10,
+    kb_revive_threshold: 0.80,
+  },
+  // Same dataclass-mirror rule — SafetySection defaults are 500/50.
+  safety: { gm_node_hard_limit: 500, max_consecutive_no_action: 50 },
   // Top-level `environments:` block — replaces the old `sandbox:`
   // section as of the runtime's environments-refactor. ``local`` is
   // always present (just an allow-list); ``sandbox`` is optional and
