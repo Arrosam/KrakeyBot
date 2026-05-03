@@ -1249,6 +1249,11 @@ const HELP = {
   "graph_memory.neighbor_expand_depth": "Neighbor-expansion depth at recall time (how many edges to traverse).",
   "knowledge_base.dir": "Directory for KB SQLite files; sleep migration writes here.",
   "sleep.max_duration_seconds": "Maximum allowed duration for a single sleep (seconds), to prevent sleep from hanging.",
+  "sleep.min_community_size": "Communities below this many GM nodes stay in graph memory; only larger communities migrate to a KB. Default 2 = skip pure singletons.",
+  "sleep.kb_consolidation_threshold": "KB consolidation: pairwise-merge active KBs whose index vectors (mean of member entry embeddings) are at least this cosine-close. 0–1; higher = stricter merging. Default 0.85.",
+  "sleep.kb_index_max": "When the active KB count exceeds this, sleep archives the least-important `kb_archive_pct` percent. Archived KBs keep their files but stop showing up in recall.",
+  "sleep.kb_archive_pct": "Percentage of active KBs to archive each pass once kb_index_max is exceeded. Importance = entry_count × mean entry importance.",
+  "sleep.kb_revive_threshold": "When sleep would build a fresh KB for a new community, first compare the summary embedding against archived KBs' index vectors; revive an archived KB if cosine ≥ this. Models the 'forgot, then re-encountered' relearning shortcut. Default 0.80.",
   "safety.gm_node_hard_limit": "Hard upper bound on GM nodes. Above this, sleep refuses to add more nodes (prevents runaway growth).",
   "safety.max_consecutive_no_action": "After this many consecutive 'No action' beats, runtime considers Self stuck and triggers a self-rescue sleep.",
   "provider.type": "Provider implementation type. Currently only openai_compatible is supported.",
@@ -1306,6 +1311,15 @@ const SCHEMAS = {
   ],
   sleep: [
     ["max_duration_seconds", "number"],
+    // KB lifecycle tuning — fields drive sleep's compaction engine
+    // (see krakey/memory/sleep/sleep_manager.py + sibling modules).
+    // Power users tune these to control how aggressively Krakey
+    // consolidates / archives knowledge bases between sleeps.
+    ["min_community_size", "number"],
+    ["kb_consolidation_threshold", "number_float"],
+    ["kb_index_max", "number"],
+    ["kb_archive_pct", "number"],
+    ["kb_revive_threshold", "number_float"],
   ],
   safety: [
     ["gm_node_hard_limit", "number"],
