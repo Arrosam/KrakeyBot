@@ -2099,8 +2099,14 @@ function renderLLMSection(llm) {
     body.appendChild(renderTagRow(tname, llm.tags, llm.providers));
   }
 
-  // Core purposes (chat use cases — Self / compact / classifier)
+  // Core purposes (chat use cases — Self / compact / classifier ...)
   body.appendChild(renderCorePurposesBlock(llm));
+  // Plugin LLM purposes — aggregate of every enabled plugin's
+  // ``llm_purposes`` declarations (per meta.yaml). Renders here so
+  // the user has a single "all the components that can take an
+  // LLM" pane in the LLM section instead of having to hunt through
+  // expanded plugin rows in the Plugins panel.
+  body.appendChild(renderPluginPurposesBlock(llm));
   // Embedding + reranker (model-type slots, not purposes)
   body.appendChild(renderModelSlotBlock(
     llm, "embedding",
@@ -2422,8 +2428,9 @@ function renderTagParamsBlock(tname, tags) {
 // classifier optional) are always shown so people know they exist.
 const KNOWN_CORE_PURPOSES = [
   ["self_thinking", "required — Self's per-beat heartbeat LLM"],
-  ["compact", "sliding-window history → GM compaction LLM"],
-  ["classifier", "node category classifier (often same as compact)"],
+  ["compact", "sliding-window history → GM compaction LLM (also drives sleep clustering + KB index rebuild)"],
+  ["classifier", "node category classifier (extractor + classifier; falls back to compact then self_thinking)"],
+  ["hypothalamus", "legacy compat — modern setups bind translator via the Hypothalamus plugin's per-plugin llm_purposes instead. Leave (unbound) unless you need the deprecated central path."],
 ];
 
 function renderCorePurposesBlock(llm) {
@@ -2455,6 +2462,94 @@ function renderCorePurposesBlock(llm) {
     renderSettingsForm();
   });
   sub.appendChild(addBtn);
+  return sub;
+}
+
+// Aggregated view of every enabled plugin's ``llm_purposes`` (from
+// each plugin's meta.yaml). One row per "<plugin>.<purpose>" with a
+// tag-binding dropdown. Edits feed straight into the per-plugin
+// config (``modifierConfigEdits[plugin].llm_purposes[purpose]``) —
+// the same backing store the per-plugin row in the Plugins panel
+// uses, so both views stay in sync without a separate save path.
+//
+// Rendered in the LLM section so users have a single "what
+// component uses what LLM?" pane; a long-standing complaint was
+// that these knobs were buried inside expanded plugin rows.
+function renderPluginPurposesBlock(llm) {
+  const sub = document.createElement("div");
+  sub.className = "subblock";
+  const head = document.createElement("h4");
+  head.appendChild(document.createTextNode("Plugin Purposes"));
+  sub.appendChild(head);
+
+  // Filter to enabled plugins that actually declare an LLM purpose;
+  // empty list ⇒ render a placeholder explaining what would show up.
+  const enabledNames = new Set([
+    ...((cfgState.modifiers || [])),
+    ...((cfgState.plugins || [])),
+  ]);
+  const candidates = (availableModifiers || []).filter((p) =>
+    enabledNames.has(p.name)
+    && Array.isArray(p.llm_purposes) && p.llm_purposes.length,
+  );
+
+  if (!candidates.length) {
+    const hint = document.createElement("p");
+    hint.className = "section-hint";
+    hint.style.borderLeftColor = "var(--muted)";
+    hint.textContent =
+      "no enabled plugin declares an llm_purposes block. Plugins "
+      + "that need an LLM (e.g. hypothalamus.translator) surface "
+      + "their bindings here once enabled.";
+    sub.appendChild(hint);
+    return sub;
+  }
+
+  const tagNames = Object.keys(llm.tags || {});
+  for (const plugin of candidates) {
+    // Lazy-load the plugin's per-folder config the first time we
+    // need it. The per-plugin row uses the same cache, so editing
+    // here updates the row's view too on the next render.
+    if (!modifierConfigEdits[plugin.name]) {
+      modifierConfigEdits[plugin.name] = {};
+      fetch(`/api/modifiers/${encodeURIComponent(plugin.name)}/config`)
+        .then((r) => (r.ok ? r.json() : { config: {} }))
+        .then((body) => {
+          modifierConfigEdits[plugin.name] = body.config || {};
+          renderSettingsForm();
+        })
+        .catch(() => {});
+    }
+    const cfg = modifierConfigEdits[plugin.name];
+    cfg.llm_purposes = cfg.llm_purposes || {};
+
+    for (const purpose of plugin.llm_purposes) {
+      const row = document.createElement("div");
+      row.className = "cfg-row";
+      const lab = document.createElement("label");
+      lab.textContent = `${plugin.name}.${purpose.name}`;
+      if (purpose.description) lab.title = purpose.description;
+      row.appendChild(lab);
+
+      const sel = document.createElement("select");
+      const blank = document.createElement("option");
+      blank.value = ""; blank.textContent = "(unbound)";
+      sel.appendChild(blank);
+      for (const t of tagNames) {
+        const opt = document.createElement("option");
+        opt.value = t; opt.textContent = t;
+        sel.appendChild(opt);
+      }
+      sel.value = cfg.llm_purposes[purpose.name] || "";
+      sel.addEventListener("change", () => {
+        cfg.llm_purposes = cfg.llm_purposes || {};
+        if (sel.value) cfg.llm_purposes[purpose.name] = sel.value;
+        else delete cfg.llm_purposes[purpose.name];
+      });
+      row.appendChild(sel);
+      sub.appendChild(row);
+    }
+  }
   return sub;
 }
 
