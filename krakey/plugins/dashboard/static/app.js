@@ -832,7 +832,12 @@ async function loadKBEntries(kbid) {
   }
 }
 
-loadMemory("graph");
+// Memory tab is lazy: don't fetch nodes/edges/stats on page load —
+// only when the user actually opens the tab (tab-switch handler at
+// the top of this file does that). Pre-fetching here was paying the
+// /api/gm/* round-trip + cytoscape build on every page load even
+// for users who never opened Memory, and it could pile on top of a
+// busy runtime (auto-recall + LLM thinking) and stall the dashboard.
 
 // ============== PROMPTS ==============
 
