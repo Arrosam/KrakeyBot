@@ -58,6 +58,10 @@ $$(".tab-btn").forEach((btn) => {
       requestAnimationFrame(() => {
         chatHistory.scrollTop = chatHistory.scrollHeight;
       });
+      // Opening the tab is the user acknowledging anything that
+      // arrived while they were elsewhere — clear the unread badge,
+      // dot, and document-title counter.
+      if (typeof _clearChatUnread === "function") _clearChatUnread();
     }
   });
 });
@@ -367,6 +371,133 @@ function formatBytes(n) {
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
 }
 
+// ----- chat unread / notifications -----
+//
+// Goal: when a Krakey-side message lands while the user isn't on
+// the Chat tab (different tab, or the window is in the background),
+// surface it without forcing the user back to the tab.
+//   * tab badge — pulse + count on the Chat tab.
+//   * audio ping — short Web Audio sine beep, no external asset.
+//   * desktop notification — Notification API; permission asked
+//     once on first user click so we don't surprise-popup on load.
+//   * document title — "(N) Krakey Dashboard" so an out-of-focus
+//     window's tab in the OS task bar shows the count too.
+//
+// Cleared the moment the user clicks the Chat tab, switches focus
+// back to the window while Chat is already active, or sends a
+// reply themselves.
+
+const chatTabBtn = document.querySelector('.tab-btn[data-tab="chat"]');
+let _chatUnread = 0;
+const _DEFAULT_TITLE = document.title;
+
+function _chatTabIsActive() {
+  return chatTabBtn && chatTabBtn.classList.contains("active");
+}
+
+function _bumpChatUnread(msg) {
+  _chatUnread += 1;
+  if (!chatTabBtn) return;
+  chatTabBtn.classList.add("has-unread");
+  let dot = chatTabBtn.querySelector(".unread-dot");
+  if (!dot) {
+    dot = document.createElement("span");
+    dot.className = "unread-dot";
+    chatTabBtn.appendChild(dot);
+  }
+  dot.textContent = _chatUnread > 9 ? "9+" : String(_chatUnread);
+  document.title = `(${_chatUnread > 9 ? "9+" : _chatUnread}) ${_DEFAULT_TITLE}`;
+  _playChatPing();
+  _showSystemNotification(msg);
+}
+
+function _clearChatUnread() {
+  if (_chatUnread === 0 && !chatTabBtn?.classList.contains("has-unread")) return;
+  _chatUnread = 0;
+  if (chatTabBtn) {
+    chatTabBtn.classList.remove("has-unread");
+    const dot = chatTabBtn.querySelector(".unread-dot");
+    if (dot) dot.remove();
+  }
+  document.title = _DEFAULT_TITLE;
+}
+
+// Web Audio sine ping (~A5, 250ms with quick attack/decay so it's a
+// short "blip" not a sustained tone). Ctx is created lazily; browsers
+// require a user gesture before audio plays, so we also resume it
+// on the first document click.
+let _audioCtx = null;
+function _ensureAudio() {
+  try {
+    if (!_audioCtx) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return null;
+      _audioCtx = new Ctx();
+    }
+    if (_audioCtx.state === "suspended") _audioCtx.resume().catch(() => {});
+    return _audioCtx;
+  } catch (e) {
+    return null;
+  }
+}
+document.addEventListener("click", _ensureAudio, { once: true });
+
+function _playChatPing() {
+  const ctx = _ensureAudio();
+  if (!ctx) return;
+  try {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = 880;  // A5
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.25);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.3);
+  } catch (e) { /* autoplay-blocked etc. — silent */ }
+}
+
+// Desktop notification — only when the dashboard tab is hidden or
+// not on Chat. Permission requested once on the user's first click
+// so we don't surprise-popup on page load.
+document.addEventListener("click", () => {
+  if (!("Notification" in window)) return;
+  if (Notification.permission === "default") {
+    Notification.requestPermission().catch(() => {});
+  }
+}, { once: true });
+
+function _showSystemNotification(msg) {
+  if (!("Notification" in window)) return;
+  if (Notification.permission !== "granted") return;
+  // Don't double-notify when the user is actively reading.
+  if (document.visibilityState === "visible" && _chatTabIsActive()) return;
+  try {
+    const body = (msg && msg.content || "").slice(0, 140);
+    const n = new Notification("Krakey: new message", {
+      body,
+      icon: "/static/logo.png",
+      tag: "krakey-chat",        // collapse repeats into one toast
+      renotify: true,
+    });
+    n.onclick = () => {
+      window.focus();
+      if (chatTabBtn) chatTabBtn.click();
+      n.close();
+    };
+  } catch (e) { /* notif quota / focus-lost — silent */ }
+}
+
+// Visibility change: if the user comes back to the window WITH the
+// chat tab already active, treat that as "they saw it" and clear.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && _chatTabIsActive()) {
+    _clearChatUnread();
+  }
+});
+
 function connectChat() {
   chatWS = new WebSocket(_wsUrl("/ws/chat"));
   chatWS.onopen = () => { chatMeta.textContent = "connected"; setStatus(); };
@@ -385,6 +516,14 @@ function connectChat() {
       for (const m of data.messages) renderChatMessage(m);
     } else if (data.kind === "message") {
       renderChatMessage(data.message);
+      // Krakey-side messages while the user is away → notify.
+      // User-side messages are echoes of what they just typed so
+      // they're never "new" from the user's perspective.
+      const isFromKrakey = data.message && data.message.sender !== "user";
+      const away = !_chatTabIsActive() || document.visibilityState !== "visible";
+      if (isFromKrakey && away) {
+        _bumpChatUnread(data.message);
+      }
     }
   };
 }
