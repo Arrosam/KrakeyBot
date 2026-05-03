@@ -93,6 +93,16 @@ function setStatus() {
   renderStatusPanel();
 }
 
+// One periodic refresh so the status indicator can flip from the
+// initial "— connecting —" placeholder to a real state even when
+// no WS events are flowing (e.g. the user wired a broken LLM and
+// the runtime can't heartbeat). Cheap — just rewrites the bar's
+// innerHTML based on cached lastStats + current WS readyState.
+// 1s cadence is invisible to a human but quick enough that a
+// failing connect is obvious within the time it takes to read the
+// header.
+setInterval(setStatus, 1000);
+
 // Format helpers for the big Status panel in the Inner Thoughts view.
 // Renders the same data as the top-bar but as a persistent readable
 // block so Samuel can watch GM growth + fatigue over time without
