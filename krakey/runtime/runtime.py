@@ -25,7 +25,9 @@ from krakey.memory.knowledge_base import KBRegistry
 from krakey.memory.recall import RecallLike, Reranker
 from krakey.models.config import Config, LLMParams
 from krakey.models.config_backup import backup_config
+from krakey.interfaces.services.prompt_builder import PromptBuilderLike
 from krakey.prompt.builder import PromptBuilder
+from krakey.runtime.service_resolver import ServiceResolver
 from krakey.runtime.stimuli.batch_tracker import BatchTrackerChannel
 from krakey.runtime.events.event_bus import EventBus
 from krakey.environment.local import LocalEnvironment
@@ -113,7 +115,17 @@ class Runtime:
             * self_params.history_token_fraction
         )
         self.window = SlidingWindow(history_token_budget=_history_budget)
-        self.builder = PromptBuilder()
+
+        # Core service slots — each can be replaced via
+        # ``core_implementations.<slot>`` in config.yaml. The resolver
+        # imports the user's dotted path and Protocol-validates at
+        # startup; empty slot = built-in default.
+        self._service_resolver = ServiceResolver(self.config)
+        self.builder = self._service_resolver.resolve(
+            "prompt_builder",
+            default_factory=PromptBuilder,
+            expected_protocol=PromptBuilderLike,
+        )
 
         gm_path = self.config.graph_memory.db_path or ":memory:"
         self.gm = GraphMemory(

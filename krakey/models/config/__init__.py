@@ -70,6 +70,10 @@ from krakey.models.config.memory import (  # noqa: F401
     _build_safety,
     _build_sleep,
 )
+from krakey.models.config.core_impls import (  # noqa: F401
+    CoreImplementations,
+    _build_core_implementations,
+)
 
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -109,6 +113,14 @@ class Config:
     safety: SafetySection = field(default_factory=SafetySection)
     environments: EnvironmentsSection = field(
         default_factory=EnvironmentsSection
+    )
+    # Optional dotted-path overrides for built-in core services
+    # (memory, prompt builder, embedder, ...). See
+    # krakey/models/config/core_impls.py + krakey/runtime/service_resolver.py.
+    # Empty fields → built-in defaults; non-empty → import + Protocol-validate
+    # the user's class at startup.
+    core_implementations: CoreImplementations = field(
+        default_factory=CoreImplementations
     )
 
 
@@ -209,6 +221,9 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         sleep=_build_sleep(raw.get("sleep") or {}),
         safety=_build_safety(raw.get("safety") or {}),
         environments=_build_environments(raw.get("environments")),
+        core_implementations=_build_core_implementations(
+            raw.get("core_implementations") or {}
+        ),
     )
 
 
