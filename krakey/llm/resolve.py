@@ -20,18 +20,29 @@ system addresses an LLM without knowing the concrete implementation:
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from krakey.llm.client import LLMClient
     from krakey.models.config import Config
 
 
+@runtime_checkable
 class ChatLike(Protocol):
     async def chat(self, messages, **kwargs) -> str: ...
 
 
+@runtime_checkable
 class AsyncEmbedder(Protocol):
+    """Async-callable returning an embedding vector for one text.
+
+    ``@runtime_checkable`` so ``ServiceResolver`` can isinstance-check
+    user-supplied embedder slots at startup. Caveat: Python's
+    runtime-checkable Protocol with ``__call__`` only verifies the
+    method exists — it can't check the signature, so any callable
+    technically passes. Documentation discipline beats type-system
+    enforcement here.
+    """
     async def __call__(self, text: str) -> list[float]: ...
 
 

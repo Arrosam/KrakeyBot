@@ -28,6 +28,7 @@ from krakey.llm.resolve import (  # noqa: F401
     AsyncEmbedder, ChatLike, resolve_llm_for_tag,
 )
 from krakey.runtime.runtime import Runtime, RuntimeDeps  # noqa: F401
+from krakey.runtime.service_resolver import ServiceResolver
 from krakey.runtime.heartbeat.heartbeat_orchestrator import (  # noqa: F401
     _summarize_stimuli,
 )
@@ -78,13 +79,26 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
     # Embedding + reranker (model-type slots, not purposes)
     embed_client = _client_for_tag(cfg.llm.embedding)
 
-    async def embedder(text: str) -> list[float]:
-        if embed_client is None:
-            raise RuntimeError(
-                "no embedding tag bound — set llm.embedding to a tag name "
-                "in config.yaml (or use the dashboard's LLM section)"
-            )
-        return await embed_client.embed(text)
+    # Default embedder wraps the tag-resolved embedding client. Wrapped
+    # in a class (rather than a closure) so it satisfies the
+    # ``AsyncEmbedder`` runtime-checkable Protocol and can be replaced
+    # 1:1 by a user override via ``core_implementations.embedder``.
+    class _DefaultEmbedder:
+        async def __call__(self, text: str) -> list[float]:
+            if embed_client is None:
+                raise RuntimeError(
+                    "no embedding tag bound — set llm.embedding to a tag "
+                    "name in config.yaml (or use the dashboard's LLM "
+                    "section)"
+                )
+            return await embed_client.embed(text)
+
+    service_resolver = ServiceResolver(cfg)
+    embedder = service_resolver.resolve(
+        "embedder",
+        default_factory=_DefaultEmbedder,
+        expected_protocol=AsyncEmbedder,
+    )
 
     reranker = None
     reranker_client = _client_for_tag(cfg.llm.reranker)
