@@ -100,13 +100,28 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
         expected_protocol=AsyncEmbedder,
     )
 
-    reranker = None
     reranker_client = _client_for_tag(cfg.llm.reranker)
-    if reranker_client is not None:
-        class _RerankerAdapter:
-            async def rerank(self, query, docs):
-                return await reranker_client.rerank(query, docs)
-        reranker = _RerankerAdapter()
+
+    class _DefaultReranker:
+        """Adapts the tag-resolved LLMClient to the Reranker Protocol."""
+        async def rerank(self, query, docs):
+            return await reranker_client.rerank(query, docs)
+
+    # Three states for the reranker slot:
+    #   * user override set        → resolver builds user impl
+    #   * no override, tag bound   → resolver builds _DefaultReranker
+    #   * no override, no tag      → reranker = None (recall paths fall
+    #                                 back to scripted scoring; callers
+    #                                 already handle ``reranker is None``)
+    from krakey.memory.recall import Reranker
+    if cfg.core_implementations.reranker or reranker_client is not None:
+        reranker = service_resolver.resolve(
+            "reranker",
+            default_factory=_DefaultReranker,
+            expected_protocol=Reranker,
+        )
+    else:
+        reranker = None
 
     # hypo_llm is no longer eagerly required at the core level — it's
     # bound through the per-plugin config of `hypothalamus`.
