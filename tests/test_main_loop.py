@@ -73,6 +73,55 @@ async def test_no_action_decision_runs_no_tool():
     assert [s for s in stims if s.type == "tool_feedback"] == []
 
 
+async def test_tool_call_parse_failure_pushes_corrective_stimulus():
+    """When Self emits <tool_call> blocks whose payload doesn't
+    JSON-parse cleanly (real-world failure: model fine-tune drift
+    appends </arg_value> after the JSON), the runtime must push a
+    system_event stimulus on system:tool_call_parse with the
+    offending payload + parser error + a tight format reminder so
+    Self can self-correct on the next beat. No hypothalamus —
+    this exercises the script-only action_executor path."""
+    self_llm = ScriptedLLM([
+        # DECISION non-empty + non-"no action" so apply_decision
+        # actually walks the tool_call parser path.
+        '[THINKING]\nReply and search.\n'
+        '[DECISION]\nReply to user, then search the web.\n'
+        '<tool_call>{"name": "web_chat_reply", "arguments": {"text": "hi"}}'
+        '</arg_value></tool_call>\n'
+        '<tool_call>{"name": "search", "arguments": {"query": "foo"}}'
+        '</arg_value></tool_call>\n'
+        '[IDLE]\n1',
+    ])
+    # modifiers=[] strips hypothalamus so dispatch goes through the
+    # action_executor parser (the path under test).
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]),
+        modifiers=[],
+    )
+    await runtime.run(iterations=1)
+    await runtime.close()
+
+    stims = runtime.buffer.drain()
+    parse_errs = [s for s in stims
+                  if s.type == "system_event"
+                  and s.source == "system:tool_call_parse"]
+    assert parse_errs, "expected system:tool_call_parse stimulus"
+    msg = parse_errs[0].content
+    assert parse_errs[0].adrenalin is True
+    # Failure count + total surfaced
+    assert "2 of 2" in msg
+    # Each block's payload preview included
+    assert "web_chat_reply" in msg
+    assert "search" in msg
+    # The drift signature is named explicitly
+    assert "</arg_value>" in msg
+    # JSON error message echoed verbatim so Self sees the diagnosis
+    assert "Extra data" in msg
+    # Format reminder embedded
+    assert "<tool_call>" in msg
+    assert '"name"' in msg
+
+
 async def test_hypothalamus_error_pushes_system_event_stimulus():
     """When the Hypothalamus LLM returns junk / empty / raises, Self must
     still learn about it via a system_event stimulus on the next heartbeat,

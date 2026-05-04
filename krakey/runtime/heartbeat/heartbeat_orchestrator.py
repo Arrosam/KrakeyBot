@@ -90,6 +90,51 @@ def _summarize_stimuli(stimuli: list[Stimulus]) -> str:
     return " | ".join(f"{s.source}: {s.content}" for s in stimuli)
 
 
+# Per-block payload truncation in the format-failure stimulus.
+# Tool-call arguments can carry large content (file writes, search
+# queries with quoted text, …) and dumping the whole thing back to
+# Self bloats the next prompt without helping diagnosis. 300 chars
+# is enough to spot the structural problem.
+_FAILURE_PAYLOAD_PREVIEW_CHARS = 300
+
+
+def _format_parse_failure_stimulus(
+    failures: list, *, total_blocks: int,
+) -> str:
+    """Build the system_event content for tool_call parse failures.
+
+    Inlined the format reminder rather than importing
+    ``ACTION_FORMAT_LAYER`` from prompt/layers — the layer is for
+    prompt assembly, not for stimulus content; coupling them would
+    drag layer concerns into the runtime path. The phrasing is
+    copy-aligned with the layer; if either drifts, dual-update.
+    """
+    lines = [
+        f"{len(failures)} of {total_blocks} <tool_call> block(s) "
+        "failed to parse last beat — those actions did NOT dispatch.",
+        "",
+    ]
+    for f in failures:
+        preview = f.payload
+        if len(preview) > _FAILURE_PAYLOAD_PREVIEW_CHARS:
+            preview = preview[:_FAILURE_PAYLOAD_PREVIEW_CHARS] + "…"
+        lines.append(f"Block {f.block_index}: {preview}")
+        lines.append(f"  → {f.error}")
+    lines.extend([
+        "",
+        "Each <tool_call> block must contain ONLY a JSON object — "
+        "no XML tags after the JSON:",
+        "",
+        '  <tool_call>{"name": "<tool_name>", "arguments": {...}}</tool_call>',
+        "",
+        "Do NOT append </arg_value>, </function>, </function_call>, "
+        "or any other closing tag after the JSON object. "
+        "Fields: name (str, required), arguments (object, optional), "
+        "adrenalin (bool, optional).",
+    ])
+    return "\n".join(lines)
+
+
 class HeartbeatOrchestrator:
     """Runs one heartbeat per ``beat()`` call. Pure logic over Runtime
     state — owns no fields of its own."""
@@ -340,26 +385,38 @@ class HeartbeatOrchestrator:
           * No such Modifier → script-only action executor scans
             ``parsed.raw`` for ``<tool_call>...</tool_call>`` blocks.
 
+        On the no-hypothalamus path, malformed blocks (e.g. JSON
+        with stray closing XML tags from model format-drift) are
+        surfaced to Self via a corrective ``system_event`` stimulus
+        on the next beat — the per-block payload + parser error +
+        a tight format reminder. Successful blocks in the same
+        response still dispatch; partial parse must not block what
+        DID parse.
+
         Returns True iff Self requested sleep.
         """
         rt = self._rt
         from krakey.interfaces.modifier import DecisionResult
-        from krakey.runtime.heartbeat.action_executor import parse_action_block
+        from krakey.runtime.heartbeat.action_executor import (
+            parse_tool_calls_with_failures,
+        )
 
         decision = parsed.decision.strip().lower()
         if not decision or decision == "no action":
             return False
 
         translator = rt.modifiers.by_role("hypothalamus")
+        parse_failures: list = []
         try:
             if translator is not None:
                 result = await translator.translate(
                     parsed.decision, rt.tools.list_descriptions(),
                 )
             else:
-                result = DecisionResult(
-                    tool_calls=parse_action_block(parsed.raw),
+                tool_calls, parse_failures = parse_tool_calls_with_failures(
+                    parsed.raw,
                 )
+                result = DecisionResult(tool_calls=tool_calls)
         except Exception as e:  # noqa: BLE001
             err = f"{type(e).__name__}: {e!r}"
             rt.log.hb(f"Decision dispatch error: {err}")
@@ -374,6 +431,16 @@ class HeartbeatOrchestrator:
                 adrenalin=True,
             ))
             return False
+        if parse_failures:
+            await rt.buffer.push(Stimulus(
+                type="system_event", source="system:tool_call_parse",
+                content=_format_parse_failure_stimulus(
+                    parse_failures, total_blocks=len(result.tool_calls)
+                                                  + len(parse_failures),
+                ),
+                timestamp=datetime.now(),
+                adrenalin=True,
+            ))
         rt._dispatcher.log_summary(rt.heartbeat_count, result)
         await rt._dispatcher.dispatch_tool_calls(
             rt.heartbeat_count, result.tool_calls,
