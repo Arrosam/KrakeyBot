@@ -179,18 +179,14 @@ const decisionEl = $("#decision-stream");
 // Tool Usage panel — replaces the old "Hypothalamus (dispatch)"
 // stream. Logs dispatch + tool_result + idle + sleep events.
 const toolEl = $("#tool-stream");
-// Stimulus Stream — chronological feed of stimuli as they enter the
-// runtime queue. Replaces the old "Pending Stimuli" snapshot list.
+// Stimulus panel — groups every received stimulus under the
+// heartbeat that drained it. The runtime emits `stimuli_queued`
+// once per beat with the list of stimuli drained for that beat,
+// and `heartbeat_start` carries the id of the same beat — track
+// the latest id and bucket each stimuli_queued payload under it.
 const stimEl = $("#stim-stream");
 const statusPanel = $("#status-panel");
-
-// Fingerprint set for stimulus-stream dedup. The runtime emits
-// `stimuli_queued` once per heartbeat with the *current* queue
-// snapshot — anything that survived this beat is in there. We only
-// want to log each stimulus once, so we track seen fingerprints
-// (type|source|ts) and append only the unseen.
-const _seenStimuli = new Set();
-const _SEEN_STIMULI_CAP = 1000;
+let _currentHbId = null;
 // Section titles that change every heartbeat — open by default.
 // Anything else (DNA, SELF-MODEL, HEARTBEAT question, BOOTSTRAP) is
 // collapsed since it's noise during normal inspection.
@@ -248,40 +244,49 @@ function appendIconEntry(panel, hbId, iconName, text, extraCls) {
   panel.scrollTop = panel.scrollHeight;
 }
 
-function appendStimulusToStream(stims) {
-  // Each stimuli_queued event carries the current pending queue.
-  // Track fingerprints so we only log each one once across the
-  // session — the same stimulus survives multiple snapshots until
-  // it gets drained by a heartbeat.
-  for (const s of stims || []) {
-    const fp = `${s.type}|${s.source}|${s.ts}`;
-    if (_seenStimuli.has(fp)) continue;
-    _seenStimuli.add(fp);
-    if (_seenStimuli.size > _SEEN_STIMULI_CAP) {
-      // Set iterator gives oldest-first; drop one to bound memory.
-      const oldest = _seenStimuli.values().next().value;
-      _seenStimuli.delete(oldest);
-    }
-    const div = document.createElement("div");
-    div.className = "entry";
-    if (s.adrenalin) div.classList.add("adrenalin");
+function appendStimulusHeartbeat(hbId, stims) {
+  // Render one group per heartbeat: a header tagged with the
+  // beat id + count, followed by the individual stimuli. Empty
+  // beats are skipped so the panel stays scannable.
+  if (!stims || !stims.length) return;
+  const group = document.createElement("div");
+  group.className = "stim-group";
+  const head = document.createElement("div");
+  head.className = "stim-head";
+  const tag = document.createElement("span");
+  tag.className = "hb-tag";
+  tag.textContent = hbId == null ? "#?" : `#${hbId}`;
+  head.appendChild(tag);
+  head.appendChild(document.createTextNode(
+    `  ${stims.length} stimulus${stims.length === 1 ? "" : "es"}`
+  ));
+  group.appendChild(head);
+  for (const s of stims) {
+    const row = document.createElement("div");
+    row.className = "stim-row";
+    if (s.adrenalin) row.classList.add("adrenalin");
     const src = document.createElement("span");
     src.className = "src";
     src.textContent = `[${s.type}] ${s.source}`;
-    div.appendChild(src);
-    div.appendChild(document.createTextNode(
+    row.appendChild(src);
+    row.appendChild(document.createTextNode(
       " " + (s.content || "").slice(0, 200)
     ));
-    stimEl.appendChild(div);
-    while (stimEl.children.length > 200) stimEl.removeChild(stimEl.firstChild);
-    stimEl.scrollTop = stimEl.scrollHeight;
+    group.appendChild(row);
   }
+  stimEl.appendChild(group);
+  // Cap the visible groups to bound DOM growth on long sessions.
+  while (stimEl.children.length > 200) stimEl.removeChild(stimEl.firstChild);
+  stimEl.scrollTop = stimEl.scrollHeight;
 }
 
 function handleEvent(e) {
   switch (e.kind) {
     case "heartbeat_start":
       lastStats.heartbeat_id = e.heartbeat_id;
+      // Snapshot the active beat id so the very next stimuli_queued
+      // (which doesn't carry an id of its own) buckets correctly.
+      _currentHbId = e.heartbeat_id;
       setStatus();
       break;
     case "gm_stats":
@@ -291,7 +296,7 @@ function handleEvent(e) {
       setStatus();
       break;
     case "stimuli_queued":
-      appendStimulusToStream(e.stimuli);
+      appendStimulusHeartbeat(_currentHbId, e.stimuli);
       break;
     case "thinking":
       appendEntry(thinkingEl, e.heartbeat_id, e.text);

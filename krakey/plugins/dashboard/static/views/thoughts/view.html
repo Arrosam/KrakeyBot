@@ -22,18 +22,18 @@
           <h3>Tool Usage</h3>
           <div class="scroll small" id="tool-stream"></div>
         </div>
-        <!-- Bottom-right cell is split: Stimulus Stream on top,
-             live Status below. Stream is a chronological feed of
-             every stimulus the runtime has received (replaces the
-             old "Pending Stimuli" snapshot — the snapshot only
-             showed what was waiting *now*, not what came in over
-             the session). Status renders GM counts, fatigue,
-             heartbeat id, sleep bookkeeping — what the top
-             status-bar already tracks but in a persistent readable
-             block inside the Inner Thoughts view. -->
+        <!-- Bottom-right cell is split: Stimulus on top, live Status
+             below. The Stimulus panel groups every received stimulus
+             under the heartbeat that drained it — replaces the old
+             "Pending Stimuli" snapshot (which never quite worked
+             since the snapshot was post-drain). Status renders GM
+             counts, fatigue, heartbeat id, sleep bookkeeping —
+             what the top status-bar already tracks but in a
+             persistent readable block inside the Inner Thoughts
+             view. -->
         <div class="thoughts-bottom-right">
           <div class="panel white">
-            <h3>Stimulus Stream</h3>
+            <h3>Stimulus</h3>
             <div class="scroll small" id="stim-stream"></div>
           </div>
           <div class="panel">
