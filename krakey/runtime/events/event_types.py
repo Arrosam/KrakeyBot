@@ -81,6 +81,20 @@ class NoteEvent(_BaseEvent):
 
 
 @dataclass
+class SelfOutputEvent(_BaseEvent):
+    """Raw, unparsed Self LLM response for this heartbeat.
+
+    Fires after ``self_llm.chat`` returns, before parsing. Carries
+    the full string so the dashboard can show the raw output
+    side-by-side with the prompt that produced it (anything the
+    parser drops — formatting, garbage between tags, partial
+    sections — stays visible here).
+    """
+    heartbeat_id: int
+    raw: str
+
+
+@dataclass
 class DecisionExecutedEvent(_BaseEvent):
     heartbeat_id: int
     tool_calls_count: int

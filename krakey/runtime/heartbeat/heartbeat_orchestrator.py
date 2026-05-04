@@ -35,8 +35,8 @@ from krakey.prompt.views import SlidingWindowRound
 from krakey.runtime.heartbeat.compact import compact_if_needed
 from krakey.runtime.events.event_types import (
     DecisionEvent, GMStatsEvent, HeartbeatStartEvent, IdleEvent,
-    NoteEvent, PromptBuiltEvent, SleepDoneEvent, SleepStartEvent,
-    StimuliQueuedEvent, ThinkingEvent,
+    NoteEvent, PromptBuiltEvent, SelfOutputEvent, SleepDoneEvent,
+    SleepStartEvent, StimuliQueuedEvent, ThinkingEvent,
 )
 from krakey.runtime.heartbeat.fatigue import calculate_fatigue
 from krakey.runtime.heartbeat.idle import idle_with_recall
@@ -321,6 +321,13 @@ class HeartbeatOrchestrator:
             rt.log.hb(f"Self LLM error: {e}")
             await asyncio.sleep(rt._min)
             return None
+        # Pair the raw response with the prompt-log entry created
+        # above so the dashboard's Prompts tab can render the
+        # unparsed output side-by-side with the prompt.
+        self.record_raw_output(rt.heartbeat_count, raw)
+        rt.events.publish(SelfOutputEvent(
+            heartbeat_id=rt.heartbeat_count, raw=raw,
+        ))
         return parse_self_output(raw)
 
     def _phase_save_round(self, parsed, stimuli) -> None:
@@ -610,7 +617,25 @@ class HeartbeatOrchestrator:
             "heartbeat_id": heartbeat_id,
             "ts": datetime.now().isoformat(),
             "full_prompt": prompt,
+            # Filled in by record_raw_output once the LLM returns;
+            # left None when the LLM call errored so the dashboard
+            # can show a "(no output)" placeholder rather than guess.
+            "raw_output": None,
         })
+
+    def record_raw_output(self, heartbeat_id: int, raw: str) -> None:
+        """Attach the raw LLM response to the most recent prompt-log
+        entry matching ``heartbeat_id``. Called after a successful
+        ``self_llm.chat`` so the dashboard's Prompts tab can show the
+        unparsed text alongside the prompt.
+        """
+        # Walk newest-to-oldest — an in-flight beat is always near
+        # the tail. Failed lookup is non-fatal (e.g. log was rotated
+        # past the entry while the LLM call was outstanding).
+        for entry in reversed(self._rt._prompt_log):
+            if entry.get("heartbeat_id") == heartbeat_id:
+                entry["raw_output"] = raw
+                return
 
     def new_recall(self) -> "RecallLike":
         # Look up the Modifier that claimed the "recall_anchor" role.

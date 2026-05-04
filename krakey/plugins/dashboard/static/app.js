@@ -338,7 +338,14 @@ function handleEvent(e) {
         heartbeat_id: e.heartbeat_id,
         ts: new Date().toISOString(),
         full_prompt: e.layers.full_prompt || "",
+        raw_output: null,
       });
+      break;
+    case "self_output":
+      // Raw LLM response landed — patch the matching cached entry's
+      // raw_output and re-render the Prompts tab if it's visible
+      // (and live updates aren't paused).
+      livePatchPromptRawOutput(e.heartbeat_id, e.raw);
       break;
     case "sleep_start":
       appendIconEntry(toolEl, "—", "moon",
@@ -1218,7 +1225,14 @@ function liveAppendPrompt(p) {
   // Cache ALWAYS updates — even when live updates are paused — so
   // resuming flushes the full backlog into the view in one render.
   const idx = promptsCache.findIndex((x) => x.heartbeat_id === p.heartbeat_id);
-  if (idx !== -1) promptsCache.splice(idx, 1);
+  // If we already had a cached copy with a raw_output filled in,
+  // preserve it across the prompt-built replay so the entry doesn't
+  // briefly lose its right column on reconnect.
+  if (idx !== -1) {
+    const old = promptsCache[idx];
+    if (old.raw_output && !p.raw_output) p.raw_output = old.raw_output;
+    promptsCache.splice(idx, 1);
+  }
   promptsCache.unshift(p);
   if (promptsCache.length > PROMPT_UI_CAP) promptsCache.length = PROMPT_UI_CAP;
   // Only repaint the foreground when live updates are on AND the
@@ -1231,6 +1245,30 @@ function liveAppendPrompt(p) {
     _promptsPendingCount += 1;
     _updatePendingHint();
   }
+}
+
+function livePatchPromptRawOutput(hbId, raw) {
+  // Self LLM finished and the runtime emitted SelfOutputEvent; drop
+  // the raw text into the matching cached entry. Order is normally
+  // prompt_built → self_output (~LLM latency apart), so the entry
+  // already exists. If somehow it doesn't (history-snapshot timing),
+  // create a thin one so the right column has something to show.
+  const idx = promptsCache.findIndex((x) => x.heartbeat_id === hbId);
+  if (idx !== -1) {
+    promptsCache[idx].raw_output = raw;
+  } else {
+    promptsCache.unshift({
+      heartbeat_id: hbId,
+      ts: new Date().toISOString(),
+      full_prompt: "",
+      raw_output: raw,
+    });
+    if (promptsCache.length > PROMPT_UI_CAP) {
+      promptsCache.length = PROMPT_UI_CAP;
+    }
+  }
+  const visible = $("#tab-prompts").classList.contains("active");
+  if (_promptsLive && visible) renderPromptsList();
 }
 
 function _updatePendingHint() {
@@ -1301,9 +1339,18 @@ function renderPromptsList() {
       "  — " + (p.full_prompt ? `${p.full_prompt.length} chars` : "(empty)")
     ));
     card.appendChild(sum);
-    // Inner sections (DNA / STATUS / STIMULUS etc) — collapsible
+    // Two-column body: prompt sections on the left, raw LLM output
+    // on the right. Each column scrolls independently so a long
+    // prompt doesn't push the response off-screen.
     const inner = document.createElement("div");
-    inner.className = "prompt-card-body";
+    inner.className = "prompt-card-body two-col";
+
+    const left = document.createElement("div");
+    left.className = "prompt-col prompt-col-prompt";
+    const leftHead = document.createElement("div");
+    leftHead.className = "prompt-col-head";
+    leftHead.textContent = "prompt";
+    left.appendChild(leftHead);
     for (const s of splitPromptSections(p.full_prompt)) {
       const sec = document.createElement("details");
       sec.className = "prompt-section";
@@ -1316,8 +1363,29 @@ function renderPromptsList() {
       pre.textContent = s.body;
       sec.appendChild(ss);
       sec.appendChild(pre);
-      inner.appendChild(sec);
+      left.appendChild(sec);
     }
+
+    const right = document.createElement("div");
+    right.className = "prompt-col prompt-col-output";
+    const rightHead = document.createElement("div");
+    rightHead.className = "prompt-col-head";
+    rightHead.textContent =
+      "raw output" + (p.raw_output != null ? "" : " — pending");
+    right.appendChild(rightHead);
+    const outPre = document.createElement("pre");
+    outPre.className = "prompt-raw-output";
+    if (p.raw_output != null && p.raw_output !== "") {
+      outPre.textContent = p.raw_output;
+    } else {
+      outPre.classList.add("muted");
+      outPre.textContent =
+        "(LLM hasn't returned yet — fills in after the call lands)";
+    }
+    right.appendChild(outPre);
+
+    inner.appendChild(left);
+    inner.appendChild(right);
     card.appendChild(inner);
     promptsList.appendChild(card);
   }
