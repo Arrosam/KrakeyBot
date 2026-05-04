@@ -34,8 +34,10 @@ from typing import TYPE_CHECKING, Any
 from krakey.bootstrap import detect_bootstrap_complete, parse_self_model_update
 
 if TYPE_CHECKING:
-    from krakey.memory.graph_memory import GraphMemory
-    from krakey.memory.knowledge_base import KBRegistry
+    from krakey.interfaces.services.memory import (
+        KBRegistryService,
+        MemoryService,
+    )
     from krakey.models.self_model import SelfModelStore
 
 
@@ -85,7 +87,7 @@ class BootstrapCoordinator:
     # ---- state mutations ---------------------------------------------
 
     async def refine_from_data(
-        self, gm: "GraphMemory", kb_registry: "KBRegistry",
+        self, gm: "MemoryService", kb_registry: "KBRegistryService",
     ) -> None:
         """Re-derive activity from actual workspace state. Bootstrap
         fires only when the workspace is genuinely empty — zero GM

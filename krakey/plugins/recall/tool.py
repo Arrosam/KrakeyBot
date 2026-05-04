@@ -22,21 +22,29 @@ Two query paths, picked by the presence of ``kb_id`` in params:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from krakey.interfaces.tool import Tool
-from krakey.memory.graph_memory import GraphMemory
-from krakey.memory.knowledge_base import KBRegistry
 from krakey.memory.recall import AsyncEmbedder
 from krakey.models.stimulus import Stimulus
 from krakey.plugins.recall.gm_query import query_gm_with_fts_fallback
 
+if TYPE_CHECKING:
+    # Type-only: tool stores the gm/kb_registry it was built with
+    # via PluginContext.services and only invokes Protocol-shaped
+    # methods on them. Decoupling lets a user-supplied MemoryService /
+    # KBRegistryService flow through unchanged.
+    from krakey.interfaces.services.memory import (
+        KBRegistryService,
+        MemoryService,
+    )
+
 
 class MemoryRecallTool(Tool):
-    def __init__(self, gm: GraphMemory | None,
+    def __init__(self, gm: "MemoryService | None",
                   embedder: AsyncEmbedder | None,
                   *, default_top_k: int = 8,
-                  kb_registry: KBRegistry | None = None):
+                  kb_registry: "KBRegistryService | None" = None):
         self._gm = gm
         self._embedder = embedder
         self._default_top_k = default_top_k

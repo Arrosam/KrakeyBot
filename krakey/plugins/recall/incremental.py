@@ -37,7 +37,7 @@ from krakey.plugins.recall.gm_query import query_gm_with_fts_fallback
 from krakey.utils.tokens import estimate_tokens
 
 if TYPE_CHECKING:
-    from krakey.memory.graph_memory import GraphMemory
+    from krakey.interfaces.services.memory import MemoryService
     from krakey.models.stimulus import Stimulus
 
 
@@ -76,7 +76,7 @@ class IncrementalRecall:
     neighbor-keyword hints, and edges among the selected set.
     """
 
-    def __init__(self, gm: "GraphMemory", *,
+    def __init__(self, gm: "MemoryService", *,
                   embedder: AsyncEmbedder,
                   per_stimulus_k: int,
                   recall_token_budget: int,
