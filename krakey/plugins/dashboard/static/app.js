@@ -1176,14 +1176,32 @@ if (logStream) {
 // ============== PROMPTS ==============
 
 const promptsList = $("#prompts-list");
+const promptsLiveToggle = $("#prompts-live");
+const promptsPending = $("#prompts-pending");
 let promptsCache = [];   // newest first; trimmed to PROMPT_UI_CAP
 const PROMPT_UI_CAP = 200;
+
+// Track which heartbeat_ids the user has expanded so re-renders
+// don't snap them shut every time a new beat arrives. Updated from
+// each <details>'s `toggle` event in renderPromptsList; consulted
+// at render time to restore open state.
+const _openPromptIds = new Set();
+
+// Live-update gate. ON (default) ⇒ renderPromptsList runs on every
+// new heartbeat. OFF ⇒ promptsCache still updates in the background
+// (subscriber stays attached) but the foreground is paused so the
+// user can browse old prompts without losing their place. Flipping
+// back ON renders once with the full backlog.
+let _promptsLive = true;
+let _promptsPendingCount = 0;
 
 async function loadPrompts() {
   promptsList.textContent = "loading...";
   try {
     const r = await fetch("/api/prompts?limit=200").then((r) => r.json());
     promptsCache = r.prompts || [];
+    _promptsPendingCount = 0;
+    _updatePendingHint();
     renderPromptsList();
   } catch (e) {
     promptsList.textContent = "error: " + e;
@@ -1191,13 +1209,50 @@ async function loadPrompts() {
 }
 
 function liveAppendPrompt(p) {
-  // Merge / dedupe by heartbeat_id (server may replay on reconnect)
+  // Merge / dedupe by heartbeat_id (server may replay on reconnect).
+  // Cache ALWAYS updates — even when live updates are paused — so
+  // resuming flushes the full backlog into the view in one render.
   const idx = promptsCache.findIndex((x) => x.heartbeat_id === p.heartbeat_id);
   if (idx !== -1) promptsCache.splice(idx, 1);
   promptsCache.unshift(p);
   if (promptsCache.length > PROMPT_UI_CAP) promptsCache.length = PROMPT_UI_CAP;
-  // Only re-render if the Prompts tab is currently visible (cheap skip)
-  if ($("#tab-prompts").classList.contains("active")) renderPromptsList();
+  // Only repaint the foreground when live updates are on AND the
+  // tab is visible. While paused we count pending arrivals so the
+  // user has feedback on how stale the view is.
+  const visible = $("#tab-prompts").classList.contains("active");
+  if (_promptsLive && visible) {
+    renderPromptsList();
+  } else if (!_promptsLive) {
+    _promptsPendingCount += 1;
+    _updatePendingHint();
+  }
+}
+
+function _updatePendingHint() {
+  if (!promptsPending) return;
+  if (!_promptsLive && _promptsPendingCount > 0) {
+    promptsPending.textContent =
+      `${_promptsPendingCount} new prompt${_promptsPendingCount === 1 ? "" : "s"} since paused`;
+    promptsPending.classList.add("has-pending");
+  } else if (!_promptsLive) {
+    promptsPending.textContent = "paused — toggle live to resume";
+    promptsPending.classList.remove("has-pending");
+  } else {
+    promptsPending.textContent = "";
+    promptsPending.classList.remove("has-pending");
+  }
+}
+
+if (promptsLiveToggle) {
+  promptsLiveToggle.addEventListener("change", () => {
+    _promptsLive = !!promptsLiveToggle.checked;
+    if (_promptsLive) {
+      // Resuming: flush the backlog into the view in one render.
+      _promptsPendingCount = 0;
+      renderPromptsList();
+    }
+    _updatePendingHint();
+  });
 }
 
 function fmtTs(iso) {
@@ -1219,6 +1274,15 @@ function renderPromptsList() {
   for (const p of promptsCache) {
     const card = document.createElement("details");
     card.className = "prompt-card";
+    // Restore expanded state across re-renders by heartbeat_id —
+    // arriving live prompts no longer snap the user's currently-
+    // open card shut. The toggle listener below keeps the set in
+    // sync as the user opens / closes things.
+    if (_openPromptIds.has(p.heartbeat_id)) card.open = true;
+    card.addEventListener("toggle", () => {
+      if (card.open) _openPromptIds.add(p.heartbeat_id);
+      else _openPromptIds.delete(p.heartbeat_id);
+    });
     const sum = document.createElement("summary");
     const tag = document.createElement("span");
     tag.className = "hb-tag";

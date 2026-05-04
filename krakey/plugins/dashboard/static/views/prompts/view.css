@@ -1,5 +1,26 @@
 /* Prompts view: collapsible per-heartbeat prompt history. */
 
+/* Toolbar above the list — the "Live updates" toggle and a paused
+   counter sit here so the user can browse old prompts without
+   having the foreground re-render every beat. */
+.prompts-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.prompts-live-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  user-select: none;
+}
+#prompts-pending { margin-left: auto; }
+#prompts-pending.has-pending { color: var(--yellow); font-weight: bold; }
+
 .prompt-collapser {
   background: var(--panel);
   border: 1px solid var(--border);
