@@ -53,16 +53,19 @@ You can override one slot, all slots, or none — they're independent.
 | `reranker` | [`Reranker`](../krakey/memory/recall/scoring.py) | tag-resolved LLMClient wrapper | _(none)_ |
 | `prompt_builder` | [`PromptBuilderLike`](../krakey/interfaces/services/prompt_builder.py) | `PromptBuilder` | _(none)_ |
 | `llm_client_factory` | [`ChatLike`](../krakey/llm/resolve.py) | `LLMClient` | `provider`, `model`, `params` |
+| `memory` | [`MemoryService`](../krakey/interfaces/services/memory.py) | `GraphMemory` | `db_path`, `embedder`, `auto_ingest_threshold`, `extractor_llm`, `classifier_llm` |
+| `kb_registry` | [`KBRegistryService`](../krakey/interfaces/services/memory.py) | `KBRegistry` | `gm`, `kb_dir`, `embedder` |
 
-The `llm_client_factory` slot is the only one that takes kwargs at
-construction; the others are no-arg. If you need configuration for a
-no-arg slot, read it from environment variables or a separate config
-file your package maintains.
+If you need configuration for a no-arg slot, read it from environment
+variables or a separate config file your package maintains. Slots that
+take kwargs receive them positionally from the runtime (the slot's
+contract specifies which); your `__init__` must accept those exact
+kwarg names.
 
-> **Future phases** will add slots for `memory`, `kb_registry`,
-> `sliding_window`, and `sleep_manager`. The config dataclass already
-> reserves these field names so your config won't break when the
-> wiring lands; today they're silently ignored.
+> **Future phases** will add slots for `sliding_window` and
+> `sleep_manager`. The config dataclass already reserves these field
+> names so your config won't break when the wiring lands; today they're
+> silently ignored.
 
 ---
 
@@ -201,6 +204,83 @@ Easiest approach: implement `chat()` only on your custom client and use
 the **embedder slot** to point at your dedicated embedding service. The
 two slots compose cleanly — KrakeyBot will use your custom chat client
 for chat tags and your custom embedder for embedding tags.
+
+---
+
+## Writing a custom memory backend
+
+The `memory` and `kb_registry` slots together let you swap the entire
+memory subsystem — graph memory + knowledge bases — for a different
+backend (Postgres, Redis, Neo4j, ScyllaDB, an in-memory dict for
+testing, ...).
+
+The Protocols are in
+[`krakey/interfaces/services/memory.py`](../krakey/interfaces/services/memory.py)
+— `MemoryService` covers ~22 methods on `GraphMemory`,
+`KBRegistryService` covers ~7 methods on `KBRegistry`, and a KB
+instance returned by `open_kb` must satisfy `KnowledgeBaseLike`
+(~9 methods).
+
+For a minimal end-to-end example showing every method stubbed at
+viable fidelity in pure Python dicts, see
+[`tests/_fake_memory.py`](../tests/_fake_memory.py) — it's used as the
+fixture in the e2e swap test and demonstrates that the Protocol
+surface is implementable without any SQLite or external service. Treat
+it as scaffolding to copy into your project, then replace each
+method's body with calls to your real backend.
+
+### Constructor kwargs
+
+The `memory` slot's `__init__` receives:
+
+```python
+def __init__(
+    self, *,
+    db_path: str,                    # whatever DSN/path makes sense for you
+    embedder,                        # AsyncEmbedder — call await embedder(text)
+    auto_ingest_threshold: float,    # cosine cutoff for dedup
+    extractor_llm,                   # ChatLike — for compact-style extraction
+    classifier_llm,                  # ChatLike — for async category classification
+):
+    ...
+```
+
+The `kb_registry` slot's `__init__` receives:
+
+```python
+def __init__(
+    self, *,
+    gm,                              # MemoryService — your memory instance
+    kb_dir: str,                     # base path / namespace for KBs
+    embedder,
+):
+    ...
+```
+
+### LLM-driven facades — auto_ingest, explicit_write, classify_and_link_pending
+
+Three of the `MemoryService` methods are LLM-driven:
+`auto_ingest`, `explicit_write`, `classify_and_link_pending`. The
+runtime calls these every heartbeat. Your implementation must produce
+the same shape of return values (`{"node_id": int, ...}`,
+`{"classified": int, "linked": int}`) but you decide internally
+whether to actually invoke an LLM. A trivial impl that just records
+the call and writes a degenerate node is fine for testing — see
+`InMemoryMemoryService.auto_ingest` in `tests/_fake_memory.py`.
+
+### Why you usually need to override BOTH memory and kb_registry
+
+The default `KBRegistry` reaches into `GraphMemory`'s private aiosqlite
+connection (`gm._require()`) to share the same DB file. That coupling
+is intentional in the SQLite case — keeps a single transactional
+backing — but it means a non-SQLite memory backend cannot pair with
+the default KBRegistry. The runtime's startup will succeed (the
+default `KBRegistry.__init__` is lazy), but the first KB operation
+will fail with a `TypeError` or `AttributeError`.
+
+If you override `memory`, you should override `kb_registry` too,
+unless you happen to be writing a SQLite-compatible memory backend
+that exposes the same `_require()` method.
 
 ---
 
