@@ -1681,6 +1681,15 @@ function renderGenericSection(key, title, target, schema) {
 // existing entry is a removable chip; the trailing input adds new
 // entries on Enter / blur. Used for ``allowed_plugins`` and
 // ``allowlist_domains`` under Environments.
+//
+// opts.suggestions (optional string[]): wires a native <datalist>
+// onto the trailing input so the browser surfaces type-ahead
+// completion + a click-to-pick dropdown of every still-unused
+// suggestion. Used by allowed_plugins to surface every detected
+// plugin from /api/modifiers/available without forcing the user
+// to remember exact names. Each render gets its own datalist id
+// since DOM ids must be unique.
+let _stringListSeq = 0;
 function _renderStringList(arr, opts) {
   if (!Array.isArray(arr)) {
     // Caller passed a non-array; coerce to empty so the UI still
@@ -1709,9 +1718,31 @@ function _renderStringList(arr, opts) {
     const input = document.createElement("input");
     input.type = "text";
     input.placeholder = (opts && opts.placeholder) || "+ add…";
+    input.autocomplete = "off";
     input.style.cssText =
       "border:none;background:transparent;color:var(--text);" +
       "font-family:inherit;font-size:11px;flex:1;min-width:80px;outline:none";
+
+    // Optional native autocomplete: list every suggestion that
+    // isn't already chipped. Browsers turn this into a typeahead
+    // dropdown filtered against whatever the user has typed.
+    const sugg = (opts && opts.suggestions) || [];
+    if (sugg.length) {
+      _stringListSeq += 1;
+      const dlId = `string-list-dl-${_stringListSeq}`;
+      const dl = document.createElement("datalist");
+      dl.id = dlId;
+      const used = new Set(arr);
+      for (const s of sugg) {
+        if (used.has(s)) continue;  // hide already-added entries
+        const opt = document.createElement("option");
+        opt.value = s;
+        dl.appendChild(opt);
+      }
+      input.setAttribute("list", dlId);
+      wrap.appendChild(dl);
+    }
+
     function commit() {
       const v = input.value.trim();
       if (!v) return;
@@ -1725,6 +1756,9 @@ function _renderStringList(arr, opts) {
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); commit(); }
     });
+    // Also commit on `change` — browsers fire this when the user
+    // picks a datalist option without pressing Enter.
+    input.addEventListener("change", commit);
     input.addEventListener("blur", commit);
     wrap.appendChild(input);
   }
@@ -1751,6 +1785,16 @@ function renderEnvironmentsSection(envs) {
   const sec = makeSection("Environments");
   const body = sec.querySelector(".body");
 
+  // Plugin-name suggestions for the allow-list editors come from
+  // the same /api/modifiers/available payload the Plugins panel
+  // uses, so anything detected on disk is one keystroke away. The
+  // input still accepts free-form text — useful for plugins not
+  // yet on disk that the user is configuring ahead of an install.
+  const pluginSuggestions = (availableModifiers || [])
+    .map((p) => p && p.name)
+    .filter(Boolean)
+    .sort();
+
   // Local sub-block.
   if (!envs.local) envs.local = { allowed_plugins: [] };
   if (!Array.isArray(envs.local.allowed_plugins)) {
@@ -1764,7 +1808,10 @@ function renderEnvironmentsSection(envs) {
   localBlock.appendChild(_renderListRow(
     "allowed_plugins", envs.local.allowed_plugins,
     "environments.local.allowed_plugins",
-    { placeholder: "plugin name + Enter" },
+    {
+      placeholder: "plugin name (type or pick)",
+      suggestions: pluginSuggestions,
+    },
   ));
   body.appendChild(localBlock);
 
@@ -1815,7 +1862,10 @@ function renderEnvironmentsSection(envs) {
     sbBlock.appendChild(_renderListRow(
       "allowed_plugins", sb.allowed_plugins,
       "environments.sandbox.allowed_plugins",
-      { placeholder: "plugin name + Enter" },
+      {
+        placeholder: "plugin name (type or pick)",
+        suggestions: pluginSuggestions,
+      },
     ));
     for (const [f, t] of SCHEMAS.env_sandbox_scalars) {
       sbBlock.appendChild(renderRow(
