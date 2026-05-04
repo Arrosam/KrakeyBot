@@ -45,23 +45,24 @@ You can override one slot, all slots, or none — they're independent.
 
 ---
 
-## Currently shipping slots (Phase 1)
+## Currently shipping slots
 
 | Slot | Protocol | Default | Construction kwargs |
 |------|----------|---------|---------------------|
 | `embedder` | [`AsyncEmbedder`](../krakey/llm/resolve.py) | tag-resolved LLMClient wrapper | _(none)_ |
 | `reranker` | [`Reranker`](../krakey/memory/recall/scoring.py) | tag-resolved LLMClient wrapper | _(none)_ |
 | `prompt_builder` | [`PromptBuilderLike`](../krakey/interfaces/services/prompt_builder.py) | `PromptBuilder` | _(none)_ |
+| `llm_client_factory` | [`ChatLike`](../krakey/llm/resolve.py) | `LLMClient` | `provider`, `model`, `params` |
 
-All three Phase 1 slots take **no kwargs at construction**. Your class
-must have an `__init__` that accepts no positional or keyword args
-(beyond `self`). If you need configuration, read it from environment
-variables or a separate config file your package maintains.
+The `llm_client_factory` slot is the only one that takes kwargs at
+construction; the others are no-arg. If you need configuration for a
+no-arg slot, read it from environment variables or a separate config
+file your package maintains.
 
 > **Future phases** will add slots for `memory`, `kb_registry`,
-> `sliding_window`, `sleep_manager`, and `llm_client_factory`. The
-> config dataclass already reserves these field names so your config
-> won't break when the wiring lands; today they're silently ignored.
+> `sliding_window`, and `sleep_manager`. The config dataclass already
+> reserves these field names so your config won't break when the
+> wiring lands; today they're silently ignored.
 
 ---
 
@@ -162,6 +163,44 @@ return values in any specific range.
 If you DON'T want a reranker (the recall pipeline falls back to
 scripted scoring), just leave the slot empty AND don't bind the
 `llm.reranker` tag. KrakeyBot will run with `reranker = None`.
+
+---
+
+## Writing a custom LLM client
+
+`ChatLike` is the smallest of the Protocols:
+
+```python
+@runtime_checkable
+class ChatLike(Protocol):
+    async def chat(self, messages, **kwargs) -> str: ...
+```
+
+Your class needs:
+- `__init__(self, *, provider: Provider, model: str, params: LLMParams | None = None)` —
+  these kwargs come from the tag binding (the same data that built
+  the default `LLMClient`)
+- `async def chat(self, messages, **kwargs) -> str`
+
+Use this slot when you want to replace the entire LLM transport — your
+own HTTP library, streaming impl, vLLM-native client, locally-loaded
+inference, or a request-routing layer. Use `llm.providers` + `llm.tags`
+instead if you only want to point at a different endpoint.
+
+### Composition with the embedder / reranker slots
+
+When you override `llm_client_factory`, your class is used for **every**
+tag — chat, embedding, and reranker. That means:
+
+- For `llm.embedding: t` to work without overriding the embedder slot,
+  your class also needs `async def embed(self, text: str) -> list[float]`.
+- For `llm.reranker: t` to work without overriding the reranker slot,
+  your class also needs `async def rerank(self, query, docs)`.
+
+Easiest approach: implement `chat()` only on your custom client and use
+the **embedder slot** to point at your dedicated embedding service. The
+two slots compose cleanly — KrakeyBot will use your custom chat client
+for chat tags and your custom embedder for embedding tags.
 
 ---
 
