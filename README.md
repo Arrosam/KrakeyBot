@@ -230,7 +230,10 @@ If you're the kind of person who wants the mechanical details:
 
 Contributors and the curious: see [`PLUGINS.md`](PLUGINS.md) for
 plugin authoring, [`SANDBOX.md`](SANDBOX.md) before enabling any
-code-execution / browser-control plugins.
+code-execution / browser-control plugins, and
+[`docs/extending-core.md`](docs/extending-core.md) for replacing
+built-in core services (memory, prompt builder, embedder, ...) with
+your own implementations.
 
 ***
 
