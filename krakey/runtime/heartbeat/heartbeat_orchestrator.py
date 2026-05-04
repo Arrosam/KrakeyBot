@@ -413,8 +413,22 @@ class HeartbeatOrchestrator:
                     parsed.decision, rt.tools.list_descriptions(),
                 )
             else:
+                # Scope the tool_call parser to the [DECISION] section
+                # only — NOT parsed.raw. Reason: when the corrective
+                # stimulus from a prior beat surfaces format examples
+                # (e.g. quoting "do not write </arg_value>"), Self
+                # tends to echo those examples in [NOTE] for self-
+                # reference. Scanning the whole response would parse
+                # the quoted examples as real <tool_call> blocks,
+                # re-fail on the same drift signature, and re-push
+                # the corrective stimulus next beat — an infinite
+                # learning loop where Self is "punished" for
+                # internalizing the lesson. [DECISION] is the
+                # commitment section by design; [THINKING] is
+                # exploratory and [NOTE] is reflective scratchpad,
+                # neither should trigger dispatch.
                 tool_calls, parse_failures = parse_tool_calls_with_failures(
-                    parsed.raw,
+                    parsed.decision,
                 )
                 result = DecisionResult(tool_calls=tool_calls)
         except Exception as e:  # noqa: BLE001

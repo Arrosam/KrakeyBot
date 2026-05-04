@@ -122,6 +122,44 @@ async def test_tool_call_parse_failure_pushes_corrective_stimulus():
     assert '"name"' in msg
 
 
+async def test_tool_call_inside_note_section_does_not_dispatch_or_fail():
+    """Regression for the 'corrective-stimulus echo' loop: when
+    Self has internalized the format reminder and writes a clean
+    [DECISION] but ALSO quotes the bad example in [NOTE] for
+    self-reference (which the prior corrective stimulus literally
+    showed Self), the parser must NOT scan [NOTE] — otherwise the
+    quoted example re-fails JSON parse, re-pushes the corrective
+    stimulus, and Self is punished for learning. [DECISION] is the
+    commitment section; [NOTE] is reflective scratchpad."""
+    self_llm = ScriptedLLM([
+        '[THINKING]\nUnderstood the format requirement.\n'
+        '[DECISION]\nReply to user.\n'
+        '<tool_call>{"name": "web_chat_reply", "arguments": {"text": "ok"}}</tool_call>\n'
+        '[NOTE]\nReminder for me: do NOT write '
+        '<tool_call>{"name": "x"}</arg_value></tool_call> '
+        'with that closing tag — last beat I made that mistake.\n'
+        '[IDLE]\n1',
+    ])
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]),
+        modifiers=[],  # no hypothalamus → script-only path
+    )
+    await runtime.run(iterations=1)
+    await asyncio.sleep(0.05)  # let the dispatched tool task complete
+    await runtime.close()
+
+    stims = runtime.buffer.drain()
+    parse_errs = [s for s in stims
+                  if s.type == "system_event"
+                  and s.source == "system:tool_call_parse"]
+    assert not parse_errs, (
+        "the quoted </arg_value> example in [NOTE] must not trigger "
+        "a parse-failure stimulus; only [DECISION] is the dispatch "
+        "section. Got stimulus(es): "
+        + repr([s.content[:200] for s in parse_errs])
+    )
+
+
 async def test_hypothalamus_error_pushes_system_event_stimulus():
     """When the Hypothalamus LLM returns junk / empty / raises, Self must
     still learn about it via a system_event stimulus on the next heartbeat,
