@@ -180,3 +180,106 @@ def test_back_compat_alias_still_works():
     from krakey.runtime.heartbeat.action_executor import parse_action_block
     text = '<tool_call>\n{"name": "x"}\n</tool_call>'
     assert parse_action_block(text) == parse_tool_calls(text)
+
+
+# ---------------- parse_tool_calls_with_failures ----------------
+
+
+def test_with_failures_empty_input_returns_two_empty_lists():
+    from krakey.runtime.heartbeat.action_executor import (
+        parse_tool_calls_with_failures,
+    )
+    calls, failures = parse_tool_calls_with_failures("")
+    assert calls == [] and failures == []
+
+
+def test_with_failures_arg_value_tail_surfaces_as_failure():
+    """Real-world Self drift: each <tool_call> ends with a stray
+    </arg_value> closing tag bleeding from a different format the
+    model was fine-tuned on. JSON parse fails with 'Extra data'."""
+    from krakey.runtime.heartbeat.action_executor import (
+        parse_tool_calls_with_failures,
+    )
+    raw = (
+        '<tool_call>{"name": "search", "arguments": {"query": "X"}}'
+        '</arg_value></tool_call>'
+    )
+    calls, failures = parse_tool_calls_with_failures(raw)
+    assert calls == []
+    assert len(failures) == 1
+    f = failures[0]
+    assert f.block_index == 0
+    assert "</arg_value>" in f.payload
+    assert "Extra data" in f.error
+
+
+def test_with_failures_partial_success_still_dispatches_clean_blocks():
+    """One </arg_value>-tail block + one clean block in the same
+    response → 1 ToolCall returned, 1 ParseFailure recorded. The
+    clean block must not be dropped just because its sibling is
+    malformed."""
+    from krakey.runtime.heartbeat.action_executor import (
+        parse_tool_calls_with_failures,
+    )
+    raw = (
+        '<tool_call>{"name": "bad", "arguments": {}}</arg_value></tool_call>\n'
+        '<tool_call>{"name": "good", "arguments": {"q": "y"}}</tool_call>'
+    )
+    calls, failures = parse_tool_calls_with_failures(raw)
+    assert [c.tool for c in calls] == ["good"]
+    assert len(failures) == 1
+    assert failures[0].block_index == 0  # bad block came first
+    assert "bad" in failures[0].payload  # name preserved in payload
+
+
+def test_with_failures_records_block_index_for_each():
+    """When several blocks fail in a row, block_index lets the
+    corrective stimulus show Self exactly which positions failed."""
+    from krakey.runtime.heartbeat.action_executor import (
+        parse_tool_calls_with_failures,
+    )
+    raw = (
+        '<tool_call>{"name": "a"}</arg_value></tool_call>\n'
+        '<tool_call>{"name": "b"}</arg_value></tool_call>\n'
+        '<tool_call>{"name": "c"}</arg_value></tool_call>'
+    )
+    calls, failures = parse_tool_calls_with_failures(raw)
+    assert calls == []
+    assert [f.block_index for f in failures] == [0, 1, 2]
+
+
+def test_with_failures_non_json_object_payload_recorded():
+    """A JSON array (or other valid JSON that isn't an object) is
+    a different failure shape from JSON-decode error — surface the
+    diagnosis rather than masking it as 'unparseable'."""
+    from krakey.runtime.heartbeat.action_executor import (
+        parse_tool_calls_with_failures,
+    )
+    raw = '<tool_call>[1, 2, 3]</tool_call>'
+    calls, failures = parse_tool_calls_with_failures(raw)
+    assert calls == []
+    assert len(failures) == 1
+    assert "not an object" in failures[0].error.lower()
+
+
+def test_with_failures_missing_name_recorded():
+    from krakey.runtime.heartbeat.action_executor import (
+        parse_tool_calls_with_failures,
+    )
+    raw = '<tool_call>{"arguments": {"x": 1}}</tool_call>'
+    calls, failures = parse_tool_calls_with_failures(raw)
+    assert calls == []
+    assert len(failures) == 1
+    assert "name" in failures[0].error.lower()
+
+
+def test_with_failures_empty_block_does_not_count_as_failure():
+    """An empty <tool_call></tool_call> tag is noise, not a parse
+    failure — don't burn a corrective stimulus on it."""
+    from krakey.runtime.heartbeat.action_executor import (
+        parse_tool_calls_with_failures,
+    )
+    calls, failures = parse_tool_calls_with_failures(
+        '<tool_call></tool_call>'
+    )
+    assert calls == [] and failures == []
