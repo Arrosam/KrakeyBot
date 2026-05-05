@@ -166,3 +166,71 @@ def test_load_plugin_meta_returns_metadata_for_known_plugin():
     assert meta is not None
     assert meta.name == "cli_exec"
     assert isinstance(meta.dependencies, list)
+
+
+# =====================================================================
+# Packaging — pyproject.toml's [tool.setuptools.package-data] table
+# must list every plugin's meta.yaml so wheel installs find them
+# =====================================================================
+#
+# Why a dedicated test: BUILTIN_ROOT walks the filesystem directly,
+# so ``test_every_builtin_plugin_meta_parses`` passes in a checkout
+# regardless of whether ``meta.yaml`` was actually declared in
+# ``pyproject.toml``'s package-data table. A pip-installed wheel
+# copy WOULDN'T see the meta.yaml unless it's listed there. Routing
+# the access through ``importlib.resources`` exercises the same
+# resolution a wheel install uses — catches a packaging omission
+# that the filesystem-walk tests miss.
+
+
+_EXPECTED_PLUGINS = (
+    # When a new plugin lands, add its name here AND add its
+    # meta.yaml entry to pyproject.toml's package-data table.
+    # This list catches drift in either direction.
+    "browser_exec",
+    "cli_exec",
+    "dashboard",
+    "duckduckgo_search",
+    "gui_exec",
+    "hypothalamus",
+    "in_mind_note",
+    "recall",
+    "telegram",
+)
+
+
+@pytest.mark.parametrize("plugin_name", _EXPECTED_PLUGINS)
+def test_plugin_meta_yaml_reachable_via_importlib_resources(plugin_name):
+    """``meta.yaml`` is reachable as a package resource for every
+    shipped plugin. Equivalent to what a wheel-installed copy sees,
+    so a missing entry in ``pyproject.toml``'s package-data table
+    fails this test post-install."""
+    from importlib.resources import files
+
+    pkg = f"krakey.plugins.{plugin_name}"
+    meta = files(pkg) / "meta.yaml"
+    assert meta.is_file(), (
+        f"{pkg}/meta.yaml not packaged. Add to pyproject.toml's "
+        f"[tool.setuptools.package-data] table."
+    )
+    text = meta.read_text(encoding="utf-8")
+    assert text and "name:" in text
+
+
+def test_browser_exec_server_source_is_reachable_via_inspect():
+    """``snippets.py`` reads ``server.py``'s source via
+    ``inspect.getsource`` at import time and embeds it in every
+    dispatched snippet. The browser_exec plugin therefore breaks
+    entirely if ``server.py`` doesn't survive the wheel build.
+    Pin that contract here."""
+    import inspect
+
+    from krakey.plugins.browser_exec import server
+
+    src = inspect.getsource(server)
+    assert src, "server.py source not reachable via inspect"
+    # Recognizable markers — protects against partial / truncated
+    # inclusions that ``is_file()`` alone wouldn't catch.
+    assert "def serve(" in src
+    assert "class BrowserWorker" in src
+    assert "/rpc" in src
