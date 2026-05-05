@@ -28,6 +28,16 @@
     <div class="status-bar" id="status-bar">— connecting —</div>
   </header>
 
+  <!-- Runtime-state banner — shown when the SPA receives a
+       SleepStartEvent and hidden again on SleepDoneEvent. While
+       visible, GM-bound tabs (Memory) refuse to auto-fetch since
+       sleep is hammering the same aiosqlite connection and
+       dashboard reads would queue behind it indefinitely. -->
+  <div id="runtime-banner" class="runtime-banner hidden">
+    <i data-bi="moon"></i>
+    <span class="banner-text"></span>
+  </div>
+
   <main>
     <!-- @@view:thoughts@@ -->
 

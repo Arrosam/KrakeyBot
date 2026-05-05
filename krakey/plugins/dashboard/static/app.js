@@ -66,6 +66,27 @@ $$(".tab-btn").forEach((btn) => {
   });
 });
 
+// ============== RUNTIME-STATE BANNER ==============
+// Shown under the header when the runtime enters sleep (or other
+// known-busy states later). Toggled from the SleepStartEvent /
+// SleepDoneEvent handlers below; the rest of the SPA reads
+// `lastStats.mode` to decide whether to throttle GM-bound work.
+function _showSleepBanner(reason) {
+  const el = document.getElementById("runtime-banner");
+  if (!el) return;
+  const txt = el.querySelector(".banner-text");
+  if (txt) {
+    txt.textContent =
+      "Krakey is sleeping (" + (reason || "compacting memory") +
+      ") — Memory tab is paused until sleep finishes.";
+  }
+  el.classList.remove("hidden");
+}
+function _hideSleepBanner() {
+  const el = document.getElementById("runtime-banner");
+  if (el) el.classList.add("hidden");
+}
+
 // ============== STATUS BAR ==============
 
 const statusBar = $("#status-bar");
@@ -351,6 +372,14 @@ function handleEvent(e) {
       appendIconEntry(toolEl, "—", "moon",
         "sleep started: " + e.reason, "sleep-start");
       lastStats.mode = "sleeping";
+      _showSleepBanner(e.reason);
+      // Memory tab is GM-bound and would queue behind sleep on
+      // the shared aiosqlite worker thread; if it's currently
+      // showing data, swap to the placeholder.
+      _lastRenderedMemView = null;
+      if ($("#tab-memory").classList.contains("active")) {
+        loadMemory(currentMemView);
+      }
       setStatus();
       break;
     case "sleep_done":
@@ -358,6 +387,13 @@ function handleEvent(e) {
         "sleep done: " + JSON.stringify(e.stats), "sleep-done");
       lastStats.mode = "normal";
       lastStats.last_sleep = new Date().toISOString();
+      _hideSleepBanner();
+      // Auto-reload Memory if the user is sitting on it — gives
+      // them an immediate refresh once GM is free again.
+      _lastRenderedMemView = null;
+      if ($("#tab-memory").classList.contains("active")) {
+        loadMemory(currentMemView);
+      }
       setStatus();
       break;
   }
@@ -770,6 +806,21 @@ async function loadMemory(view, opts) {
   const target = $("#mem-content");
   if (!force && view === _lastRenderedMemView) return;
   _disposeMemView();
+  // Hard gate while the runtime is sleeping — sleep keeps the
+  // shared aiosqlite worker thread continuously busy with GM
+  // writes, and any /api/gm/* read would queue behind it for the
+  // entire sleep duration, leaving the dashboard appearing to
+  // hang. Render a placeholder instead; the sleep_done handler
+  // re-runs loadMemory automatically.
+  if (lastStats.mode === "sleeping") {
+    target.classList.remove("graph-mode");
+    target.innerHTML =
+      `<p style="padding:20px;color:var(--muted);text-align:center">` +
+      `Krakey is sleeping — Memory will load automatically when ` +
+      `sleep finishes.</p>`;
+    _lastRenderedMemView = null;  // force a real render once awake
+    return;
+  }
   target.classList.toggle("graph-mode", view === "graph");
   target.textContent = "loading...";
   try {
