@@ -2328,6 +2328,14 @@ function renderLLMSection(llm) {
   const tagsHead = document.createElement("h4");
   tagsHead.style.cssText = "color:var(--text);font-weight:bold;font-size:11px;margin:12px 0 6px";
   tagsHead.appendChild(document.createTextNode("Tags"));
+  // Section-wide tooltip explaining what a tag is and how
+  // Core / Plugin Purposes consume them. Shown on hover.
+  tagsHead.title =
+    "A tag is a named (provider/model + params) preset. " +
+    "Core Purposes (Self / compact / classifier) and Plugin " +
+    "Purposes both bind a tag name; multiple purposes can share " +
+    "the same tag, and a tag can be re-tuned in one place to " +
+    "change every consumer at once.";
   const addTag = mkBtn("+ add tag", () => {
     const provNames = Object.keys(llm.providers || {});
     if (!provNames.length) { alert("add a provider first"); return; }
@@ -2527,6 +2535,35 @@ function mkDropdown(triggerLabel, items, onPick) {
   return dd;
 }
 
+// Build the hover-tooltip body for a tag-row label. Lists the
+// provider/model the tag points at + every place it's currently
+// consumed (core_purposes, embedding, reranker, plugin
+// llm_purposes). Plain text — gets attached as `label.title`.
+function _tagTooltip(tname, tag) {
+  const llm = cfgState.llm || {};
+  const lines = [];
+  lines.push(`Tag: ${tname}`);
+  lines.push(`Binding: ${(tag && tag.provider) || "(unset)"}`);
+  const purposes = [];
+  for (const [purp, t] of Object.entries(llm.core_purposes || {})) {
+    if (t === tname) purposes.push(`core.${purp}`);
+  }
+  if (llm.embedding === tname) purposes.push("embedding slot");
+  if (llm.reranker === tname) purposes.push("reranker slot");
+  for (const p of (availableModifiers || [])) {
+    const cfg = (modifierConfigEdits || {})[p && p.name];
+    const lp = cfg && cfg.llm_purposes;
+    if (!lp) continue;
+    for (const [k, v] of Object.entries(lp)) {
+      if (v === tname) purposes.push(`${p.name}.${k}`);
+    }
+  }
+  lines.push(
+    "Used by: " + (purposes.length ? purposes.join(", ") : "(nothing yet)"),
+  );
+  return lines.join("\n");
+}
+
 function renderTagRow(tname, tags, providers) {
   // Wrapper so the params <details> sits directly below the tag row
   // (sharing a container keeps delete/rename behavior correct).
@@ -2554,6 +2591,11 @@ function renderTagRow(tname, tags, providers) {
       renderSettingsForm();
     },
   }));
+  // Hover help: surface the tag's binding + every consumer
+  // (Core / Plugin Purposes, embedding, reranker) so the user
+  // can see at a glance what renaming or unbinding would
+  // affect, without having to expand the params block.
+  lab.title = _tagTooltip(tname, tags[tname]);
   row.appendChild(lab);
 
   const wrap = document.createElement("div");
@@ -2680,9 +2722,16 @@ function renderTagParamsBlock(tname, tags) {
 // classifier optional) are always shown so people know they exist.
 const KNOWN_CORE_PURPOSES = [
   ["self_thinking", "required — Self's per-beat heartbeat LLM"],
-  ["compact", "sliding-window history → GM compaction LLM (also drives sleep clustering + KB index rebuild)"],
+  ["compact", "sliding-window history -> GM compaction LLM (also drives sleep clustering + KB index rebuild)"],
   ["classifier", "node category classifier (extractor + classifier; falls back to compact then self_thinking)"],
-  ["hypothalamus", "legacy compat — modern setups bind translator via the Hypothalamus plugin's per-plugin llm_purposes instead. Leave (unbound) unless you need the deprecated central path."],
+  // Note: ``hypothalamus`` is intentionally NOT here. The runtime
+  // still honours ``llm.core_purposes.hypothalamus`` for legacy
+  // configs (main.py:103), but the modern path is per-plugin
+  // — the Hypothalamus plugin declares ``translator`` in its
+  // meta.yaml and that surfaces in the "Plugin Purposes"
+  // sub-block below. Listing it here too caused duplicate rows
+  // once the plugin was enabled. A user on the legacy path can
+  // still add ``hypothalamus`` via "+ add purpose".
 ];
 
 function renderCorePurposesBlock(llm) {
