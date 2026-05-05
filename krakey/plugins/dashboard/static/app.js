@@ -1819,14 +1819,13 @@ function renderGenericSection(key, title, target, schema) {
 // entries on Enter / blur. Used for ``allowed_plugins`` and
 // ``allowlist_domains`` under Environments.
 //
-// opts.suggestions (optional string[]): wires a native <datalist>
-// onto the trailing input so the browser surfaces type-ahead
-// completion + a click-to-pick dropdown of every still-unused
-// suggestion. Used by allowed_plugins to surface every detected
-// plugin from /api/modifiers/available without forcing the user
-// to remember exact names. Each render gets its own datalist id
-// since DOM ids must be unique.
-let _stringListSeq = 0;
+// opts.suggestions (optional string[]): attaches an in-page
+// custom dropdown styled to match the rest of the panel (same
+// .dd-menu / .dd-item palette as the existing capabilities
+// picker). The dropdown opens on focus, filters as the user
+// types, and supports ArrowUp / ArrowDown / Enter / Escape.
+// Used by allowed_plugins to surface every detected plugin
+// without forcing the user to remember exact names.
 function _renderStringList(arr, opts) {
   if (!Array.isArray(arr)) {
     // Caller passed a non-array; coerce to empty so the UI still
@@ -1852,36 +1851,23 @@ function _renderStringList(arr, opts) {
       chip.appendChild(x);
       wrap.appendChild(chip);
     }
+
+    // Input + (optional) typeahead host. The host wraps both so
+    // the absolute-positioned dropdown anchors to the input
+    // column rather than the whole chip strip.
+    const inputHost = document.createElement("span");
+    inputHost.className = "string-list-input-host";
     const input = document.createElement("input");
     input.type = "text";
     input.placeholder = (opts && opts.placeholder) || "+ add…";
     input.autocomplete = "off";
     input.style.cssText =
       "border:none;background:transparent;color:var(--text);" +
-      "font-family:inherit;font-size:11px;flex:1;min-width:80px;outline:none";
+      "font-family:inherit;font-size:11px;flex:1;min-width:80px;outline:none;width:100%";
+    inputHost.appendChild(input);
 
-    // Optional native autocomplete: list every suggestion that
-    // isn't already chipped. Browsers turn this into a typeahead
-    // dropdown filtered against whatever the user has typed.
-    const sugg = (opts && opts.suggestions) || [];
-    if (sugg.length) {
-      _stringListSeq += 1;
-      const dlId = `string-list-dl-${_stringListSeq}`;
-      const dl = document.createElement("datalist");
-      dl.id = dlId;
-      const used = new Set(arr);
-      for (const s of sugg) {
-        if (used.has(s)) continue;  // hide already-added entries
-        const opt = document.createElement("option");
-        opt.value = s;
-        dl.appendChild(opt);
-      }
-      input.setAttribute("list", dlId);
-      wrap.appendChild(dl);
-    }
-
-    function commit() {
-      const v = input.value.trim();
+    function commit(value) {
+      const v = (value != null ? value : input.value).trim();
       if (!v) return;
       if (!arr.includes(v)) arr.push(v);
       input.value = "";
@@ -1890,17 +1876,100 @@ function _renderStringList(arr, opts) {
       const newInput = wrap.querySelector("input");
       if (newInput) newInput.focus();
     }
+
+    const sugg = (opts && opts.suggestions) || [];
+    if (sugg.length) {
+      _attachTypeaheadMenu(inputHost, input, sugg, () => arr, commit);
+    }
+
     input.addEventListener("keydown", (e) => {
+      // Enter falls through to the typeahead handler when a
+      // suggestion is highlighted; otherwise commits the typed
+      // text. Letting both run is fine — typeahead's commit
+      // also clears the input so a second commit() finds nothing.
       if (e.key === "Enter") { e.preventDefault(); commit(); }
     });
-    // Also commit on `change` — browsers fire this when the user
-    // picks a datalist option without pressing Enter.
-    input.addEventListener("change", commit);
-    input.addEventListener("blur", commit);
-    wrap.appendChild(input);
+    input.addEventListener("blur", () => commit());
+    wrap.appendChild(inputHost);
   }
   repaint();
   return wrap;
+}
+
+// Custom typeahead dropdown for the chip-list inputs. Renders a
+// styled menu under the input that filters suggestions by
+// substring match against the current input value. Hides items
+// already on the row (passed in via getCurrent()). Supports
+// keyboard navigation (Up / Down / Enter / Escape).
+function _attachTypeaheadMenu(host, input, suggestions, getCurrent, commit) {
+  host.classList.add("has-typeahead");
+  const menu = document.createElement("div");
+  menu.className = "dd-menu typeahead-menu hidden";
+  host.appendChild(menu);
+  let cursor = -1;
+
+  function open() {
+    rebuild();
+  }
+  function close() {
+    menu.classList.add("hidden");
+    cursor = -1;
+  }
+  function rebuild() {
+    const q = input.value.trim().toLowerCase();
+    const used = new Set(getCurrent());
+    const matches = suggestions
+      .filter((s) => !used.has(s))
+      .filter((s) => !q || s.toLowerCase().includes(q));
+    menu.innerHTML = "";
+    if (!matches.length) {
+      close();
+      return;
+    }
+    if (cursor >= matches.length) cursor = matches.length - 1;
+    matches.forEach((s, i) => {
+      const item = document.createElement("div");
+      item.className = "dd-item" + (i === cursor ? " active" : "");
+      item.textContent = s;
+      // mousedown (not click) so the input's blur doesn't fire
+      // first and swallow the pick.
+      item.addEventListener("mousedown", (ev) => {
+        ev.preventDefault();
+        commit(s);
+      });
+      menu.appendChild(item);
+    });
+    menu.classList.remove("hidden");
+  }
+
+  input.addEventListener("focus", open);
+  input.addEventListener("input", () => { cursor = -1; rebuild(); });
+  input.addEventListener("keydown", (e) => {
+    if (menu.classList.contains("hidden")) return;
+    if (e.key === "Escape") { e.preventDefault(); close(); return; }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      cursor = Math.min(cursor + 1, menu.children.length - 1);
+      rebuild();
+      const active = menu.querySelector(".dd-item.active");
+      if (active) active.scrollIntoView({ block: "nearest" });
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      cursor = Math.max(cursor - 1, -1);
+      rebuild();
+      const active = menu.querySelector(".dd-item.active");
+      if (active) active.scrollIntoView({ block: "nearest" });
+    } else if (e.key === "Enter" && cursor >= 0) {
+      e.preventDefault();
+      const pick = menu.children[cursor].textContent;
+      commit(pick);
+    }
+  });
+  // Hide on outside click / blur — small delay so a mousedown
+  // pick has time to fire.
+  input.addEventListener("blur", () => {
+    setTimeout(close, 120);
+  });
 }
 
 function _renderListRow(label, arr, helpPath, opts) {

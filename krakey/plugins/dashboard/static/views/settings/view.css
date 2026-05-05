@@ -297,6 +297,29 @@
 }
 .dd-item:hover { background: var(--panel-2); color: var(--text); }
 .dd-item.custom { color: var(--muted); border-top: 1px dashed var(--border); }
+/* Keyboard-highlighted item in the typeahead menu (ArrowUp /
+   ArrowDown). Same hover-tint so mouse + keyboard navigation
+   read identically. */
+.dd-item.active { background: var(--panel-2); color: var(--cyan); }
+
+/* Typeahead host inside chip-list (.cap-multi). The input shares
+   the strip with chips, but its dropdown anchors to this host so
+   it pops open under the input column rather than under the
+   whole strip. */
+.string-list-input-host {
+  position: relative;
+  flex: 1;
+  min-width: 80px;
+  display: inline-flex;
+}
+.string-list-input-host.has-typeahead .typeahead-menu {
+  /* Inherits .dd-menu styling — full panel-themed dropdown. The
+     position is anchored to the input host so the menu sits
+     directly beneath the input as the user types. */
+  left: 0;
+  right: auto;
+  min-width: 100%;
+}
 
 /* Style native <select> as far as the browser allows (role pickers etc.) */
 #settings-form select {
