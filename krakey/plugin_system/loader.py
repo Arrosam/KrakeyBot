@@ -30,6 +30,8 @@ any combination of components, each one of:
 name: my_plugin
 description: "..."
 config_schema: []          # plugin-level config fields (UI hints)
+dependencies:              # pip-installable spec strings
+  - "some-package>=1.0"    # installed by ``krakey install``
 
 components:
   - kind: modifier
@@ -101,11 +103,19 @@ class PluginMetadata:
     by ``config.environments`` allow-lists (the runtime preflights
     every env that has at least one assigned plugin), not by a
     self-declared flag in meta.yaml.
+
+    ``dependencies`` (added 2026-05-05) is a list of pip-installable
+    spec strings (e.g. ``"playwright>=1.40"``, ``"aiohttp~=3.9"``).
+    Each plugin declares its own third-party deps so plugins behave
+    "like an independent project". The ``krakey install`` CLI walks
+    every plugin under BUILTIN_ROOT + WORKSPACE_ROOT, collects the
+    union, and pip-installs in one shot.
     """
     name: str
     description: str
     components: list[ComponentMetadata] = field(default_factory=list)
     config_schema: list[dict[str, Any]] = field(default_factory=list)
+    dependencies: list[str] = field(default_factory=list)
     source_path: Path | None = None
 
 
@@ -161,6 +171,17 @@ def parse_meta(path: Path) -> PluginMetadata:
     schema = raw.get("config_schema") or []
     if not isinstance(schema, list):
         raise ValueError("meta.yaml `config_schema:` must be a list")
+    deps_raw = raw.get("dependencies") or []
+    if not isinstance(deps_raw, list):
+        raise ValueError("meta.yaml `dependencies:` must be a list")
+    dependencies: list[str] = []
+    for i, d in enumerate(deps_raw):
+        if not isinstance(d, str) or not d.strip():
+            raise ValueError(
+                f"meta.yaml `dependencies[{i}]` must be a non-empty "
+                "pip-installable string (e.g. 'playwright>=1.40')"
+            )
+        dependencies.append(d.strip())
     if "requires_sandbox" in raw:
         # Quietly tolerated for one release window — old plugin
         # meta.yamls in the wild had this field. Drop it from yours
@@ -177,6 +198,7 @@ def parse_meta(path: Path) -> PluginMetadata:
         description=str(raw.get("description", "")),
         components=components,
         config_schema=list(schema),
+        dependencies=dependencies,
         source_path=path,
     )
 
