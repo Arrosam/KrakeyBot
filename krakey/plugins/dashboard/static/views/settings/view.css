@@ -359,6 +359,80 @@
 }
 .settings-actions button:hover { filter: brightness(1.1); }
 
+/* Install banner — appears above the settings form when one or
+   more enabled plugins have unsatisfied pip / post_install deps.
+   Yellow border so it reads as advisory, not destructive. */
+.install-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--yellow);
+  border-radius: 4px;
+  font-size: 12px;
+}
+.install-banner.installing {
+  border-color: var(--cyan);
+  color: var(--muted);
+}
+.install-banner.success {
+  border-color: var(--green);
+}
+.install-banner.failed {
+  border-color: var(--red);
+}
+.install-banner-text {
+  flex: 1;
+  color: var(--text);
+}
+.install-banner-text strong { color: var(--yellow); }
+.install-banner-upgrade {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.install-banner button {
+  padding: 5px 12px;
+  background: var(--text);
+  border: none;
+  border-radius: 3px;
+  color: var(--bg);
+  font-weight: bold;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.install-banner button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Inline log pane — shown post-install with the captured pip
+   stdout / stderr so the operator sees what happened (esp.
+   useful when rc != 0). */
+.install-log {
+  font-family: ui-monospace, "Consolas", monospace;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 8px 10px;
+  max-height: 200px;
+  margin: 0 0 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 #settings-toast {
   font-size: 12px;
   margin-left: 12px;

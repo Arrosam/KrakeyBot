@@ -1722,10 +1722,131 @@ async function loadSettings() {
     }
     await loadAvailableModifiers();
     renderSettingsForm();
+    // Refresh the deps-install banner alongside the form. Failure
+    // to fetch is non-fatal — the rest of settings still works.
+    refreshInstallBanner().catch(() => {});
   } catch (e) {
     settingsForm.innerHTML = "error loading: " + escapeHtml(String(e));
   }
 }
+
+
+// =====================================================================
+// Plugin install banner — shown on the Settings tab when one or
+// more enabled plugins have unsatisfied pip deps / post_install hooks.
+// Drives the one-click "Install" button that runs `krakey install`
+// inside the runtime venv via /api/plugins/install.
+// =====================================================================
+
+
+async function refreshInstallBanner() {
+  const banner = $("#install-banner");
+  const text = $("#install-banner-text");
+  const log = $("#install-log");
+  if (!banner || !text) return;
+  try {
+    const r = await fetch("/api/plugins/deps_status");
+    if (!r.ok) {
+      banner.hidden = true;
+      return;
+    }
+    const data = await r.json();
+    if (!data || !data.pending) {
+      banner.hidden = true;
+      banner.classList.remove("installing", "success", "failed");
+      if (log) log.hidden = true;
+      return;
+    }
+    // Find which plugins are unsatisfied so the user knows what
+    // the click will install.
+    const unsatisfied = Object.entries(data.plugins || {})
+      .filter(([_, info]) => !info.satisfied)
+      .map(([name, _]) => name);
+    const list = unsatisfied.length
+      ? unsatisfied.join(", ")
+      : "(checking declared deps)";
+    text.innerHTML =
+      `<strong>Plugin dependencies pending install:</strong> ` +
+      `${escapeHtml(list)}. ` +
+      `Click <em>Install</em> to run pip + each plugin's post_install ` +
+      `hooks (e.g. <code>playwright install chromium</code>) ` +
+      `inside the runtime's venv.`;
+    banner.hidden = false;
+    banner.classList.remove("installing", "success", "failed");
+  } catch (_) {
+    banner.hidden = true;
+  }
+}
+
+
+async function runInstallNow() {
+  const banner = $("#install-banner");
+  const text = $("#install-banner-text");
+  const btn = $("#install-run");
+  const log = $("#install-log");
+  const upgrade = $("#install-upgrade");
+  if (!banner || !btn) return;
+  btn.disabled = true;
+  banner.classList.remove("success", "failed");
+  banner.classList.add("installing");
+  if (text) {
+    text.innerHTML =
+      "<strong>Installing…</strong> pip + post_install hooks " +
+      "running. This may take a minute (browser binaries are ~200MB).";
+  }
+  if (log) {
+    log.hidden = false;
+    log.textContent = "running install — please wait…";
+  }
+  try {
+    const r = await fetch("/api/plugins/install", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ upgrade: !!(upgrade && upgrade.checked) }),
+    });
+    const data = r.ok ? await r.json() : null;
+    if (!data) {
+      throw new Error(`HTTP ${r.status}`);
+    }
+    const ok = data.rc === 0;
+    banner.classList.remove("installing");
+    banner.classList.add(ok ? "success" : "failed");
+    if (text) {
+      text.innerHTML = ok
+        ? "<strong>Install ok.</strong> Plugin dependencies are " +
+          "satisfied. Restart Krakey to load the newly installed plugins."
+        : `<strong>Install failed (rc=${data.rc}).</strong> ` +
+          "See the log below; fix the underlying issue and click " +
+          "Install again.";
+    }
+    if (log) {
+      const stdout = data.stdout || "";
+      const stderr = data.stderr || "";
+      log.textContent = (
+        "--- stdout ---\n" + stdout +
+        "\n--- stderr ---\n" + stderr
+      );
+    }
+    if (ok) {
+      // Re-fetch the status so the banner clears once the user
+      // dismisses it / navigates away. The form itself doesn't
+      // need rebuilding; install state is independent of config.
+      setTimeout(refreshInstallBanner, 500);
+    }
+  } catch (e) {
+    banner.classList.remove("installing");
+    banner.classList.add("failed");
+    if (text) {
+      text.innerHTML =
+        `<strong>Install request failed:</strong> ${escapeHtml(String(e))}`;
+    }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+
+$("#install-run")?.addEventListener("click", runInstallNow);
 
 function renderSettingsForm() {
   settingsForm.innerHTML = "";

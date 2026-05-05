@@ -21,9 +21,22 @@ class _FakePluginsService:
     """Stand-in PluginsService backed by an in-memory report + file
     store. Mirrors RuntimePluginsService but without needing a Runtime."""
 
-    def __init__(self, report: dict, cfg_root: Path):
+    def __init__(
+        self,
+        report: dict,
+        cfg_root: Path,
+        deps_status_payload: dict | None = None,
+        install_payload: dict | None = None,
+    ):
         self._report = report
         self._cfg_root = cfg_root
+        self._deps_status = deps_status_payload or {
+            "pending": False, "plugins": {}, "state": {},
+        }
+        self._install_payload = install_payload or {
+            "rc": 0, "stdout": "", "stderr": "",
+        }
+        self.install_calls: list[dict] = []
 
     def report(self):
         return self._report
@@ -40,6 +53,13 @@ class _FakePluginsService:
         path.write_text(yaml.safe_dump(final, sort_keys=False),
                           encoding="utf-8")
         return {"project": project, "path": str(path), "config": final}
+
+    def deps_status(self):
+        return self._deps_status
+
+    def install(self, body):
+        self.install_calls.append(dict(body or {}))
+        return self._install_payload
 
 
 def _client(plugins_service):
@@ -139,3 +159,121 @@ async def test_update_config_succeeds_without_runtime(tmp_path, monkeypatch):
     )
     # `enabled` is dropped (central config.yaml owns enable/disable).
     assert on_disk == {"max_results": 9}
+
+
+# =====================================================================
+# /api/plugins/deps_status — drives the plugin-list "needs install"
+# badges
+# =====================================================================
+
+
+async def test_deps_status_passes_through_payload(tmp_path):
+    payload = {
+        "pending": True,
+        "plugins": {
+            "browser_exec": {
+                "dependencies": ["playwright>=1.40"],
+                "post_install": [
+                    {"args": ["{python}", "-m", "playwright", "install",
+                              "chromium"],
+                     "description": "browser binary",
+                     "optional": False},
+                ],
+                "installed": False,
+                "satisfied": False,
+            },
+            "cli_exec": {
+                "dependencies": [],
+                "post_install": [],
+                "installed": False,
+                "satisfied": True,  # no deps → trivially satisfied
+            },
+        },
+        "state": {
+            "installed_at": None,
+            "deps_hash": None,
+            "live_hash": "abc123",
+        },
+    }
+    svc = _FakePluginsService(
+        {"tools": [], "channels": []},
+        tmp_path / "cfgs",
+        deps_status_payload=payload,
+    )
+    async with _client(svc) as c:
+        r = await c.get("/api/plugins/deps_status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["pending"] is True
+    assert body["plugins"]["browser_exec"]["satisfied"] is False
+    assert body["plugins"]["cli_exec"]["satisfied"] is True
+
+
+# =====================================================================
+# /api/plugins/install — one-click install button backend
+# =====================================================================
+
+
+async def test_install_endpoint_invokes_service_and_returns_rc(tmp_path):
+    svc = _FakePluginsService(
+        {"tools": [], "channels": []},
+        tmp_path / "cfgs",
+        install_payload={
+            "rc": 0,
+            "stdout": "Successfully installed playwright-1.40.0\n",
+            "stderr": "",
+        },
+    )
+    async with _client(svc) as c:
+        r = await c.post(
+            "/api/plugins/install",
+            json={"upgrade": False},
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["rc"] == 0
+    assert "playwright" in body["stdout"]
+    assert svc.install_calls == [{"upgrade": False}]
+
+
+async def test_install_endpoint_propagates_pip_failure(tmp_path):
+    svc = _FakePluginsService(
+        {"tools": [], "channels": []},
+        tmp_path / "cfgs",
+        install_payload={
+            "rc": 1,
+            "stdout": "",
+            "stderr": "ERROR: Could not find a version that satisfies "
+                      "the requirement playwright>=999\n",
+        },
+    )
+    async with _client(svc) as c:
+        r = await c.post("/api/plugins/install", json={})
+    # HTTP success — the failure is in the body's rc field, not
+    # the HTTP status. (rc != 0 isn't a server error; the
+    # endpoint did its job and reports what pip said.)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["rc"] == 1
+    assert "ERROR" in body["stderr"]
+
+
+async def test_install_endpoint_threads_upgrade_flag(tmp_path):
+    svc = _FakePluginsService(
+        {"tools": [], "channels": []}, tmp_path / "cfgs",
+    )
+    async with _client(svc) as c:
+        await c.post("/api/plugins/install", json={"upgrade": True})
+    assert svc.install_calls == [{"upgrade": True}]
+
+
+async def test_install_endpoint_accepts_empty_body(tmp_path):
+    """Operator hits "Install" without any payload — should still
+    work, defaulting upgrade=false."""
+    svc = _FakePluginsService(
+        {"tools": [], "channels": []}, tmp_path / "cfgs",
+    )
+    async with _client(svc) as c:
+        r = await c.post("/api/plugins/install")
+    assert r.status_code == 200
+    assert svc.install_calls == [{}]
