@@ -122,6 +122,112 @@ async def test_tool_call_parse_failure_pushes_corrective_stimulus():
     assert '"name"' in msg
 
 
+async def test_builtin_sleep_tool_triggers_voluntary_sleep_no_hypothalamus(tmp_path):
+    """Voluntary sleep without depending on the hypothalamus plugin.
+    Self emits <tool_call>{"name":"sleep"}</tool_call> in [DECISION];
+    orchestrator intercepts the reserved name, sets result.sleep,
+    and the heartbeat loop runs the full sleep cycle. FACT in GM
+    migrates to KB → confirms _perform_sleep actually executed."""
+    self_llm = ScriptedLLM([
+        '[DECISION]\nTime to sleep.\n'
+        '<tool_call>{"name": "sleep"}</tool_call>\n[IDLE]\n1',
+    ])
+    sleep_llm = ScriptedLLM(["summary"] * 5)
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]),
+        compact_llm=sleep_llm,
+        modifiers=[],  # no hypothalamus — only the built-in path
+    )
+    runtime.sleep_log_dir = str(tmp_path / "logs")
+    runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
+    runtime.self_model = default_self_model()
+    await runtime.gm.initialize()
+    await runtime.gm.insert_node(
+        name="apple", category="FACT", description="red fruit",
+        embedding=[1.0, 0.0],
+    )
+
+    await runtime.run(iterations=1)
+
+    # Sleep ran end-to-end: FACT migrated out of GM, sleep counter bumped.
+    assert await runtime.gm.list_nodes(category="FACT") == []
+    assert runtime._sleep_cycles == 1
+    drained = runtime.buffer.drain()
+    wake = [s for s in drained if s.source == "system:sleep"]
+    assert wake, "expected a system:sleep wake-up stimulus"
+    await runtime.close()
+
+
+async def test_builtin_sleep_tool_appears_in_capabilities():
+    """Self learns about every tool through [CAPABILITIES]. The
+    built-in sleep tool must show up there alongside plugin tools
+    so Self knows the option exists without needing a separate
+    teaching layer."""
+    runtime = build_runtime_with_fakes(
+        self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
+        modifiers=[],
+    )
+    descriptions = runtime.tools.list_descriptions()
+    sleep_entries = [t for t in descriptions if t["name"] == "sleep"]
+    assert len(sleep_entries) == 1
+    assert "sleep mode" in sleep_entries[0]["description"].lower()
+
+
+async def test_sleep_failure_surfaces_via_three_channels(tmp_path, monkeypatch, capsys):
+    """When _perform_sleep's enter_sleep_mode raises, the failure
+    must NOT be silently absorbed — it goes to (1) stderr via
+    hb_warn, (2) the event bus as SleepFailedEvent, (3) Self as a
+    system:sleep stimulus on the next beat. The previous behavior
+    (single hb log line on stdout) was easy to miss; users were
+    seeing 'sleep doesn't fire' without realizing it was actually
+    firing-and-crashing."""
+    from krakey.runtime.events.event_bus import EventBus
+
+    self_llm = ScriptedLLM([
+        '[DECISION]\nSleep now.\n<tool_call>{"name": "sleep"}</tool_call>\n[IDLE]\n1',
+    ])
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]),
+        modifiers=[],
+    )
+    bus = EventBus()
+    runtime.events = bus
+    received = []
+    bus.subscribe(received.append)
+
+    # Force enter_sleep_mode to raise so we exercise the exception
+    # branch without needing a real misconfiguration.
+    async def _boom(*a, **k):
+        raise RuntimeError("simulated sleep crash")
+    monkeypatch.setattr(
+        "krakey.runtime.heartbeat.heartbeat_orchestrator.enter_sleep_mode",
+        _boom,
+    )
+
+    await runtime.run(iterations=1)
+    await runtime.close()
+
+    # (1) stderr — hb_warn writes there
+    err_out = capsys.readouterr().err
+    assert "sleep failed" in err_out.lower()
+    assert "simulated sleep crash" in err_out
+
+    # (2) event bus — dashboard sees a SleepFailed card
+    sleep_failed = [e for e in received if e.kind == "sleep_failed"]
+    assert len(sleep_failed) == 1
+    assert "simulated sleep crash" in sleep_failed[0].error
+
+    # (3) Self stimulus — corrective awareness on the next beat
+    drained = runtime.buffer.drain()
+    sleep_stims = [s for s in drained
+                   if s.type == "system_event"
+                   and s.source == "system:sleep"]
+    assert len(sleep_stims) == 1
+    assert "Sleep transition failed" in sleep_stims[0].content
+    assert "simulated sleep crash" in sleep_stims[0].content
+    assert sleep_stims[0].adrenalin is True
+
+
 async def test_tool_call_inside_note_section_does_not_dispatch_or_fail():
     """Regression for the 'corrective-stimulus echo' loop: when
     Self has internalized the format reminder and writes a clean

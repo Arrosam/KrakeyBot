@@ -35,8 +35,8 @@ from krakey.prompt.views import SlidingWindowRound
 from krakey.runtime.heartbeat.compact import compact_if_needed
 from krakey.runtime.events.event_types import (
     DecisionEvent, GMStatsEvent, HeartbeatStartEvent, IdleEvent,
-    NoteEvent, PromptBuiltEvent, SleepDoneEvent, SleepStartEvent,
-    StimuliQueuedEvent, ThinkingEvent,
+    NoteEvent, PromptBuiltEvent, SleepDoneEvent, SleepFailedEvent,
+    SleepStartEvent, StimuliQueuedEvent, ThinkingEvent,
 )
 from krakey.runtime.heartbeat.fatigue import calculate_fatigue
 from krakey.runtime.heartbeat.idle import idle_with_recall
@@ -455,6 +455,24 @@ class HeartbeatOrchestrator:
                 timestamp=datetime.now(),
                 adrenalin=True,
             ))
+        # Intercept built-in `sleep` tool calls before dispatch.
+        # Sleep is a heartbeat-lifecycle transition that must run
+        # in the beat loop AFTER this method returns, not as a
+        # fire-and-forget async task in the dispatcher. Filter
+        # any sleep call out of tool_calls and set result.sleep
+        # so the caller's existing `if sleep_requested:` branch
+        # picks it up. This works for BOTH paths uniformly: the
+        # hypothalamus translator can also emit
+        # ``tool_calls=[{"tool":"sleep"}]`` and this intercept
+        # collapses it into the sleep flag, redundant with the
+        # legacy `sleep: true` JSON field but uniform.
+        from krakey.runtime.builtin_tools import SLEEP_TOOL_NAME
+        if any(c.tool == SLEEP_TOOL_NAME for c in result.tool_calls):
+            result.sleep = True
+            result.tool_calls = [
+                c for c in result.tool_calls
+                if c.tool != SLEEP_TOOL_NAME
+            ]
         rt._dispatcher.log_summary(rt.heartbeat_count, result)
         await rt._dispatcher.dispatch_tool_calls(
             rt.heartbeat_count, result.tool_calls,
@@ -684,7 +702,28 @@ class HeartbeatOrchestrator:
                 kb_revive_threshold=sl.kb_revive_threshold,
             )
         except Exception as e:  # noqa: BLE001
-            rt.log.hb(f"sleep failed: {e}")
+            err = f"{type(e).__name__}: {e}"
+            # Three-way surfacing so a sleep failure isn't silent:
+            # (1) stderr via hb_warn, since `hb` previously went to
+            #     stdout where it could blend with normal beat lines
+            # (2) event bus → dashboard sees a SleepFailed card
+            # (3) system_event stimulus → Self sees on next beat
+            #     that its sleep request didn't take effect AND
+            #     gets the underlying error so it can react
+            rt.log.hb_warn(f"sleep failed: {err}")
+            rt.events.publish(SleepFailedEvent(reason=reason, error=err))
+            await rt.buffer.push(Stimulus(
+                type="system_event", source="system:sleep",
+                content=(
+                    f"Sleep transition failed: {err}. "
+                    "Runtime is continuing without entering sleep "
+                    "state. Likely causes: compact_llm not bound or "
+                    "unreachable, GM/KB I/O error during clustering "
+                    "or migration. Check the runtime stderr for the "
+                    "stack trace."
+                ),
+                timestamp=datetime.now(), adrenalin=True,
+            ))
             return
         rt.events.publish(SleepDoneEvent(stats=stats))
         rt.log.hb(

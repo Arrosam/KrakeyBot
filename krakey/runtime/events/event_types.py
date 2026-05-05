@@ -117,3 +117,12 @@ class SleepStartEvent(_BaseEvent):
 @dataclass
 class SleepDoneEvent(_BaseEvent):
     stats: dict[str, Any]
+
+
+@dataclass
+class SleepFailedEvent(_BaseEvent):
+    """Sleep transition was attempted but ``enter_sleep_mode`` raised.
+    Runtime continues without entering sleep state; the dashboard +
+    Self both need to know so the failure isn't silent."""
+    reason: str    # the reason _perform_sleep was called
+    error: str     # ``"<ExceptionType>: <message>"``

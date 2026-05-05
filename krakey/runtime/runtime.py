@@ -183,6 +183,15 @@ class Runtime:
         )
 
         self.tools = ToolRegistry()
+        # Built-in tools are registered BEFORE the plugin loader runs
+        # so plugins can't shadow them by registering a same-named
+        # Tool (the registry's register() raises on duplicate name).
+        # Sleep is the only built-in today; it lets Self choose
+        # voluntary sleep without depending on the optional
+        # hypothalamus translator plugin (sleep is a heartbeat-
+        # lifecycle capability, not an add-on).
+        from krakey.runtime.builtin_tools import SleepTool
+        self.tools.register(SleepTool())
         # Each plugin's config lives at
         # <plugin_configs_root>/<name>/config.yaml. Same root as the
         # plugin folders themselves (workspace/plugins/) so user config
