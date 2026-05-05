@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Callable
@@ -52,9 +53,17 @@ operator can override the default via ``default_timeout_s`` in
 plugin config."""
 
 DEFAULT_PYTHON_CMD = "python"
-"""Default interpreter name on the env's PATH. Same caveat as
-``gui_exec``: many Linux distros only expose ``python3`` — set
-``python_cmd: python3`` in plugin config when needed."""
+"""Default interpreter name for the **sandbox** env's PATH. The
+**local** env intentionally ignores this and uses ``sys.executable``
+— the runtime's own interpreter — so a venv-installed playwright
+(via ``krakey install``) is reachable from the dispatched
+subprocess. Otherwise the bare name ``python`` resolves through
+the system PATH and lands on a non-venv interpreter where
+playwright was never installed.
+
+Operators with a sandbox guest whose interpreter isn't named
+``python`` (e.g. minimal Linux distros that ship only ``python3``)
+override this via plugin config."""
 
 DEFAULT_BROWSER = "chromium"
 """Default Playwright launcher. The operator must have run
@@ -190,13 +199,17 @@ class BrowserExecTool(Tool):
             "objects: navigate / click / type / press / scroll / "
             "wait_for / screenshot) and runs them on the chosen tab. "
             "Every successful response includes the current `tabs` "
-            "list so you always see what's open. The env's Python "
-            "interpreter (default \"python\"; configurable via the "
-            "plugin's `python_cmd` config field) must have "
-            "`playwright` installed with bundled browsers downloaded "
-            "via `playwright install`. Default extraction format is "
-            "the page's accessibility tree (`output: \"a11y\"`); "
-            "`\"text\"` and `\"html\"` are also available."
+            "list so you always see what's open. For `env=\"local\"`, "
+            "the dispatched subprocess uses the krakey runtime's own "
+            "Python interpreter — `krakey install` puts playwright "
+            "in the same venv that runs the subprocess, so it just "
+            "works. For `env=\"sandbox\"`, the configured `python_cmd` "
+            "(default \"python\") names the guest's interpreter, "
+            "which must also have `playwright` installed and bundled "
+            "browsers downloaded via `playwright install`. Default "
+            "extraction format is the page's accessibility tree "
+            "(`output: \"a11y\"`); `\"text\"` and `\"html\"` are "
+            "also available."
         )
 
     @property
@@ -380,15 +393,24 @@ class BrowserExecTool(Tool):
             ENV_RUN_OVERHEAD_S + per_action_s * (n_actions + 1),
             10.0 * per_action_s + 90.0,
         )
+        # Local env uses the runtime's own interpreter
+        # (``sys.executable``) — the venv where ``krakey install``
+        # placed playwright. Sandbox env uses the configured name
+        # because ``sys.executable`` is a host path that doesn't
+        # exist inside the guest. The configured ``python_cmd``
+        # remains the sandbox-side knob.
+        python_cmd = (
+            sys.executable if env_name == "local" else self._python_cmd
+        )
         snippet = snip.build_dispatch_script(
             action,
             args,
-            python_cmd=self._python_cmd,
+            python_cmd=python_cmd,
             browser=browser_name,
             headless=bool(headless_raw),
             rpc_timeout_s=env_timeout,
         )
-        cmd = [self._python_cmd, "-c", snippet]
+        cmd = [python_cmd, "-c", snippet]
 
         try:
             rc, out, err = await env.run(

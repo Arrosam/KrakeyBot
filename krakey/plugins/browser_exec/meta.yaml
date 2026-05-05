@@ -16,11 +16,15 @@ config_schema:
     type: text
     default: python
     help: >
-      Python interpreter on the env's PATH (must have ``playwright``
-      installed and browsers downloaded via ``playwright install``).
-      Default works on Windows and most distros that keep a
-      ``python`` symlink; set to ``python3`` (or an absolute path)
-      on minimal Linux installs that ship only ``python3``.
+      Sandbox-side Python interpreter name (or absolute path).
+      For ``env: "local"`` the plugin always uses the krakey
+      runtime's own interpreter (``sys.executable``) so a
+      ``krakey install`` venv works without further config.
+      This field only kicks in for ``env: "sandbox"`` calls,
+      where the configured name resolves on the guest's PATH.
+      Default works on most distros that keep a ``python``
+      symlink; set to ``python3`` (or an absolute path) on
+      minimal Linux guests that ship only ``python3``.
   - field: headless
     type: boolean
     default: true
