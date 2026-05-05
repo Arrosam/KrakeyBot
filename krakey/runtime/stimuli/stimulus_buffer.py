@@ -105,6 +105,18 @@ class StimulusBuffer:
                 await s.start(self.push)
                 self._running.add(s.name)
 
+    async def start_one(self, name: str) -> None:
+        """Start a single channel by name (idempotent: no-op if
+        already running). Used by hot-reload paths that register a
+        new channel AFTER ``start_all()`` has already fired during
+        runtime startup."""
+        if name not in self._channels:
+            raise ValueError(f"channel '{name}' not registered")
+        if name in self._running:
+            return
+        await self._channels[name].start(self.push)
+        self._running.add(name)
+
     async def pause_non_urgent(self) -> None:
         """Sleep phase-1: stop channels whose ``default_adrenalin`` is
         False (the calm ones). Urgent channels (e.g. user-message

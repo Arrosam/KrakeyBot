@@ -61,6 +61,16 @@ class _FakePluginsService:
         self.install_calls.append(dict(body or {}))
         return self._install_payload
 
+    async def hot_reload(self):
+        return {
+            "added": [{"plugin": "x", "components": [
+                {"kind": "tool", "name": "x"}
+            ]}],
+            "skipped": [],
+            "errors": [],
+            "still_pending_remove": [],
+        }
+
 
 def _client(plugins_service):
     app = create_app(runtime=None, plugins_service=plugins_service)
@@ -277,3 +287,20 @@ async def test_install_endpoint_accepts_empty_body(tmp_path):
         r = await c.post("/api/plugins/install")
     assert r.status_code == 200
     assert svc.install_calls == [{}]
+
+
+# =====================================================================
+# /api/plugins/hot_reload — add newly-enabled plugins without restart
+# =====================================================================
+
+
+async def test_hot_reload_returns_runtime_report(tmp_path):
+    svc = _FakePluginsService(
+        {"tools": [], "channels": []}, tmp_path / "cfgs",
+    )
+    async with _client(svc) as c:
+        r = await c.post("/api/plugins/hot_reload")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["added"][0]["plugin"] == "x"
+    assert body["still_pending_remove"] == []

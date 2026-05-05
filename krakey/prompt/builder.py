@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from krakey.models.stimulus import Stimulus
-from krakey.prompt.dna import DNA
+from krakey.prompt.dna import get_dna
 from krakey.prompt.elements import PromptElements
 from krakey.prompt.layers import ACTION_FORMAT_LAYER, HEARTBEAT_QUESTION
 from krakey.prompt.views import (
@@ -113,7 +113,10 @@ class PromptBuilder:
         (in_mind_instructions, in_mind_round) are reserved for plugins
         to fill in."""
         return PromptElements(initial=[
-            ("dna", DNA),
+            # ``get_dna()`` re-reads ``krakey/prompt/dna.txt`` only
+            # when its mtime changes — live prompt-tuning during
+            # development without a runtime restart.
+            ("dna", get_dna()),
             ("self_model", self.render_self_model(self_model)),
             ("capabilities", self.render_capabilities(capabilities)),
             ("action_format", ACTION_FORMAT_LAYER),

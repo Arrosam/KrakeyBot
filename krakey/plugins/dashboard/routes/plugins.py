@@ -48,6 +48,17 @@ def register(app: FastAPI, *, plugins: PluginsService) -> None:
         except RuntimeError as e:
             raise HTTPException(status_code=503, detail=str(e))
 
+    @app.post("/api/plugins/hot_reload")
+    async def hot_reload_plugins():  # noqa: ANN201
+        """Add newly-enabled plugins without a process restart.
+        Returns the runtime's report; ``still_pending_remove`` is
+        the operator-facing hint that one or more plugins still
+        need a full restart to take effect (hot-add only)."""
+        try:
+            return await plugins.hot_reload()
+        except RuntimeError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+
     @app.post("/api/plugins/{project}/config")
     async def update_config(project: str, body: dict):  # noqa: ANN201
         try:

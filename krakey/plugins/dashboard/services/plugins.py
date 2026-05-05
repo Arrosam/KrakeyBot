@@ -62,6 +62,14 @@ class PluginsService(Protocol):
         plugins whose deps haven't been installed in this venv.
         """
 
+    async def hot_reload(self) -> dict[str, Any]:
+        """Re-read ``config.yaml``'s ``plugins:`` list and hot-add
+        any plugins enabled there but not currently loaded. Returns
+        the runtime's ``hot_reload_plugins`` report (added /
+        skipped / errors / still_pending_remove). Plugins flagged
+        as ``still_pending_remove`` need a full restart — the
+        dashboard surfaces this as a "Restart Krakey" hint."""
+
     def install(self, body: dict[str, Any]) -> dict[str, Any]:
         """Run ``krakey install`` programmatically. Body fields::
 

@@ -276,6 +276,11 @@ class Runtime:
             },
         )
         self._plugin_loader.register_from_config(deps)
+        # Stashed so hot_reload_plugins (called later from the
+        # dashboard) can re-invoke ``register_one`` with the same
+        # deps. Plugins that need a fresh ctx per call build it
+        # inside register_one — deps is the constant boundary.
+        self._deps = deps
 
         # Self-model + Bootstrap state (Phase 2.1)
         sm_path = deps.self_model_path or "workspace/self_model.yaml"
@@ -383,6 +388,87 @@ class Runtime:
     # for ``self._plugin_loader.register_from_config(deps)`` directly.
     def _register_plugins_from_config(self, deps: "RuntimeDeps") -> None:
         self._plugin_loader.register_from_config(deps)
+
+    async def hot_reload_plugins(
+        self, target_plugin_names: list[str],
+    ) -> dict[str, Any]:
+        """Hot-add plugins not currently loaded. Used by the
+        dashboard's "Apply changes" path so a freshly-enabled
+        plugin starts working without a process restart.
+
+        Diff against ``self._plugin_loader.loaded_plugin_names``
+        (the loader's own per-name history) — for plugins NOT
+        already loaded, run the loader's ``register_one(name)``
+        path. For plugins that ARE already loaded, no-op (this
+        method is hot-ADD only; remove still requires restart
+        because cleanly tearing down a Modifier / Channel needs
+        per-plugin detach hooks the runtime doesn't enforce yet).
+
+        Newly-registered channels are started immediately via
+        ``buffer.start_one(name)`` — without that the channel's
+        background task never fires because ``start_all`` ran
+        during ``run()`` before the channel existed.
+
+        Returns::
+
+            {
+              "added":   [{plugin, components: [...]}],
+              "skipped": [{plugin, reason}],
+              "errors":  [{plugin, error}],
+              "still_pending_remove": [...],   # advisory only
+            }
+        """
+        report: dict[str, Any] = {
+            "added": [], "skipped": [], "errors": [],
+            "still_pending_remove": [],
+        }
+        target_set = set(target_plugin_names)
+        loaded_via_loader = self._plugin_loader.loaded_plugin_names
+
+        for plugin_name in target_plugin_names:
+            if plugin_name in loaded_via_loader:
+                report["skipped"].append({
+                    "plugin": plugin_name,
+                    "reason": "already loaded — no-op (hot-reload "
+                              "is add-only; restart to fully reload)",
+                })
+                continue
+            sub_report = self._plugin_loader.register_one(
+                plugin_name, self._deps,
+            )
+            if sub_report["ok"]:
+                # Start any newly-registered channels right away.
+                for comp in sub_report["components"]:
+                    if comp["kind"] == "channel":
+                        try:
+                            await self.buffer.start_one(comp["name"])
+                        except Exception as e:  # noqa: BLE001
+                            report["errors"].append({
+                                "plugin": plugin_name,
+                                "error":
+                                    f"channel {comp['name']} "
+                                    f"failed to start: "
+                                    f"{type(e).__name__}: {e}",
+                            })
+                report["added"].append({
+                    "plugin":     plugin_name,
+                    "components": sub_report["components"],
+                })
+            else:
+                report["errors"].append({
+                    "plugin": plugin_name,
+                    "error":  sub_report["error"]
+                              or "unknown registration failure",
+                })
+
+        # Advisory: any plugin currently loaded that's NOT in the
+        # target list would need REMOVE — not supported in this
+        # hot-reload pass. Operator gets a "restart for these"
+        # heads-up.
+        for plugin_name in loaded_via_loader - target_set:
+            report["still_pending_remove"].append(plugin_name)
+
+        return report
 
     def _new_recall(self) -> RecallLike:
         # Facade — heartbeat algorithm lives in HeartbeatOrchestrator.

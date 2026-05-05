@@ -204,6 +204,28 @@ class RuntimePluginsService:
             },
         }
 
+    async def hot_reload(self) -> dict[str, Any]:
+        """Re-parse the central config.yaml and ask the runtime to
+        hot-add any newly-enabled plugins. Returns the runtime's
+        report verbatim."""
+        if self._rt is None:
+            raise RuntimeError("runtime not available")
+        # Re-read config.yaml from disk so the latest edit is what
+        # we diff against (the runtime's in-memory ``config.plugins``
+        # was set at startup and may be stale). The plugin enable/
+        # disable surface is the dashboard's settings page; users
+        # save then click "Apply changes".
+        if hasattr(self._rt, "config"):
+            target_names = list(self._rt.config.plugins or [])
+        else:
+            target_names = []
+        if not hasattr(self._rt, "hot_reload_plugins"):
+            raise RuntimeError(
+                "runtime does not support hot reload "
+                "(older Runtime; restart required)",
+            )
+        return await self._rt.hot_reload_plugins(target_names)
+
     def install(self, body: dict[str, Any]) -> dict[str, Any]:
         """Run ``krakey install`` programmatically with
         ``upgrade`` flag from body. Captures stdout / stderr and

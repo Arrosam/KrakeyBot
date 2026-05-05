@@ -59,6 +59,10 @@ class PluginLoader:
         self._channels = channels
         self._services = services
         self.registered: set[tuple[str, str]] = set()
+        # Plugin-name-level history (separate from per-component
+        # ``registered``). The hot-reload path uses this to skip
+        # plugins already loaded.
+        self.loaded_plugin_names: set[str] = set()
 
     def register_from_config(self, deps: "RuntimeDeps") -> None:
         """Walk ``config.plugins`` and lazily load each plugin's components.
@@ -73,13 +77,6 @@ class PluginLoader:
              b. Lazy-import the factory module + invoke factory.
              c. Route the returned instance to the right registry.
         """
-        from krakey.interfaces.plugin_context import (
-            PluginContext, load_plugin_config,
-        )
-        from krakey.plugin_system.loader import (
-            load_component, load_plugin_meta,
-        )
-
         names = self._config.plugins
         if names is None:
             print(
@@ -92,55 +89,115 @@ class PluginLoader:
         if not names:
             return  # explicit empty list: respect, no nag
 
-        cfg_root = Path(deps.plugin_configs_root or "workspace/plugins")
-
         for plugin_name in names:
-            meta = load_plugin_meta(plugin_name)
-            if meta is None:
+            self.register_one(plugin_name, deps)
+
+    def register_one(
+        self,
+        plugin_name: str,
+        deps: "RuntimeDeps",
+    ) -> dict[str, Any]:
+        """Load + register a single plugin by name. Used for both
+        startup (looped via ``register_from_config``) and runtime
+        hot-add (the dashboard's "apply changes" path).
+
+        Returns a small report dict::
+
+            {
+              "ok":          bool,
+              "plugin":      "<name>",
+              "components":  [{kind, name}],   # newly registered
+              "error":       str | None,       # set when ok=false
+            }
+
+        Side effect: every successfully-registered component is
+        recorded in ``self.registered`` so subsequent calls + the
+        plugin report can label it as plugin-sourced.
+        """
+        from krakey.interfaces.plugin_context import (
+            PluginContext, load_plugin_config,
+        )
+        from krakey.plugin_system.loader import (
+            load_component, load_plugin_meta,
+        )
+
+        cfg_root = Path(deps.plugin_configs_root or "workspace/plugins")
+        report: dict[str, Any] = {
+            "ok":         False,
+            "plugin":     plugin_name,
+            "components": [],
+            "error":      None,
+        }
+
+        meta = load_plugin_meta(plugin_name)
+        if meta is None:
+            msg = (
+                f"unknown plugin {plugin_name!r} (no meta.yaml found "
+                f"in krakey/plugins/ or workspace/plugins/)"
+            )
+            print(f"config: {msg}; skipping.", file=sys.stderr)
+            report["error"] = msg
+            return report
+
+        plugin_cfg = load_plugin_config(plugin_name, cfg_root)
+        plugin_cache: dict[str, Any] = {}
+
+        any_registered = False
+        any_error: str | None = None
+        for component in meta.components:
+            ctx = PluginContext(
+                deps=deps, plugin_name=plugin_name,
+                config=plugin_cfg,
+                services=self._services, plugin_cache=plugin_cache,
+            )
+
+            try:
+                instance = load_component(component, ctx)
+            except Exception as e:  # noqa: BLE001
+                msg = (
+                    f"component {component.kind!r} factory raised: "
+                    f"{type(e).__name__}: {e}"
+                )
                 print(
-                    f"config: unknown plugin {plugin_name!r} (no "
-                    f"meta.yaml found in krakey/plugins/ or "
-                    f"workspace/plugins/) — skipping.",
+                    f"config: plugin {plugin_name!r} {msg}; skipping.",
                     file=sys.stderr,
                 )
+                any_error = msg
                 continue
+            if instance is None:
+                continue  # factory opted out (e.g. unbound LLM)
 
-            plugin_cfg = load_plugin_config(plugin_name, cfg_root)
+            registered_ok = self._register_component(
+                plugin_name, component, instance,
+            )
+            if registered_ok:
+                any_registered = True
+                report["components"].append({
+                    "kind": component.kind,
+                    "name": getattr(instance, "name", "?"),
+                })
 
-            # Single ``plugin_cache`` dict shared across this plugin's
-            # components — multi-component plugins (telegram /
-            # in_mind_note / dashboard) use it to share state
-            # between their factories.
-            plugin_cache: dict[str, Any] = {}
-
-            for component in meta.components:
-                ctx = PluginContext(
-                    deps=deps, plugin_name=plugin_name,
-                    config=plugin_cfg,
-                    services=self._services, plugin_cache=plugin_cache,
-                )
-
-                try:
-                    instance = load_component(component, ctx)
-                except Exception as e:  # noqa: BLE001
-                    print(
-                        f"config: plugin {plugin_name!r} component "
-                        f"{component.kind!r} failed to load: "
-                        f"{type(e).__name__}: {e}; skipping.",
-                        file=sys.stderr,
-                    )
-                    continue
-                if instance is None:
-                    continue  # factory opted out (e.g. unbound LLM)
-
-                self._register_component(plugin_name, component, instance)
+        report["ok"] = any_registered
+        if any_registered:
+            self.loaded_plugin_names.add(plugin_name)
+        if not any_registered and any_error is None:
+            # Meta parsed and components iterated, but everything
+            # opted out (None returns). Not strictly a failure.
+            report["error"] = (
+                "all components opted out (returned None) — check "
+                "plugin config / LLM bindings"
+            )
+        elif not any_registered:
+            report["error"] = any_error
+        return report
 
     def _register_component(
         self, plugin_name: str, component: Any, instance: Any,
-    ) -> None:
+    ) -> bool:
         """Route a built component to the right registry by kind. On
         success, record ``(kind, name)`` in ``self.registered`` so
-        the observer can label it as plugin-sourced."""
+        the observer can label it as plugin-sourced. Returns
+        True iff the component was successfully registered."""
         kind = component.kind
         try:
             if kind == "modifier":
@@ -155,12 +212,13 @@ class PluginLoader:
                     f"component kind {kind!r}; skipping",
                     file=sys.stderr,
                 )
-                return
+                return False
         except Exception as e:  # noqa: BLE001
             print(
                 f"config: plugin {plugin_name!r} {kind} registration "
                 f"failed: {type(e).__name__}: {e}",
                 file=sys.stderr,
             )
-            return
+            return False
         self.registered.add((kind, instance.name))
+        return True

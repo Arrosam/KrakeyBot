@@ -3770,3 +3770,51 @@ $("#settings-restart").addEventListener("click", async () => {
     showToast("restarting (lost connection)...", "pending");
   }
 });
+
+// "Apply changes" — hot-add newly-enabled plugins without a
+// restart. The runtime reports back which plugins were added,
+// which were skipped (already loaded), and which would need a
+// full restart to remove. We surface that in the toast so the
+// operator knows whether the cheap path was enough.
+$("#settings-apply")?.addEventListener("click", async () => {
+  showToast("applying...", "pending");
+  try {
+    const r = await fetch("/api/plugins/hot_reload", { method: "POST" });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      showToast(
+        `apply failed: ${body.detail || r.statusText}`, "err",
+      );
+      return;
+    }
+    const data = await r.json();
+    const added = (data.added || []).map((a) => a.plugin);
+    const errors = data.errors || [];
+    const pendingRemove = data.still_pending_remove || [];
+    const parts = [];
+    if (added.length) {
+      parts.push(`added: ${added.join(", ")}`);
+    }
+    if (pendingRemove.length) {
+      parts.push(
+        `restart needed to remove: ${pendingRemove.join(", ")}`,
+      );
+    }
+    if (errors.length) {
+      parts.push(
+        `errors: ${errors.map((e) => `${e.plugin}: ${e.error}`).join("; ")}`,
+      );
+    }
+    if (!parts.length) {
+      parts.push("no changes — everything was already loaded");
+    }
+    const level = errors.length ? "err"
+      : pendingRemove.length ? "warn" : "ok";
+    showToast(parts.join(" | "), level);
+    // Refresh the install banner since hot-add may have surfaced
+    // new pending deps.
+    refreshInstallBanner().catch(() => {});
+  } catch (e) {
+    showToast(`apply error: ${e}`, "err");
+  }
+});
