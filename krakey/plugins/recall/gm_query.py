@@ -15,12 +15,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from krakey.memory.graph_memory import GraphMemory
+    from krakey.interfaces.services.memory import MemoryService
     from krakey.memory.recall import AsyncEmbedder
 
 
 async def query_gm_with_fts_fallback(
-    gm: "GraphMemory",
+    gm: "MemoryService",
     embedder: "AsyncEmbedder",
     text: str,
     *,

@@ -198,6 +198,53 @@ def _print_runtime_banner_if_needed(wizard_ran: bool) -> None:
     _banner.print_banner()
 
 
+def _warn_if_install_pending(repo: Path) -> None:
+    """At runtime startup, look up
+    ``workspace/data/install_state.json`` (relative to repo) and
+    compare its recorded deps_hash against the live one. If they
+    differ — i.e. a plugin was added / removed / changed its
+    declared deps since the last ``krakey install`` — print a
+    one-line warning to stderr telling the operator to run install.
+
+    Best-effort and fail-silent: any exception inside the check
+    is swallowed so a malformed install_state.json or unreadable
+    plugin meta.yaml never blocks the heartbeat from starting.
+    Sleep / heartbeat / plugin loading already have their own
+    additive-fallback paths; this is only an advisory."""
+    try:
+        prev_cwd = os.getcwd()
+        os.chdir(str(repo))
+        try:
+            from . import install as _install
+            pending, plugin_deps = _install.has_pending_deps()
+        finally:
+            os.chdir(prev_cwd)
+    except Exception:  # noqa: BLE001
+        return
+
+    if not pending:
+        return
+
+    plugins_with_deps = sorted(
+        name for name, deps in plugin_deps.items() if deps
+    )
+    if plugins_with_deps:
+        listed = ", ".join(plugins_with_deps)
+        print(
+            "krakey: plugin dependencies look out-of-date. Run "
+            "`krakey install` to install the latest declared "
+            f"deps for: {listed}.",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            "krakey: no plugin dependencies declared yet — run "
+            "`krakey install` once to record install state and "
+            "silence this message.",
+            file=sys.stderr,
+        )
+
+
 def run_foreground() -> int:
     repo, pidfile, _log = _paths()
     rc, wizard_ran = _ensure_config(repo)
@@ -213,6 +260,7 @@ def run_foreground() -> int:
         _clear_pidfile(pidfile)
 
     _print_runtime_banner_if_needed(wizard_ran)
+    _warn_if_install_pending(repo)
     _write_pidfile(pidfile, os.getpid())
     _install_pidfile_cleanup(pidfile)
     return _exec_runtime(repo)
@@ -234,6 +282,7 @@ def start_daemon() -> int:
     logfile.parent.mkdir(parents=True, exist_ok=True)
 
     _print_runtime_banner_if_needed(wizard_ran)
+    _warn_if_install_pending(repo)
     if os.name == "nt":
         return _spawn_daemon_windows(repo, pidfile, logfile)
     return _spawn_daemon_unix(repo, pidfile, logfile)

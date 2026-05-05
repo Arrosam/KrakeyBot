@@ -8,10 +8,16 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Awaitable, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol
 
-from krakey.memory.graph_memory import GraphMemory
 from krakey.runtime.heartbeat.sliding_window import SlidingWindow, SlidingWindowRound
+
+if TYPE_CHECKING:
+    # Type-only: compact never instantiates the memory backend, it just
+    # calls methods on the gm passed in. Decoupling lets a user-supplied
+    # MemoryService (per the slot mechanism) flow through here without
+    # this module needing to know which concrete class is in use.
+    from krakey.interfaces.services.memory import MemoryService
 
 
 COMPACT_PROMPT = """Distill a past conversation segment, extracting information worth remembering.
@@ -80,7 +86,7 @@ def _format_existing(nodes: list[dict[str, Any]]) -> str:
     )
 
 
-async def _apply_extraction(gm: GraphMemory, parsed: dict[str, Any]) -> None:
+async def _apply_extraction(gm: "MemoryService", parsed: dict[str, Any]) -> None:
     name_to_id: dict[str, int] = {}
     for n in parsed.get("nodes", []):
         try:
@@ -109,7 +115,7 @@ async def _apply_extraction(gm: GraphMemory, parsed: dict[str, Any]) -> None:
             continue  # malformed edge — skip
 
 
-async def _compact_round(round_: SlidingWindowRound, gm: GraphMemory,
+async def _compact_round(round_: SlidingWindowRound, gm: "MemoryService",
                           llm: ChatLike, recall_fn: RecallFn) -> None:
     query = round_.stimulus_summary or round_.decision_text or round_.note_text
     existing = await recall_fn(query) if query else []
@@ -134,7 +140,7 @@ def _chunks_by_char_budget(text: str, chars: int) -> list[str]:
 
 
 async def _split_and_compact_single_round(
-    window: SlidingWindow, gm: GraphMemory, llm: ChatLike,
+    window: SlidingWindow, gm: "MemoryService", llm: ChatLike,
     recall_fn: RecallFn, split_chunk_tokens: int,
 ) -> None:
     """Last resort: single round too big to remove in one shot.
@@ -159,7 +165,7 @@ async def _split_and_compact_single_round(
 
 
 async def compact_if_needed(
-    window: SlidingWindow, gm: GraphMemory, llm: ChatLike,
+    window: SlidingWindow, gm: "MemoryService", llm: ChatLike,
     *, recall_fn: RecallFn, split_chunk_tokens: int = 1000,
 ) -> None:
     """Blocking compact loop. Evict oldest rounds via LLM summarization until

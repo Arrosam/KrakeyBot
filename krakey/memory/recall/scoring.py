@@ -20,7 +20,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 
 CATEGORY_WEIGHTS: dict[str, float] = {
@@ -71,7 +71,15 @@ def scripted_score(node: dict[str, Any], *, vec_sim: float, now: datetime,
     )
 
 
+@runtime_checkable
 class Reranker(Protocol):
+    """Async reranker — returns one float score per doc in ``docs``,
+    in the same order. Higher = better.
+
+    ``@runtime_checkable`` so ``ServiceResolver`` can isinstance-check
+    user-supplied reranker slots at startup (see
+    ``core_implementations.reranker`` in config.yaml).
+    """
     async def rerank(self, query: str, docs: list[str]) -> list[float]: ...
 
 

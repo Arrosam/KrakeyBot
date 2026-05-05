@@ -65,3 +65,13 @@ include = ["krakey*"]
 "krakey.plugins.in_mind_note" = ["meta.yaml"]
 "krakey.plugins.recall" = ["meta.yaml"]
 "krakey.plugins.telegram" = ["meta.yaml"]
+"krakey.plugins.cli_exec" = ["meta.yaml"]
+"krakey.plugins.gui_exec" = ["meta.yaml"]
+# server.py is a regular Python module (auto-packaged by
+# find_packages) but listed explicitly here as a load-bearing
+# anchor: snippets.py reads its source via inspect.getsource at
+# import time, so a future packaging refactor that accidentally
+# excludes browser_exec's .py files would break browser_exec
+# entirely. Listing it here makes that requirement visible at
+# the packaging-config level.
+"krakey.plugins.browser_exec" = ["meta.yaml", "server.py"]

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -399,13 +400,16 @@ async def test_operate_happy_path_returns_a11y_output():
 
 
 async def test_dispatch_uses_python_minus_c_with_snippet():
+    """For sandbox dispatch, the configured `python_cmd` lands in
+    cmd[0]. (Local dispatch always uses sys.executable — covered
+    separately in test_local_dispatch_uses_runtime_sys_executable.)"""
     env = FakeEnv(result=(0, _envelope(tabs=[]), ""))
     tool = BrowserExecTool(
         env_resolver=_resolver_returning(env),
         python_cmd="python3",
     )
     await tool.execute(
-        "x", {"env": "local", "action": "list_tabs"},
+        "x", {"env": "sandbox", "action": "list_tabs"},
     )
     assert len(env.calls) == 1
     cmd = env.calls[0]["cmd"]
@@ -415,6 +419,39 @@ async def test_dispatch_uses_python_minus_c_with_snippet():
     compile(cmd[2], "<dispatched>", "exec")
     # Carries the embedded server source.
     assert "SERVER_SOURCE = json.loads(" in cmd[2]
+
+
+async def test_local_dispatch_uses_runtime_sys_executable():
+    """Local-env dispatches MUST use the runtime's own interpreter
+    (``sys.executable``), regardless of what's configured for
+    ``python_cmd``. Reason: the runtime lives in a venv where
+    ``krakey install`` placed playwright; spawning ``python``
+    via system PATH lands on a different interpreter without
+    the dep."""
+    env = FakeEnv(result=(0, _envelope(tabs=[]), ""))
+    tool = BrowserExecTool(
+        env_resolver=_resolver_returning(env),
+        python_cmd="some-other-python-not-the-runtime",
+    )
+    await tool.execute(
+        "x", {"env": "local", "action": "list_tabs"},
+    )
+    assert env.calls[0]["cmd"][0] == sys.executable
+
+
+async def test_sandbox_dispatch_uses_configured_python_cmd():
+    """Sandbox dispatches MUST use the configured ``python_cmd``
+    because ``sys.executable`` is a host path that means nothing
+    inside the guest VM."""
+    env = FakeEnv(result=(0, _envelope(tabs=[]), ""))
+    tool = BrowserExecTool(
+        env_resolver=_resolver_returning(env),
+        python_cmd="/usr/bin/python3",
+    )
+    await tool.execute(
+        "x", {"env": "sandbox", "action": "list_tabs"},
+    )
+    assert env.calls[0]["cmd"][0] == "/usr/bin/python3"
 
 
 async def test_dispatch_threads_args_into_payload_via_json():
@@ -696,12 +733,15 @@ def _python_var_value(snippet: str, name: str) -> str:
 
 
 async def test_factory_reads_python_cmd_from_config():
+    """`python_cmd` config is the SANDBOX-side knob — local
+    always uses sys.executable. Verify by dispatching against
+    env=sandbox where the configured value applies."""
     env = FakeEnv(result=(0, _envelope(tabs=[]), ""))
     tool = build_tool(_CtxWithEnv(  # type: ignore[arg-type]
         {"python_cmd": "/opt/py/bin/python3.11"}, env,
     ))
     await tool.execute(
-        "x", {"env": "local", "action": "list_tabs"},
+        "x", {"env": "sandbox", "action": "list_tabs"},
     )
     assert env.calls[0]["cmd"][0] == "/opt/py/bin/python3.11"
     # AND it's threaded into the snippet's PYTHON_CMD constant
@@ -720,10 +760,13 @@ async def test_factory_reads_python_cmd_from_config():
     {"python_cmd": ["python3"]},
 ])
 async def test_factory_falls_back_to_default_python_cmd(config):
+    """Same fallback contract as before — but verified against
+    env=sandbox where the configured (or default) value flows
+    through. Local would always use sys.executable instead."""
     env = FakeEnv(result=(0, _envelope(tabs=[]), ""))
     tool = build_tool(_CtxWithEnv(config, env))  # type: ignore[arg-type]
     await tool.execute(
-        "x", {"env": "local", "action": "list_tabs"},
+        "x", {"env": "sandbox", "action": "list_tabs"},
     )
     assert env.calls[0]["cmd"][0] == DEFAULT_PYTHON_CMD
 

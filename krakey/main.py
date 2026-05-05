@@ -28,6 +28,7 @@ from krakey.llm.resolve import (  # noqa: F401
     AsyncEmbedder, ChatLike, resolve_llm_for_tag,
 )
 from krakey.runtime.runtime import Runtime, RuntimeDeps  # noqa: F401
+from krakey.runtime.service_resolver import ServiceResolver
 from krakey.runtime.heartbeat.heartbeat_orchestrator import (  # noqa: F401
     _summarize_stimuli,
 )
@@ -78,21 +79,49 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
     # Embedding + reranker (model-type slots, not purposes)
     embed_client = _client_for_tag(cfg.llm.embedding)
 
-    async def embedder(text: str) -> list[float]:
-        if embed_client is None:
-            raise RuntimeError(
-                "no embedding tag bound — set llm.embedding to a tag name "
-                "in config.yaml (or use the dashboard's LLM section)"
-            )
-        return await embed_client.embed(text)
+    # Default embedder wraps the tag-resolved embedding client. Wrapped
+    # in a class (rather than a closure) so it satisfies the
+    # ``AsyncEmbedder`` runtime-checkable Protocol and can be replaced
+    # 1:1 by a user override via ``core_implementations.embedder``.
+    class _DefaultEmbedder:
+        async def __call__(self, text: str) -> list[float]:
+            if embed_client is None:
+                raise RuntimeError(
+                    "no embedding tag bound — set llm.embedding to a tag "
+                    "name in config.yaml (or use the dashboard's LLM "
+                    "section)"
+                )
+            return await embed_client.embed(text)
 
-    reranker = None
+    service_resolver = ServiceResolver(cfg)
+    embedder = service_resolver.resolve(
+        "embedder",
+        default_factory=_DefaultEmbedder,
+        expected_protocol=AsyncEmbedder,
+    )
+
     reranker_client = _client_for_tag(cfg.llm.reranker)
-    if reranker_client is not None:
-        class _RerankerAdapter:
-            async def rerank(self, query, docs):
-                return await reranker_client.rerank(query, docs)
-        reranker = _RerankerAdapter()
+
+    class _DefaultReranker:
+        """Adapts the tag-resolved LLMClient to the Reranker Protocol."""
+        async def rerank(self, query, docs):
+            return await reranker_client.rerank(query, docs)
+
+    # Three states for the reranker slot:
+    #   * user override set        → resolver builds user impl
+    #   * no override, tag bound   → resolver builds _DefaultReranker
+    #   * no override, no tag      → reranker = None (recall paths fall
+    #                                 back to scripted scoring; callers
+    #                                 already handle ``reranker is None``)
+    from krakey.memory.recall import Reranker
+    if cfg.core_implementations.reranker or reranker_client is not None:
+        reranker = service_resolver.resolve(
+            "reranker",
+            default_factory=_DefaultReranker,
+            expected_protocol=Reranker,
+        )
+    else:
+        reranker = None
 
     # hypo_llm is no longer eagerly required at the core level — it's
     # bound through the per-plugin config of `hypothalamus`.

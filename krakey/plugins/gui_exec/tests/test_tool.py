@@ -182,6 +182,7 @@ def _resolver_returning(env: FakeEnv) -> Callable[[str], FakeEnv]:
 
 
 async def test_click_dispatch_happy():
+    import sys as _sys
     env = FakeEnv()
     tool = GuiExecTool(env_resolver=_resolver_returning(env))
     s = await tool.execute(
@@ -193,8 +194,12 @@ async def test_click_dispatch_happy():
     assert "rc=0" in s.content
     assert "action=click" in s.content
     assert "(10,20)" in s.content
+    # Local-env dispatch always uses sys.executable (the runtime's
+    # own venv interpreter), not the configured ``python_cmd`` —
+    # see the python_cmd config-field tests below for the
+    # sandbox-side behaviour.
     assert env.calls[0]["cmd"] == [
-        DEFAULT_PYTHON_CMD, "-c", snippets.click(10, 20, "left"),
+        _sys.executable, "-c", snippets.click(10, 20, "left"),
     ]
     assert env.calls[0]["timeout"] == DEFAULT_TIMEOUT_S
     assert env.calls[0]["stdin"] is None
@@ -481,9 +486,10 @@ def test_static_tool_metadata():
 # =====================================================================
 
 
-async def test_custom_python_cmd_is_used_in_dispatched_argv():
-    """Constructor accepts an alternative interpreter name and
-    threads it into every env.run call."""
+async def test_custom_python_cmd_is_used_for_sandbox_dispatch():
+    """Constructor's `python_cmd` arg is the SANDBOX-side knob —
+    threaded into env.run only when env=sandbox. (Local always
+    uses sys.executable; see test_local_dispatch_uses_runtime_sys_executable.)"""
     env = FakeEnv()
     tool = GuiExecTool(
         env_resolver=_resolver_returning(env),
@@ -491,19 +497,39 @@ async def test_custom_python_cmd_is_used_in_dispatched_argv():
     )
     await tool.execute(
         "x",
-        {"env": "local", "action": "click", "x": 1, "y": 2},
+        {"env": "sandbox", "action": "click", "x": 1, "y": 2},
     )
     assert env.calls[0]["cmd"][0] == "python3"
 
 
-async def test_default_python_cmd_when_constructor_omits_it():
+async def test_default_python_cmd_used_for_sandbox_when_omitted():
     env = FakeEnv()
     tool = GuiExecTool(env_resolver=_resolver_returning(env))
     await tool.execute(
         "x",
-        {"env": "local", "action": "click", "x": 1, "y": 2},
+        {"env": "sandbox", "action": "click", "x": 1, "y": 2},
     )
     assert env.calls[0]["cmd"][0] == DEFAULT_PYTHON_CMD
+
+
+async def test_local_dispatch_uses_runtime_sys_executable():
+    """Local-env dispatches MUST use the runtime's own interpreter
+    (``sys.executable``), regardless of what's configured for
+    ``python_cmd``. Reason: the runtime lives in a venv where
+    ``krakey install`` placed pyautogui; spawning ``python``
+    via system PATH lands on a different interpreter without
+    the dep."""
+    import sys as _sys
+    env = FakeEnv()
+    tool = GuiExecTool(
+        env_resolver=_resolver_returning(env),
+        python_cmd="some-other-python-not-the-runtime",
+    )
+    await tool.execute(
+        "x",
+        {"env": "local", "action": "click", "x": 1, "y": 2},
+    )
+    assert env.calls[0]["cmd"][0] == _sys.executable
 
 
 # build_tool factory tests use a tiny duck-typed PluginContext stand-in
@@ -522,6 +548,9 @@ class _FakeCtx:
 
 
 async def test_build_tool_reads_python_cmd_from_config():
+    """Verified against env=sandbox where the configured value
+    flows through. (Local always uses sys.executable — see
+    test_local_dispatch_uses_runtime_sys_executable.)"""
     env = FakeEnv()
     tool = build_tool(_FakeCtx(  # type: ignore[arg-type]
         {"python_cmd": "/opt/python311/bin/python3"}, env,
@@ -529,7 +558,7 @@ async def test_build_tool_reads_python_cmd_from_config():
     assert isinstance(tool, GuiExecTool)
     await tool.execute(
         "x",
-        {"env": "local", "action": "click", "x": 1, "y": 2},
+        {"env": "sandbox", "action": "click", "x": 1, "y": 2},
     )
     assert env.calls[0]["cmd"][0] == "/opt/python311/bin/python3"
 
@@ -543,10 +572,12 @@ async def test_build_tool_reads_python_cmd_from_config():
     {"python_cmd": ["python"]},  # wrong type
 ])
 async def test_build_tool_falls_back_to_default_on_invalid_config(config):
+    """Same fallback contract; verified against env=sandbox where
+    the configured (or default) value flows through."""
     env = FakeEnv()
     tool = build_tool(_FakeCtx(config, env))  # type: ignore[arg-type]
     await tool.execute(
         "x",
-        {"env": "local", "action": "click", "x": 1, "y": 2},
+        {"env": "sandbox", "action": "click", "x": 1, "y": 2},
     )
     assert env.calls[0]["cmd"][0] == DEFAULT_PYTHON_CMD

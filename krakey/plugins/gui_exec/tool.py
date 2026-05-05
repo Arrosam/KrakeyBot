@@ -13,6 +13,7 @@ Windows / Linux / macOS uniformly inside the env.
 from __future__ import annotations
 
 import asyncio
+import sys
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Callable
@@ -36,12 +37,17 @@ longest expected operation (sub-second by default); 15s leaves
 slack for slow guests."""
 
 DEFAULT_PYTHON_CMD = "python"
-"""Default interpreter name on the env's PATH. Many Linux distros
-expose only ``python3`` (no bare ``python``); on those, set
-``python_cmd: python3`` (or an absolute path) in
-``workspace/plugins/gui_exec/config.yaml`` so the tool dispatches to
-an interpreter that exists. The local Windows host has ``python`` by
-convention; sandbox guests vary."""
+"""Default interpreter name for the **sandbox** env's PATH. The
+**local** env intentionally ignores this and uses ``sys.executable``
+— the runtime's own interpreter — so a venv-installed pyautogui
+(via ``krakey install``) is reachable from the dispatched
+subprocess. Otherwise the bare name ``python`` resolves through
+the system PATH and lands on a non-venv interpreter where
+pyautogui was never installed.
+
+Operators with a sandbox guest whose interpreter isn't named
+``python`` (e.g. minimal Linux distros that ship only ``python3``)
+override this via plugin config."""
 
 SCREENSHOT_DIR = PurePosixPath("workspace/data/screenshots")
 """Relative path inside the env's filesystem where screenshots
@@ -103,10 +109,13 @@ class GuiExecTool(Tool):
             "allow-listed for that env in config. `action` is one "
             "of: click, right_click, double_click, drag, type, key, "
             "screenshot. Coordinates are pixels relative to the "
-            "env's primary display top-left. The env's Python "
-            "interpreter (default \"python\"; configurable via the "
-            "plugin's `python_cmd` config field) must have pyautogui "
-            "installed."
+            "env's primary display top-left. For `env=\"local\"`, "
+            "the dispatched subprocess uses the krakey runtime's own "
+            "Python interpreter (so `krakey install` is enough — "
+            "pyautogui lands in the same venv that runs the "
+            "subprocess). For `env=\"sandbox\"`, the configured "
+            "`python_cmd` (default \"python\") names the guest's "
+            "interpreter, which must also have pyautogui installed."
         )
 
     @property
@@ -203,7 +212,16 @@ class GuiExecTool(Tool):
                 f"env resolver error: {type(e).__name__}: {e}",
             )
 
-        cmd = [self._python_cmd, "-c", snippet]
+        # Local env uses the runtime's own interpreter
+        # (``sys.executable``) — the venv where ``krakey install``
+        # placed pyautogui. Sandbox env uses the configured name
+        # because ``sys.executable`` is a host path that doesn't
+        # exist inside the guest. The configured ``python_cmd``
+        # remains the sandbox-side knob.
+        python_cmd = (
+            sys.executable if env_name == "local" else self._python_cmd
+        )
+        cmd = [python_cmd, "-c", snippet]
         try:
             rc, out, err = await env.run(
                 cmd,

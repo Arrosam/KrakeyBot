@@ -25,7 +25,13 @@ from krakey.memory.knowledge_base import KBRegistry
 from krakey.memory.recall import RecallLike, Reranker
 from krakey.models.config import Config, LLMParams
 from krakey.models.config_backup import backup_config
+from krakey.interfaces.services.memory import (
+    KBRegistryService,
+    MemoryService,
+)
+from krakey.interfaces.services.prompt_builder import PromptBuilderLike
 from krakey.prompt.builder import PromptBuilder
+from krakey.runtime.service_resolver import ServiceResolver
 from krakey.runtime.stimuli.batch_tracker import BatchTrackerChannel
 from krakey.runtime.events.event_bus import EventBus
 from krakey.environment.local import LocalEnvironment
@@ -113,24 +119,79 @@ class Runtime:
             * self_params.history_token_fraction
         )
         self.window = SlidingWindow(history_token_budget=_history_budget)
-        self.builder = PromptBuilder()
+
+        # Core service slots — each can be replaced via
+        # ``core_implementations.<slot>`` in config.yaml. The resolver
+        # imports the user's dotted path and Protocol-validates at
+        # startup; empty slot = built-in default.
+        self._service_resolver = ServiceResolver(self.config)
+        self.builder = self._service_resolver.resolve(
+            "prompt_builder",
+            default_factory=PromptBuilder,
+            expected_protocol=PromptBuilderLike,
+        )
 
         gm_path = self.config.graph_memory.db_path or ":memory:"
-        self.gm = GraphMemory(
-            gm_path,
+        # Memory + KB registry are slots: empty slot = built-in
+        # GraphMemory / KBRegistry; override via ``core_implementations``
+        # in config.yaml. Wrap the built-in constructors in a thin
+        # factory closure because GraphMemory's ``__init__`` takes
+        # ``db_path`` as the first POSITIONAL argument, and the
+        # resolver calls ``default_factory(**kwargs)``.
+        def _build_default_gm(*, db_path, embedder, auto_ingest_threshold,
+                                extractor_llm, classifier_llm):
+            return GraphMemory(
+                db_path,
+                embedder=embedder,
+                auto_ingest_threshold=auto_ingest_threshold,
+                extractor_llm=extractor_llm,
+                classifier_llm=classifier_llm,
+            )
+
+        self.gm = self._service_resolver.resolve(
+            "memory",
+            default_factory=_build_default_gm,
+            expected_protocol=MemoryService,
+            db_path=gm_path,
             embedder=deps.embedder,
-            auto_ingest_threshold=self.config.graph_memory.auto_ingest_similarity_threshold,
+            auto_ingest_threshold=(
+                self.config.graph_memory.auto_ingest_similarity_threshold
+            ),
             extractor_llm=deps.classify_llm,
             classifier_llm=deps.classify_llm,
         )
 
-        self.kb_registry = KBRegistry(
-            self.gm,
-            kb_dir=self.config.knowledge_base.dir or "workspace/data/knowledge_bases",
+        # KBRegistry takes its memory partner as the first POSITIONAL
+        # argument; wrap in a factory the same way. Note: the default
+        # KBRegistry uses gm's private SQLite connection (gm._require()),
+        # so a user-supplied memory backend that's NOT GraphMemory will
+        # also need a custom kb_registry override; document this in
+        # docs/extending-core.md.
+        def _build_default_kb_registry(*, gm, kb_dir, embedder):
+            return KBRegistry(gm, kb_dir=kb_dir, embedder=embedder)
+
+        self.kb_registry = self._service_resolver.resolve(
+            "kb_registry",
+            default_factory=_build_default_kb_registry,
+            expected_protocol=KBRegistryService,
+            gm=self.gm,
+            kb_dir=(
+                self.config.knowledge_base.dir
+                or "workspace/data/knowledge_bases"
+            ),
             embedder=deps.embedder,
         )
 
         self.tools = ToolRegistry()
+        # Built-in tools are registered BEFORE the plugin loader runs
+        # so plugins can't shadow them by registering a same-named
+        # Tool (the registry's register() raises on duplicate name).
+        # Sleep is the only built-in today; it lets Self choose
+        # voluntary sleep without depending on the optional
+        # hypothalamus translator plugin (sleep is a heartbeat-
+        # lifecycle capability, not an add-on).
+        from krakey.runtime.builtin_tools import SleepTool
+        self.tools.register(SleepTool())
         # Each plugin's config lives at
         # <plugin_configs_root>/<name>/config.yaml. Same root as the
         # plugin folders themselves (workspace/plugins/) so user config

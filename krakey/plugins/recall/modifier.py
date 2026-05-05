@@ -3,7 +3,7 @@
 Imported lazily by ``src.plugin_system.load_component`` only when
 the user enables ``recall`` in ``config.yaml``'s ``plugins:`` list.
 
-The Modifier captures everything it needs (GraphMemory, embedder,
+The Modifier captures everything it needs (MemoryService, embedder,
 reranker, config knobs) from ``PluginContext`` at construction time.
 ``make_recall(runtime)`` then ignores its ``runtime`` argument —
 captured state is sufficient. The runtime parameter is part of the
@@ -20,7 +20,7 @@ from krakey.plugins.recall.incremental import IncrementalRecall
 
 if TYPE_CHECKING:
     from krakey.interfaces.plugin_context import PluginContext
-    from krakey.memory.graph_memory import GraphMemory
+    from krakey.interfaces.services.memory import MemoryService
     from krakey.memory.recall import AsyncEmbedder, RecallLike, Reranker
 
 
@@ -32,7 +32,7 @@ class RecallAnchorModifierImpl:
 
     def __init__(
         self, *,
-        gm: "GraphMemory",
+        gm: "MemoryService",
         embedder: "AsyncEmbedder",
         reranker: "Reranker | None",
         per_stimulus_k: int,

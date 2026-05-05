@@ -16,11 +16,15 @@ config_schema:
     type: text
     default: python
     help: >
-      Python interpreter on the env's PATH (must have ``playwright``
-      installed and browsers downloaded via ``playwright install``).
-      Default works on Windows and most distros that keep a
-      ``python`` symlink; set to ``python3`` (or an absolute path)
-      on minimal Linux installs that ship only ``python3``.
+      Sandbox-side Python interpreter name (or absolute path).
+      For ``env: "local"`` the plugin always uses the krakey
+      runtime's own interpreter (``sys.executable``) so a
+      ``krakey install`` venv works without further config.
+      This field only kicks in for ``env: "sandbox"`` calls,
+      where the configured name resolves on the guest's PATH.
+      Default works on most distros that keep a ``python``
+      symlink; set to ``python3`` (or an absolute path) on
+      minimal Linux guests that ship only ``python3``.
   - field: headless
     type: boolean
     default: true
@@ -41,6 +45,13 @@ config_schema:
     help: >
       Per-action timeout cap (page.goto, page.click, wait_for, ...).
       Self can override per call via ``timeout_s``.
+
+dependencies:
+  # ``krakey install`` adds the playwright Python package, but
+  # browser BINARIES still need the operator to run
+  # ``playwright install chromium`` (or firefox / webkit) — that
+  # downloads ~200MB per browser and is out of pip's scope.
+  - "playwright>=1.40"
 
 components:
   - kind: tool

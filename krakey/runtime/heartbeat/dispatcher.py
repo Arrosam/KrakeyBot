@@ -33,7 +33,7 @@ from krakey.runtime.events.event_types import (
 if TYPE_CHECKING:
     from krakey.interfaces.modifier import DecisionResult, ToolCall
     from krakey.interfaces.tool import ToolRegistry
-    from krakey.memory.graph_memory import GraphMemory
+    from krakey.interfaces.services.memory import MemoryService
     from krakey.runtime.stimuli.batch_tracker import BatchTrackerChannel
     from krakey.runtime.events.event_bus import EventBus
     from krakey.runtime.console.heartbeat_logger import HeartbeatLogger
@@ -49,7 +49,7 @@ class DecisionDispatcher:
         tools: "ToolRegistry",
         batch_tracker: "BatchTrackerChannel",
         buffer: "StimulusBuffer",
-        gm: "GraphMemory",
+        gm: "MemoryService",
         log: "HeartbeatLogger",
         events: "EventBus",
     ):

@@ -68,7 +68,6 @@ import json
 import logging
 import os
 import secrets
-import socket
 import sys
 import threading
 import traceback
@@ -485,11 +484,8 @@ def serve(
         workspace, browser_name, headless, os.getpid(),
     )
 
-    # Pick port via OS (bind to 0). Token is random per lifetime.
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    sock.listen(8)
-    port = sock.getsockname()[1]
+    # Random token per server lifetime — prevents another process
+    # inside the env from driving the browser by guessing the port.
     token = secrets.token_hex(16)
 
     worker = BrowserWorker(browser_name, headless, logger)
@@ -500,17 +496,23 @@ def serve(
     handler_cls.token = token
     handler_cls.logger = logger
 
-    server = ThreadingHTTPServer.__new__(ThreadingHTTPServer)
-    # Init manually because we already bound the socket to grab a
-    # port early (so we can write server.json before serve_forever
-    # blocks).
-    server.allow_reuse_address = False
-    server.RequestHandlerClass = handler_cls
-    server.socket = sock
-    server.server_address = sock.getsockname()
-    server.timeout = None
-    # ThreadingHTTPServer needs ``daemon_threads``.
+    # Construct via the public initializer so ``BaseServer.__init__``
+    # runs and sets up ``_BaseServer__is_shut_down`` (a
+    # ``threading.Event``) + ``_BaseServer__shutdown_request``.
+    # ``serve_forever`` references both immediately on entry; an
+    # earlier ``__new__``-only construction skipped that init and
+    # crashed the daemon with ``AttributeError`` before any request
+    # could be served — every browser_exec call would time out at
+    # the dispatch-snippet's 30s "server failed to start" deadline.
+    #
+    # Port 0 → OS picks a free ephemeral port; we read the actual
+    # port back out of ``server.server_address`` AFTER construction
+    # binds the socket. server.json is written before
+    # ``serve_forever`` blocks, so the dispatch snippet's TCP probe
+    # succeeds as soon as the listening socket exists.
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
     server.daemon_threads = True
+    port = server.server_address[1]
 
     info_path = _server_info_path(workspace)
     _atomic_write_json(info_path, {
