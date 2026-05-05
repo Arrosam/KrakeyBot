@@ -41,6 +41,39 @@
 .cfg-section.collapsed > .body { display: none; }
 .cfg-section > .body { padding: 10px; }
 
+/* Inline hint under a section heading — used today by Safety to
+   note the fields are advisory-only. Quiet enough not to compete
+   with the actual config rows beneath. */
+.cfg-section .section-hint {
+  margin: 0 0 8px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg);
+  border-left: 2px solid var(--yellow);
+  border-radius: 0 3px 3px 0;
+}
+
+/* Per-section heading tint. The leading icon + the title text both
+   pick up the colour via inheritance (svg fill: currentColor); the
+   collapse caret keeps its muted grey since it's a navigation
+   affordance, not part of the section identity. The section border
+   gets a subtle tint of the same colour so the panel is still
+   scannable when scrolling past collapsed sections. */
+.cfg-section.tint-cyan    > h3 { color: var(--cyan); }
+.cfg-section.tint-cyan          { border-color: rgba(108, 213, 213, 0.4); }
+.cfg-section.tint-magenta > h3 { color: var(--magenta); }
+.cfg-section.tint-magenta       { border-color: rgba(197, 133, 197, 0.4); }
+.cfg-section.tint-green   > h3 { color: var(--green); }
+.cfg-section.tint-green         { border-color: rgba(126, 199, 126, 0.4); }
+.cfg-section.tint-yellow  > h3 { color: var(--yellow); }
+.cfg-section.tint-yellow        { border-color: rgba(232, 192, 96, 0.4); }
+.cfg-section.tint-red     > h3 { color: var(--red); }
+.cfg-section.tint-red           { border-color: rgba(210, 117, 117, 0.4); }
+.cfg-section.tint-muted   > h3 { color: var(--muted); }
+/* Caret stays neutral regardless of tint. */
+.cfg-section > h3 > .section-caret { color: var(--muted); }
+
 .cfg-row {
   display: grid;
   grid-template-columns: 200px 1fr;
@@ -119,6 +152,30 @@
 }
 .subblock > h4 .actions { margin-left: auto; display: flex; gap: 4px; }
 
+/* Click-to-rename label for keyed entries (provider names, tag
+   names, custom core-purpose names). Hover hints that the text is
+   editable; click swaps in an .editable-key-input that commits on
+   blur or Enter. Replaces the old "rename" button + prompt() flow. */
+.editable-key {
+  cursor: text;
+  border-bottom: 1px dashed transparent;
+  padding: 0 1px;
+}
+.editable-key:hover {
+  border-bottom-color: var(--muted);
+}
+.editable-key-input {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--cyan);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  min-width: 120px;
+}
+
 /* Plugin row in the unified Plugins panel. Enabled rows get a full
    box so the boundary between adjacent plugins (especially when the
    top one is expanded with a config body) is unambiguous. Disabled
@@ -143,7 +200,30 @@
   grid-template-columns: 1fr 1fr auto;
   gap: 6px;
   margin-bottom: 4px;
-  align-items: start;
+  /* Centre the delete X with the surrounding inputs/chip-picker —
+     start-alignment was leaving it floating high while the
+     cap-multi container expanded below it. */
+  align-items: center;
+}
+
+/* Unified "×" delete button. One look across the settings panel
+   (model rows, tag rows, custom-purpose rows, fatigue thresholds)
+   so the visual reads as the same affordance everywhere. */
+.btn-mini.btn-x {
+  min-width: 28px;
+  height: 26px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  border-color: var(--border);
+}
+.btn-mini.btn-x:hover {
+  color: var(--red);
+  border-color: var(--red);
 }
 
 .cap-multi {
@@ -259,6 +339,15 @@
 #settings-toast {
   font-size: 12px;
   margin-left: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: bold;
 }
-#settings-toast.ok { color: var(--text); font-weight: bold; }
-#settings-toast.err { color: var(--text); font-weight: bold; }
+/* Toast levels — Bootstrap-Icons SVG inherits via fill:currentColor,
+   so we only set `color` on the host and the icon follows. */
+#settings-toast.ok      { color: var(--green); }
+#settings-toast.err     { color: var(--red); }
+#settings-toast.warn    { color: var(--yellow); }
+#settings-toast.info    { color: var(--cyan); }
+#settings-toast.pending { color: var(--cyan); }

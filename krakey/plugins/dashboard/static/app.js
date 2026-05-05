@@ -58,6 +58,10 @@ $$(".tab-btn").forEach((btn) => {
       requestAnimationFrame(() => {
         chatHistory.scrollTop = chatHistory.scrollHeight;
       });
+      // Opening the tab is the user acknowledging anything that
+      // arrived while they were elsewhere — clear the unread badge,
+      // dot, and document-title counter.
+      if (typeof _clearChatUnread === "function") _clearChatUnread();
     }
   });
 });
@@ -92,6 +96,16 @@ function setStatus() {
   statusBar.innerHTML = parts.join("  |  ");
   renderStatusPanel();
 }
+
+// One periodic refresh so the status indicator can flip from the
+// initial "— connecting —" placeholder to a real state even when
+// no WS events are flowing (e.g. the user wired a broken LLM and
+// the runtime can't heartbeat). Cheap — just rewrites the bar's
+// innerHTML based on cached lastStats + current WS readyState.
+// 1s cadence is invisible to a human but quick enough that a
+// failing connect is obvious within the time it takes to read the
+// header.
+setInterval(setStatus, 1000);
 
 // Format helpers for the big Status panel in the Inner Thoughts view.
 // Renders the same data as the top-bar but as a persistent readable
@@ -162,9 +176,21 @@ function renderStatusPanel() {
 let eventsWS = null;
 const thinkingEl = $("#thinking-stream");
 const decisionEl = $("#decision-stream");
-const hypoEl = $("#hypo-stream");
-const stimList = $("#stim-list");
+// Tool Usage panel — replaces the old "Hypothalamus (dispatch)"
+// stream. Logs dispatch + tool_result + idle + sleep events.
+const toolEl = $("#tool-stream");
+// Stimulus Stream — chronological feed of stimuli as they enter the
+// runtime queue. Replaces the old "Pending Stimuli" snapshot list.
+const stimEl = $("#stim-stream");
 const statusPanel = $("#status-panel");
+
+// Fingerprint set for stimulus-stream dedup. The runtime emits
+// `stimuli_queued` once per heartbeat with the *current* queue
+// snapshot — anything that survived this beat is in there. We only
+// want to log each stimulus once, so we track seen fingerprints
+// (type|source|ts) and append only the unseen.
+const _seenStimuli = new Set();
+const _SEEN_STIMULI_CAP = 1000;
 // Section titles that change every heartbeat — open by default.
 // Anything else (DNA, SELF-MODEL, HEARTBEAT question, BOOTSTRAP) is
 // collapsed since it's noise during normal inspection.
@@ -199,24 +225,56 @@ function appendEntry(panel, hbId, text) {
   panel.scrollTop = panel.scrollHeight;
 }
 
-function renderStimuli(stims) {
-  stimList.innerHTML = "";
-  if (!stims.length) {
-    const li = document.createElement("li");
-    li.textContent = "(empty)";
-    li.style.color = "var(--muted)";
-    stimList.appendChild(li);
-    return;
+// Sibling of appendEntry that prepends a Bootstrap-Icons SVG. Used
+// for stream lines that have a categorical "kind" — dispatch (→ in
+// markup), tool result (chevron-left), idle (stopwatch), sleep (moon /
+// sunrise) etc. No emoji ever; bi.js icons only (per repo memo).
+function appendIconEntry(panel, hbId, iconName, text, extraCls) {
+  const div = document.createElement("div");
+  div.className = "entry" + (extraCls ? " " + extraCls : "");
+  const tag = document.createElement("span");
+  tag.className = "hb-tag";
+  tag.textContent = `#${hbId}`;
+  div.appendChild(tag);
+  if (iconName && window.biIcon) {
+    const ico = document.createElement("span");
+    ico.className = "entry-icon";
+    ico.innerHTML = window.biIcon(iconName, 11);
+    div.appendChild(ico);
   }
-  for (const s of stims) {
-    const li = document.createElement("li");
-    if (s.adrenalin) li.classList.add("adrenalin");
+  div.appendChild(document.createTextNode(" " + text));
+  panel.appendChild(div);
+  while (panel.children.length > 200) panel.removeChild(panel.firstChild);
+  panel.scrollTop = panel.scrollHeight;
+}
+
+function appendStimulusToStream(stims) {
+  // Each stimuli_queued event carries the current pending queue.
+  // Track fingerprints so we only log each one once across the
+  // session — the same stimulus survives multiple snapshots until
+  // it gets drained by a heartbeat.
+  for (const s of stims || []) {
+    const fp = `${s.type}|${s.source}|${s.ts}`;
+    if (_seenStimuli.has(fp)) continue;
+    _seenStimuli.add(fp);
+    if (_seenStimuli.size > _SEEN_STIMULI_CAP) {
+      // Set iterator gives oldest-first; drop one to bound memory.
+      const oldest = _seenStimuli.values().next().value;
+      _seenStimuli.delete(oldest);
+    }
+    const div = document.createElement("div");
+    div.className = "entry";
+    if (s.adrenalin) div.classList.add("adrenalin");
     const src = document.createElement("span");
     src.className = "src";
     src.textContent = `[${s.type}] ${s.source}`;
-    li.appendChild(src);
-    li.appendChild(document.createTextNode(s.content.slice(0, 200)));
-    stimList.appendChild(li);
+    div.appendChild(src);
+    div.appendChild(document.createTextNode(
+      " " + (s.content || "").slice(0, 200)
+    ));
+    stimEl.appendChild(div);
+    while (stimEl.children.length > 200) stimEl.removeChild(stimEl.firstChild);
+    stimEl.scrollTop = stimEl.scrollHeight;
   }
 }
 
@@ -233,7 +291,7 @@ function handleEvent(e) {
       setStatus();
       break;
     case "stimuli_queued":
-      renderStimuli(e.stimuli);
+      appendStimulusToStream(e.stimuli);
       break;
     case "thinking":
       appendEntry(thinkingEl, e.heartbeat_id, e.text);
@@ -244,14 +302,28 @@ function handleEvent(e) {
     case "note":
       appendEntry(decisionEl, e.heartbeat_id, "[NOTE] " + e.text);
       break;
-    case "hypothalamus":
-      appendEntry(hypoEl, e.heartbeat_id,
-        `tool_calls=${e.tool_calls_count} writes=${e.memory_writes_count}` +
-        ` updates=${e.memory_updates_count} sleep=${e.sleep_requested}`);
-      break;
     case "dispatch":
-      appendEntry(hypoEl, e.heartbeat_id,
-        `→ ${e.tool} : ${e.intent}${e.adrenalin ? " (adrenalin)" : ""}`);
+      // Tool dispatch — Self decided to call this tool. Outbound
+      // chevron icon so the paired result (chevron-left, below)
+      // reads chronologically once it lands.
+      appendIconEntry(toolEl, e.heartbeat_id, "chevron-right",
+        `${e.tool} : ${e.intent}${e.adrenalin ? " (adrenalin)" : ""}`,
+        "dispatch");
+      break;
+    case "tool_result":
+      // Result returned by the tool. Truncate to keep the panel
+      // scannable; full content shows up in the Log tab if needed.
+      appendIconEntry(toolEl, "—", "chevron-left",
+        `${e.tool} : ${(e.content || "").slice(0, 200)}`,
+        "tool-result");
+      break;
+    case "idle":
+      // Self decided how long to idle before the next heartbeat.
+      // Useful to see the rhythm of the loop alongside the tool
+      // calls that fire each beat.
+      appendIconEntry(toolEl, e.heartbeat_id, "stopwatch",
+        `idle ${Number(e.interval_seconds).toFixed(1)}s`,
+        "idle");
       break;
     case "prompt_built":
       // Live-append to the Prompts tab cache so users see new beats
@@ -264,18 +336,17 @@ function handleEvent(e) {
       });
       break;
     case "sleep_start":
-      appendEntry(hypoEl, "—", "💤 sleep started: " + e.reason);
+      appendIconEntry(toolEl, "—", "moon",
+        "sleep started: " + e.reason, "sleep-start");
       lastStats.mode = "sleeping";
       setStatus();
       break;
     case "sleep_done":
-      appendEntry(hypoEl, "—", "🌅 sleep done: " + JSON.stringify(e.stats));
+      appendIconEntry(toolEl, "—", "sunrise",
+        "sleep done: " + JSON.stringify(e.stats), "sleep-done");
       lastStats.mode = "normal";
       lastStats.last_sleep = new Date().toISOString();
       setStatus();
-      break;
-    case "idle":
-      // could render but it's noisy; skip in UI
       break;
   }
 }
@@ -337,7 +408,10 @@ function renderChatMessage(msg) {
       }
       const link = document.createElement("a");
       link.href = a.url; link.target = "_blank";
-      link.textContent = `📎 ${a.name} (${formatBytes(a.size)})`;
+      // Bootstrap-Icons paperclip + filename + size; no emoji.
+      link.innerHTML =
+        `${window.biIcon("paperclip", 11)} ` +
+        `${escapeHtml(a.name)} (${escapeHtml(formatBytes(a.size))})`;
       wrap.appendChild(link);
     }
     div.appendChild(wrap);
@@ -357,6 +431,133 @@ function formatBytes(n) {
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
 }
 
+// ----- chat unread / notifications -----
+//
+// Goal: when a Krakey-side message lands while the user isn't on
+// the Chat tab (different tab, or the window is in the background),
+// surface it without forcing the user back to the tab.
+//   * tab badge — pulse + count on the Chat tab.
+//   * audio ping — short Web Audio sine beep, no external asset.
+//   * desktop notification — Notification API; permission asked
+//     once on first user click so we don't surprise-popup on load.
+//   * document title — "(N) Krakey Dashboard" so an out-of-focus
+//     window's tab in the OS task bar shows the count too.
+//
+// Cleared the moment the user clicks the Chat tab, switches focus
+// back to the window while Chat is already active, or sends a
+// reply themselves.
+
+const chatTabBtn = document.querySelector('.tab-btn[data-tab="chat"]');
+let _chatUnread = 0;
+const _DEFAULT_TITLE = document.title;
+
+function _chatTabIsActive() {
+  return chatTabBtn && chatTabBtn.classList.contains("active");
+}
+
+function _bumpChatUnread(msg) {
+  _chatUnread += 1;
+  if (!chatTabBtn) return;
+  chatTabBtn.classList.add("has-unread");
+  let dot = chatTabBtn.querySelector(".unread-dot");
+  if (!dot) {
+    dot = document.createElement("span");
+    dot.className = "unread-dot";
+    chatTabBtn.appendChild(dot);
+  }
+  dot.textContent = _chatUnread > 9 ? "9+" : String(_chatUnread);
+  document.title = `(${_chatUnread > 9 ? "9+" : _chatUnread}) ${_DEFAULT_TITLE}`;
+  _playChatPing();
+  _showSystemNotification(msg);
+}
+
+function _clearChatUnread() {
+  if (_chatUnread === 0 && !chatTabBtn?.classList.contains("has-unread")) return;
+  _chatUnread = 0;
+  if (chatTabBtn) {
+    chatTabBtn.classList.remove("has-unread");
+    const dot = chatTabBtn.querySelector(".unread-dot");
+    if (dot) dot.remove();
+  }
+  document.title = _DEFAULT_TITLE;
+}
+
+// Web Audio sine ping (~A5, 250ms with quick attack/decay so it's a
+// short "blip" not a sustained tone). Ctx is created lazily; browsers
+// require a user gesture before audio plays, so we also resume it
+// on the first document click.
+let _audioCtx = null;
+function _ensureAudio() {
+  try {
+    if (!_audioCtx) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return null;
+      _audioCtx = new Ctx();
+    }
+    if (_audioCtx.state === "suspended") _audioCtx.resume().catch(() => {});
+    return _audioCtx;
+  } catch (e) {
+    return null;
+  }
+}
+document.addEventListener("click", _ensureAudio, { once: true });
+
+function _playChatPing() {
+  const ctx = _ensureAudio();
+  if (!ctx) return;
+  try {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = 880;  // A5
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.25);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.3);
+  } catch (e) { /* autoplay-blocked etc. — silent */ }
+}
+
+// Desktop notification — only when the dashboard tab is hidden or
+// not on Chat. Permission requested once on the user's first click
+// so we don't surprise-popup on page load.
+document.addEventListener("click", () => {
+  if (!("Notification" in window)) return;
+  if (Notification.permission === "default") {
+    Notification.requestPermission().catch(() => {});
+  }
+}, { once: true });
+
+function _showSystemNotification(msg) {
+  if (!("Notification" in window)) return;
+  if (Notification.permission !== "granted") return;
+  // Don't double-notify when the user is actively reading.
+  if (document.visibilityState === "visible" && _chatTabIsActive()) return;
+  try {
+    const body = (msg && msg.content || "").slice(0, 140);
+    const n = new Notification("Krakey: new message", {
+      body,
+      icon: "/static/logo.png",
+      tag: "krakey-chat",        // collapse repeats into one toast
+      renotify: true,
+    });
+    n.onclick = () => {
+      window.focus();
+      if (chatTabBtn) chatTabBtn.click();
+      n.close();
+    };
+  } catch (e) { /* notif quota / focus-lost — silent */ }
+}
+
+// Visibility change: if the user comes back to the window WITH the
+// chat tab already active, treat that as "they saw it" and clear.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && _chatTabIsActive()) {
+    _clearChatUnread();
+  }
+});
+
 function connectChat() {
   chatWS = new WebSocket(_wsUrl("/ws/chat"));
   chatWS.onopen = () => { chatMeta.textContent = "connected"; setStatus(); };
@@ -375,6 +576,14 @@ function connectChat() {
       for (const m of data.messages) renderChatMessage(m);
     } else if (data.kind === "message") {
       renderChatMessage(data.message);
+      // Krakey-side messages while the user is away → notify.
+      // User-side messages are echoes of what they just typed so
+      // they're never "new" from the user's perspective.
+      const isFromKrakey = data.message && data.message.sender !== "user";
+      const away = !_chatTabIsActive() || document.visibilityState !== "visible";
+      if (isFromKrakey && away) {
+        _bumpChatUnread(data.message);
+      }
     }
   };
 }
@@ -488,7 +697,12 @@ function renderAttachStrip() {
   pendingAttachments.forEach((a, i) => {
     const chip = document.createElement("span");
     chip.className = "attach-chip";
-    chip.appendChild(document.createTextNode(`📎 ${a.name} (${formatBytes(a.size)})`));
+    // Bootstrap-Icons paperclip + filename; no emoji.
+    chip.insertAdjacentHTML(
+      "beforeend",
+      `${window.biIcon("paperclip", 11)} ` +
+      `${escapeHtml(a.name)} (${escapeHtml(formatBytes(a.size))})`,
+    );
     const x = document.createElement("span");
     x.className = "x"; x.textContent = "×"; x.title = "remove";
     x.addEventListener("click", () => {
@@ -782,7 +996,10 @@ function _showNodeInspect(host, n) {
       ["category", n.category],
       ["source", n.source_type],
       ["importance", n.importance != null ? Number(n.importance).toFixed(2) : "—"],
-      ["description", (n.description || "").slice(0, 400)],
+      // Render the full description. The inspector column has its
+      // own overflow / word-break so a long LLM-generated summary
+      // scrolls inside its column instead of being silently elided.
+      ["description", n.description || ""],
     ],
   });
 }
@@ -832,7 +1049,129 @@ async function loadKBEntries(kbid) {
   }
 }
 
-loadMemory("graph");
+// Memory tab is lazy: don't fetch nodes/edges/stats on page load —
+// only when the user actually opens the tab (tab-switch handler at
+// the top of this file does that). Pre-fetching here was paying the
+// /api/gm/* round-trip + cytoscape build on every page load even
+// for users who never opened Memory, and it could pile on top of a
+// busy runtime (auto-recall + LLM thinking) and stall the dashboard.
+
+// ============== LOG — /ws/logs ==============
+//
+// Live stdout/stderr from the runtime, captured server-side by a tee
+// in log_capture.py. ANSI escape sequences (the runtime's heartbeat
+// logger emits cyan/green/yellow/magenta) are parsed here into
+// CSS-classed spans so the on-screen log feels like a tinted
+// terminal rather than a plain text dump.
+
+const logStream = $("#log-stream");
+const logCount = $("#log-count");
+const logAutoscroll = $("#log-autoscroll");
+const LOG_UI_CAP = 2000;  // cap rendered lines so a long-running tab can't OOM the browser
+let logWS = null;
+let _logLineCount = 0;
+
+// Map ANSI SGR colour codes to the same theme tokens used elsewhere.
+// Only handles foreground colours and reset — that's all the runtime
+// console.colors module emits.
+const _ANSI_CLASS = {
+  "31": "ansi-red",
+  "32": "ansi-green",
+  "33": "ansi-yellow",
+  "34": "ansi-cyan",   // map to cyan; we don't have a real blue token
+  "35": "ansi-magenta",
+  "36": "ansi-cyan",
+  "37": null,           // white = default
+  "0":  null,           // reset → close current span
+};
+
+function _renderAnsiLine(line) {
+  // Escape HTML first so any < > & in log content can't inject markup.
+  let safe = line
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  // Then walk the ANSI codes left-to-right, opening/closing spans as
+  // we see codes. A single \x1b[<n>m sequence either opens a new
+  // colour span (closing any previous) or, for code 0, closes.
+  const re = /\[([0-9;]*)m/g;
+  let out = "";
+  let cursor = 0;
+  let openSpan = false;
+  let m;
+  while ((m = re.exec(safe)) !== null) {
+    out += safe.slice(cursor, m.index);
+    cursor = m.index + m[0].length;
+    // Multi-code sequences (e.g. "\x1b[1;36m") — take the last
+    // colour-meaningful one. The runtime only emits single-code
+    // sequences in practice, but be defensive.
+    const codes = m[1].split(";").filter(Boolean);
+    let cls = null;
+    let isReset = false;
+    for (const c of codes) {
+      if (c === "0" || c === "") { isReset = true; cls = null; continue; }
+      if (_ANSI_CLASS[c] !== undefined) { cls = _ANSI_CLASS[c]; isReset = false; }
+    }
+    if (openSpan) { out += "</span>"; openSpan = false; }
+    if (!isReset && cls) { out += `<span class="${cls}">`; openSpan = true; }
+  }
+  out += safe.slice(cursor);
+  if (openSpan) out += "</span>";
+  return out;
+}
+
+function _appendLogLine(line) {
+  const div = document.createElement("div");
+  div.className = "log-line";
+  // Tag warning-ish lines from stderr-style prefixes so they pop
+  // even when the runtime didn't bother with ANSI codes.
+  if (/\[runtime\]|error|traceback/i.test(line)) {
+    div.classList.add("error");
+  } else if (/\[warn\]|warning/i.test(line)) {
+    div.classList.add("warn");
+  }
+  div.innerHTML = _renderAnsiLine(line);
+  logStream.appendChild(div);
+  while (logStream.children.length > LOG_UI_CAP) {
+    logStream.removeChild(logStream.firstChild);
+  }
+  _logLineCount += 1;
+  if (logCount) logCount.textContent = `${_logLineCount} lines`;
+  if (logAutoscroll && logAutoscroll.checked) {
+    logStream.scrollTop = logStream.scrollHeight;
+  }
+}
+
+function connectLogs() {
+  logWS = new WebSocket(_wsUrl("/ws/logs"));
+  logWS.onopen = () => {
+    if (logStream.textContent === "— connecting —") {
+      logStream.textContent = "";
+    }
+  };
+  logWS.onclose = (ev) => {
+    if (ev && ev.code === 1008) { location.reload(); return; }
+    setTimeout(connectLogs, 2000);
+  };
+  logWS.onmessage = (msg) => {
+    const data = JSON.parse(msg.data);
+    if (data.kind === "history") {
+      logStream.textContent = "";
+      for (const line of data.lines) _appendLogLine(line);
+    } else if (data.kind === "line") {
+      _appendLogLine(data.line);
+    }
+  };
+}
+connectLogs();
+
+if (logStream) {
+  $("#log-clear").addEventListener("click", () => {
+    logStream.innerHTML = "";
+    _logLineCount = 0;
+    if (logCount) logCount.textContent = "0 lines";
+  });
+}
 
 // ============== PROMPTS ==============
 
@@ -940,12 +1279,27 @@ const SECTION_DEFAULTS = {
     // recall_token_budget (absolute token cap, not a node count).
   },
   knowledge_base: { dir: "workspace/data/knowledge_bases" },
-  sleep: { max_duration_seconds: 7200 },
-  safety: { gm_node_hard_limit: 1200, max_consecutive_no_action: 100 },
-  sandbox: {
-    guest_os: "", provider: "qemu", vm_name: "",
-    display: "headed",
-    network_mode: "nat_allowlist",
+  // Defaults mirror SleepSection in krakey/models/config/memory.py —
+  // editing here without keeping the dataclass in sync makes the UI
+  // pre-populate the wrong values on a fresh config.
+  sleep: {
+    max_duration_seconds: 7200,
+    min_community_size: 2,
+    kb_consolidation_threshold: 0.85,
+    kb_index_max: 30,
+    kb_archive_pct: 10,
+    kb_revive_threshold: 0.80,
+  },
+  // Same dataclass-mirror rule — SafetySection defaults are 500/50.
+  safety: { gm_node_hard_limit: 500, max_consecutive_no_action: 50 },
+  // Top-level `environments:` block — replaces the old `sandbox:`
+  // section as of the runtime's environments-refactor. ``local`` is
+  // always present (just an allow-list); ``sandbox`` is optional and
+  // holds the VM connectivity fields the runtime previously read
+  // off the top-level sandbox section.
+  environments: {
+    local: { allowed_plugins: [] },
+    sandbox: null,
   },
 };
 
@@ -963,6 +1317,11 @@ const HELP = {
   "graph_memory.neighbor_expand_depth": "Neighbor-expansion depth at recall time (how many edges to traverse).",
   "knowledge_base.dir": "Directory for KB SQLite files; sleep migration writes here.",
   "sleep.max_duration_seconds": "Maximum allowed duration for a single sleep (seconds), to prevent sleep from hanging.",
+  "sleep.min_community_size": "Communities below this many GM nodes stay in graph memory; only larger communities migrate to a KB. Default 2 = skip pure singletons.",
+  "sleep.kb_consolidation_threshold": "KB consolidation: pairwise-merge active KBs whose index vectors (mean of member entry embeddings) are at least this cosine-close. 0–1; higher = stricter merging. Default 0.85.",
+  "sleep.kb_index_max": "When the active KB count exceeds this, sleep archives the least-important `kb_archive_pct` percent. Archived KBs keep their files but stop showing up in recall.",
+  "sleep.kb_archive_pct": "Percentage of active KBs to archive each pass once kb_index_max is exceeded. Importance = entry_count × mean entry importance.",
+  "sleep.kb_revive_threshold": "When sleep would build a fresh KB for a new community, first compare the summary embedding against archived KBs' index vectors; revive an archived KB if cosine ≥ this. Models the 'forgot, then re-encountered' relearning shortcut. Default 0.80.",
   "safety.gm_node_hard_limit": "Hard upper bound on GM nodes. Above this, sleep refuses to add more nodes (prevents runaway growth).",
   "safety.max_consecutive_no_action": "After this many consecutive 'No action' beats, runtime considers Self stuck and triggers a self-rescue sleep.",
   "provider.type": "Provider implementation type. Currently only openai_compatible is supported.",
@@ -982,16 +1341,19 @@ const HELP = {
   "tool.screenshot_dir": "Directory for GUI screenshots.",
   "tool.history_path": "JSONL persistence path for web chat.",
   "tool.sandbox": "Whether this tool's non-idempotent operations are confined to the sandbox VM. Default true — turning off is dangerous (code / GUI runs on your host).",
-  "sandbox.guest_os": "Sandbox guest OS: linux / macos / windows. Required before any sandboxed tool can be enabled.",
-  "sandbox.provider": "VM manager: qemu (recommended) / virtualbox / utm.",
-  "sandbox.vm_name": "VM instance name (must be pre-provisioned).",
-  "sandbox.display": "headed = VM desktop shown in a window so you can watch / intervene; headless = VM hidden, only the agent interacts. Choose by your usage preference.",
-  "sandbox.resources.cpu": "vCPU count assigned to the VM.",
-  "sandbox.resources.memory_mb": "RAM (MB) assigned to the VM.",
-  "sandbox.resources.disk_gb": "VM disk size (GB).",
-  "sandbox.agent.url": "HTTP URL of the in-VM guest agent, e.g. http://10.0.2.10:8765. Must be on the host-only subnet.",
-  "sandbox.agent.token": "Shared token between host and agent. Use ${ENV_VAR} to read from the environment.",
-  "sandbox.network_mode": "VM network policy: nat_allowlist (egress allow-list) / host_only (no internet) / isolated (no network).",
+  "environments.local.allowed_plugins": "Plugins permitted to use the always-on Local execution env (host-process access). Empty = no plugin can run on the host.",
+  "environments.sandbox.allowed_plugins": "Plugins permitted to use the Sandbox VM env. Empty = sandbox VM is registered but no plugin can drive it.",
+  "environments.sandbox.guest_os": "Sandbox guest OS: linux / macos / windows. Required when the sandbox env is enabled.",
+  "environments.sandbox.provider": "VM manager: qemu (recommended) / virtualbox / utm.",
+  "environments.sandbox.vm_name": "VM instance name (must be pre-provisioned).",
+  "environments.sandbox.display": "headed = VM desktop shown in a window so you can watch / intervene; headless = VM hidden, only the agent interacts. Choose by your usage preference.",
+  "environments.sandbox.resources.cpu": "vCPU count assigned to the VM.",
+  "environments.sandbox.resources.memory_mb": "RAM (MB) assigned to the VM.",
+  "environments.sandbox.resources.disk_gb": "VM disk size (GB).",
+  "environments.sandbox.agent.url": "HTTP URL of the in-VM guest agent, e.g. http://10.0.2.10:8765. Must be on the host-only subnet.",
+  "environments.sandbox.agent.token": "Shared token between host and agent. Use ${ENV_VAR} to read from the environment.",
+  "environments.sandbox.network_mode": "VM network policy: nat_allowlist (egress allow-list) / host_only (no internet) / isolated (no network).",
+  "environments.sandbox.allowlist_domains": "When network_mode=nat_allowlist, the sandbox VM can reach exactly these hostnames. Egress to anything else is dropped.",
 };
 
 // Fixed numeric/string dataclass schemas — drives generic renderer.
@@ -1017,30 +1379,42 @@ const SCHEMAS = {
   ],
   sleep: [
     ["max_duration_seconds", "number"],
+    // KB lifecycle tuning — fields drive sleep's compaction engine
+    // (see krakey/memory/sleep/sleep_manager.py + sibling modules).
+    // Power users tune these to control how aggressively Krakey
+    // consolidates / archives knowledge bases between sleeps.
+    ["min_community_size", "number"],
+    ["kb_consolidation_threshold", "number_float"],
+    ["kb_index_max", "number"],
+    ["kb_archive_pct", "number"],
+    ["kb_revive_threshold", "number_float"],
   ],
   safety: [
     ["gm_node_hard_limit", "number"],
     ["max_consecutive_no_action", "number"],
   ],
-  sandbox_scalars: [
+  // Schemas under `environments.sandbox.*`. The top-level sandbox
+  // section is gone in the runtime (rewrites to environments.sandbox),
+  // so the dashboard's sandbox UI is now a sub-block of Environments.
+  env_sandbox_scalars: [
     ["guest_os", "text"],
     ["provider", "text"],
     ["vm_name", "text"],
     ["display", "text"],
     ["network_mode", "text"],
   ],
-  sandbox_resources: [
+  env_sandbox_resources: [
     ["cpu", "number"],
     ["memory_mb", "number"],
     ["disk_gb", "number"],
   ],
-  sandbox_agent: [
+  env_sandbox_agent: [
     ["url", "text"],
     ["token", "password"],
   ],
 };
 
-// Live load report (loaded ✓ / failed ✗) sourced from /api/plugins.
+// Live load report (loaded / failed) sourced from /api/plugins.
 // The unified Plugins panel surfaces this as a per-row status badge —
 // edits are NOT made through this object; per-plugin config edits live
 // in modifierConfigEdits, enable/disable lives in cfgState.{modifiers,
@@ -1071,6 +1445,24 @@ async function loadSettings() {
     }
     const data = await cfgRes.json();
     cfgState = data.parsed || {};
+    // Migration: the runtime stopped reading top-level `sandbox:` —
+    // see krakey/models/config/__init__.py — and moved every field
+    // under `environments.sandbox`. If the user's on-disk yaml still
+    // has the legacy block, lift its contents into the new shape so
+    // the dashboard renders something instead of an empty toggle.
+    // Drop the legacy key from the edit state so the next save
+    // produces a clean yaml.
+    if (cfgState.sandbox && typeof cfgState.sandbox === "object") {
+      cfgState.environments = cfgState.environments || {};
+      if (cfgState.environments.sandbox == null) {
+        cfgState.environments.sandbox = {
+          allowed_plugins: [],
+          allowlist_domains: [],
+          ...cfgState.sandbox,
+        };
+      }
+      delete cfgState.sandbox;
+    }
     if (pluginRes && pluginRes.ok) {
       pluginReport = await pluginRes.json();
     } else {
@@ -1128,38 +1520,29 @@ function renderSettingsForm() {
   settingsForm.appendChild(renderGenericSection("sleep", "Sleep",
     cfgState.sleep, SCHEMAS.sleep));
   ensureSection("safety");
-  settingsForm.appendChild(renderGenericSection("safety", "Safety",
-    cfgState.safety, SCHEMAS.safety));
+  const safetySec = renderGenericSection("safety", "Safety",
+    cfgState.safety, SCHEMAS.safety);
+  // Hint at the top of the section body: the SafetySection dataclass
+  // is parsed and persisted but the runtime currently has zero
+  // consumers of config.safety.*. Document the status so users
+  // don't expect their hard-limit to fire.
+  const advisoryHint = document.createElement("p");
+  advisoryHint.className = "section-hint";
+  advisoryHint.textContent =
+    "advisory only — runtime does not yet enforce these limits";
+  const safetyBody = safetySec.querySelector(".body");
+  safetyBody.insertBefore(advisoryHint, safetyBody.firstChild);
+  settingsForm.appendChild(safetySec);
 
-  // Sandbox — composite (scalars + resources sub-block + agent sub-block).
-  ensureSection("sandbox");
-  const sb = cfgState.sandbox;
-  if (sb.resources == null) sb.resources = { cpu: 2, memory_mb: 4096, disk_gb: 40 };
-  if (sb.agent == null) sb.agent = { url: "", token: "" };
-  const sbSec = renderGenericSection("sandbox", "Sandbox VM",
-    sb, SCHEMAS.sandbox_scalars);
-  const body = sbSec.querySelector(".body");
-  const resBlock = document.createElement("div");
-  resBlock.className = "subblock";
-  const resH = document.createElement("h4");
-  resH.textContent = "resources";
-  resBlock.appendChild(resH);
-  for (const [f, t] of SCHEMAS.sandbox_resources) {
-    resBlock.appendChild(renderRow(f, sb.resources, f, t,
-      `sandbox.resources.${f}`));
-  }
-  body.appendChild(resBlock);
-  const agentBlock = document.createElement("div");
-  agentBlock.className = "subblock";
-  const agH = document.createElement("h4");
-  agH.textContent = "agent";
-  agentBlock.appendChild(agH);
-  for (const [f, t] of SCHEMAS.sandbox_agent) {
-    agentBlock.appendChild(renderRow(f, sb.agent, f, t,
-      `sandbox.agent.${f}`));
-  }
-  body.appendChild(agentBlock);
-  settingsForm.appendChild(sbSec);
+  // Environments — top-level execution-env block. Replaces the old
+  // top-level `sandbox:` section the runtime no longer reads.
+  // Two sub-blocks:
+  //   * Local — always present, just an allow-list of plugins
+  //     permitted to run on the host process.
+  //   * Sandbox VM — optional. Toggle to register/deregister; when
+  //     registered, holds VM connectivity + per-plugin allow-list.
+  ensureSection("environments");
+  settingsForm.appendChild(renderEnvironmentsSection(cfgState.environments));
 }
 
 function ensure(obj, key, factory) {
@@ -1186,7 +1569,23 @@ const SECTION_ICONS = {
   "Knowledge Base": "book",
   "Sleep": "moon",
   "Safety": "shield-check",
-  "Sandbox VM": "hdd",
+  "Environments": "hdd",
+};
+
+// Synthwave-ish accent per section. Renders on the heading icon +
+// title only — the body keeps the neutral text colour so dense
+// configuration stays readable. Token names match the CSS variables
+// defined in shared/theme.css.
+const SECTION_TINT = {
+  "LLM": "cyan",
+  "Plugins": "magenta",
+  "Idle": "muted",
+  "Fatigue": "yellow",
+  "Graph Memory": "magenta",
+  "Knowledge Base": "green",
+  "Sleep": "muted",
+  "Safety": "red",
+  "Environments": "cyan",
 };
 
 // Titles whose body is currently collapsed. Module-scoped so the
@@ -1202,6 +1601,8 @@ function _svgFromBiHtml(html) {
 function makeSection(title) {
   const sec = document.createElement("div");
   sec.className = "cfg-section";
+  const tint = SECTION_TINT[title];
+  if (tint) sec.classList.add("tint-" + tint);
   const isCollapsed = collapsedSections.has(title);
   if (isCollapsed) sec.classList.add("collapsed");
 
@@ -1273,6 +1674,186 @@ function renderGenericSection(key, title, target, schema) {
   for (const [field, type] of schema) {
     body.appendChild(renderRow(field, target, field, type, `${key}.${field}`));
   }
+  return sec;
+}
+
+// Generic chip-list editor for ``string[]`` config values. Each
+// existing entry is a removable chip; the trailing input adds new
+// entries on Enter / blur. Used for ``allowed_plugins`` and
+// ``allowlist_domains`` under Environments.
+function _renderStringList(arr, opts) {
+  if (!Array.isArray(arr)) {
+    // Caller passed a non-array; coerce to empty so the UI still
+    // renders rather than throwing on .filter() / .push().
+    arr = [];
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "cap-multi";  // re-use existing chip-strip styling
+  function repaint() {
+    wrap.innerHTML = "";
+    for (const v of arr) {
+      const chip = document.createElement("span");
+      chip.className = "cap-chip";
+      chip.appendChild(document.createTextNode(v));
+      const x = document.createElement("span");
+      x.className = "x";
+      x.textContent = "×";
+      x.addEventListener("click", () => {
+        const idx = arr.indexOf(v);
+        if (idx !== -1) arr.splice(idx, 1);
+        repaint();
+      });
+      chip.appendChild(x);
+      wrap.appendChild(chip);
+    }
+    const input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = (opts && opts.placeholder) || "+ add…";
+    input.style.cssText =
+      "border:none;background:transparent;color:var(--text);" +
+      "font-family:inherit;font-size:11px;flex:1;min-width:80px;outline:none";
+    function commit() {
+      const v = input.value.trim();
+      if (!v) return;
+      if (!arr.includes(v)) arr.push(v);
+      input.value = "";
+      repaint();
+      // Re-focus the new input so the user can keep typing names.
+      const newInput = wrap.querySelector("input");
+      if (newInput) newInput.focus();
+    }
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); commit(); }
+    });
+    input.addEventListener("blur", commit);
+    wrap.appendChild(input);
+  }
+  repaint();
+  return wrap;
+}
+
+function _renderListRow(label, arr, helpPath, opts) {
+  const row = document.createElement("div");
+  row.className = "cfg-row";
+  const lab = document.createElement("label");
+  lab.textContent = label;
+  if (helpPath && HELP[helpPath]) lab.title = HELP[helpPath];
+  row.appendChild(lab);
+  row.appendChild(_renderStringList(arr, opts));
+  return row;
+}
+
+function renderEnvironmentsSection(envs) {
+  // Top-level `environments:` block. Maps to runtime's
+  // krakey.models.config.environments.EnvironmentsSection — `local`
+  // is always-on with just an allow-list; `sandbox` is optional and
+  // gated by an enable toggle.
+  const sec = makeSection("Environments");
+  const body = sec.querySelector(".body");
+
+  // Local sub-block.
+  if (!envs.local) envs.local = { allowed_plugins: [] };
+  if (!Array.isArray(envs.local.allowed_plugins)) {
+    envs.local.allowed_plugins = [];
+  }
+  const localBlock = document.createElement("div");
+  localBlock.className = "subblock";
+  const localH = document.createElement("h4");
+  localH.appendChild(document.createTextNode("Local"));
+  localBlock.appendChild(localH);
+  localBlock.appendChild(_renderListRow(
+    "allowed_plugins", envs.local.allowed_plugins,
+    "environments.local.allowed_plugins",
+    { placeholder: "plugin name + Enter" },
+  ));
+  body.appendChild(localBlock);
+
+  // Sandbox sub-block — togglable. When the toggle is off, the
+  // saved config has ``environments.sandbox: null`` (runtime does
+  // not register the sandbox env at all). Flipping it on hydrates
+  // a sandbox object with sensible defaults so all sub-rows
+  // render and the user can edit in place.
+  const sbBlock = document.createElement("div");
+  sbBlock.className = "subblock";
+  const sbHead = document.createElement("h4");
+  sbHead.style.display = "flex";
+  sbHead.style.alignItems = "center";
+  sbHead.style.gap = "8px";
+  sbHead.appendChild(document.createTextNode("Sandbox VM"));
+  const enabled = envs.sandbox != null;
+  const toggle = document.createElement("span");
+  toggle.className = "toggle" + (enabled ? " on" : "");
+  toggle.title = "register a sandbox execution environment";
+  toggle.addEventListener("click", () => {
+    if (envs.sandbox == null) {
+      envs.sandbox = {
+        allowed_plugins: [],
+        guest_os: "",
+        provider: "qemu",
+        vm_name: "",
+        display: "headed",
+        resources: { cpu: 2, memory_mb: 4096, disk_gb: 40 },
+        agent: { url: "", token: "" },
+        network_mode: "nat_allowlist",
+        allowlist_domains: [],
+      };
+    } else {
+      envs.sandbox = null;
+    }
+    renderSettingsForm();
+  });
+  sbHead.appendChild(toggle);
+  sbBlock.appendChild(sbHead);
+
+  if (envs.sandbox != null) {
+    const sb = envs.sandbox;
+    if (!sb.resources) sb.resources = { cpu: 2, memory_mb: 4096, disk_gb: 40 };
+    if (!sb.agent) sb.agent = { url: "", token: "" };
+    if (!Array.isArray(sb.allowed_plugins)) sb.allowed_plugins = [];
+    if (!Array.isArray(sb.allowlist_domains)) sb.allowlist_domains = [];
+
+    sbBlock.appendChild(_renderListRow(
+      "allowed_plugins", sb.allowed_plugins,
+      "environments.sandbox.allowed_plugins",
+      { placeholder: "plugin name + Enter" },
+    ));
+    for (const [f, t] of SCHEMAS.env_sandbox_scalars) {
+      sbBlock.appendChild(renderRow(
+        f, sb, f, t, `environments.sandbox.${f}`,
+      ));
+    }
+    sbBlock.appendChild(_renderListRow(
+      "allowlist_domains", sb.allowlist_domains,
+      "environments.sandbox.allowlist_domains",
+      { placeholder: "domain + Enter" },
+    ));
+
+    const resBlock = document.createElement("div");
+    resBlock.className = "subblock";
+    const resH = document.createElement("h4");
+    resH.textContent = "resources";
+    resBlock.appendChild(resH);
+    for (const [f, t] of SCHEMAS.env_sandbox_resources) {
+      resBlock.appendChild(renderRow(
+        f, sb.resources, f, t, `environments.sandbox.resources.${f}`,
+      ));
+    }
+    sbBlock.appendChild(resBlock);
+
+    const agentBlock = document.createElement("div");
+    agentBlock.className = "subblock";
+    const agH = document.createElement("h4");
+    agH.textContent = "agent";
+    agentBlock.appendChild(agH);
+    for (const [f, t] of SCHEMAS.env_sandbox_agent) {
+      agentBlock.appendChild(renderRow(
+        f, sb.agent, f, t, `environments.sandbox.agent.${f}`,
+      ));
+    }
+    sbBlock.appendChild(agentBlock);
+  }
+  body.appendChild(sbBlock);
+
   return sec;
 }
 
@@ -1411,7 +1992,7 @@ function renderFatigueThresholds(fatigue) {
       keyIn.type = "number"; keyIn.value = k; keyIn.style.maxWidth = "80px";
       const valIn = document.createElement("input");
       valIn.type = "text"; valIn.value = fatigue.thresholds[k];
-      const del = mkBtn("×", () => { delete fatigue.thresholds[k]; redraw(); }, "danger");
+      const del = mkBtn("×", () => { delete fatigue.thresholds[k]; redraw(); }, "btn-x");
       keyIn.addEventListener("change", () => {
         const newK = parseInt(keyIn.value, 10);
         if (Number.isNaN(newK) || String(newK) === k) return;
@@ -1445,6 +2026,74 @@ function mkBtn(text, onClick, cls = "") {
 
 // ---------------- LLM section ----------------
 
+// Pending inline-rename target. Set by "+ add provider/tag/purpose"
+// to {scope, name}; the matching editable-key span auto-switches to
+// input mode at render time so the user types the real name in
+// place instead of seeing a prompt() dialog. Cleared after the
+// auto-edit fires so it only triggers once.
+let _pendingNewKey = null;
+
+// Build a span that displays a key (provider name, tag name, etc.)
+// and turns into an inline <input> when clicked. On commit (Enter or
+// blur) it calls onRename(newName); validate(newName) returning a
+// truthy string blocks commit and surfaces the message.
+function _renderEditableKey(currentName, opts) {
+  const span = document.createElement("span");
+  span.className = "editable-key";
+  span.textContent = currentName;
+  span.title = "click to rename";
+
+  function _enterEdit() {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "editable-key-input";
+    input.value = currentName;
+    if (opts.placeholder) input.placeholder = opts.placeholder;
+    let committing = false;
+    function _commit() {
+      if (committing) return;
+      committing = true;
+      const nv = (input.value || "").trim();
+      if (!nv || nv === currentName) { _revert(); return; }
+      const err = opts.validate ? opts.validate(nv) : null;
+      if (err) { alert(err); committing = false; input.focus(); return; }
+      opts.onRename(nv);
+    }
+    function _revert() {
+      span.textContent = currentName;
+      if (input.parentNode) input.replaceWith(span);
+    }
+    input.addEventListener("blur", _commit);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); _commit(); }
+      else if (e.key === "Escape") { e.preventDefault(); _revert(); }
+    });
+    span.replaceWith(input);
+    input.focus();
+    input.select();
+  }
+  span.addEventListener("click", _enterEdit);
+
+  // If this span is the freshly-added "+ add ___" target, auto-enter
+  // edit mode after the DOM is in place (focus needs the element to
+  // be attached). The flag is consumed so a subsequent re-render
+  // doesn't re-trigger.
+  if (_pendingNewKey && _pendingNewKey.scope === opts.scope &&
+      _pendingNewKey.name === currentName) {
+    _pendingNewKey = null;
+    setTimeout(_enterEdit, 0);
+  }
+  return span;
+}
+
+// Find a unique placeholder name for a "+ add" action — keeps the
+// suffix incrementing until the dict has no entry with that key.
+function _uniqueDraftName(dict, base) {
+  let n = 1;
+  while (dict[`${base}_${n}`]) n++;
+  return `${base}_${n}`;
+}
+
 // Shape (post tag-based refactor 2026-04-26):
 //   llm.providers     : dict of provider connections (with API keys)
 //   llm.tags          : dict of named (provider/model + params)
@@ -1469,13 +2118,13 @@ function renderLLMSection(llm) {
   provHead.style.cssText = "color:var(--text);font-weight:bold;font-size:11px;margin:0 0 6px";
   provHead.appendChild(document.createTextNode("Providers"));
   const addProv = mkBtn("+ add provider", () => {
-    let name = prompt("Provider name (unique key):");
-    if (!name) return;
-    name = name.trim();
-    if (!name || llm.providers[name]) { alert("invalid or exists"); return; }
+    // Add directly with a placeholder name; the heading enters
+    // edit-mode on render so the user types the real name inline.
+    const name = _uniqueDraftName(llm.providers, "provider");
     llm.providers[name] = {
       type: "openai_compatible", base_url: "", api_key: "", models: [],
     };
+    _pendingNewKey = { scope: "provider", name };
     renderSettingsForm();
   });
   const headWrap = document.createElement("div");
@@ -1493,19 +2142,17 @@ function renderLLMSection(llm) {
   tagsHead.style.cssText = "color:var(--text);font-weight:bold;font-size:11px;margin:12px 0 6px";
   tagsHead.appendChild(document.createTextNode("Tags"));
   const addTag = mkBtn("+ add tag", () => {
-    const name = prompt("Tag name (e.g. fast_generation):");
-    if (!name) return;
-    if (llm.tags[name]) { alert("exists"); return; }
     const provNames = Object.keys(llm.providers || {});
     if (!provNames.length) { alert("add a provider first"); return; }
-    // First model of first provider as a starting point
     const firstProv = llm.providers[provNames[0]];
     const firstModel = (firstProv.models && firstProv.models[0]
                           && firstProv.models[0].name) || "";
+    const name = _uniqueDraftName(llm.tags, "tag");
     llm.tags[name] = {
       provider: `${provNames[0]}/${firstModel}`,
       params: {},
     };
+    _pendingNewKey = { scope: "tag", name };
     renderSettingsForm();
   });
   const tagsHeadWrap = document.createElement("div");
@@ -1517,8 +2164,14 @@ function renderLLMSection(llm) {
     body.appendChild(renderTagRow(tname, llm.tags, llm.providers));
   }
 
-  // Core purposes (chat use cases — Self / compact / classifier)
+  // Core purposes (chat use cases — Self / compact / classifier ...)
   body.appendChild(renderCorePurposesBlock(llm));
+  // Plugin LLM purposes — aggregate of every enabled plugin's
+  // ``llm_purposes`` declarations (per meta.yaml). Renders here so
+  // the user has a single "all the components that can take an
+  // LLM" pane in the LLM section instead of having to hunt through
+  // expanded plugin rows in the Plugins panel.
+  body.appendChild(renderPluginPurposesBlock(llm));
   // Embedding + reranker (model-type slots, not purposes)
   body.appendChild(renderModelSlotBlock(
     llm, "embedding",
@@ -1536,27 +2189,35 @@ function renderProviderBlock(pname, prov, llm) {
   const block = document.createElement("div");
   block.className = "subblock";
   const h = document.createElement("h4");
-  h.appendChild(document.createTextNode(pname));
+  // Inline-editable name. Click the heading → it turns into an
+  // input. Replaces the old "rename" prompt() flow.
+  h.appendChild(_renderEditableKey(pname, {
+    scope: "provider",
+    placeholder: "provider name",
+    validate: (nv) => llm.providers[nv] ? "name exists" : null,
+    onRename: (nv) => {
+      llm.providers[nv] = llm.providers[pname];
+      delete llm.providers[pname];
+      // Cascade: tags whose provider field starts with "<pname>/"
+      // need their prefix substituted so they keep pointing at the
+      // same provider object.
+      const prefix = pname + "/";
+      for (const t of Object.values(llm.tags || {})) {
+        if (typeof t.provider === "string" && t.provider.startsWith(prefix)) {
+          t.provider = nv + "/" + t.provider.slice(prefix.length);
+        }
+      }
+      renderSettingsForm();
+    },
+  }));
   const actions = document.createElement("span");
   actions.className = "actions";
-  const renameBtn = mkBtn("rename", () => {
-    const nn = prompt("New name:", pname);
-    if (!nn || nn === pname) return;
-    if (llm.providers[nn]) { alert("exists"); return; }
-    llm.providers[nn] = llm.providers[pname];
-    delete llm.providers[pname];
-    // Update roles referencing old name
-    for (const r of Object.values(llm.roles || {})) {
-      if (r.provider === pname) r.provider = nn;
-    }
-    renderSettingsForm();
-  });
   const delBtn = mkBtn("delete", () => {
     if (!confirm(`delete provider "${pname}"?`)) return;
     delete llm.providers[pname];
     renderSettingsForm();
   }, "danger");
-  actions.appendChild(renameBtn); actions.appendChild(delBtn);
+  actions.appendChild(delBtn);
   h.appendChild(actions);
   block.appendChild(h);
 
@@ -1596,7 +2257,7 @@ function renderModelRow(prov, idx) {
   nameIn.addEventListener("input", () => { m.name = nameIn.value; });
   row.appendChild(nameIn);
   row.appendChild(renderCapabilitiesMulti(m));
-  const del = mkBtn("×", () => { prov.models.splice(idx, 1); renderSettingsForm(); }, "danger");
+  const del = mkBtn("×", () => { prov.models.splice(idx, 1); renderSettingsForm(); }, "btn-x");
   row.appendChild(del);
   return row;
 }
@@ -1687,7 +2348,25 @@ function renderTagRow(tname, tags, providers) {
   const row = document.createElement("div");
   row.className = "cfg-row";
   const lab = document.createElement("label");
-  lab.textContent = tname;
+  // Inline-editable tag name. Click → input → commit on blur/Enter.
+  lab.appendChild(_renderEditableKey(tname, {
+    scope: "tag",
+    placeholder: "tag name",
+    validate: (nv) => tags[nv] ? "name exists" : null,
+    onRename: (nv) => {
+      tags[nv] = tags[tname];
+      delete tags[tname];
+      // Cascade: any core_purpose / embedding / reranker that
+      // referenced the old name needs to follow.
+      const llm = cfgState.llm || {};
+      for (const [purp, t] of Object.entries(llm.core_purposes || {})) {
+        if (t === tname) llm.core_purposes[purp] = nv;
+      }
+      if (llm.embedding === tname) llm.embedding = nv;
+      if (llm.reranker === tname) llm.reranker = nv;
+      renderSettingsForm();
+    },
+  }));
   row.appendChild(lab);
 
   const wrap = document.createElement("div");
@@ -1757,7 +2436,7 @@ function renderTagRow(tname, tags, providers) {
     if (llm.embedding === tname) llm.embedding = "";
     if (llm.reranker === tname) llm.reranker = "";
     renderSettingsForm();
-  }, "danger");
+  }, "btn-x");
 
   wrap.appendChild(provSel); wrap.appendChild(modSel); wrap.appendChild(del);
   row.appendChild(wrap);
@@ -1814,8 +2493,9 @@ function renderTagParamsBlock(tname, tags) {
 // classifier optional) are always shown so people know they exist.
 const KNOWN_CORE_PURPOSES = [
   ["self_thinking", "required — Self's per-beat heartbeat LLM"],
-  ["compact", "sliding-window history → GM compaction LLM"],
-  ["classifier", "node category classifier (often same as compact)"],
+  ["compact", "sliding-window history → GM compaction LLM (also drives sleep clustering + KB index rebuild)"],
+  ["classifier", "node category classifier (extractor + classifier; falls back to compact then self_thinking)"],
+  ["hypothalamus", "legacy compat — modern setups bind translator via the Hypothalamus plugin's per-plugin llm_purposes instead. Leave (unbound) unless you need the deprecated central path."],
 ];
 
 function renderCorePurposesBlock(llm) {
@@ -1841,12 +2521,100 @@ function renderCorePurposesBlock(llm) {
   }
 
   const addBtn = mkBtn("+ add purpose", () => {
-    const name = prompt("Custom core purpose name:");
-    if (!name || llm.core_purposes[name]) return;
+    const name = _uniqueDraftName(llm.core_purposes, "purpose");
     llm.core_purposes[name] = "";
+    _pendingNewKey = { scope: "purpose", name };
     renderSettingsForm();
   });
   sub.appendChild(addBtn);
+  return sub;
+}
+
+// Aggregated view of every enabled plugin's ``llm_purposes`` (from
+// each plugin's meta.yaml). One row per "<plugin>.<purpose>" with a
+// tag-binding dropdown. Edits feed straight into the per-plugin
+// config (``modifierConfigEdits[plugin].llm_purposes[purpose]``) —
+// the same backing store the per-plugin row in the Plugins panel
+// uses, so both views stay in sync without a separate save path.
+//
+// Rendered in the LLM section so users have a single "what
+// component uses what LLM?" pane; a long-standing complaint was
+// that these knobs were buried inside expanded plugin rows.
+function renderPluginPurposesBlock(llm) {
+  const sub = document.createElement("div");
+  sub.className = "subblock";
+  const head = document.createElement("h4");
+  head.appendChild(document.createTextNode("Plugin Purposes"));
+  sub.appendChild(head);
+
+  // Filter to enabled plugins that actually declare an LLM purpose;
+  // empty list ⇒ render a placeholder explaining what would show up.
+  const enabledNames = new Set([
+    ...((cfgState.modifiers || [])),
+    ...((cfgState.plugins || [])),
+  ]);
+  const candidates = (availableModifiers || []).filter((p) =>
+    enabledNames.has(p.name)
+    && Array.isArray(p.llm_purposes) && p.llm_purposes.length,
+  );
+
+  if (!candidates.length) {
+    const hint = document.createElement("p");
+    hint.className = "section-hint";
+    hint.style.borderLeftColor = "var(--muted)";
+    hint.textContent =
+      "no enabled plugin declares an llm_purposes block. Plugins "
+      + "that need an LLM (e.g. hypothalamus.translator) surface "
+      + "their bindings here once enabled.";
+    sub.appendChild(hint);
+    return sub;
+  }
+
+  const tagNames = Object.keys(llm.tags || {});
+  for (const plugin of candidates) {
+    // Lazy-load the plugin's per-folder config the first time we
+    // need it. The per-plugin row uses the same cache, so editing
+    // here updates the row's view too on the next render.
+    if (!modifierConfigEdits[plugin.name]) {
+      modifierConfigEdits[plugin.name] = {};
+      fetch(`/api/modifiers/${encodeURIComponent(plugin.name)}/config`)
+        .then((r) => (r.ok ? r.json() : { config: {} }))
+        .then((body) => {
+          modifierConfigEdits[plugin.name] = body.config || {};
+          renderSettingsForm();
+        })
+        .catch(() => {});
+    }
+    const cfg = modifierConfigEdits[plugin.name];
+    cfg.llm_purposes = cfg.llm_purposes || {};
+
+    for (const purpose of plugin.llm_purposes) {
+      const row = document.createElement("div");
+      row.className = "cfg-row";
+      const lab = document.createElement("label");
+      lab.textContent = `${plugin.name}.${purpose.name}`;
+      if (purpose.description) lab.title = purpose.description;
+      row.appendChild(lab);
+
+      const sel = document.createElement("select");
+      const blank = document.createElement("option");
+      blank.value = ""; blank.textContent = "(unbound)";
+      sel.appendChild(blank);
+      for (const t of tagNames) {
+        const opt = document.createElement("option");
+        opt.value = t; opt.textContent = t;
+        sel.appendChild(opt);
+      }
+      sel.value = cfg.llm_purposes[purpose.name] || "";
+      sel.addEventListener("change", () => {
+        cfg.llm_purposes = cfg.llm_purposes || {};
+        if (sel.value) cfg.llm_purposes[purpose.name] = sel.value;
+        else delete cfg.llm_purposes[purpose.name];
+      });
+      row.appendChild(sel);
+      sub.appendChild(row);
+    }
+  }
   return sub;
 }
 
@@ -1854,7 +2622,25 @@ function _purposeRow(llm, purp, tagNames, helpText) {
   const row = document.createElement("div");
   row.className = "cfg-row";
   const lab = document.createElement("label");
-  lab.textContent = purp;
+  // Well-known purposes (self_thinking / compact / classifier) drive
+  // runtime behaviour by name — renaming would silently break
+  // dispatch — so they stay as plain text. User-added purposes are
+  // free-form labels and get inline-rename like providers + tags.
+  const isKnown = KNOWN_CORE_PURPOSES.some(([p]) => p === purp);
+  if (isKnown) {
+    lab.textContent = purp;
+  } else {
+    lab.appendChild(_renderEditableKey(purp, {
+      scope: "purpose",
+      placeholder: "purpose name",
+      validate: (nv) => llm.core_purposes[nv] != null ? "name exists" : null,
+      onRename: (nv) => {
+        llm.core_purposes[nv] = llm.core_purposes[purp];
+        delete llm.core_purposes[purp];
+        renderSettingsForm();
+      },
+    }));
+  }
   if (helpText) lab.title = helpText;
   row.appendChild(lab);
 
@@ -1878,12 +2664,12 @@ function _purposeRow(llm, purp, tagNames, helpText) {
   wrap.appendChild(sel);
 
   // Custom (non-known) purposes get a delete button; well-known ones
-  // are persistent.
-  const isKnown = KNOWN_CORE_PURPOSES.some(([p]) => p === purp);
+  // are persistent. (`isKnown` was already computed above to gate
+  // the editable-name path — reuse instead of redeclaring.)
   if (!isKnown) {
     const del = mkBtn("×", () => {
       delete llm.core_purposes[purp]; renderSettingsForm();
-    }, "danger");
+    }, "btn-x");
     wrap.appendChild(del);
   } else {
     wrap.appendChild(document.createElement("span"));
@@ -1941,7 +2727,7 @@ function renderModelSlotBlock(llm, fieldName, helpText) {
 // (description + config_schema + components[] with kind, plus any
 // llm_purposes), already grouped by plugin folder.
 //
-// Live load status (loaded ✓ / error ✗) comes from /api/plugins,
+// Live load status (loaded / error) comes from /api/plugins,
 // which is the runtime-observation snapshot and is keyed by component
 // project — we aggregate per plugin name for the badge.
 //
@@ -2355,14 +3141,34 @@ function _renderLLMPurposesEditor(plugin, cfg) {
   return block;
 }
 
-function showToast(text, ok = true) {
-  settingsToast.textContent = text;
-  settingsToast.className = ok ? "ok" : "err";
-  setTimeout(() => { settingsToast.textContent = ""; settingsToast.className = ""; }, 5000);
+// Map toast level → Bootstrap icon. Re-using the existing icons
+// keeps the visual vocabulary consistent with the rest of the SPA
+// (status bar, tabs, etc.).
+const _TOAST_ICON = {
+  ok: "check-circle-fill",
+  err: "x-circle-fill",
+  warn: "exclamation-circle-fill",
+  info: "info-circle-fill",
+  pending: "arrow-clockwise",
+};
+
+function showToast(text, level = "ok") {
+  const icon = window.biIcon(_TOAST_ICON[level] || _TOAST_ICON.info, 13);
+  const t = document.createElement("span");
+  t.className = "toast-text";
+  t.textContent = text;
+  settingsToast.innerHTML = "";
+  settingsToast.insertAdjacentHTML("beforeend", icon);
+  settingsToast.appendChild(t);
+  settingsToast.className = "toast " + level;
+  setTimeout(() => {
+    settingsToast.textContent = "";
+    settingsToast.className = "";
+  }, 5000);
 }
 
 $("#settings-save").addEventListener("click", async () => {
-  if (cfgState == null) { showToast("✗ nothing to save", false); return; }
+  if (cfgState == null) { showToast("nothing to save", "err"); return; }
   try {
     // Central config.yaml carries the two enable lists
     // (cfgState.modifiers, cfgState.plugins); the unified panel's
@@ -2376,7 +3182,7 @@ $("#settings-save").addEventListener("click", async () => {
     });
     const body = await r.json();
     if (!r.ok) {
-      showToast(`✗ save failed: ${body.detail || r.statusText}`, false);
+      showToast(`save failed: ${body.detail || r.statusText}`, "err");
       return;
     }
 
@@ -2404,12 +3210,12 @@ $("#settings-save").addEventListener("click", async () => {
     }
 
     if (pluginErrs.length) {
-      showToast(`✗ plugin saves failed: ${pluginErrs.join(", ")}`, false);
+      showToast(`plugin saves failed: ${pluginErrs.join(", ")}`, "err");
     } else {
-      showToast(`✓ saved (backup: ${body.backup || "n/a"}). Restart for changes to take effect.`);
+      showToast(`saved (backup: ${body.backup || "n/a"}). Restart for changes to take effect.`, "ok");
     }
   } catch (e) {
-    showToast("✗ network: " + e, false);
+    showToast("network: " + e, "err");
   }
 });
 
@@ -2418,13 +3224,13 @@ $("#settings-restart").addEventListener("click", async () => {
   try {
     const r = await fetch("/api/restart", { method: "POST" });
     if (r.ok) {
-      showToast("⏳ restarting...");
+      showToast("restarting...", "pending");
     } else {
       const body = await r.json();
-      showToast(`✗ restart failed: ${body.detail || r.statusText}`, false);
+      showToast(`restart failed: ${body.detail || r.statusText}`, "err");
     }
   } catch (e) {
     // Network error is expected during restart
-    showToast("⏳ restarting (lost connection)...");
+    showToast("restarting (lost connection)...", "pending");
   }
 });
