@@ -60,6 +60,11 @@ def onboard(args: argparse.Namespace) -> int:
     return lifecycle.run_foreground()
 
 
+def install(args: argparse.Namespace) -> int:
+    from . import install as _install
+    return _install.install(args)
+
+
 def update(args: argparse.Namespace) -> int:
     from . import release
     return release.update()
