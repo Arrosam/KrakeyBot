@@ -66,6 +66,27 @@ $$(".tab-btn").forEach((btn) => {
   });
 });
 
+// ============== RUNTIME-STATE BANNER ==============
+// Shown under the header when the runtime enters sleep (or other
+// known-busy states later). Toggled from the SleepStartEvent /
+// SleepDoneEvent handlers below; the rest of the SPA reads
+// `lastStats.mode` to decide whether to throttle GM-bound work.
+function _showSleepBanner(reason) {
+  const el = document.getElementById("runtime-banner");
+  if (!el) return;
+  const txt = el.querySelector(".banner-text");
+  if (txt) {
+    txt.textContent =
+      "Krakey is sleeping (" + (reason || "compacting memory") +
+      ") — Memory tab is paused until sleep finishes.";
+  }
+  el.classList.remove("hidden");
+}
+function _hideSleepBanner() {
+  const el = document.getElementById("runtime-banner");
+  if (el) el.classList.add("hidden");
+}
+
 // ============== STATUS BAR ==============
 
 const statusBar = $("#status-bar");
@@ -179,18 +200,14 @@ const decisionEl = $("#decision-stream");
 // Tool Usage panel — replaces the old "Hypothalamus (dispatch)"
 // stream. Logs dispatch + tool_result + idle + sleep events.
 const toolEl = $("#tool-stream");
-// Stimulus Stream — chronological feed of stimuli as they enter the
-// runtime queue. Replaces the old "Pending Stimuli" snapshot list.
+// Stimulus panel — groups every received stimulus under the
+// heartbeat that drained it. The runtime emits `stimuli_queued`
+// once per beat with the list of stimuli drained for that beat,
+// and `heartbeat_start` carries the id of the same beat — track
+// the latest id and bucket each stimuli_queued payload under it.
 const stimEl = $("#stim-stream");
 const statusPanel = $("#status-panel");
-
-// Fingerprint set for stimulus-stream dedup. The runtime emits
-// `stimuli_queued` once per heartbeat with the *current* queue
-// snapshot — anything that survived this beat is in there. We only
-// want to log each stimulus once, so we track seen fingerprints
-// (type|source|ts) and append only the unseen.
-const _seenStimuli = new Set();
-const _SEEN_STIMULI_CAP = 1000;
+let _currentHbId = null;
 // Section titles that change every heartbeat — open by default.
 // Anything else (DNA, SELF-MODEL, HEARTBEAT question, BOOTSTRAP) is
 // collapsed since it's noise during normal inspection.
@@ -248,40 +265,49 @@ function appendIconEntry(panel, hbId, iconName, text, extraCls) {
   panel.scrollTop = panel.scrollHeight;
 }
 
-function appendStimulusToStream(stims) {
-  // Each stimuli_queued event carries the current pending queue.
-  // Track fingerprints so we only log each one once across the
-  // session — the same stimulus survives multiple snapshots until
-  // it gets drained by a heartbeat.
-  for (const s of stims || []) {
-    const fp = `${s.type}|${s.source}|${s.ts}`;
-    if (_seenStimuli.has(fp)) continue;
-    _seenStimuli.add(fp);
-    if (_seenStimuli.size > _SEEN_STIMULI_CAP) {
-      // Set iterator gives oldest-first; drop one to bound memory.
-      const oldest = _seenStimuli.values().next().value;
-      _seenStimuli.delete(oldest);
-    }
-    const div = document.createElement("div");
-    div.className = "entry";
-    if (s.adrenalin) div.classList.add("adrenalin");
+function appendStimulusHeartbeat(hbId, stims) {
+  // Render one group per heartbeat: a header tagged with the
+  // beat id + count, followed by the individual stimuli. Empty
+  // beats are skipped so the panel stays scannable.
+  if (!stims || !stims.length) return;
+  const group = document.createElement("div");
+  group.className = "stim-group";
+  const head = document.createElement("div");
+  head.className = "stim-head";
+  const tag = document.createElement("span");
+  tag.className = "hb-tag";
+  tag.textContent = hbId == null ? "#?" : `#${hbId}`;
+  head.appendChild(tag);
+  head.appendChild(document.createTextNode(
+    `  ${stims.length} stimulus${stims.length === 1 ? "" : "es"}`
+  ));
+  group.appendChild(head);
+  for (const s of stims) {
+    const row = document.createElement("div");
+    row.className = "stim-row";
+    if (s.adrenalin) row.classList.add("adrenalin");
     const src = document.createElement("span");
     src.className = "src";
     src.textContent = `[${s.type}] ${s.source}`;
-    div.appendChild(src);
-    div.appendChild(document.createTextNode(
+    row.appendChild(src);
+    row.appendChild(document.createTextNode(
       " " + (s.content || "").slice(0, 200)
     ));
-    stimEl.appendChild(div);
-    while (stimEl.children.length > 200) stimEl.removeChild(stimEl.firstChild);
-    stimEl.scrollTop = stimEl.scrollHeight;
+    group.appendChild(row);
   }
+  stimEl.appendChild(group);
+  // Cap the visible groups to bound DOM growth on long sessions.
+  while (stimEl.children.length > 200) stimEl.removeChild(stimEl.firstChild);
+  stimEl.scrollTop = stimEl.scrollHeight;
 }
 
 function handleEvent(e) {
   switch (e.kind) {
     case "heartbeat_start":
       lastStats.heartbeat_id = e.heartbeat_id;
+      // Snapshot the active beat id so the very next stimuli_queued
+      // (which doesn't carry an id of its own) buckets correctly.
+      _currentHbId = e.heartbeat_id;
       setStatus();
       break;
     case "gm_stats":
@@ -291,7 +317,7 @@ function handleEvent(e) {
       setStatus();
       break;
     case "stimuli_queued":
-      appendStimulusToStream(e.stimuli);
+      appendStimulusHeartbeat(_currentHbId, e.stimuli);
       break;
     case "thinking":
       appendEntry(thinkingEl, e.heartbeat_id, e.text);
@@ -333,12 +359,27 @@ function handleEvent(e) {
         heartbeat_id: e.heartbeat_id,
         ts: new Date().toISOString(),
         full_prompt: e.layers.full_prompt || "",
+        raw_output: null,
       });
+      break;
+    case "self_output":
+      // Raw LLM response landed — patch the matching cached entry's
+      // raw_output and re-render the Prompts tab if it's visible
+      // (and live updates aren't paused).
+      livePatchPromptRawOutput(e.heartbeat_id, e.raw);
       break;
     case "sleep_start":
       appendIconEntry(toolEl, "—", "moon",
         "sleep started: " + e.reason, "sleep-start");
       lastStats.mode = "sleeping";
+      _showSleepBanner(e.reason);
+      // Memory tab is GM-bound and would queue behind sleep on
+      // the shared aiosqlite worker thread; if it's currently
+      // showing data, swap to the placeholder.
+      _lastRenderedMemView = null;
+      if ($("#tab-memory").classList.contains("active")) {
+        loadMemory(currentMemView);
+      }
       setStatus();
       break;
     case "sleep_done":
@@ -346,6 +387,13 @@ function handleEvent(e) {
         "sleep done: " + JSON.stringify(e.stats), "sleep-done");
       lastStats.mode = "normal";
       lastStats.last_sleep = new Date().toISOString();
+      _hideSleepBanner();
+      // Auto-reload Memory if the user is sitting on it — gives
+      // them an immediate refresh once GM is free again.
+      _lastRenderedMemView = null;
+      if ($("#tab-memory").classList.contains("active")) {
+        loadMemory(currentMemView);
+      }
       setStatus();
       break;
   }
@@ -758,6 +806,21 @@ async function loadMemory(view, opts) {
   const target = $("#mem-content");
   if (!force && view === _lastRenderedMemView) return;
   _disposeMemView();
+  // Hard gate while the runtime is sleeping — sleep keeps the
+  // shared aiosqlite worker thread continuously busy with GM
+  // writes, and any /api/gm/* read would queue behind it for the
+  // entire sleep duration, leaving the dashboard appearing to
+  // hang. Render a placeholder instead; the sleep_done handler
+  // re-runs loadMemory automatically.
+  if (lastStats.mode === "sleeping") {
+    target.classList.remove("graph-mode");
+    target.innerHTML =
+      `<p style="padding:20px;color:var(--muted);text-align:center">` +
+      `Krakey is sleeping — Memory will load automatically when ` +
+      `sleep finishes.</p>`;
+    _lastRenderedMemView = null;  // force a real render once awake
+    return;
+  }
   target.classList.toggle("graph-mode", view === "graph");
   target.textContent = "loading...";
   try {
@@ -1176,14 +1239,32 @@ if (logStream) {
 // ============== PROMPTS ==============
 
 const promptsList = $("#prompts-list");
+const promptsLiveToggle = $("#prompts-live");
+const promptsPending = $("#prompts-pending");
 let promptsCache = [];   // newest first; trimmed to PROMPT_UI_CAP
 const PROMPT_UI_CAP = 200;
+
+// Track which heartbeat_ids the user has expanded so re-renders
+// don't snap them shut every time a new beat arrives. Updated from
+// each <details>'s `toggle` event in renderPromptsList; consulted
+// at render time to restore open state.
+const _openPromptIds = new Set();
+
+// Live-update gate. ON (default) ⇒ renderPromptsList runs on every
+// new heartbeat. OFF ⇒ promptsCache still updates in the background
+// (subscriber stays attached) but the foreground is paused so the
+// user can browse old prompts without losing their place. Flipping
+// back ON renders once with the full backlog.
+let _promptsLive = true;
+let _promptsPendingCount = 0;
 
 async function loadPrompts() {
   promptsList.textContent = "loading...";
   try {
     const r = await fetch("/api/prompts?limit=200").then((r) => r.json());
     promptsCache = r.prompts || [];
+    _promptsPendingCount = 0;
+    _updatePendingHint();
     renderPromptsList();
   } catch (e) {
     promptsList.textContent = "error: " + e;
@@ -1191,13 +1272,81 @@ async function loadPrompts() {
 }
 
 function liveAppendPrompt(p) {
-  // Merge / dedupe by heartbeat_id (server may replay on reconnect)
+  // Merge / dedupe by heartbeat_id (server may replay on reconnect).
+  // Cache ALWAYS updates — even when live updates are paused — so
+  // resuming flushes the full backlog into the view in one render.
   const idx = promptsCache.findIndex((x) => x.heartbeat_id === p.heartbeat_id);
-  if (idx !== -1) promptsCache.splice(idx, 1);
+  // If we already had a cached copy with a raw_output filled in,
+  // preserve it across the prompt-built replay so the entry doesn't
+  // briefly lose its right column on reconnect.
+  if (idx !== -1) {
+    const old = promptsCache[idx];
+    if (old.raw_output && !p.raw_output) p.raw_output = old.raw_output;
+    promptsCache.splice(idx, 1);
+  }
   promptsCache.unshift(p);
   if (promptsCache.length > PROMPT_UI_CAP) promptsCache.length = PROMPT_UI_CAP;
-  // Only re-render if the Prompts tab is currently visible (cheap skip)
-  if ($("#tab-prompts").classList.contains("active")) renderPromptsList();
+  // Only repaint the foreground when live updates are on AND the
+  // tab is visible. While paused we count pending arrivals so the
+  // user has feedback on how stale the view is.
+  const visible = $("#tab-prompts").classList.contains("active");
+  if (_promptsLive && visible) {
+    renderPromptsList();
+  } else if (!_promptsLive) {
+    _promptsPendingCount += 1;
+    _updatePendingHint();
+  }
+}
+
+function livePatchPromptRawOutput(hbId, raw) {
+  // Self LLM finished and the runtime emitted SelfOutputEvent; drop
+  // the raw text into the matching cached entry. Order is normally
+  // prompt_built → self_output (~LLM latency apart), so the entry
+  // already exists. If somehow it doesn't (history-snapshot timing),
+  // create a thin one so the right column has something to show.
+  const idx = promptsCache.findIndex((x) => x.heartbeat_id === hbId);
+  if (idx !== -1) {
+    promptsCache[idx].raw_output = raw;
+  } else {
+    promptsCache.unshift({
+      heartbeat_id: hbId,
+      ts: new Date().toISOString(),
+      full_prompt: "",
+      raw_output: raw,
+    });
+    if (promptsCache.length > PROMPT_UI_CAP) {
+      promptsCache.length = PROMPT_UI_CAP;
+    }
+  }
+  const visible = $("#tab-prompts").classList.contains("active");
+  if (_promptsLive && visible) renderPromptsList();
+}
+
+function _updatePendingHint() {
+  if (!promptsPending) return;
+  if (!_promptsLive && _promptsPendingCount > 0) {
+    promptsPending.textContent =
+      `${_promptsPendingCount} new prompt${_promptsPendingCount === 1 ? "" : "s"} since paused`;
+    promptsPending.classList.add("has-pending");
+  } else if (!_promptsLive) {
+    promptsPending.textContent = "paused — toggle live to resume";
+    promptsPending.classList.remove("has-pending");
+  } else {
+    promptsPending.textContent = "";
+    promptsPending.classList.remove("has-pending");
+  }
+}
+
+if (promptsLiveToggle) {
+  promptsLiveToggle.addEventListener("change", () => {
+    _promptsLive = !!promptsLiveToggle.checked;
+    if (_promptsLive) {
+      // Resuming: flush the backlog into the view in one render.
+      _promptsPendingCount = 0;
+      renderPromptsList();
+    }
+    _updatePendingHint();
+  });
 }
 
 function fmtTs(iso) {
@@ -1219,6 +1368,15 @@ function renderPromptsList() {
   for (const p of promptsCache) {
     const card = document.createElement("details");
     card.className = "prompt-card";
+    // Restore expanded state across re-renders by heartbeat_id —
+    // arriving live prompts no longer snap the user's currently-
+    // open card shut. The toggle listener below keeps the set in
+    // sync as the user opens / closes things.
+    if (_openPromptIds.has(p.heartbeat_id)) card.open = true;
+    card.addEventListener("toggle", () => {
+      if (card.open) _openPromptIds.add(p.heartbeat_id);
+      else _openPromptIds.delete(p.heartbeat_id);
+    });
     const sum = document.createElement("summary");
     const tag = document.createElement("span");
     tag.className = "hb-tag";
@@ -1232,9 +1390,18 @@ function renderPromptsList() {
       "  — " + (p.full_prompt ? `${p.full_prompt.length} chars` : "(empty)")
     ));
     card.appendChild(sum);
-    // Inner sections (DNA / STATUS / STIMULUS etc) — collapsible
+    // Two-column body: prompt sections on the left, raw LLM output
+    // on the right. Each column scrolls independently so a long
+    // prompt doesn't push the response off-screen.
     const inner = document.createElement("div");
-    inner.className = "prompt-card-body";
+    inner.className = "prompt-card-body two-col";
+
+    const left = document.createElement("div");
+    left.className = "prompt-col prompt-col-prompt";
+    const leftHead = document.createElement("div");
+    leftHead.className = "prompt-col-head";
+    leftHead.textContent = "prompt";
+    left.appendChild(leftHead);
     for (const s of splitPromptSections(p.full_prompt)) {
       const sec = document.createElement("details");
       sec.className = "prompt-section";
@@ -1247,8 +1414,29 @@ function renderPromptsList() {
       pre.textContent = s.body;
       sec.appendChild(ss);
       sec.appendChild(pre);
-      inner.appendChild(sec);
+      left.appendChild(sec);
     }
+
+    const right = document.createElement("div");
+    right.className = "prompt-col prompt-col-output";
+    const rightHead = document.createElement("div");
+    rightHead.className = "prompt-col-head";
+    rightHead.textContent =
+      "raw output" + (p.raw_output != null ? "" : " — pending");
+    right.appendChild(rightHead);
+    const outPre = document.createElement("pre");
+    outPre.className = "prompt-raw-output";
+    if (p.raw_output != null && p.raw_output !== "") {
+      outPre.textContent = p.raw_output;
+    } else {
+      outPre.classList.add("muted");
+      outPre.textContent =
+        "(LLM hasn't returned yet — fills in after the call lands)";
+    }
+    right.appendChild(outPre);
+
+    inner.appendChild(left);
+    inner.appendChild(right);
     card.appendChild(inner);
     promptsList.appendChild(card);
   }
@@ -1681,6 +1869,14 @@ function renderGenericSection(key, title, target, schema) {
 // existing entry is a removable chip; the trailing input adds new
 // entries on Enter / blur. Used for ``allowed_plugins`` and
 // ``allowlist_domains`` under Environments.
+//
+// opts.suggestions (optional string[]): attaches an in-page
+// custom dropdown styled to match the rest of the panel (same
+// .dd-menu / .dd-item palette as the existing capabilities
+// picker). The dropdown opens on focus, filters as the user
+// types, and supports ArrowUp / ArrowDown / Enter / Escape.
+// Used by allowed_plugins to surface every detected plugin
+// without forcing the user to remember exact names.
 function _renderStringList(arr, opts) {
   if (!Array.isArray(arr)) {
     // Caller passed a non-array; coerce to empty so the UI still
@@ -1706,14 +1902,23 @@ function _renderStringList(arr, opts) {
       chip.appendChild(x);
       wrap.appendChild(chip);
     }
+
+    // Input + (optional) typeahead host. The host wraps both so
+    // the absolute-positioned dropdown anchors to the input
+    // column rather than the whole chip strip.
+    const inputHost = document.createElement("span");
+    inputHost.className = "string-list-input-host";
     const input = document.createElement("input");
     input.type = "text";
     input.placeholder = (opts && opts.placeholder) || "+ add…";
+    input.autocomplete = "off";
     input.style.cssText =
       "border:none;background:transparent;color:var(--text);" +
-      "font-family:inherit;font-size:11px;flex:1;min-width:80px;outline:none";
-    function commit() {
-      const v = input.value.trim();
+      "font-family:inherit;font-size:11px;flex:1;min-width:80px;outline:none;width:100%";
+    inputHost.appendChild(input);
+
+    function commit(value) {
+      const v = (value != null ? value : input.value).trim();
       if (!v) return;
       if (!arr.includes(v)) arr.push(v);
       input.value = "";
@@ -1722,14 +1927,100 @@ function _renderStringList(arr, opts) {
       const newInput = wrap.querySelector("input");
       if (newInput) newInput.focus();
     }
+
+    const sugg = (opts && opts.suggestions) || [];
+    if (sugg.length) {
+      _attachTypeaheadMenu(inputHost, input, sugg, () => arr, commit);
+    }
+
     input.addEventListener("keydown", (e) => {
+      // Enter falls through to the typeahead handler when a
+      // suggestion is highlighted; otherwise commits the typed
+      // text. Letting both run is fine — typeahead's commit
+      // also clears the input so a second commit() finds nothing.
       if (e.key === "Enter") { e.preventDefault(); commit(); }
     });
-    input.addEventListener("blur", commit);
-    wrap.appendChild(input);
+    input.addEventListener("blur", () => commit());
+    wrap.appendChild(inputHost);
   }
   repaint();
   return wrap;
+}
+
+// Custom typeahead dropdown for the chip-list inputs. Renders a
+// styled menu under the input that filters suggestions by
+// substring match against the current input value. Hides items
+// already on the row (passed in via getCurrent()). Supports
+// keyboard navigation (Up / Down / Enter / Escape).
+function _attachTypeaheadMenu(host, input, suggestions, getCurrent, commit) {
+  host.classList.add("has-typeahead");
+  const menu = document.createElement("div");
+  menu.className = "dd-menu typeahead-menu hidden";
+  host.appendChild(menu);
+  let cursor = -1;
+
+  function open() {
+    rebuild();
+  }
+  function close() {
+    menu.classList.add("hidden");
+    cursor = -1;
+  }
+  function rebuild() {
+    const q = input.value.trim().toLowerCase();
+    const used = new Set(getCurrent());
+    const matches = suggestions
+      .filter((s) => !used.has(s))
+      .filter((s) => !q || s.toLowerCase().includes(q));
+    menu.innerHTML = "";
+    if (!matches.length) {
+      close();
+      return;
+    }
+    if (cursor >= matches.length) cursor = matches.length - 1;
+    matches.forEach((s, i) => {
+      const item = document.createElement("div");
+      item.className = "dd-item" + (i === cursor ? " active" : "");
+      item.textContent = s;
+      // mousedown (not click) so the input's blur doesn't fire
+      // first and swallow the pick.
+      item.addEventListener("mousedown", (ev) => {
+        ev.preventDefault();
+        commit(s);
+      });
+      menu.appendChild(item);
+    });
+    menu.classList.remove("hidden");
+  }
+
+  input.addEventListener("focus", open);
+  input.addEventListener("input", () => { cursor = -1; rebuild(); });
+  input.addEventListener("keydown", (e) => {
+    if (menu.classList.contains("hidden")) return;
+    if (e.key === "Escape") { e.preventDefault(); close(); return; }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      cursor = Math.min(cursor + 1, menu.children.length - 1);
+      rebuild();
+      const active = menu.querySelector(".dd-item.active");
+      if (active) active.scrollIntoView({ block: "nearest" });
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      cursor = Math.max(cursor - 1, -1);
+      rebuild();
+      const active = menu.querySelector(".dd-item.active");
+      if (active) active.scrollIntoView({ block: "nearest" });
+    } else if (e.key === "Enter" && cursor >= 0) {
+      e.preventDefault();
+      const pick = menu.children[cursor].textContent;
+      commit(pick);
+    }
+  });
+  // Hide on outside click / blur — small delay so a mousedown
+  // pick has time to fire.
+  input.addEventListener("blur", () => {
+    setTimeout(close, 120);
+  });
 }
 
 function _renderListRow(label, arr, helpPath, opts) {
@@ -1751,6 +2042,16 @@ function renderEnvironmentsSection(envs) {
   const sec = makeSection("Environments");
   const body = sec.querySelector(".body");
 
+  // Plugin-name suggestions for the allow-list editors come from
+  // the same /api/modifiers/available payload the Plugins panel
+  // uses, so anything detected on disk is one keystroke away. The
+  // input still accepts free-form text — useful for plugins not
+  // yet on disk that the user is configuring ahead of an install.
+  const pluginSuggestions = (availableModifiers || [])
+    .map((p) => p && p.name)
+    .filter(Boolean)
+    .sort();
+
   // Local sub-block.
   if (!envs.local) envs.local = { allowed_plugins: [] };
   if (!Array.isArray(envs.local.allowed_plugins)) {
@@ -1764,7 +2065,10 @@ function renderEnvironmentsSection(envs) {
   localBlock.appendChild(_renderListRow(
     "allowed_plugins", envs.local.allowed_plugins,
     "environments.local.allowed_plugins",
-    { placeholder: "plugin name + Enter" },
+    {
+      placeholder: "plugin name (type or pick)",
+      suggestions: pluginSuggestions,
+    },
   ));
   body.appendChild(localBlock);
 
@@ -1815,7 +2119,10 @@ function renderEnvironmentsSection(envs) {
     sbBlock.appendChild(_renderListRow(
       "allowed_plugins", sb.allowed_plugins,
       "environments.sandbox.allowed_plugins",
-      { placeholder: "plugin name + Enter" },
+      {
+        placeholder: "plugin name (type or pick)",
+        suggestions: pluginSuggestions,
+      },
     ));
     for (const [f, t] of SCHEMAS.env_sandbox_scalars) {
       sbBlock.appendChild(renderRow(
@@ -2141,6 +2448,14 @@ function renderLLMSection(llm) {
   const tagsHead = document.createElement("h4");
   tagsHead.style.cssText = "color:var(--text);font-weight:bold;font-size:11px;margin:12px 0 6px";
   tagsHead.appendChild(document.createTextNode("Tags"));
+  // Section-wide tooltip explaining what a tag is and how
+  // Core / Plugin Purposes consume them. Shown on hover.
+  tagsHead.title =
+    "A tag is a named (provider/model + params) preset. " +
+    "Core Purposes (Self / compact / classifier) and Plugin " +
+    "Purposes both bind a tag name; multiple purposes can share " +
+    "the same tag, and a tag can be re-tuned in one place to " +
+    "change every consumer at once.";
   const addTag = mkBtn("+ add tag", () => {
     const provNames = Object.keys(llm.providers || {});
     if (!provNames.length) { alert("add a provider first"); return; }
@@ -2340,6 +2655,35 @@ function mkDropdown(triggerLabel, items, onPick) {
   return dd;
 }
 
+// Build the hover-tooltip body for a tag-row label. Lists the
+// provider/model the tag points at + every place it's currently
+// consumed (core_purposes, embedding, reranker, plugin
+// llm_purposes). Plain text — gets attached as `label.title`.
+function _tagTooltip(tname, tag) {
+  const llm = cfgState.llm || {};
+  const lines = [];
+  lines.push(`Tag: ${tname}`);
+  lines.push(`Binding: ${(tag && tag.provider) || "(unset)"}`);
+  const purposes = [];
+  for (const [purp, t] of Object.entries(llm.core_purposes || {})) {
+    if (t === tname) purposes.push(`core.${purp}`);
+  }
+  if (llm.embedding === tname) purposes.push("embedding slot");
+  if (llm.reranker === tname) purposes.push("reranker slot");
+  for (const p of (availableModifiers || [])) {
+    const cfg = (modifierConfigEdits || {})[p && p.name];
+    const lp = cfg && cfg.llm_purposes;
+    if (!lp) continue;
+    for (const [k, v] of Object.entries(lp)) {
+      if (v === tname) purposes.push(`${p.name}.${k}`);
+    }
+  }
+  lines.push(
+    "Used by: " + (purposes.length ? purposes.join(", ") : "(nothing yet)"),
+  );
+  return lines.join("\n");
+}
+
 function renderTagRow(tname, tags, providers) {
   // Wrapper so the params <details> sits directly below the tag row
   // (sharing a container keeps delete/rename behavior correct).
@@ -2367,6 +2711,11 @@ function renderTagRow(tname, tags, providers) {
       renderSettingsForm();
     },
   }));
+  // Hover help: surface the tag's binding + every consumer
+  // (Core / Plugin Purposes, embedding, reranker) so the user
+  // can see at a glance what renaming or unbinding would
+  // affect, without having to expand the params block.
+  lab.title = _tagTooltip(tname, tags[tname]);
   row.appendChild(lab);
 
   const wrap = document.createElement("div");
@@ -2493,9 +2842,16 @@ function renderTagParamsBlock(tname, tags) {
 // classifier optional) are always shown so people know they exist.
 const KNOWN_CORE_PURPOSES = [
   ["self_thinking", "required — Self's per-beat heartbeat LLM"],
-  ["compact", "sliding-window history → GM compaction LLM (also drives sleep clustering + KB index rebuild)"],
+  ["compact", "sliding-window history -> GM compaction LLM (also drives sleep clustering + KB index rebuild)"],
   ["classifier", "node category classifier (extractor + classifier; falls back to compact then self_thinking)"],
-  ["hypothalamus", "legacy compat — modern setups bind translator via the Hypothalamus plugin's per-plugin llm_purposes instead. Leave (unbound) unless you need the deprecated central path."],
+  // Note: ``hypothalamus`` is intentionally NOT here. The runtime
+  // still honours ``llm.core_purposes.hypothalamus`` for legacy
+  // configs (main.py:103), but the modern path is per-plugin
+  // — the Hypothalamus plugin declares ``translator`` in its
+  // meta.yaml and that surfaces in the "Plugin Purposes"
+  // sub-block below. Listing it here too caused duplicate rows
+  // once the plugin was enabled. A user on the legacy path can
+  // still add ``hypothalamus`` via "+ add purpose".
 ];
 
 function renderCorePurposesBlock(llm) {

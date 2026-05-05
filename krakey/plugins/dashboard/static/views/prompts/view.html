@@ -2,5 +2,12 @@
     <section id="tab-prompts" class="tab-panel">
       <p class="hint">The full prompt built for each heartbeat (last 50
         beats, in-memory ring buffer; cleared on restart).</p>
+      <div class="prompts-toolbar">
+        <label class="prompts-live-toggle">
+          <input id="prompts-live" type="checkbox" checked>
+          <span>Live updates</span>
+        </label>
+        <span id="prompts-pending" class="muted"></span>
+      </div>
       <div id="prompts-list" class="scroll">— loading —</div>
     </section>

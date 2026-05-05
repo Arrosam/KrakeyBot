@@ -14,14 +14,15 @@ SocketSend = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 # Event kinds we DO NOT keep in the reconnect-snapshot ring buffer.
-# Right now this is just ``prompt_built``: each one carries the full
-# heartbeat prompt as a single string (often 50\u2013200 KB), so saving
-# 50+ of them in memory and shipping them all on every WS connect
-# blows up the snapshot size to multiple MB. The Prompts tab fetches
-# /api/prompts directly when the user opens it (canonical source);
-# live new ``prompt_built`` events still flow through the broadcaster
-# in real time, they just don't get replayed on reconnect.
-_HISTORY_EXCLUDE_KINDS = frozenset({"prompt_built"})
+# Each carries a full text blob (the heartbeat prompt for
+# ``prompt_built``; the raw Self LLM response for ``self_output``),
+# so saving 50+ of them in memory and shipping them all on every WS
+# connect blows up the snapshot size to multiple MB. The Prompts
+# tab fetches /api/prompts directly when the user opens it
+# (canonical source \u2014 its entries carry both fields); live events
+# still flow through the broadcaster in real time, they just don't
+# get replayed on reconnect.
+_HISTORY_EXCLUDE_KINDS = frozenset({"prompt_built", "self_output"})
 
 
 class EventBroadcaster:

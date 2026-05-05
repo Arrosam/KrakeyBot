@@ -274,6 +274,25 @@ main {
 .scroll .entry.sleep-start .entry-icon { color: var(--magenta); }
 .scroll .entry.sleep-done  .entry-icon { color: var(--yellow); }
 
+/* Sleep banner — pinned under the header. The runtime is busy
+   compacting GM during sleep and any /api/gm/* read would queue
+   behind it on the shared aiosqlite worker thread. We surface the
+   state here so the user knows the dashboard is intentionally
+   limited (rather than wondering why Memory hangs). */
+.runtime-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 12px 0;
+  padding: 5px 10px;
+  font-size: 11px;
+  color: var(--bg);
+  background: var(--magenta);
+  border-radius: 4px;
+  font-weight: bold;
+}
+.runtime-banner.hidden { display: none; }
+
 /* Shared hint paragraph (prompts + settings). */
 .hint {
   font-size: 12px;
