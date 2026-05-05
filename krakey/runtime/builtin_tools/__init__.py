@@ -13,9 +13,16 @@ composition root, alongside ``BatchTrackerChannel``. They appear in
 ``[CAPABILITIES]`` like any other tool so Self learns about them
 through the same channel.
 """
+from krakey.runtime.builtin_tools.install_tool import (
+    INSTALL_TOOL_NAME,
+    InstallTool,
+)
 from krakey.runtime.builtin_tools.sleep_tool import (
     SLEEP_TOOL_NAME,
     SleepTool,
 )
 
-__all__ = ["SLEEP_TOOL_NAME", "SleepTool"]
+__all__ = [
+    "INSTALL_TOOL_NAME", "InstallTool",
+    "SLEEP_TOOL_NAME", "SleepTool",
+]

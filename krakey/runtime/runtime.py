@@ -18,6 +18,7 @@ from typing import Any
 
 from krakey.bootstrap import load_self_model_or_default
 from krakey.models.self_model import SelfModelStore
+from krakey.models.stimulus import Stimulus
 from krakey.interfaces.tool import ToolRegistry
 from krakey.llm.resolve import AsyncEmbedder, ChatLike, resolve_llm_for_tag
 from krakey.memory.graph_memory import GraphMemory
@@ -85,6 +86,12 @@ class RuntimeDeps:
     # at construction time. Tests pass a pre-built Router (or leave
     # this None for the default empty-allow-list build).
     environment_router: EnvironmentRouter | None = None
+    # Whether ``run()`` should push a system:install advisory
+    # Stimulus when ``has_pending_deps()`` is True. Production
+    # leaves this on so Self can self-repair via the built-in
+    # ``install`` tool. Tests default to False to avoid surprise
+    # stimuli polluting buffer-state assertions.
+    enable_install_advisory: bool = True
 
 
 class Runtime:
@@ -190,8 +197,13 @@ class Runtime:
         # voluntary sleep without depending on the optional
         # hypothalamus translator plugin (sleep is a heartbeat-
         # lifecycle capability, not an add-on).
-        from krakey.runtime.builtin_tools import SleepTool
+        from krakey.runtime.builtin_tools import InstallTool, SleepTool
         self.tools.register(SleepTool())
+        # InstallTool lets Self self-repair missing plugin deps.
+        # Bootstrapping property: she can call install BEFORE the
+        # plugin she's missing is functional, since the tool lives
+        # in the runtime not in any plugin.
+        self.tools.register(InstallTool())
         # Each plugin's config lives at
         # <plugin_configs_root>/<name>/config.yaml. Same root as the
         # plugin folders themselves (workspace/plugins/) so user config
@@ -201,6 +213,9 @@ class Runtime:
         plugin_root = Path(deps.plugin_configs_root
                             or "workspace/plugins")
         self._plugin_configs_root = plugin_root
+        self._enable_install_advisory = bool(
+            deps.enable_install_advisory,
+        )
 
         # ``self.buffer`` is both the live stimulus queue AND the live
         # channel set (see krakey/runtime/stimuli/stimulus_buffer.py).
@@ -396,6 +411,12 @@ class Runtime:
         # dashboard is just a channel like any other.
         await self.buffer.start_all()
 
+        # Surface "plugin deps need installing" to Self as a
+        # high-priority Stimulus so she can call the built-in
+        # `install` tool herself without operator intervention.
+        # See krakey/runtime/builtin_tools/install_tool.py.
+        await self._maybe_push_install_advisory()
+
         self._recall = self._new_recall()
 
         # Pause mode: no Self LLM bound (user skipped chat in onboarding,
@@ -447,6 +468,60 @@ class Runtime:
         combines this with its own ``FilePluginConfigStore`` reads to
         build the ``/api/plugins`` payload."""
         return self._plugin_observer.loaded_report()
+
+    async def _maybe_push_install_advisory(self) -> None:
+        """If declared plugin deps drifted from the last
+        ``krakey install`` (no install_state.json yet OR hash
+        changed), push a system_event Stimulus so Self sees it on
+        her first heartbeat. She can then call the built-in
+        ``install`` tool to self-repair.
+
+        Best-effort: any exception inside the check is swallowed
+        (the additive-plugin invariant extends to advisories).
+        Doesn't block startup.
+
+        Gated by ``RuntimeDeps.enable_install_advisory`` (default
+        True in production; False in tests via build_runtime_with_fakes
+        so existing buffer-state assertions don't have to know
+        about this stimulus)."""
+        if not self._enable_install_advisory:
+            return
+        try:
+            from krakey.cli import install as install_mod
+            pending, plugin_deps = install_mod.has_pending_deps()
+        except Exception:  # noqa: BLE001
+            return
+        if not pending:
+            return
+
+        plugins_with_deps = sorted(
+            name for name, deps in plugin_deps.items() if deps
+        )
+        if plugins_with_deps:
+            listed = ", ".join(plugins_with_deps)
+            content = (
+                "Plugin dependencies are out-of-date since the "
+                "last `krakey install`. Plugins with declared "
+                f"deps: {listed}. You have a built-in `install` "
+                "tool — call it to self-repair. If pip fails "
+                "(no network, PyPI unreachable), tell the user "
+                "via your outbound channel and stop trying."
+            )
+        else:
+            content = (
+                "Plugin install_state.json is missing or stale, "
+                "but no plugins declare third-party deps right "
+                "now. Calling the built-in `install` tool is "
+                "harmless and will refresh the state file."
+            )
+
+        await self.buffer.push(Stimulus(
+            type="system_event",
+            source="system:install",
+            content=content,
+            timestamp=datetime.now(),
+            adrenalin=True,
+        ))
 
     def _build_environment_router(self) -> EnvironmentRouter:
         """Compose Local + Sandbox-if-configured into a Router whose
