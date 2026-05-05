@@ -1250,6 +1250,20 @@ const PROMPT_UI_CAP = 200;
 // at render time to restore open state.
 const _openPromptIds = new Set();
 
+// Same pattern for the inner per-section <details> blocks (DNA,
+// SELF MODEL, CAPABILITIES, ...). Map keyed by
+// ``${hbId}|${sectionTitle}`` → boolean (true = open, false =
+// closed). When a key is present, its recorded state ALWAYS
+// wins on the next render — that's how we preserve a user-
+// expanded DNA across heartbeat updates AND remember a user-
+// collapsed STIMULUS that would otherwise re-auto-open. When a
+// key is absent (no interaction yet), the DYNAMIC_SECTIONS
+// auto-open rule below applies.
+const _promptSectionStates = new Map();
+function _sectionKey(hbId, title) {
+  return `${hbId}|${title}`;
+}
+
 // Live-update gate. ON (default) ⇒ renderPromptsList runs on every
 // new heartbeat. OFF ⇒ promptsCache still updates in the background
 // (subscriber stays attached) but the foreground is paused so the
@@ -1405,9 +1419,19 @@ function renderPromptsList() {
     for (const s of splitPromptSections(p.full_prompt)) {
       const sec = document.createElement("details");
       sec.className = "prompt-section";
-      if (DYNAMIC_SECTIONS.some((k) => s.title.toUpperCase().includes(k))) {
+      const secKey = _sectionKey(p.heartbeat_id, s.title);
+      // Recorded user state wins; otherwise fall back to the
+      // auto-open rule for dynamic sections.
+      if (_promptSectionStates.has(secKey)) {
+        sec.open = _promptSectionStates.get(secKey);
+      } else if (
+        DYNAMIC_SECTIONS.some((k) => s.title.toUpperCase().includes(k))
+      ) {
         sec.open = true;
       }
+      sec.addEventListener("toggle", () => {
+        _promptSectionStates.set(secKey, sec.open);
+      });
       const ss = document.createElement("summary");
       ss.textContent = s.title;
       const pre = document.createElement("pre");
