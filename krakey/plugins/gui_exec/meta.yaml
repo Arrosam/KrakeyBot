@@ -20,6 +20,13 @@ config_schema:
       keep a ``python`` symlink. Set to ``python3`` (or an absolute
       path) on minimal Linux installs that ship only ``python3``.
 
+dependencies:
+  # ``pyautogui`` is needed in the env's Python (where the snippet
+  # runs), not just in the host. ``krakey install`` adds it to the
+  # current Python — operators using a separate venv inside a
+  # sandbox must install it there too.
+  - "pyautogui>=0.9"
+
 components:
   - kind: tool
     factory_module: krakey.plugins.gui_exec.tool

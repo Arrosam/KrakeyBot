@@ -23,6 +23,8 @@ config_schema:
     help: >
       Chat ID the reply tool sends to when no chat_id is specified
       in the tool call.
+dependencies:
+  - "aiohttp>=3.9"
 components:
   - kind: channel
     factory_module: krakey.plugins.telegram

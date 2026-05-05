@@ -42,6 +42,13 @@ config_schema:
       Per-action timeout cap (page.goto, page.click, wait_for, ...).
       Self can override per call via ``timeout_s``.
 
+dependencies:
+  # ``krakey install`` adds the playwright Python package, but
+  # browser BINARIES still need the operator to run
+  # ``playwright install chromium`` (or firefox / webkit) — that
+  # downloads ~200MB per browser and is out of pip's scope.
+  - "playwright>=1.40"
+
 components:
   - kind: tool
     factory_module: krakey.plugins.browser_exec.tool

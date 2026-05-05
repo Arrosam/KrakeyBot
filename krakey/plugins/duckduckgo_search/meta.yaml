@@ -9,6 +9,8 @@ config_schema:
     type: number
     default: 5
     help: Upper bound on results per query.
+dependencies:
+  - "ddgs>=9.0"
 components:
   - kind: tool
     factory_module: krakey.plugins.duckduckgo_search
