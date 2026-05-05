@@ -51,19 +51,11 @@ the workspace root via ``os.chdir``."""
 # =====================================================================
 
 
-def collect_plugin_dependencies() -> dict[str, list[str]]:
-    """Walk every plugin folder under BUILTIN_ROOT + WORKSPACE_ROOT.
-    Returns ``{plugin_name: [pip-spec-strings]}``.
-
-    Workspace overrides built-in (matches ``load_plugin_meta``'s
-    same-name semantics — but here we walk EVERY plugin, not just
-    those in the user's enabled list, because a plugin's deps need
-    to be installed before its meta.yaml is referenced from
-    config.yaml).
-    """
-    out: dict[str, list[str]] = {}
-    # Iterate built-in first, then workspace, so workspace wins on
-    # name collisions (later writes override earlier).
+def _walk_plugin_metas():
+    """Yield (plugin_name, parsed_meta) for every well-formed
+    plugin under BUILTIN_ROOT + WORKSPACE_ROOT. Workspace wins on
+    name collisions. Malformed metas log and skip."""
+    seen: dict[str, Any] = {}
     for root in (BUILTIN_ROOT, WORKSPACE_ROOT):
         if not root.exists():
             continue
@@ -76,16 +68,28 @@ def collect_plugin_dependencies() -> dict[str, list[str]]:
             try:
                 meta = parse_meta(meta_path)
             except Exception as e:  # noqa: BLE001
-                # Surface but don't abort — a malformed plugin
-                # shouldn't block installing the others.
                 print(
                     f"warning: skipping {d.name}: meta.yaml parse "
                     f"failed: {e}",
                     file=sys.stderr,
                 )
                 continue
-            out[meta.name] = list(meta.dependencies)
-    return out
+            seen[meta.name] = meta
+    for name, meta in seen.items():
+        yield name, meta
+
+
+def collect_plugin_dependencies() -> dict[str, list[str]]:
+    """Walk every plugin folder under BUILTIN_ROOT + WORKSPACE_ROOT.
+    Returns ``{plugin_name: [pip-spec-strings]}``."""
+    return {n: list(m.dependencies) for n, m in _walk_plugin_metas()}
+
+
+def collect_plugin_post_install() -> dict[str, list[dict[str, Any]]]:
+    """Same walk, returns ``{plugin_name: [post_install entries]}``.
+    Each entry is the validated dict from
+    ``loader._parse_post_install``: ``{args, description, optional}``."""
+    return {n: list(m.post_install) for n, m in _walk_plugin_metas()}
 
 
 def collect_core_dependencies() -> list[str]:
@@ -125,18 +129,38 @@ def collect_core_dependencies() -> list[str]:
 # =====================================================================
 
 
-def deps_hash(plugin_deps: dict[str, list[str]]) -> str:
-    """Stable sha256 over the SORTED union of all declared deps.
+def deps_hash(
+    plugin_deps: dict[str, list[str]],
+    post_install: dict[str, list[dict[str, Any]]] | None = None,
+) -> str:
+    """Stable sha256 over the SORTED union of declared pip deps
+    AND the per-plugin post_install commands (joined arg lists).
 
-    Hashing the union (not per-plugin) means:
-      - reordering plugins doesn't trip the hash
-      - adding a plugin whose every dep is already declared by
-        another plugin doesn't trigger a re-install warning
-      - changing a version pin DOES (a new spec string is a
-        different element of the set)
-    """
+    Including post_install means a plugin that adds a new
+    secondary install step (e.g. browser_exec adding firefox
+    binaries) trips the startup advisory + dashboard
+    "needs install" status, even if its pip deps haven't changed.
+
+    ``post_install`` defaults to None for back-compat with
+    callers that don't have it (existing tests). New code
+    should pass both."""
     flat = sorted({d for deps in plugin_deps.values() for d in deps})
-    return hashlib.sha256("\n".join(flat).encode("utf-8")).hexdigest()
+    parts = ["\n".join(flat)]
+    if post_install:
+        # Serialize each post_install entry deterministically:
+        # plugin|args|optional. Description is documentation,
+        # not part of the install behavior, so excluded from
+        # the hash.
+        post_lines = []
+        for plugin in sorted(post_install.keys()):
+            for entry in post_install[plugin]:
+                args = json.dumps(entry.get("args") or [])
+                opt = bool(entry.get("optional", False))
+                post_lines.append(f"{plugin}|{args}|{opt}")
+        parts.append("\n".join(sorted(post_lines)))
+    return hashlib.sha256(
+        "\n---\n".join(parts).encode("utf-8"),
+    ).hexdigest()
 
 
 def read_install_state() -> dict | None:
@@ -171,12 +195,13 @@ def has_pending_deps() -> tuple[bool, dict[str, list[str]]]:
       * no install_state.json exists yet (fresh checkout / first
         run), OR
       * the deps_hash on disk differs from the live one (a plugin
-        was added / removed / changed its declared deps since last
-        install).
+        was added / removed / changed its declared deps OR its
+        post_install commands since last install).
     """
     plugin_deps = collect_plugin_dependencies()
+    post_install = collect_plugin_post_install()
     state = read_install_state()
-    current = deps_hash(plugin_deps)
+    current = deps_hash(plugin_deps, post_install)
     if state is None:
         return True, plugin_deps
     if state.get("deps_hash") != current:
@@ -189,15 +214,73 @@ def has_pending_deps() -> tuple[bool, dict[str, list[str]]]:
 # =====================================================================
 
 
+def expand_python_token(args: list[str]) -> list[str]:
+    """Token-substitute ``{python}`` → ``sys.executable`` in argv
+    so post_install commands ALWAYS hit the runtime's interpreter
+    (same venv where pip just installed)."""
+    return [
+        sys.executable if a == "{python}" else a for a in args
+    ]
+
+
+def run_post_install_for_plugin(
+    plugin_name: str,
+    entries: list[dict[str, Any]],
+) -> tuple[int, list[str]]:
+    """Run a single plugin's post_install entries in declared
+    order. Returns ``(rc, errors)`` where rc is 0 on full success.
+
+    Per-entry behavior:
+      - args list with ``{python}`` token substitution
+      - description echoed to stdout before each command
+      - ``optional=True`` failures are logged but don't abort
+      - ``optional=False`` (default) failures abort the rest of
+        THIS plugin's chain (other plugins still get to try)
+    """
+    errors: list[str] = []
+    for i, entry in enumerate(entries):
+        argv = expand_python_token(entry["args"])
+        desc = entry.get("description") or ""
+        optional = bool(entry.get("optional", False))
+        label = f"  $ {' '.join(argv)}"
+        if desc:
+            label += f"     # {desc}"
+        print(f"\n[{plugin_name} post_install #{i + 1}] " + (
+            "(optional)" if optional else ""
+        ))
+        print(label)
+        rc = subprocess.call(argv)
+        if rc == 0:
+            continue
+        msg = (
+            f"{plugin_name} post_install #{i + 1} "
+            f"({argv[0]}...) returned rc={rc}"
+        )
+        if optional:
+            print(f"  ⚠ optional step failed (continuing): {msg}",
+                  file=sys.stderr)
+            continue
+        errors.append(msg)
+        print(
+            f"  ✗ aborting {plugin_name} post_install: {msg}",
+            file=sys.stderr,
+        )
+        return rc, errors
+    return 0, errors
+
+
 def install(args: argparse.Namespace) -> int:
-    """``krakey install`` handler. Discovers, prints, dispatches.
+    """``krakey install`` handler. Discovers, prints, pip-installs,
+    runs post_install hooks.
 
     Returns the pip subprocess's exit code (0 on success). On
-    pip failure the install_state.json is NOT updated, so the
-    next startup still warns and the operator can re-run after
-    fixing the underlying pip error.
+    pip failure or any non-optional post_install failure, the
+    install_state.json is NOT updated, so the next startup still
+    warns and the operator can re-run after fixing the underlying
+    error.
     """
     plugin_deps = collect_plugin_dependencies()
+    plugin_post = collect_plugin_post_install()
     core_deps = collect_core_dependencies()
 
     print("krakey install: discovery")
@@ -208,13 +291,21 @@ def install(args: argparse.Namespace) -> int:
     else:
         print("  core: (none — running from a wheel / no pyproject "
               "at repo root)")
-    for name, deps in sorted(plugin_deps.items()):
-        if deps:
-            print(f"  plugin {name}:")
-            for d in deps:
-                print(f"    - {d}")
-        else:
-            print(f"  plugin {name}: (no third-party deps)")
+    for name in sorted(set(plugin_deps) | set(plugin_post)):
+        deps = plugin_deps.get(name) or []
+        post = plugin_post.get(name) or []
+        if not deps and not post:
+            print(f"  plugin {name}: (no deps, no post_install)")
+            continue
+        print(f"  plugin {name}:")
+        for d in deps:
+            print(f"    - {d}")
+        for entry in post:
+            argv = " ".join(entry["args"])
+            tag = " (optional)" if entry.get("optional") else ""
+            desc = entry.get("description") or ""
+            print(f"    + post_install: {argv}{tag}"
+                  + (f" — {desc}" if desc else ""))
 
     union = sorted(set(core_deps) | {
         d for deps in plugin_deps.values() for d in deps
@@ -224,39 +315,72 @@ def install(args: argparse.Namespace) -> int:
         print("\n--dry-run: not invoking pip; would install:")
         for d in union:
             print(f"  - {d}")
+        for plugin_name in sorted(plugin_post):
+            for entry in plugin_post[plugin_name]:
+                argv = " ".join(expand_python_token(entry["args"]))
+                tag = " (optional)" if entry.get("optional") else ""
+                print(f"  + post_install ({plugin_name}): "
+                      f"{argv}{tag}")
         return 0
 
-    if not union:
-        print("\nNothing to install.")
-        write_install_state({
-            "deps_hash":    deps_hash(plugin_deps),
-            "installed":    sorted(plugin_deps.keys()),
-            "installed_at": datetime.now().isoformat(timespec="seconds"),
-            "core_count":   len(core_deps),
-        })
-        return 0
-
-    print(f"\nInstalling {len(union)} unique dep(s) via pip...")
-    cmd = [sys.executable, "-m", "pip", "install", *union]
-    if getattr(args, "upgrade", False):
-        cmd.insert(4, "--upgrade")
-    print(f"  $ {' '.join(cmd)}\n")
-
-    rc = subprocess.call(cmd)
-    if rc != 0:
-        print(
-            f"\npip exited with rc={rc}; install_state.json NOT "
-            "updated. Fix the underlying error and re-run "
-            "`krakey install`.",
-            file=sys.stderr,
-        )
-        return rc
-
-    write_install_state({
-        "deps_hash":    deps_hash(plugin_deps),
+    final_state = {
+        "deps_hash":    deps_hash(plugin_deps, plugin_post),
         "installed":    sorted(plugin_deps.keys()),
         "installed_at": datetime.now().isoformat(timespec="seconds"),
         "core_count":   len(core_deps),
-    })
+        "post_install_done": sorted(
+            n for n, p in plugin_post.items() if p
+        ),
+    }
+
+    if not union:
+        print("\nNo pip deps to install — skipping pip step.")
+    else:
+        print(f"\nInstalling {len(union)} unique dep(s) via pip...")
+        cmd = [sys.executable, "-m", "pip", "install", *union]
+        if getattr(args, "upgrade", False):
+            cmd.insert(4, "--upgrade")
+        print(f"  $ {' '.join(cmd)}\n")
+
+        rc = subprocess.call(cmd)
+        if rc != 0:
+            print(
+                f"\npip exited with rc={rc}; install_state.json NOT "
+                "updated. Fix the underlying error and re-run "
+                "`krakey install`.",
+                file=sys.stderr,
+            )
+            return rc
+
+    # ---- post_install hooks ----
+    any_post_failure = False
+    for plugin_name in sorted(plugin_post.keys()):
+        entries = plugin_post[plugin_name]
+        if not entries:
+            continue
+        rc, errs = run_post_install_for_plugin(plugin_name, entries)
+        if rc != 0:
+            any_post_failure = True
+            # Don't break — other plugins' post_install still get
+            # a chance, so a single broken plugin doesn't gate
+            # ALL secondary install steps. The state is NOT
+            # written below, so the operator re-runs after
+            # fixing the issue.
+            print(
+                f"\nNote: {plugin_name} post_install failed; "
+                "continuing with other plugins.",
+                file=sys.stderr,
+            )
+
+    if any_post_failure:
+        print(
+            "\nkrakey install: pip succeeded but at least one "
+            "non-optional post_install step failed. "
+            "install_state.json NOT updated; re-run after fixing.",
+            file=sys.stderr,
+        )
+        return 1
+
+    write_install_state(final_state)
     print("\nkrakey install: done.")
     return 0

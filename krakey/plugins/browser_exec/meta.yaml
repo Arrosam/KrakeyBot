@@ -47,11 +47,19 @@ config_schema:
       Self can override per call via ``timeout_s``.
 
 dependencies:
-  # ``krakey install`` adds the playwright Python package, but
-  # browser BINARIES still need the operator to run
-  # ``playwright install chromium`` (or firefox / webkit) — that
-  # downloads ~200MB per browser and is out of pip's scope.
   - "playwright>=1.40"
+
+post_install:
+  # Browser binary download — pip can't drive this, but
+  # ``playwright install <browser>`` ships with the playwright
+  # package once pip puts it in place. ~200MB per browser, but
+  # idempotent so re-running is cheap (skip if already present).
+  # ``{python}`` is substituted with sys.executable at run-time
+  # so the command targets the same venv pip just installed
+  # playwright into.
+  - args: ["{python}", "-m", "playwright", "install", "chromium"]
+    description: "Download Chromium browser binary (~200MB, one-time)"
+    optional: false
 
 components:
   - kind: tool

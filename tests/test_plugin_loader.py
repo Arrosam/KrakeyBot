@@ -217,6 +217,67 @@ def test_plugin_meta_yaml_reachable_via_importlib_resources(plugin_name):
     assert text and "name:" in text
 
 
+# =====================================================================
+# post_install field — secondary install commands (e.g. playwright
+# install chromium for browser_exec) that pip can't drive
+# =====================================================================
+
+
+def test_parse_meta_default_post_install_is_empty(tmp_path):
+    meta = parse_meta(_write_meta(tmp_path, _baseline_meta()))
+    assert meta.post_install == []
+
+
+def test_parse_meta_post_install_round_trips(tmp_path):
+    body = _baseline_meta()
+    body["post_install"] = [
+        {
+            "args": ["{python}", "-m", "playwright", "install", "chromium"],
+            "description": "Download Chromium",
+        },
+        {
+            "args": ["echo", "hello"],
+            "description": "Optional ping",
+            "optional": True,
+        },
+    ]
+    meta = parse_meta(_write_meta(tmp_path, body))
+    assert len(meta.post_install) == 2
+    assert meta.post_install[0]["args"] == [
+        "{python}", "-m", "playwright", "install", "chromium",
+    ]
+    assert meta.post_install[0]["description"] == "Download Chromium"
+    assert meta.post_install[0]["optional"] is False
+    assert meta.post_install[1]["optional"] is True
+
+
+def test_parse_meta_post_install_rejects_non_list(tmp_path):
+    body = _baseline_meta()
+    body["post_install"] = "not a list"
+    with pytest.raises(ValueError) as ei:
+        parse_meta(_write_meta(tmp_path, body))
+    assert "post_install" in str(ei.value)
+
+
+@pytest.mark.parametrize("bad_args", [
+    None, "string", [], [""], ["valid", 7],
+])
+def test_parse_meta_post_install_rejects_bad_args(tmp_path, bad_args):
+    body = _baseline_meta()
+    body["post_install"] = [{"args": bad_args}]
+    with pytest.raises(ValueError) as ei:
+        parse_meta(_write_meta(tmp_path, body))
+    assert "args" in str(ei.value)
+
+
+def test_parse_meta_post_install_rejects_non_bool_optional(tmp_path):
+    body = _baseline_meta()
+    body["post_install"] = [{"args": ["x"], "optional": "yes"}]
+    with pytest.raises(ValueError) as ei:
+        parse_meta(_write_meta(tmp_path, body))
+    assert "optional" in str(ei.value)
+
+
 def test_browser_exec_server_source_is_reachable_via_inspect():
     """``snippets.py`` reads ``server.py``'s source via
     ``inspect.getsource`` at import time and embeds it in every

@@ -212,7 +212,8 @@ def test_has_pending_deps_true_when_no_state_file(isolated_workspace):
 
 def test_has_pending_deps_false_when_state_matches(isolated_workspace):
     deps = install_mod.collect_plugin_dependencies()
-    h = install_mod.deps_hash(deps)
+    post = install_mod.collect_plugin_post_install()
+    h = install_mod.deps_hash(deps, post)
     install_mod.write_install_state({
         "deps_hash": h, "installed": [], "installed_at": "x",
     })
@@ -280,8 +281,13 @@ def test_install_invokes_pip_with_union_of_deps(
         argparse.Namespace(dry_run=False, upgrade=False),
     )
     assert rc == 0
-    assert len(captured) == 1
-    cmd = captured[0]
+    # Find the pip call among the captured subprocess invocations.
+    # In-tree browser_exec declares a post_install (playwright
+    # binary download) that also fires, so the pip call may not
+    # be the only one — match by content instead of position.
+    pip_calls = [c for c in captured if "pip" in c]
+    assert len(pip_calls) == 1
+    cmd = pip_calls[0]
     # Must invoke the active interpreter's pip (so we end up in
     # the right venv).
     assert cmd[:4] == [
@@ -377,3 +383,210 @@ def test_adding_a_new_workspace_plugin_after_install_pends_again(
         deps=["totally-new-pkg>=1"],
     )
     assert install_mod.has_pending_deps()[0] is True
+
+
+# =====================================================================
+# post_install hooks — pip-can't-drive secondary install commands
+# =====================================================================
+
+
+def _make_workspace_plugin_with_post(
+    workspace, name, deps=None, post_install=None,
+):
+    plugin_dir = workspace / "plugins" / name
+    plugin_dir.mkdir(parents=True)
+    body = {
+        "name": name, "description": "x",
+        "components": [{
+            "kind": "tool",
+            "factory_module": "krakey.plugins.cli_exec.tool",
+            "factory_attr": "build_tool",
+        }],
+    }
+    if deps is not None:
+        body["dependencies"] = deps
+    if post_install is not None:
+        body["post_install"] = post_install
+    (plugin_dir / "meta.yaml").write_text(
+        yaml.safe_dump(body), encoding="utf-8",
+    )
+
+
+def test_collect_plugin_post_install_walks_all_plugins(
+    isolated_workspace,
+):
+    _make_workspace_plugin_with_post(
+        isolated_workspace, "with_post",
+        post_install=[{
+            "args": ["echo", "after-install"],
+            "description": "test",
+        }],
+    )
+    out = install_mod.collect_plugin_post_install()
+    assert "with_post" in out
+    assert out["with_post"][0]["args"] == ["echo", "after-install"]
+
+
+def test_expand_python_token_substitutes_runtime_executable():
+    out = install_mod.expand_python_token(
+        ["{python}", "-m", "playwright", "install", "chromium"],
+    )
+    assert out[0] == install_mod.sys.executable
+    assert out[1:] == ["-m", "playwright", "install", "chromium"]
+
+
+def test_deps_hash_includes_post_install_changes():
+    """Adding / changing a post_install command must change the
+    hash so the startup advisory and dashboard status see it."""
+    deps = {"a": ["pkg>=1.0"]}
+    h_no_post = install_mod.deps_hash(deps, {})
+    h_with_post = install_mod.deps_hash(deps, {
+        "a": [{"args": ["echo", "hi"], "optional": False}],
+    })
+    assert h_no_post != h_with_post
+    h_diff_args = install_mod.deps_hash(deps, {
+        "a": [{"args": ["echo", "bye"], "optional": False}],
+    })
+    assert h_with_post != h_diff_args
+
+
+def test_deps_hash_ignores_post_install_description_changes():
+    """``description`` is documentation only — changing it does
+    NOT affect install behavior, so it shouldn't trip the hash."""
+    deps = {"a": ["pkg>=1.0"]}
+    h1 = install_mod.deps_hash(deps, {
+        "a": [{
+            "args": ["echo", "hi"],
+            "description": "old text",
+            "optional": False,
+        }],
+    })
+    h2 = install_mod.deps_hash(deps, {
+        "a": [{
+            "args": ["echo", "hi"],
+            "description": "new text — totally rewritten",
+            "optional": False,
+        }],
+    })
+    assert h1 == h2
+
+
+def test_install_runs_post_install_after_pip(
+    isolated_workspace, monkeypatch,
+):
+    """End-to-end: krakey install runs each plugin's post_install
+    commands AFTER pip succeeds, with {python} substitution."""
+    _make_workspace_plugin_with_post(
+        isolated_workspace, "p1",
+        deps=["pkg>=1"],
+        post_install=[{
+            "args": ["{python}", "-c", "import test_marker_p1"],
+            "description": "smoke",
+        }],
+    )
+    captured: list[list[str]] = []
+    monkeypatch.setattr(
+        install_mod.subprocess, "call",
+        lambda cmd, *a, **kw: (captured.append(list(cmd)) or 0),
+    )
+    rc = install_mod.install(
+        argparse.Namespace(dry_run=False, upgrade=False),
+    )
+    assert rc == 0
+    # Pip call exists (deduped union of all plugins' deps + core).
+    pip_calls = [c for c in captured if "pip" in c]
+    assert len(pip_calls) == 1
+    # The p1-specific post_install ran with {python} substitution.
+    p1_call = next(
+        c for c in captured
+        if "test_marker_p1" in " ".join(c)
+    )
+    assert p1_call[0] == install_mod.sys.executable
+    assert p1_call[1:] == ["-c", "import test_marker_p1"]
+
+
+def test_install_aborts_on_non_optional_post_install_failure(
+    isolated_workspace, monkeypatch,
+):
+    """rc=0 from pip but a required post_install fails → install
+    state NOT written, install() returns nonzero so re-runs."""
+    _make_workspace_plugin_with_post(
+        isolated_workspace, "p1",
+        post_install=[{
+            "args": ["echo", "boom"],
+            "description": "will fail",
+            "optional": False,
+        }],
+    )
+
+    def fake_call(cmd, *a, **kw):
+        if "pip" in cmd:
+            return 0
+        return 5  # any post_install call fails
+
+    monkeypatch.setattr(install_mod.subprocess, "call", fake_call)
+    rc = install_mod.install(
+        argparse.Namespace(dry_run=False, upgrade=False),
+    )
+    assert rc != 0
+    assert not install_mod.INSTALL_STATE_PATH.exists()
+
+
+def test_install_continues_on_optional_post_install_failure(
+    isolated_workspace, monkeypatch,
+):
+    """Optional commands fail soft — pip succeeded, install
+    state written, runtime is good. (The in-tree browser_exec
+    post_install is NOT optional, so we have to make it pass
+    here too.)"""
+    _make_workspace_plugin_with_post(
+        isolated_workspace, "p1",
+        post_install=[{
+            "args": ["echo", "p1-optional"],
+            "optional": True,
+        }],
+    )
+
+    def fake_call(cmd, *a, **kw):
+        joined = " ".join(cmd)
+        # Pip → success.
+        if "pip" in cmd:
+            return 0
+        # The OPTIONAL post_install we declared for p1 → fail.
+        if "p1-optional" in joined:
+            return 7
+        # Anything else (e.g. browser_exec's chromium download) →
+        # let it succeed so we're testing the optional flag, not
+        # the in-tree non-optional behavior.
+        return 0
+
+    monkeypatch.setattr(install_mod.subprocess, "call", fake_call)
+    rc = install_mod.install(
+        argparse.Namespace(dry_run=False, upgrade=False),
+    )
+    assert rc == 0
+    assert install_mod.INSTALL_STATE_PATH.exists()
+
+
+def test_dry_run_lists_post_install_without_running(
+    isolated_workspace, monkeypatch, capsys,
+):
+    _make_workspace_plugin_with_post(
+        isolated_workspace, "p1",
+        post_install=[{
+            "args": ["{python}", "-m", "playwright", "install"],
+            "description": "browser binary",
+        }],
+    )
+    called = []
+    monkeypatch.setattr(
+        install_mod.subprocess, "call",
+        lambda cmd, *a, **kw: (called.append(cmd) or 0),
+    )
+    install_mod.install(
+        argparse.Namespace(dry_run=True, upgrade=False),
+    )
+    assert called == []
+    out = capsys.readouterr().out
+    assert "post_install" in out
+    assert "playwright" in out

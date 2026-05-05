@@ -32,6 +32,10 @@ description: "..."
 config_schema: []          # plugin-level config fields (UI hints)
 dependencies:              # pip-installable spec strings
   - "some-package>=1.0"    # installed by ``krakey install``
+post_install:              # secondary install steps after pip
+  - args: ["{python}", "-m", "playwright", "install", "chromium"]
+    description: "Download Chromium (~200MB, one-time)"
+    optional: false        # true = swallow failure; false = abort install
 
 components:
   - kind: modifier
@@ -110,12 +114,22 @@ class PluginMetadata:
     "like an independent project". The ``krakey install`` CLI walks
     every plugin under BUILTIN_ROOT + WORKSPACE_ROOT, collects the
     union, and pip-installs in one shot.
+
+    ``post_install`` (added 2026-05-06) is a list of secondary
+    install commands run AFTER pip — for things pip can't drive
+    (e.g. Playwright's ``playwright install chromium`` to download
+    browser binaries). Each entry is
+    ``{args: list[str], description: str, optional: bool=False}``.
+    The token ``{python}`` inside ``args`` is replaced with
+    ``sys.executable`` at run-time so commands always invoke the
+    runtime's own interpreter.
     """
     name: str
     description: str
     components: list[ComponentMetadata] = field(default_factory=list)
     config_schema: list[dict[str, Any]] = field(default_factory=list)
     dependencies: list[str] = field(default_factory=list)
+    post_install: list[dict[str, Any]] = field(default_factory=list)
     source_path: Path | None = None
 
 
@@ -182,6 +196,15 @@ def parse_meta(path: Path) -> PluginMetadata:
                 "pip-installable string (e.g. 'playwright>=1.40')"
             )
         dependencies.append(d.strip())
+    post_install_raw = raw.get("post_install") or []
+    if not isinstance(post_install_raw, list):
+        raise ValueError(
+            "meta.yaml `post_install:` must be a list of "
+            "{args: [...], description: str, optional?: bool}"
+        )
+    post_install: list[dict[str, Any]] = []
+    for i, entry in enumerate(post_install_raw):
+        post_install.append(_parse_post_install(entry, i))
     if "requires_sandbox" in raw:
         # Quietly tolerated for one release window — old plugin
         # meta.yamls in the wild had this field. Drop it from yours
@@ -199,8 +222,46 @@ def parse_meta(path: Path) -> PluginMetadata:
         components=components,
         config_schema=list(schema),
         dependencies=dependencies,
+        post_install=post_install,
         source_path=path,
     )
+
+
+def _parse_post_install(entry: Any, index: int) -> dict[str, Any]:
+    """Validate one ``post_install`` entry. Returns a dict shape
+    ``{args: list[str], description: str, optional: bool}``."""
+    if not isinstance(entry, dict):
+        raise ValueError(
+            f"meta.yaml `post_install[{index}]` must be a mapping "
+            "with `args:` (and optional `description:`, `optional:`)"
+        )
+    args = entry.get("args")
+    if (
+        not isinstance(args, list)
+        or not args
+        or not all(isinstance(a, str) and a for a in args)
+    ):
+        raise ValueError(
+            f"meta.yaml `post_install[{index}].args` must be a "
+            "non-empty list of non-empty strings (argv-style)"
+        )
+    description = entry.get("description", "")
+    if not isinstance(description, str):
+        raise ValueError(
+            f"meta.yaml `post_install[{index}].description` must "
+            "be a string if provided"
+        )
+    optional = entry.get("optional", False)
+    if not isinstance(optional, bool):
+        raise ValueError(
+            f"meta.yaml `post_install[{index}].optional` must be "
+            "a boolean if provided"
+        )
+    return {
+        "args":        [str(a) for a in args],
+        "description": description,
+        "optional":    optional,
+    }
 
 
 _KNOWN_COMPONENT_KINDS = {"modifier", "tool", "channel"}
