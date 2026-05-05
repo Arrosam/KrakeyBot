@@ -57,6 +57,64 @@ async def test_single_iteration_user_message_triggers_tool_dispatch():
     assert any("Sent to web chat" in c for c in contents)
 
 
+async def test_dispatch_event_carries_params_for_observability():
+    """DispatchEvent must include the structured ``params`` dict so
+    observers (the dashboard's tool-usage panel, the log feed, any
+    custom subscriber) can show what was actually run, not just
+    the LLM-supplied ``intent`` label which is often empty / generic.
+
+    Pre-fix the event only carried (heartbeat_id, tool, intent,
+    adrenalin); cli_exec invocations all looked the same in the
+    dashboard regardless of the cmd[] argv they were running."""
+    from krakey.runtime.events.event_types import DispatchEvent
+
+    self_llm = ScriptedLLM([
+        "[THINKING]\nrun a command.\n"
+        "[DECISION]\nrun python --version.\n"
+        '<tool_call>{"name":"web_chat_reply","arguments":'
+        '{"text":"hi from test"}}</tool_call>\n'
+        "[IDLE]\n1"
+    ])
+    # ``modifiers`` is misnamed — it's the plugin list. Drop
+    # hypothalamus so the script-only action_executor parses the
+    # <tool_call> block and synthesizes the intent itself. Keep
+    # ``dashboard`` so web_chat_reply (the tool we dispatch to)
+    # stays registered.
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]),
+        modifiers=["dashboard"],
+    )
+
+    captured: list[DispatchEvent] = []
+    runtime.events.subscribe(
+        lambda e: captured.append(e)
+        if isinstance(e, DispatchEvent) else None,
+    )
+
+    await runtime.run(iterations=1)
+    await asyncio.sleep(0.05)
+
+    assert len(captured) >= 1
+    e = next(d for d in captured if d.tool == "web_chat_reply")
+    assert e.params == {"text": "hi from test"}
+    # Synthesized intent shows the value preview, not just the key.
+    assert "text=" in e.intent
+    assert "hi from test" in e.intent
+
+
+def test_dispatch_event_default_params_is_empty_dict():
+    """Back-compat: DispatchEvent constructs without ``params``
+    (any pre-existing caller / test helper that hadn't been
+    updated keeps working). Default is an empty dict, not None."""
+    from krakey.runtime.events.event_types import DispatchEvent
+
+    e = DispatchEvent(
+        heartbeat_id=1, tool="x", intent="y", adrenalin=False,
+    )
+    assert e.params == {}
+    assert isinstance(e.params, dict)
+
+
 async def test_no_action_decision_runs_no_tool():
     self_llm = ScriptedLLM([
         "[DECISION]\nNo action.\n[IDLE]\n1"

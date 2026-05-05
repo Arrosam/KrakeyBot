@@ -265,6 +265,33 @@ function appendIconEntry(panel, hbId, iconName, text, extraCls) {
   panel.scrollTop = panel.scrollHeight;
 }
 
+// Render one DispatchEvent into the tool-usage panel. Includes
+// the intent label + a compact JSON preview of params so calls
+// like cli_exec that vary entirely by their args are
+// distinguishable in the live stream. Truncated to keep the
+// stream scannable; full args stay accessible via the Log tab.
+const _DISPATCH_PARAMS_CHARS = 160;
+function formatDispatchLine(e) {
+  const head = `${e.tool} : ${e.intent || "(no intent)"}`;
+  const adr = e.adrenalin ? " (adrenalin)" : "";
+  let params = "";
+  if (e.params && typeof e.params === "object") {
+    try {
+      const text = JSON.stringify(e.params);
+      if (text && text !== "{}") {
+        params = " " + (
+          text.length > _DISPATCH_PARAMS_CHARS
+            ? text.slice(0, _DISPATCH_PARAMS_CHARS - 3) + "..."
+            : text
+        );
+      }
+    } catch (_) {
+      // Unserializable param payload — fall back to the head.
+    }
+  }
+  return head + adr + params;
+}
+
 function appendStimulusHeartbeat(hbId, stims) {
   // Render one group per heartbeat: a header tagged with the
   // beat id + count, followed by the individual stimuli. Empty
@@ -332,8 +359,16 @@ function handleEvent(e) {
       // Tool dispatch — Self decided to call this tool. Outbound
       // chevron icon so the paired result (chevron-left, below)
       // reads chronologically once it lands.
+      //
+      // Render the intent label first, then the actual params
+      // (truncated) so back-to-back calls to the same tool
+      // (e.g. cli_exec running multiple commands in a row) are
+      // distinguishable. Pre-redesign the line was just
+      // ``${tool} : ${intent}`` which for cli_exec collapsed to
+      // a generic synth label and the user couldn't see what
+      // was actually being run.
       appendIconEntry(toolEl, e.heartbeat_id, "chevron-right",
-        `${e.tool} : ${e.intent}${e.adrenalin ? " (adrenalin)" : ""}`,
+        formatDispatchLine(e),
         "dispatch");
       break;
     case "tool_result":

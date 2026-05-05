@@ -283,3 +283,76 @@ def test_with_failures_empty_block_does_not_count_as_failure():
         '<tool_call></tool_call>'
     )
     assert calls == [] and failures == []
+
+
+# =====================================================================
+# Synthesized intent — value previews so back-to-back calls of the
+# same tool are distinguishable in the dashboard's tool-usage panel
+# =====================================================================
+
+
+def test_synth_intent_shows_string_value_previews():
+    """Strings render verbatim (truncated to a per-arg cap), so a
+    cli_exec invocation reads ``cli_exec(env='local', cmd=...)``
+    instead of the previous useless ``cli_exec(env, cmd, ...)``."""
+    text = (
+        '<tool_call>{"name":"cli_exec","arguments":'
+        '{"env":"local","cmd":["python","--version"]}}</tool_call>'
+    )
+    calls = parse_tool_calls(text)
+    intent = calls[0].intent
+    assert "env=" in intent
+    assert "'local'" in intent
+    assert "cmd=" in intent
+    # The cmd list previewed verbatim because it's all primitives.
+    assert "python" in intent
+    assert "--version" in intent
+
+
+def test_synth_intent_truncates_giant_values():
+    """Per-arg + total length caps so a tool taking a 5KB blob
+    doesn't spam the dashboard."""
+    big = "x" * 5000
+    text = (
+        '<tool_call>{"name":"code_run","arguments":'
+        '{"language":"python","source":"' + big + '"}}</tool_call>'
+    )
+    calls = parse_tool_calls(text)
+    intent = calls[0].intent
+    # Total intent stays under the documented total cap (currently
+    # 120 + tool name + parens, but the cap pins it at 120 inner +
+    # bookkeeping; just verify it stays well under 200).
+    assert len(intent) < 200
+    # Truncation marker present somewhere in the rendered intent.
+    assert "..." in intent
+
+
+def test_synth_intent_renders_primitive_lists():
+    text = (
+        '<tool_call>{"name":"foo","arguments":'
+        '{"items":["a","b","c"]}}</tool_call>'
+    )
+    calls = parse_tool_calls(text)
+    intent = calls[0].intent
+    assert "items=" in intent
+    assert "['a', 'b', 'c']" in intent
+
+
+def test_synth_intent_collapses_nested_objects():
+    """Lists of dicts (or other non-primitive structures) render
+    as ``key=...`` so the line stays compact. Full structure is
+    available on DispatchEvent.params for callers that need it."""
+    text = (
+        '<tool_call>{"name":"foo","arguments":'
+        '{"big":{"nested":{"deep":1}},"small":42}}</tool_call>'
+    )
+    calls = parse_tool_calls(text)
+    intent = calls[0].intent
+    assert "big=..." in intent
+    assert "small=42" in intent
+
+
+def test_synth_intent_with_no_args_returns_just_name():
+    text = '<tool_call>{"name":"sleep"}</tool_call>'
+    calls = parse_tool_calls(text)
+    assert calls[0].intent == "sleep"

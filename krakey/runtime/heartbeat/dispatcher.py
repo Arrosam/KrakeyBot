@@ -116,6 +116,12 @@ class DecisionDispatcher:
         self._events.publish(DispatchEvent(
             heartbeat_id=heartbeat_id, tool=call.tool,
             intent=call.intent, adrenalin=call.adrenalin,
+            # Carry the raw args so the dashboard's tool-usage
+            # panel can show what was actually run (e.g. for
+            # cli_exec, the cmd[] argv). Without this, observers
+            # only saw the LLM-supplied ``intent`` label which is
+            # often empty / generic.
+            params=dict(call.params or {}),
         ))
         try:
             stim = await tool.execute(call.intent, call.params)

@@ -168,13 +168,63 @@ def _parse_one_call(
     ), None
 
 
+_INTENT_VALUE_PREVIEW_CHARS = 40
+"""Per-arg value preview cap inside ``_synth_intent`` output."""
+
+_INTENT_TOTAL_PREVIEW_CHARS = 120
+"""Total cap on the synthesized intent string."""
+
+
 def _synth_intent(name: str, arguments: dict[str, Any]) -> str:
     """Compact one-line label for the dispatch event display.
 
-    Avoids dumping the entire arguments dict — large prompts /
-    file-write tools would render unreadably long.
+    Includes short value previews for primitive / list args so
+    the dashboard's tool-usage line says ``cli_exec(env='local',
+    cmd=['python', '--version'])`` instead of the previously
+    keys-only ``cli_exec(env, cmd, cwd, timeout_s, stdin)`` —
+    the keys-only form was useless for telling apart back-to-
+    back invocations of the same tool.
+
+    Large / non-primitive values render as ``key=...`` to keep
+    the line compact (full args ride along separately on
+    ``DispatchEvent.params`` for callers that need the full
+    structure).
     """
     if not arguments:
         return name
-    keys = ", ".join(arguments.keys())
-    return f"{name}({keys})"
+    parts: list[str] = []
+    for k, v in arguments.items():
+        parts.append(f"{k}={_format_arg_value(v)}")
+    inner = ", ".join(parts)
+    if len(inner) > _INTENT_TOTAL_PREVIEW_CHARS:
+        inner = inner[:_INTENT_TOTAL_PREVIEW_CHARS - 3] + "..."
+    return f"{name}({inner})"
+
+
+def _format_arg_value(v: Any) -> str:
+    """Render a single arg value compactly. Strings + numbers +
+    bools print verbatim (truncated). Lists of primitives print
+    as ``[a, b, c]`` (truncated). Everything else collapses to
+    ``...`` so a giant blob doesn't blow up the line."""
+    if isinstance(v, bool) or v is None:
+        return repr(v)
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, str):
+        return _truncate_repr(v)
+    if isinstance(v, list) and all(
+        isinstance(x, (str, int, float, bool)) or x is None
+        for x in v
+    ):
+        rendered = "[" + ", ".join(_format_arg_value(x) for x in v) + "]"
+        if len(rendered) > _INTENT_VALUE_PREVIEW_CHARS:
+            rendered = rendered[:_INTENT_VALUE_PREVIEW_CHARS - 3] + "...]"
+        return rendered
+    return "..."
+
+
+def _truncate_repr(s: str) -> str:
+    r = repr(s)
+    if len(r) > _INTENT_VALUE_PREVIEW_CHARS:
+        r = r[:_INTENT_VALUE_PREVIEW_CHARS - 4] + "...'"
+    return r
