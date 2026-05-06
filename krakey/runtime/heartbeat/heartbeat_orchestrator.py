@@ -103,17 +103,43 @@ def _format_parse_failure_stimulus(
 ) -> str:
     """Build the system_event content for tool_call parse failures.
 
+    Two failure modes appear in the same list:
+      * **Lost** — JSON decode failure with no safe truncation
+        point, OR a structural problem (missing name, non-object).
+        The call did NOT dispatch.
+      * **Salvaged** — "Extra data" (trailing junk after the JSON
+        object). The parser truncated and recovered; the call DID
+        dispatch this beat. The diagnostic surfaces so Self can
+        clean up the format on the next beat.
+
+    The header tells Self how many of each happened. Salvaged
+    failures use ``repr()`` for the payload so invisible chars
+    (zero-width space, BOM, control chars) appear as escape
+    sequences rather than rendering as nothing — the "I can't
+    see what's wrong" trap that previously stuck Self in a 120+
+    beat loop.
+
     Inlined the format reminder rather than importing
     ``ACTION_FORMAT_LAYER`` from prompt/layers — the layer is for
     prompt assembly, not for stimulus content; coupling them would
     drag layer concerns into the runtime path. The phrasing is
     copy-aligned with the layer; if either drifts, dual-update.
     """
-    lines = [
-        f"{len(failures)} of {total_blocks} <tool_call> block(s) "
-        "failed to parse last beat — those actions did NOT dispatch.",
-        "",
-    ]
+    n_salv = sum(1 for f in failures if getattr(f, "salvaged", False))
+    n_lost = len(failures) - n_salv
+    header_parts: list[str] = []
+    if n_lost > 0:
+        header_parts.append(
+            f"{n_lost} of {total_blocks} <tool_call> block(s) "
+            "FAILED to parse — those actions did NOT dispatch."
+        )
+    if n_salv > 0:
+        header_parts.append(
+            f"{n_salv} of {total_blocks} <tool_call> block(s) had "
+            "trailing junk after the JSON; salvaged this time but "
+            "fix the format next beat."
+        )
+    lines = ["\n".join(header_parts), ""]
     for f in failures:
         preview = f.payload
         if len(preview) > _FAILURE_PAYLOAD_PREVIEW_CHARS:
@@ -128,9 +154,10 @@ def _format_parse_failure_stimulus(
         '  <tool_call>{"name": "<tool_name>", "arguments": {...}}</tool_call>',
         "",
         "Do NOT append </arg_value>, </function>, </function_call>, "
-        "or any other closing tag after the JSON object. "
-        "Fields: name (str, required), arguments (object, optional), "
-        "adrenalin (bool, optional).",
+        "zero-width spaces, or any other characters after the closing "
+        "}. The trailing-bytes line above shows EXACTLY what was "
+        "appended — including invisible characters as escape "
+        "sequences.",
     ])
     return "\n".join(lines)
 
@@ -453,11 +480,21 @@ class HeartbeatOrchestrator:
             ))
             return False
         if parse_failures:
+            # Salvaged failures appear in BOTH ``result.tool_calls``
+            # (the recovered call) and ``parse_failures`` (the
+            # diagnostic). To get the true block count we add and
+            # subtract the salvaged duplicate.
+            n_salvaged = sum(
+                1 for f in parse_failures
+                if getattr(f, "salvaged", False)
+            )
+            total_blocks = (
+                len(result.tool_calls) + len(parse_failures) - n_salvaged
+            )
             await rt.buffer.push(Stimulus(
                 type="system_event", source="system:tool_call_parse",
                 content=_format_parse_failure_stimulus(
-                    parse_failures, total_blocks=len(result.tool_calls)
-                                                  + len(parse_failures),
+                    parse_failures, total_blocks=total_blocks,
                 ),
                 timestamp=datetime.now(),
                 adrenalin=True,

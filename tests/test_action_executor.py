@@ -193,10 +193,13 @@ def test_with_failures_empty_input_returns_two_empty_lists():
     assert calls == [] and failures == []
 
 
-def test_with_failures_arg_value_tail_surfaces_as_failure():
+def test_with_failures_arg_value_tail_salvaged_with_diagnostic():
     """Real-world Self drift: each <tool_call> ends with a stray
     </arg_value> closing tag bleeding from a different format the
-    model was fine-tuned on. JSON parse fails with 'Extra data'."""
+    model was fine-tuned on. JSON parse hits 'Extra data', the
+    salvage path truncates and recovers, and a ParseFailure
+    surfaces alongside the dispatched ToolCall so Self gets
+    corrective feedback without losing forward progress."""
     from krakey.runtime.heartbeat.action_executor import (
         parse_tool_calls_with_failures,
     )
@@ -205,19 +208,21 @@ def test_with_failures_arg_value_tail_surfaces_as_failure():
         '</arg_value></tool_call>'
     )
     calls, failures = parse_tool_calls_with_failures(raw)
-    assert calls == []
+    # Salvaged: ToolCall dispatches AND failure surfaces.
+    assert [c.tool for c in calls] == ["search"]
+    assert calls[0].params == {"query": "X"}
     assert len(failures) == 1
     f = failures[0]
     assert f.block_index == 0
-    assert "</arg_value>" in f.payload
-    assert "Extra data" in f.error
+    assert f.salvaged is True
+    assert "</arg_value>" in f.error  # trailing bytes echoed in error
+    assert "trailing data" in f.error.lower()
 
 
 def test_with_failures_partial_success_still_dispatches_clean_blocks():
     """One </arg_value>-tail block + one clean block in the same
-    response → 1 ToolCall returned, 1 ParseFailure recorded. The
-    clean block must not be dropped just because its sibling is
-    malformed."""
+    response → 2 ToolCalls returned (one salvaged, one clean),
+    1 ParseFailure recorded for the salvaged block."""
     from krakey.runtime.heartbeat.action_executor import (
         parse_tool_calls_with_failures,
     )
@@ -226,15 +231,17 @@ def test_with_failures_partial_success_still_dispatches_clean_blocks():
         '<tool_call>{"name": "good", "arguments": {"q": "y"}}</tool_call>'
     )
     calls, failures = parse_tool_calls_with_failures(raw)
-    assert [c.tool for c in calls] == ["good"]
+    assert [c.tool for c in calls] == ["bad", "good"]
     assert len(failures) == 1
-    assert failures[0].block_index == 0  # bad block came first
-    assert "bad" in failures[0].payload  # name preserved in payload
+    assert failures[0].block_index == 0
+    assert failures[0].salvaged is True
 
 
 def test_with_failures_records_block_index_for_each():
     """When several blocks fail in a row, block_index lets the
-    corrective stimulus show Self exactly which positions failed."""
+    corrective stimulus show Self exactly which positions had
+    drift. With salvage, all three calls dispatch AND all three
+    failures surface."""
     from krakey.runtime.heartbeat.action_executor import (
         parse_tool_calls_with_failures,
     )
@@ -244,8 +251,28 @@ def test_with_failures_records_block_index_for_each():
         '<tool_call>{"name": "c"}</arg_value></tool_call>'
     )
     calls, failures = parse_tool_calls_with_failures(raw)
-    assert calls == []
+    assert [c.tool for c in calls] == ["a", "b", "c"]
     assert [f.block_index for f in failures] == [0, 1, 2]
+    assert all(f.salvaged for f in failures)
+
+
+def test_with_failures_invisible_chars_in_repr_payload():
+    """Zero-width space and other invisible characters after the
+    JSON object trigger 'Extra data'. The payload field of the
+    salvage ParseFailure uses repr() so Self can SEE the
+    invisible char as an escape sequence — fixing the
+    "I can't tell what's wrong" 120+-beat loop."""
+    from krakey.runtime.heartbeat.action_executor import (
+        parse_tool_calls_with_failures,
+    )
+    raw = '<tool_call>{"name": "X", "arguments": {}}​</tool_call>'
+    calls, failures = parse_tool_calls_with_failures(raw)
+    assert [c.tool for c in calls] == ["X"]
+    assert len(failures) == 1
+    f = failures[0]
+    assert f.salvaged is True
+    # The payload is repr()'d — invisible char now visible.
+    assert "\\u200b" in f.payload or "\\u200b" in f.error
 
 
 def test_with_failures_non_json_object_payload_recorded():

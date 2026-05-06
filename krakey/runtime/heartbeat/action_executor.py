@@ -55,13 +55,21 @@ _TOOL_CALL_BLOCK = re.compile(
 
 @dataclass
 class ParseFailure:
-    """One ``<tool_call>`` block that couldn't be turned into a
-    ``ToolCall``. Carried back to the orchestrator so it can push
-    a corrective stimulus to Self with the offending payload + the
-    parser's diagnosis."""
+    """One ``<tool_call>`` block whose parsing surfaced a problem.
+
+    Two flavors:
+      * ``salvaged=False`` (default) — call was lost; orchestrator
+        reports it as a failed dispatch.
+      * ``salvaged=True``  — JSON had trailing junk but the parser
+        recovered the object; the call DID dispatch and a
+        ``ToolCall`` was emitted alongside this ``ParseFailure``.
+        Surfaced so Self gets format-correction feedback even on
+        the salvage path.
+    """
     payload: str       # raw text inside <tool_call>...</tool_call>
     error: str         # human-readable reason (JSONDecodeError msg, shape error)
     block_index: int   # 0-based position among all <tool_call> blocks
+    salvaged: bool = False
 
 
 def parse_tool_calls_with_failures(
@@ -84,9 +92,14 @@ def parse_tool_calls_with_failures(
             # a corrective stimulus for it.
             continue
         call, failure = _parse_one_call(payload, block_index=idx)
+        # Salvage path: the parser can return BOTH a successful
+        # ToolCall AND a ParseFailure (the call was recovered from
+        # trailing junk; the failure carries the diagnostic so
+        # Self still gets corrective feedback). So append both,
+        # not one-or-the-other.
         if call is not None:
             calls.append(call)
-        elif failure is not None:
+        if failure is not None:
             failures.append(failure)
     return calls, failures
 
@@ -118,17 +131,70 @@ def _parse_one_call(
     bad argument type). Logs at warning level so terminal output
     still has a breadcrumb when the orchestrator's stimulus path
     isn't wired in (e.g. unit tests calling the parser directly).
+
+    Salvage behavior on JSON "Extra data": some open-source models
+    append trailing junk after the JSON object (e.g. stray
+    ``</arg_value>`` from XML-style training, or invisible
+    characters like zero-width space / BOM). The decoder's
+    ``e.pos`` points at the first byte past the JSON, so we
+    truncate to ``payload[:e.pos]`` and retry — but we ALSO emit
+    a ``ParseFailure`` so Self still gets the corrective stimulus
+    (with the trailing-junk visible via ``repr()``) on the next
+    beat. The call dispatches; the format drift gets surfaced;
+    Self sees both action effect AND the diagnostic.
     """
     try:
         obj = json.loads(payload)
     except json.JSONDecodeError as e:
-        msg = f"JSON decode error: {e}"
+        # Salvage path for "Extra data" only — every other decode
+        # failure (Expecting value, Unterminated string, etc.) has
+        # no safe truncation point.
+        salvaged: Any | None = None
+        if "Extra data" in str(e) and e.pos > 0:
+            try:
+                salvaged = json.loads(payload[:e.pos])
+            except json.JSONDecodeError:
+                salvaged = None
+
+        if salvaged is None:
+            msg = f"JSON decode error: {e}"
+            _log.warning(
+                "tool_call: skipping unparseable payload %r (%s)",
+                payload, e,
+            )
+            return None, ParseFailure(
+                payload=payload, error=msg, block_index=block_index,
+            )
+
+        # Salvaged: continue with the truncated obj, but also build
+        # a ParseFailure describing the trailing junk so Self gets
+        # corrective feedback on the next beat. The payload field
+        # uses repr() so invisible characters (zero-width space,
+        # BOM, control chars) appear as escape sequences instead
+        # of rendering as nothing.
+        trailing = payload[e.pos:]
+        salvage_failure = ParseFailure(
+            payload=repr(payload),
+            error=(
+                f"trailing data after JSON object — {e}. "
+                f"Trailing bytes: {trailing!r}. "
+                "The call was salvaged this time, but emit ONLY "
+                "the JSON object inside <tool_call>...</tool_call> "
+                "with no characters after the closing }."
+            ),
+            block_index=block_index,
+            salvaged=True,
+        )
+        obj = salvaged
         _log.warning(
-            "tool_call: skipping unparseable payload %r (%s)", payload, e,
+            "tool_call: salvaged payload by truncating trailing "
+            "junk %r (%s)", trailing, e,
         )
-        return None, ParseFailure(
-            payload=payload, error=msg, block_index=block_index,
-        )
+        # Fall through into shape validation below; emit the
+        # salvage failure alongside the successful ToolCall via the
+        # explicit return at the bottom of the success path.
+    else:
+        salvage_failure = None  # type: ignore[assignment]
     if not isinstance(obj, dict):
         msg = (
             f"payload is valid JSON but not an object "
@@ -162,10 +228,16 @@ def _parse_one_call(
     # doesn't carry it natively; we synthesize from name + a short
     # arg preview so the dashboard's dispatch line is informative.
     intent = _synth_intent(name, arguments)
+    # ``salvage_failure`` is non-None only when the JSON parser
+    # truncated trailing junk to recover. Return it alongside the
+    # successful ToolCall so the orchestrator pushes a corrective
+    # stimulus AND the dispatch goes through. This is the key
+    # difference from "failed parse" — Self gets BOTH effects so
+    # it can iterate on its format without losing forward progress.
     return ToolCall(
         tool=name, intent=intent, params=arguments,
         adrenalin=adrenalin,
-    ), None
+    ), salvage_failure
 
 
 _INTENT_VALUE_PREVIEW_CHARS = 40
