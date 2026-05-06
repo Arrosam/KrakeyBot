@@ -113,5 +113,26 @@ class PluginObserver:
             else "core"
         return PluginInfo(
             name=name, kind=kind, source=source,
-            path="", project=name,
+            path="", project=self._lookup_project(kind, name),
         )
+
+    def _lookup_project(self, kind: str, name: str) -> str:
+        """Resolve which plugin folder owns this ``(kind, name)`` tuple.
+
+        The loader records every successful registration in its
+        ``plugin_components`` manifest as ``plugin_name → [(kind,
+        instance_name), ...]``. We invert that lookup here so the
+        dashboard's per-plugin status badge can match the report
+        against the catalog (which is keyed by plugin folder name,
+        not component instance name — e.g. the ``duckduckgo_search``
+        plugin contributes a tool whose ``.name`` is ``"search"``).
+
+        Falls back to the component name for entries the loader
+        didn't install (built-in tools, BatchTracker, modifier
+        ``attach()`` extras) — those have no plugin folder, so the
+        component name is the only stable identifier.
+        """
+        for plugin_name, components in self._loader.plugin_components.items():
+            if (kind, name) in components:
+                return plugin_name
+        return name
