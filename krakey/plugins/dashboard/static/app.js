@@ -3542,7 +3542,11 @@ function _renderPluginCard(plugin, enabled, liveByName, modIdx, modCount) {
 
   const title = document.createElement("strong");
   title.textContent = plugin.name;
-  if (plugin.description) title.title = plugin.description;
+  // Description used to land on `title.title` (browser tooltip on
+  // hover) — moved to a permanent block inside the expanded body
+  // below. The hover-only path was easy to miss and the
+  // description text is often paragraph-length, which a tooltip
+  // truncates / wraps awkwardly.
   head.appendChild(title);
 
   for (const kind of _pluginKinds(plugin)) {
@@ -3570,6 +3574,18 @@ function _renderPluginCard(plugin, enabled, liveByName, modIdx, modCount) {
   card.appendChild(head);
 
   if (!isExpanded) return card;
+
+  // Description block — replaces the old hover-tooltip surface.
+  // Visible whenever the plugin row is expanded, so the operator
+  // sees the description in their natural flow ("I clicked open
+  // → I read what it does") rather than having to guess that the
+  // title is hover-able.
+  if (plugin.description) {
+    const descBlock = document.createElement("div");
+    descBlock.className = "plugin-description";
+    descBlock.textContent = plugin.description;
+    card.appendChild(descBlock);
+  }
 
   // Live error pre-block, when /api/plugins surfaced one for this
   // plugin. The header status badge already says "error"; this shows

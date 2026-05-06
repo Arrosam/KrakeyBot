@@ -195,6 +195,23 @@
   margin: 0;
 }
 
+/* Plugin description, surfaced inside the expanded card body
+   (used to be a hover tooltip on the title — see app.js
+   _renderPluginCard). Quiet enough not to compete with the
+   config rows beneath, but always visible when the row is
+   open so the operator never has to discover hover. */
+.plugin-description {
+  margin: 6px 0 8px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg);
+  border-left: 2px solid var(--cyan);
+  border-radius: 0 3px 3px 0;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
 .model-row {
   display: grid;
   grid-template-columns: 1fr 1fr auto;
