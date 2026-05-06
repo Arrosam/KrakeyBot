@@ -205,7 +205,14 @@ class Runtime:
         # When None, install advisory + InstallTool both no-op
         # gracefully (additive-plugin invariant). Stashed BEFORE
         # the InstallTool constructor below reads it.
-        self._install_service: InstallServiceProto | None = (
+        #
+        # Public attribute (no underscore prefix) so peers like the
+        # dashboard's ``RuntimePluginsService`` can read it without
+        # reaching into private state. The runtime is the composition
+        # aggregator that holds long-lived services; exposing the
+        # service slot via a public attribute is the same shape as
+        # ``self.gm`` / ``self.kb_registry`` etc.
+        self.install_service: InstallServiceProto | None = (
             deps.install_service
         )
 
@@ -219,7 +226,7 @@ class Runtime:
         # The service is injected via DI so the tool depends on
         # ``InstallService`` Protocol, not the concrete impl.
         self.tools.register(InstallTool(
-            install_service=self._install_service,
+            install_service=self.install_service,
         ))
         # Each plugin's config lives at
         # <plugin_configs_root>/<name>/config.yaml. Same root as the
@@ -661,14 +668,14 @@ class Runtime:
         about this stimulus)."""
         if not self._enable_install_advisory:
             return
-        if self._install_service is None:
+        if self.install_service is None:
             # No service injected (composition root chose to skip,
             # or test built Runtime directly without one). Silent
             # no-op — additive-plugin invariant covers this too.
             return
         try:
             pending, plugin_deps = (
-                self._install_service.has_pending_deps()
+                self.install_service.has_pending_deps()
             )
         except Exception:  # noqa: BLE001
             return

@@ -236,7 +236,7 @@ def _runtime_with_advisory_on(self_llm, install_service=None):
         self_llm=self_llm, hypo_llm=self_llm,
     )
     runtime._enable_install_advisory = True
-    runtime._install_service = install_service
+    runtime.install_service = install_service
     return runtime
 
 
@@ -331,7 +331,7 @@ async def test_runtime_install_advisory_off_by_default_in_helper():
     )
     # Inject a service that says "yes pending" but leave the
     # advisory flag at its helper-default (False).
-    runtime._install_service = FakeInstallService(
+    runtime.install_service = FakeInstallService(
         has_pending=(True, {"x": ["pkg"]}),
     )
     await runtime.run(iterations=0)

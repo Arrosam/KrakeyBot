@@ -167,7 +167,7 @@ class RuntimePluginsService:
     def _install_service(self):
         if self._rt is None:
             raise RuntimeError("runtime not available")
-        svc = getattr(self._rt, "_install_service", None)
+        svc = getattr(self._rt, "install_service", None)
         if svc is None:
             raise RuntimeError(
                 "no InstallService configured on the runtime — "
