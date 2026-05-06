@@ -19,6 +19,11 @@ from krakey.models.stimulus import Stimulus
 
 
 _BODY_CHARS = 240
+# Hard cap on results-per-call so a stray ``max_results: 9999`` from
+# Self can't blow up the next prompt. ~25 results × 240 char bodies
+# ≈ 6 KB content, comfortable for the heartbeat. Self can issue
+# multiple searches if she actually needs more breadth.
+_MAX_RESULTS_CAP = 25
 
 
 class SearchBackend(Protocol):
@@ -43,6 +48,9 @@ class DDGSBackend:
 class SearchTool(Tool):
     def __init__(self, backend: SearchBackend, *, max_results: int = 5):
         self._backend = backend
+        # Default-only floor — used when Self doesn't pass
+        # ``max_results``. She can override per-call up to
+        # ``_MAX_RESULTS_CAP``.
         self._max_results = max_results
 
     @property
@@ -51,22 +59,76 @@ class SearchTool(Tool):
 
     @property
     def description(self) -> str:
-        return ("Web search via DuckDuckGo. Use when you want fresh "
-                "external info you don't already have in GM/KB. "
-                "Returns top N results (title + url + snippet).")
+        return (
+            "Web search via DuckDuckGo. Use when you want fresh "
+            "external info you don't already have in GM/KB — "
+            "current events, docs lookup, fact-checking a claim, "
+            "finding a URL to hand to ``browser_exec``. "
+            "Returns ranked results (title + url + snippet) as a "
+            "tool_feedback stimulus; pick which (if any) to act on. "
+            "You control breadth via ``max_results``: small (3–5) "
+            "for a quick check, larger (10–25) when you need to "
+            "compare sources or the first hit might be wrong. "
+            "If you don't pass it, the per-plugin config default "
+            "is used. Cap is 25 per call — issue multiple queries "
+            "with refined keywords if you need more."
+        )
 
     @property
     def parameters_schema(self) -> dict[str, Any]:
         return {
-            "query": "search keywords (defaults to the natural-language intent)",
-            "max_results": "max number of results (default 5)",
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Search keywords. Defaults to the "
+                        "natural-language intent if omitted."
+                    ),
+                },
+                "max_results": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": _MAX_RESULTS_CAP,
+                    "description": (
+                        "How many results to return. Scale up for "
+                        "thoroughness, down for a quick sanity "
+                        "check. Default comes from the plugin's "
+                        "config (typically 5). Hard cap "
+                        f"{_MAX_RESULTS_CAP}."
+                    ),
+                },
+            },
+            "additionalProperties": False,
         }
 
 
     async def execute(self, intent: str,
                         params: dict[str, Any]) -> Stimulus:
         query = (params.get("query") or intent or "").strip()
-        max_results = int(params.get("max_results") or self._max_results)
+
+        # max_results validation: Self should be able to set this
+        # per-call, but a bad type / out-of-range value shouldn't
+        # crash the dispatcher — return a clear error stim instead.
+        raw = params.get("max_results")
+        if raw is None:
+            max_results = self._max_results
+        else:
+            try:
+                max_results = int(raw)
+            except (TypeError, ValueError):
+                return self._stim(
+                    f"Search failed: max_results must be an integer, "
+                    f"got {raw!r}.",
+                )
+            if max_results < 1:
+                return self._stim(
+                    "Search failed: max_results must be >= 1.",
+                )
+            if max_results > _MAX_RESULTS_CAP:
+                # Soft-cap: clamp + tell Self what happened so she
+                # learns the ceiling without us aborting her call.
+                max_results = _MAX_RESULTS_CAP
 
         try:
             results = await self._backend.search(query, max_results)
