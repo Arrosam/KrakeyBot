@@ -63,6 +63,14 @@ class PluginLoader:
         # ``registered``). The hot-reload path uses this to skip
         # plugins already loaded.
         self.loaded_plugin_names: set[str] = set()
+        # Per-plugin component manifest: ``plugin_name → list of
+        # (kind, instance_name)``. Built incrementally as
+        # register_one succeeds. ``unregister_one`` consults it
+        # to know what to tear down — without this we'd have to
+        # re-walk meta.yaml + match factories against registered
+        # names, which is fragile (factories can produce different
+        # instance.name than the meta-declared name).
+        self.plugin_components: dict[str, list[tuple[str, str]]] = {}
 
     def register_from_config(self, deps: "RuntimeDeps") -> None:
         """Walk ``config.plugins`` and lazily load each plugin's components.
@@ -172,10 +180,14 @@ class PluginLoader:
             )
             if registered_ok:
                 any_registered = True
+                inst_name = getattr(instance, "name", "?")
                 report["components"].append({
                     "kind": component.kind,
-                    "name": getattr(instance, "name", "?"),
+                    "name": inst_name,
                 })
+                self.plugin_components.setdefault(
+                    plugin_name, [],
+                ).append((component.kind, inst_name))
 
         report["ok"] = any_registered
         if any_registered:
@@ -189,6 +201,90 @@ class PluginLoader:
             )
         elif not any_registered:
             report["error"] = any_error
+        return report
+
+    async def unregister_one(
+        self, plugin_name: str,
+    ) -> dict[str, Any]:
+        """Tear down every component this plugin registered. Used
+        by hot-reload BEFORE a re-register, and by hot-disable
+        (when a plugin is removed from config.plugins).
+
+        For each (kind, name) recorded in ``plugin_components``:
+
+          - tool     → ``tools.deregister(name)``
+          - modifier → call optional ``detach(runtime)`` then
+                       ``modifiers.deregister_by_name(name)``
+          - channel  → ``channels.deregister(name)`` which stops
+                       the channel's background task before
+                       removing it
+
+        Returns ``{ok, plugin, removed: [...], errors: [...]}``.
+        Best-effort: errors during teardown are logged + collected
+        but don't abort the rest of the cleanup. The plugin's
+        entry in ``loaded_plugin_names`` + ``plugin_components``
+        is cleared regardless so a subsequent ``register_one``
+        starts clean."""
+        components = self.plugin_components.get(plugin_name) or []
+        report: dict[str, Any] = {
+            "ok":      True,
+            "plugin":  plugin_name,
+            "removed": [],
+            "errors":  [],
+        }
+        for kind, inst_name in list(components):
+            try:
+                if kind == "tool":
+                    self._tools.deregister(inst_name)
+                elif kind == "modifier":
+                    removed = self._modifiers.deregister_by_name(
+                        inst_name,
+                    )
+                    # Optional detach hook: a modifier that wires
+                    # itself into runtime-coupled assets (event-bus
+                    # subscriptions, async tasks, file watchers)
+                    # implements ``detach(runtime)``. Most don't —
+                    # they hold an LLM ref + state, which Python
+                    # GC reclaims when we drop the registry slot.
+                    detach = getattr(removed, "detach", None)
+                    if callable(detach):
+                        try:
+                            detach(None)
+                        except Exception as e:  # noqa: BLE001
+                            report["errors"].append({
+                                "kind": kind, "name": inst_name,
+                                "error":
+                                    f"detach raised: "
+                                    f"{type(e).__name__}: {e}",
+                            })
+                elif kind == "channel":
+                    await self._channels.deregister(inst_name)
+                else:
+                    report["errors"].append({
+                        "kind": kind, "name": inst_name,
+                        "error": f"unknown kind {kind!r}",
+                    })
+                    continue
+                report["removed"].append({
+                    "kind": kind, "name": inst_name,
+                })
+                self.registered.discard((kind, inst_name))
+            except Exception as e:  # noqa: BLE001
+                report["errors"].append({
+                    "kind": kind, "name": inst_name,
+                    "error":
+                        f"deregister raised: "
+                        f"{type(e).__name__}: {e}",
+                })
+        # Always clear the plugin's entries so a follow-up
+        # register_one starts clean — even if some teardown
+        # raised, the registries are now in an unknown state and
+        # we don't want them counted as "owned by this plugin"
+        # any more.
+        self.plugin_components.pop(plugin_name, None)
+        self.loaded_plugin_names.discard(plugin_name)
+        if report["errors"]:
+            report["ok"] = False
         return report
 
     def _register_component(

@@ -63,12 +63,15 @@ class _FakePluginsService:
 
     async def hot_reload(self):
         return {
+            "reloaded": [{"plugin": "hypothalamus", "components": [
+                {"kind": "modifier", "name": "hypothalamus"}
+            ]}],
             "added": [{"plugin": "x", "components": [
                 {"kind": "tool", "name": "x"}
             ]}],
+            "removed": [],
             "skipped": [],
             "errors": [],
-            "still_pending_remove": [],
         }
 
 
@@ -303,4 +306,5 @@ async def test_hot_reload_returns_runtime_report(tmp_path):
     assert r.status_code == 200
     body = r.json()
     assert body["added"][0]["plugin"] == "x"
-    assert body["still_pending_remove"] == []
+    assert body["reloaded"][0]["plugin"] == "hypothalamus"
+    assert body["removed"] == []

@@ -3775,11 +3775,19 @@ $("#settings-restart").addEventListener("click", async () => {
   }
 });
 
-// "Apply changes" — hot-add newly-enabled plugins without a
-// restart. The runtime reports back which plugins were added,
-// which were skipped (already loaded), and which would need a
-// full restart to remove. We surface that in the toast so the
-// operator knows whether the cheap path was enough.
+// "Apply changes" — full plugin reconcile WITHOUT process
+// restart:
+//   - newly-enabled plugins are registered + their channels
+//     started;
+//   - already-loaded plugins are unregistered + re-registered
+//     so config edits / LLM-binding changes take effect;
+//   - plugins removed from the config are unregistered
+//     (channels stopped, tools/modifiers torn down).
+// The toast summarises what changed so the operator knows the
+// cheap path was enough vs. when they need to read the errors
+// list (still rare — heartbeat orchestrator code edits and
+// memory-backend swaps are the only true "must restart" cases
+// left).
 $("#settings-apply")?.addEventListener("click", async () => {
   showToast("applying...", "pending");
   try {
@@ -3792,17 +3800,19 @@ $("#settings-apply")?.addEventListener("click", async () => {
       return;
     }
     const data = await r.json();
+    const reloaded = (data.reloaded || []).map((a) => a.plugin);
     const added = (data.added || []).map((a) => a.plugin);
+    const removed = (data.removed || []).map((a) => a.plugin);
     const errors = data.errors || [];
-    const pendingRemove = data.still_pending_remove || [];
     const parts = [];
+    if (reloaded.length) {
+      parts.push(`reloaded: ${reloaded.join(", ")}`);
+    }
     if (added.length) {
       parts.push(`added: ${added.join(", ")}`);
     }
-    if (pendingRemove.length) {
-      parts.push(
-        `restart needed to remove: ${pendingRemove.join(", ")}`,
-      );
+    if (removed.length) {
+      parts.push(`removed: ${removed.join(", ")}`);
     }
     if (errors.length) {
       parts.push(
@@ -3810,12 +3820,11 @@ $("#settings-apply")?.addEventListener("click", async () => {
       );
     }
     if (!parts.length) {
-      parts.push("no changes — everything was already loaded");
+      parts.push("no plugins enabled / changed");
     }
-    const level = errors.length ? "err"
-      : pendingRemove.length ? "warn" : "ok";
+    const level = errors.length ? "err" : "ok";
     showToast(parts.join(" | "), level);
-    // Refresh the install banner since hot-add may have surfaced
+    // Refresh the install banner since added plugins may surface
     // new pending deps.
     refreshInstallBanner().catch(() => {});
   } catch (e) {

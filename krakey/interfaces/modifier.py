@@ -183,6 +183,30 @@ class ModifierRegistry:
         """All registered Modifiers, in registration order."""
         return [self._by_role[r] for r in self._order]
 
+    # ---- deregistration (hot-reload) --------------------------------
+
+    def deregister_by_name(self, name: str) -> "Modifier | None":
+        """Remove a Modifier by its instance name. Returns the
+        removed instance or ``None`` if not found. Used by hot-
+        reload to swap a plugin's modifier implementation. If the
+        modifier defines an optional ``detach(runtime)`` method,
+        the caller is responsible for invoking it BEFORE this
+        call so the modifier can release runtime-coupled assets
+        (the registry itself doesn't carry a runtime reference)."""
+        target_role: str | None = None
+        for role, mod in self._by_role.items():
+            if getattr(mod, "name", None) == name:
+                target_role = role
+                break
+        if target_role is None:
+            return None
+        removed = self._by_role.pop(target_role)
+        try:
+            self._order.remove(target_role)
+        except ValueError:
+            pass
+        return removed
+
     # ---- lifecycle hook ---------------------------------------------
 
     def attach_all(self, runtime: Any) -> None:
