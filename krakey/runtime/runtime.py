@@ -77,6 +77,13 @@ class RuntimeDeps:
     # Tests pass a tmpdir so update_in_mind dispatches don't bleed
     # into the production state.
     in_mind_state_path: str | None = None
+    # Sliding window persistence file. None → workspace/data/
+    # sliding_window.json. Tests pass a tmpdir so per-test
+    # heartbeat history doesn't bleed across runs. Set to ""
+    # (empty string) to opt out of persistence entirely — the
+    # window stays in-memory only and a process restart loses
+    # working memory (the pre-2026-05-07 behavior).
+    sliding_window_state_path: str | None = None
     # Shared LLMClient cache keyed by tag name. Populated by
     # build_runtime_from_config for core purposes; Runtime adds plugin
     # purpose entries on top. Sharing the cache means two purposes that
@@ -136,7 +143,21 @@ class Runtime:
             (self_params.max_input_tokens or 128_000)
             * self_params.history_token_fraction
         )
-        self.window = SlidingWindow(history_token_budget=_history_budget)
+        # Sliding window persists across restarts so working memory
+        # survives a reboot. ``""`` (empty) opts out — useful for
+        # tests/benchmarks that want pure in-memory windows. ``None``
+        # → default workspace path.
+        if deps.sliding_window_state_path == "":
+            sw_state_path: Path | None = None
+        else:
+            sw_state_path = Path(
+                deps.sliding_window_state_path
+                or "workspace/data/sliding_window.json"
+            )
+        self.window = SlidingWindow(
+            history_token_budget=_history_budget,
+            state_path=sw_state_path,
+        )
 
         # Core service slots — each can be replaced via
         # ``core_implementations.<slot>`` in config.yaml. The resolver

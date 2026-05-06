@@ -172,6 +172,14 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         encoding="utf-8",
     )
 
+    # Sliding window state file: per-test tmpdir so heartbeat
+    # rounds don't bleed across runs. Tests that want to verify
+    # cross-restart persistence (test_sliding_window.py) pass an
+    # explicit path via build_runtime_with_fakes' kwargs and
+    # construct two runtimes pointing at the same file.
+    sliding_window_state_path = (
+        f"{tempfile.mkdtemp(prefix='krakey_test_sw_')}/sliding_window.json"
+    )
     deps = RuntimeDeps(
         config=cfg, self_llm=self_llm, hypo_llm=hypo_llm,
         compact_llm=compact_llm or ScriptedLLM(),
@@ -181,6 +189,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         plugin_configs_root=plugin_configs_dir,
         self_model_path=self_model_path,
         in_mind_state_path=in_mind_state_path,
+        sliding_window_state_path=sliding_window_state_path,
         llm_clients_by_tag=llm_clients_by_tag,
         # Tests almost universally assume a clean stimulus buffer
         # at startup — the install advisory's runtime push would
