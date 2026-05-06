@@ -1742,39 +1742,43 @@ async function loadSettings() {
 async function refreshInstallBanner() {
   const banner = $("#install-banner");
   const text = $("#install-banner-text");
-  const log = $("#install-log");
   if (!banner || !text) return;
+  // Banner is ALWAYS visible (the static HTML has no `hidden`
+  // attribute) so the Install button is always self-explanatory.
+  // We only adjust the left-side text to reflect current state.
+  banner.classList.remove("installing", "success", "failed");
   try {
     const r = await fetch("/api/plugins/deps_status");
     if (!r.ok) {
-      banner.hidden = true;
+      // Endpoint unreachable — keep the static fallback text
+      // already in the HTML.
       return;
     }
     const data = await r.json();
     if (!data || !data.pending) {
-      banner.hidden = true;
-      banner.classList.remove("installing", "success", "failed");
-      if (log) log.hidden = true;
+      banner.classList.add("success");
+      text.innerHTML =
+        "<strong>All plugin dependencies are installed.</strong> " +
+        "Click <em>Install</em> to refresh the venv (e.g. after a " +
+        "manual <code>pip uninstall</code> or to pull " +
+        "<code>--upgrade</code>'d wheels).";
       return;
     }
-    // Find which plugins are unsatisfied so the user knows what
-    // the click will install.
     const unsatisfied = Object.entries(data.plugins || {})
       .filter(([_, info]) => !info.satisfied)
       .map(([name, _]) => name);
     const list = unsatisfied.length
       ? unsatisfied.join(", ")
-      : "(checking declared deps)";
+      : "(state changed; click Install to refresh)";
     text.innerHTML =
       `<strong>Plugin dependencies pending install:</strong> ` +
       `${escapeHtml(list)}. ` +
-      `Click <em>Install</em> to run pip + each plugin's post_install ` +
-      `hooks (e.g. <code>playwright install chromium</code>) ` +
-      `inside the runtime's venv.`;
-    banner.hidden = false;
-    banner.classList.remove("installing", "success", "failed");
+      `Click <em>Install</em> to run <code>pip install</code> + each ` +
+      `plugin's <code>post_install</code> hook (e.g. ` +
+      `<code>playwright install chromium</code>) inside the ` +
+      `runtime's venv.`;
   } catch (_) {
-    banner.hidden = true;
+    // Keep the static fallback HTML.
   }
 }
 

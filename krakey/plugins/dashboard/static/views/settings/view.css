@@ -386,8 +386,26 @@
 .install-banner-text {
   flex: 1;
   color: var(--text);
+  line-height: 1.5;
 }
 .install-banner-text strong { color: var(--yellow); }
+.install-banner.success .install-banner-text strong { color: var(--green); }
+.install-banner.installing .install-banner-text strong { color: var(--cyan); }
+.install-banner.failed .install-banner-text strong { color: var(--red); }
+.install-banner-text code {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 1px 4px;
+  font-family: ui-monospace, "Consolas", monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+.install-banner-text em {
+  font-style: normal;
+  font-weight: bold;
+  color: var(--text);
+}
 .install-banner-upgrade {
   display: inline-flex;
   align-items: center;
