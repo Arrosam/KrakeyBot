@@ -236,3 +236,82 @@ def test_default_config_is_loadable():
     parsed = yaml.safe_load(text)
     assert "llm" in parsed
     assert "tags" in parsed["llm"]
+
+
+# ---------------- sliding_window section (2026-05-07) ----------------
+
+
+def test_sliding_window_default_state_path_is_workspace_data():
+    """Default Config exposes the persistence path so users see
+    where the file lives without having to dig into source."""
+    cfg = Config()
+    assert cfg.sliding_window.state_path == "workspace/data/sliding_window.json"
+
+
+def test_sliding_window_dumped_then_reloaded(tmp_path):
+    """Dashboard edits write YAML, runtime restart reloads. The
+    section must round-trip through dump → load."""
+    cfg = Config()
+    cfg.sliding_window.state_path = "/tmp/custom/sw.json"
+    p = tmp_path / "config.yaml"
+    p.write_text(dump_config(cfg), encoding="utf-8")
+    reloaded = load_config(p)
+    assert reloaded.sliding_window.state_path == "/tmp/custom/sw.json"
+
+
+def test_sliding_window_empty_string_means_in_memory_only(tmp_path):
+    """Setting state_path to "" in YAML opts out of persistence —
+    matches the RuntimeDeps sentinel ("" → in-memory only)."""
+    p = _write(tmp_path, """
+        llm:
+          providers: {}
+          tags: {}
+          core_purposes: {}
+        plugins: []
+        graph_memory:
+          db_path: ":memory:"
+        sliding_window:
+          state_path: ""
+    """)
+    cfg = load_config(p)
+    assert cfg.sliding_window.state_path == ""
+
+
+def test_sliding_window_section_absent_falls_back_to_default(tmp_path):
+    """Old config.yaml files without a sliding_window section keep
+    working — the default path is auto-applied."""
+    p = _write(tmp_path, """
+        llm:
+          providers: {}
+          tags: {}
+          core_purposes: {}
+        plugins: []
+        graph_memory:
+          db_path: ":memory:"
+    """)
+    cfg = load_config(p)
+    assert cfg.sliding_window.state_path == "workspace/data/sliding_window.json"
+
+
+def test_sliding_window_max_tokens_still_warns(tmp_path, capsys):
+    """The deprecated `sliding_window.max_tokens` field has been
+    removed but users may still have it from old configs. Warn
+    explicitly so they remove it; honor `state_path` alongside."""
+    p = _write(tmp_path, """
+        llm:
+          providers: {}
+          tags: {}
+          core_purposes: {}
+        plugins: []
+        graph_memory:
+          db_path: ":memory:"
+        sliding_window:
+          max_tokens: 4096
+          state_path: /tmp/sw.json
+    """)
+    cfg = load_config(p)
+    err = capsys.readouterr().err
+    assert "max_tokens" in err
+    assert "deprecated" in err.lower()
+    # state_path still applied even when max_tokens triggers the warning.
+    assert cfg.sliding_window.state_path == "/tmp/sw.json"

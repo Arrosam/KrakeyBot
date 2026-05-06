@@ -24,6 +24,30 @@ class FatigueSection:
     })
 
 
+@dataclass
+class SlidingWindowSection:
+    """Working-memory persistence (Samuel 2026-05-07).
+
+    The sliding window holds the last N heartbeats' rounds in memory
+    AND mirrors them to ``state_path`` after every mutation so a
+    process restart restores the rounds exactly. Without persistence
+    a restart wipes Self's recent context — only rounds already
+    compacted to GM survive, the latest few in-flight ones vanish.
+
+    To opt out (run pure in-memory, pre-2026-05-07 behavior), set
+    ``state_path: ""`` (empty string). Empty also opts out via the
+    YAML loader.
+    """
+    state_path: str = "workspace/data/sliding_window.json"
+
+
+def _build_sliding_window(raw: dict[str, Any]) -> SlidingWindowSection:
+    d = SlidingWindowSection()
+    return SlidingWindowSection(
+        state_path=str(raw.get("state_path", d.state_path)),
+    )
+
+
 def _build_idle(raw: dict[str, Any]) -> IdleSection:
     d = IdleSection()
     return IdleSection(

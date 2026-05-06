@@ -36,8 +36,10 @@ import yaml
 from krakey.models.config.heartbeat import (  # noqa: F401
     FatigueSection,
     IdleSection,
+    SlidingWindowSection,
     _build_fatigue,
     _build_idle,
+    _build_sliding_window,
     _validate_fatigue_thresholds,
 )
 from krakey.models.config.environments import (  # noqa: F401
@@ -87,11 +89,14 @@ class Config:
     llm: LLMSection = field(default_factory=LLMSection)
     idle: IdleSection = field(default_factory=IdleSection)
     fatigue: FatigueSection = field(default_factory=FatigueSection)
-    # `sliding_window` removed in the prompt-budget refactor — the
-    # window's size is now derived from the Self role's LLMParams
-    # (`max_input_tokens * history_token_fraction`). See
-    # `_warn_about_removed_sections` below for the deprecation
-    # message on old configs.
+    # The sliding window's SIZE budget is derived from the Self
+    # role's LLMParams (max_input_tokens * history_token_fraction)
+    # — that's why `sliding_window.max_tokens` is not a config
+    # field. ``sliding_window`` here only carries persistence
+    # settings (state_path) — see SlidingWindowSection.
+    sliding_window: SlidingWindowSection = field(
+        default_factory=SlidingWindowSection
+    )
     graph_memory: GraphMemorySection = field(
         default_factory=GraphMemorySection
     )
@@ -215,6 +220,9 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         llm=_build_llm(raw.get("llm") or {}),
         idle=_build_idle(raw.get("idle") or {}),
         fatigue=fatigue,
+        sliding_window=_build_sliding_window(
+            raw.get("sliding_window") or {}
+        ),
         graph_memory=_build_graph_memory(raw.get("graph_memory") or {}),
         knowledge_base=_build_kb(raw.get("knowledge_base") or {}),
         plugins=_build_plugins(raw),
@@ -294,12 +302,15 @@ def _warn_about_removed_sections(raw: dict[str, Any]) -> None:
     """
     sw = raw.get("sliding_window") or {}
     if isinstance(sw, dict) and "max_tokens" in sw:
+        # Note (2026-05-07): `sliding_window` is back as a section
+        # (carrying state_path for persistence), but `max_tokens`
+        # specifically is still derived, never user-configured.
         print(
             "deprecated: `sliding_window.max_tokens` is no longer used.\n"
-            "  History budget is now derived from "
-            "`llm.roles.self.params.max_input_tokens * "
-            "history_token_fraction`. Remove the sliding_window section "
-            "from your config. Your previous value is being ignored.",
+            "  History budget is derived from "
+            "`llm.tags.<self_tag>.params.max_input_tokens * "
+            "history_token_fraction`. Remove just the `max_tokens` "
+            "key — `sliding_window.state_path` is still honored.",
             file=sys.stderr,
         )
     gm = raw.get("graph_memory") or {}

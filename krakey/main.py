@@ -146,6 +146,12 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
         config_path=str(config_path),
         llm_clients_by_tag=client_cache,  # shared with plugin loader
         install_service=install_service,
+        # Pull the sliding-window state path straight from
+        # config.yaml so dashboard edits to ``sliding_window.state_path``
+        # take effect on the next restart. Empty string in YAML →
+        # in-memory only (RuntimeDeps respects "" as the opt-out
+        # sentinel).
+        sliding_window_state_path=cfg.sliding_window.state_path,
     )
     return Runtime(deps)
 
