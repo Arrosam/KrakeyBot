@@ -46,12 +46,10 @@ work to fix herself.
 """
 from __future__ import annotations
 
-import argparse
-import contextlib
-import io
 from datetime import datetime
 from typing import Any
 
+from krakey.interfaces.install_service import InstallService
 from krakey.interfaces.tool import Tool
 from krakey.models.stimulus import Stimulus
 
@@ -62,8 +60,19 @@ _OUTPUT_TRUNCATE = 4000
 
 
 class InstallTool(Tool):
-    """Reserved built-in tool that runs ``krakey install`` from
-    inside the runtime."""
+    """Reserved built-in tool that runs ``krakey install`` via
+    an injected ``InstallService``. The runtime composition root
+    is the only place that knows about the concrete service
+    implementation; this tool depends only on the Protocol.
+
+    When ``install_service is None`` (e.g. tests that didn't
+    provide one, or a composition root that disabled install
+    advisory), ``execute`` returns a diagnostic Stimulus rather
+    than raising — the additive-plugin invariant covers built-in
+    tools too."""
+
+    def __init__(self, install_service: InstallService | None = None):
+        self._svc = install_service
 
     @property
     def name(self) -> str:
@@ -118,7 +127,13 @@ class InstallTool(Tool):
     async def execute(
         self, intent: str, params: dict[str, Any],
     ) -> Stimulus:
-        from krakey.cli import install as install_mod
+        if self._svc is None:
+            return self._err(
+                "install service not configured at runtime "
+                "construction. The composition root must inject "
+                "an InstallService implementation; this build of "
+                "krakey skipped that injection.",
+            )
 
         upgrade = bool(params.get("upgrade", False))
         # ``plugins`` filter is advisory — pip resolves the union
@@ -133,32 +148,18 @@ class InstallTool(Tool):
                 "`plugins` must be a list of strings if provided",
             )
 
-        # Capture stdout + stderr so the dashboard log + Self's
-        # feedback Stimulus see what pip / post_install actually
-        # did. The CLI install function prints freely; we
-        # redirect to our own buffer.
-        out_buf = io.StringIO()
-        err_buf = io.StringIO()
-
         try:
-            with (
-                contextlib.redirect_stdout(out_buf),
-                contextlib.redirect_stderr(err_buf),
-            ):
-                rc = install_mod.install(
-                    argparse.Namespace(
-                        dry_run=False, upgrade=upgrade,
-                    ),
-                )
+            result = self._svc.install(
+                upgrade=upgrade, dry_run=False,
+            )
         except Exception as e:  # noqa: BLE001
             return self._err(
-                f"install crashed: {type(e).__name__}: {e}\n"
-                f"stdout:\n{out_buf.getvalue()[:_OUTPUT_TRUNCATE]}\n"
-                f"stderr:\n{err_buf.getvalue()[:_OUTPUT_TRUNCATE]}",
+                f"install service crashed: {type(e).__name__}: {e}",
             )
 
-        out = _truncate(out_buf.getvalue(), _OUTPUT_TRUNCATE)
-        err = _truncate(err_buf.getvalue(), _OUTPUT_TRUNCATE)
+        out = _truncate(result.stdout, _OUTPUT_TRUNCATE)
+        err = _truncate(result.stderr, _OUTPUT_TRUNCATE)
+        rc = result.rc
 
         if rc == 0:
             content = (

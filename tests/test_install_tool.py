@@ -3,30 +3,75 @@ self-repair surface for missing plugin deps.
 
 Pinned behaviors:
   * Tool name + description / schema visible to Self.
-  * execute() runs the same krakey.cli.install.install code-path
-    a shell ``krakey install`` does, with stdout / stderr
-    captured into the returned Stimulus.
+  * execute() delegates to the injected ``InstallService`` Protocol
+    impl, with rc + stdout + stderr captured into the returned
+    Stimulus.
   * rc == 0 → success Stimulus, adrenalin=False.
   * rc != 0 → error Stimulus, adrenalin=True (so Self prioritises
     deciding what to do — retry / report-to-user / abandon).
-  * ``upgrade`` flag plumbs through to install.
-  * Crash inside install() returns an error Stimulus instead of
-    propagating the exception (additive-plugin invariant).
+  * ``upgrade`` flag plumbs through to the service.
+  * Crash inside service.install returns an error Stimulus
+    instead of propagating the exception (additive-plugin
+    invariant).
+  * No InstallService injected → tool returns a clean error
+    Stimulus rather than crashing.
 
-Tests stub install_mod.install so pip is never actually run.
+Tests inject a fake ``InstallService`` that records calls + returns
+canned ``InstallResult`` objects — no monkeypatching of module
+internals, no real pip subprocess.
 """
 from __future__ import annotations
 
-import argparse
 from datetime import datetime
 
 import pytest
 
-from krakey.cli import install as install_mod
+from krakey.interfaces.install_service import InstallResult, InstallService
 from krakey.runtime.builtin_tools import (
     INSTALL_TOOL_NAME,
     InstallTool,
 )
+
+
+class FakeInstallService:
+    """In-memory ``InstallService`` for tests. Records every
+    install() call so assertions can verify what the tool
+    forwarded; returns whatever ``InstallResult`` was queued."""
+
+    def __init__(
+        self,
+        result: InstallResult | None = None,
+        has_pending: tuple[bool, dict] = (False, {}),
+        deps_status_value: dict | None = None,
+        crash: BaseException | None = None,
+    ):
+        self._result = result or InstallResult(
+            rc=0, stdout="", stderr="",
+        )
+        self._has_pending = has_pending
+        self._deps_status_value = deps_status_value or {}
+        self._crash = crash
+        self.install_calls: list[dict] = []
+
+    def has_pending_deps(self):
+        return self._has_pending
+
+    def collect_plugin_dependencies(self):
+        return {}
+
+    def collect_plugin_post_install(self):
+        return {}
+
+    def deps_status(self):
+        return self._deps_status_value
+
+    def install(self, *, upgrade=False, dry_run=False):
+        self.install_calls.append(
+            {"upgrade": upgrade, "dry_run": dry_run},
+        )
+        if self._crash is not None:
+            raise self._crash
+        return self._result
 
 
 # =====================================================================
@@ -40,8 +85,6 @@ def test_tool_name():
 
 def test_tool_description_mentions_self_facing_use_cases():
     desc = InstallTool().description
-    # Description must explicitly tell Self when to call this so
-    # she doesn't have to guess from the name alone.
     assert "ModuleNotFoundError" in desc
     assert "playwright install chromium" in desc
     assert "post_install" in desc
@@ -55,115 +98,101 @@ def test_tool_schema_advertises_plugins_and_upgrade():
     assert schema["properties"]["plugins"]["type"] == "array"
     assert "upgrade" in schema["properties"]
     assert schema["properties"]["upgrade"]["type"] == "boolean"
-    # No required fields — Self can call install with no args
-    # to get the default "install everything pending" behaviour.
     assert "required" not in schema or not schema.get("required")
 
 
 # =====================================================================
-# execute() — happy path + failure path
+# execute() — happy path + failure path (via injected fake service)
 # =====================================================================
 
 
-async def test_execute_success_returns_low_priority_feedback(
-    monkeypatch,
-):
-    monkeypatch.setattr(
-        install_mod, "install",
-        lambda args: (print("pip ok"), 0)[1],
+async def test_execute_success_returns_low_priority_feedback():
+    svc = FakeInstallService(
+        result=InstallResult(rc=0, stdout="pip ok", stderr=""),
     )
-    s = await InstallTool().execute("repair browser_exec", {})
+    s = await InstallTool(install_service=svc).execute(
+        "repair browser_exec", {},
+    )
     assert s.type == "tool_feedback"
     assert s.source == f"tool:{INSTALL_TOOL_NAME}"
     assert s.adrenalin is False
     assert "rc=0" in s.content
-    # stdout from the inner install() run is captured into the
-    # Stimulus so Self can read what pip did.
     assert "pip ok" in s.content
 
 
-async def test_execute_failure_returns_adrenalin_feedback(
-    monkeypatch,
-):
-    monkeypatch.setattr(
-        install_mod, "install",
-        lambda args: (print("pip rc=1 retry"), 1)[1],
+async def test_execute_failure_returns_adrenalin_feedback():
+    svc = FakeInstallService(
+        result=InstallResult(
+            rc=1, stdout="", stderr="pip rc=1 retry",
+        ),
     )
-    s = await InstallTool().execute("repair", {})
+    s = await InstallTool(install_service=svc).execute("repair", {})
     assert s.adrenalin is True
     assert "rc=1" in s.content
     assert "FAILED" in s.content
 
 
-async def test_execute_threads_upgrade_flag(monkeypatch):
-    captured: list[argparse.Namespace] = []
-
-    def fake_install(args):
-        captured.append(args)
-        return 0
-
-    monkeypatch.setattr(install_mod, "install", fake_install)
-    await InstallTool().execute("force-refresh", {"upgrade": True})
-    assert len(captured) == 1
-    assert captured[0].upgrade is True
-    assert captured[0].dry_run is False
-
-
-async def test_execute_default_upgrade_is_false(monkeypatch):
-    captured: list[argparse.Namespace] = []
-    monkeypatch.setattr(
-        install_mod, "install",
-        lambda args: (captured.append(args), 0)[1],
+async def test_execute_threads_upgrade_flag():
+    svc = FakeInstallService()
+    await InstallTool(install_service=svc).execute(
+        "force-refresh", {"upgrade": True},
     )
-    await InstallTool().execute("default", {})
-    assert captured[0].upgrade is False
+    assert svc.install_calls == [
+        {"upgrade": True, "dry_run": False},
+    ]
 
 
-async def test_execute_validates_plugins_list_type(monkeypatch):
-    """`plugins` must be a list of strings if provided. Wrong
-    types should error at the tool boundary rather than crash
-    deep inside install()."""
-    # If validation passes the install_mod patch isn't consulted,
-    # but stub it anyway so we don't hit the real install on
-    # accidental fall-through.
-    monkeypatch.setattr(install_mod, "install", lambda args: 0)
-    s = await InstallTool().execute(
+async def test_execute_default_upgrade_is_false():
+    svc = FakeInstallService()
+    await InstallTool(install_service=svc).execute("default", {})
+    assert svc.install_calls == [
+        {"upgrade": False, "dry_run": False},
+    ]
+
+
+async def test_execute_validates_plugins_list_type():
+    svc = FakeInstallService()
+    s = await InstallTool(install_service=svc).execute(
         "scoped",
         {"plugins": ["browser_exec", 7]},  # type: ignore[arg-type]
     )
     assert s.adrenalin is True
     assert "must be a list of strings" in s.content
+    # Validation runs BEFORE the service is called.
+    assert svc.install_calls == []
 
 
-async def test_execute_swallows_install_crash(monkeypatch):
-    """If install() raises (bug, not a clean rc!=0 exit), the
-    tool returns an error Stimulus rather than letting the
-    exception propagate. Additive-plugin invariant covers
-    advisory tools too."""
-    def boom(args):
-        raise RuntimeError("install module bug")
-
-    monkeypatch.setattr(install_mod, "install", boom)
-    s = await InstallTool().execute("repair", {})
+async def test_execute_swallows_install_crash():
+    """If service.install raises (bug, not a clean rc!=0 exit),
+    the tool returns an error Stimulus rather than letting the
+    exception propagate."""
+    svc = FakeInstallService(crash=RuntimeError("install module bug"))
+    s = await InstallTool(install_service=svc).execute("repair", {})
     assert s.adrenalin is True
-    assert "install crashed" in s.content
+    assert "install service crashed" in s.content
     assert "RuntimeError" in s.content
 
 
-async def test_execute_truncates_giant_output(monkeypatch):
-    """A pip install that prints megabytes (e.g. on a build-
-    from-source dep) shouldn't blow up Self's prompt. Output
-    is capped at 4000 chars per stream."""
+async def test_execute_truncates_giant_output():
+    """A pip install that prints megabytes shouldn't blow up
+    Self's prompt. Output is capped at 4000 chars per stream."""
     huge = "x" * 10_000
-
-    def fake(args):
-        print(huge)
-        return 0
-
-    monkeypatch.setattr(install_mod, "install", fake)
-    s = await InstallTool().execute("repair", {})
+    svc = FakeInstallService(
+        result=InstallResult(rc=0, stdout=huge, stderr=""),
+    )
+    s = await InstallTool(install_service=svc).execute("repair", {})
     assert s.content.count("x") < 5000  # truncated
     assert "truncated" in s.content
+
+
+async def test_execute_returns_error_when_no_service_configured():
+    """Composition root chose not to inject a service (or test
+    built the tool standalone without one). Tool reports
+    cleanly rather than raising."""
+    s = await InstallTool().execute("repair", {})
+    assert s.type == "tool_feedback"
+    assert s.adrenalin is True
+    assert "install service not configured" in s.content
 
 
 # =====================================================================
@@ -173,9 +202,9 @@ async def test_execute_truncates_giant_output(monkeypatch):
 
 def test_install_tool_registered_in_runtime_tools():
     """Sanity: the runtime composition root registers InstallTool
-    alongside SleepTool. If a plugin tries to register a
-    ``install`` tool, the registry's duplicate-name guard
-    refuses it."""
+    alongside SleepTool. The build_runtime_with_fakes helper
+    doesn't inject an install service, but the tool is still
+    constructed (with service=None) and registered."""
     from tests._runtime_helpers import build_runtime_with_fakes
 
     class _StubLLM:
@@ -196,40 +225,34 @@ def test_install_tool_registered_in_runtime_tools():
 # =====================================================================
 
 
-def _runtime_with_advisory_on(self_llm):
-    """build_runtime_with_fakes defaults to advisory OFF (so
-    existing buffer-state tests aren't surprised). The advisory
-    tests explicitly flip it back ON via direct attribute set
-    after construction."""
+def _runtime_with_advisory_on(self_llm, install_service=None):
+    """build_runtime_with_fakes defaults the advisory OFF (so
+    existing buffer-state tests aren't surprised). Tests that
+    want the advisory to fire pass an InstallService + flip the
+    flag."""
     from tests._runtime_helpers import build_runtime_with_fakes
 
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=self_llm,
     )
-    # Re-enable the advisory for this specific test.
     runtime._enable_install_advisory = True
+    runtime._install_service = install_service
     return runtime
 
 
-async def test_runtime_pushes_install_advisory_when_state_missing(
-    monkeypatch, tmp_path,
-):
-    """No install_state.json on disk → has_pending_deps=True →
+async def test_runtime_pushes_install_advisory_when_state_missing():
+    """has_pending_deps=True via the injected service →
     ``run()`` pushes a system:install Stimulus before the first
     heartbeat fires."""
     class _StubLLM:
         async def chat(self, messages, **kw):
             return "[DECISION]\nNo action.\n[IDLE]\n1"
 
-    runtime = _runtime_with_advisory_on(_StubLLM())
-
-    monkeypatch.setattr(
-        install_mod, "has_pending_deps",
-        lambda: (True, {"browser_exec": ["playwright>=1.40"]}),
+    svc = FakeInstallService(
+        has_pending=(True, {"browser_exec": ["playwright>=1.40"]}),
     )
+    runtime = _runtime_with_advisory_on(_StubLLM(), install_service=svc)
 
-    # Run zero iterations (just startup) so the advisory push
-    # happens but the heartbeat doesn't actually consume it.
     await runtime.run(iterations=0)
 
     drained = runtime.buffer.drain()
@@ -243,20 +266,14 @@ async def test_runtime_pushes_install_advisory_when_state_missing(
     assert "browser_exec" in s.content
 
 
-async def test_runtime_silent_when_install_state_current(
-    monkeypatch, tmp_path,
-):
-    """When has_pending_deps=False, no advisory Stimulus fires —
-    Self isn't bothered every startup if everything is in order."""
+async def test_runtime_silent_when_install_state_current():
+    """has_pending_deps=False → no advisory."""
     class _StubLLM:
         async def chat(self, messages, **kw):
             return "[DECISION]\nNo action.\n[IDLE]\n1"
 
-    runtime = _runtime_with_advisory_on(_StubLLM())
-
-    monkeypatch.setattr(
-        install_mod, "has_pending_deps", lambda: (False, {}),
-    )
+    svc = FakeInstallService(has_pending=(False, {}))
+    runtime = _runtime_with_advisory_on(_StubLLM(), install_service=svc)
 
     await runtime.run(iterations=0)
 
@@ -265,35 +282,44 @@ async def test_runtime_silent_when_install_state_current(
     assert advisories == []
 
 
-async def test_runtime_install_advisory_swallows_check_exception(
-    monkeypatch, tmp_path,
-):
-    """If has_pending_deps raises (corrupt workspace, weird env),
-    runtime startup must NOT crash — the advisory is best-effort."""
+async def test_runtime_install_advisory_swallows_check_exception():
+    """If service.has_pending_deps raises, runtime startup must
+    NOT crash — the advisory is best-effort."""
     class _StubLLM:
         async def chat(self, messages, **kw):
             return "[DECISION]\nNo action.\n[IDLE]\n1"
 
-    runtime = _runtime_with_advisory_on(_StubLLM())
+    class _BadSvc:
+        def has_pending_deps(self):
+            raise RuntimeError("workspace blew up")
 
-    def boom():
-        raise RuntimeError("workspace blew up")
+        def collect_plugin_dependencies(self):
+            return {}
 
-    monkeypatch.setattr(install_mod, "has_pending_deps", boom)
+        def collect_plugin_post_install(self):
+            return {}
+
+        def deps_status(self):
+            return {}
+
+        def install(self, *, upgrade=False, dry_run=False):
+            return InstallResult(rc=0, stdout="", stderr="")
+
+    runtime = _runtime_with_advisory_on(
+        _StubLLM(), install_service=_BadSvc(),
+    )
 
     # Must not raise.
     await runtime.run(iterations=0)
     drained = runtime.buffer.drain()
-    # No advisory pushed (the check failed silently).
     assert not any(s.source == "system:install" for s in drained)
 
 
-async def test_runtime_install_advisory_off_by_default_in_helper(
-    monkeypatch, tmp_path,
-):
+async def test_runtime_install_advisory_off_by_default_in_helper():
     """Sanity: build_runtime_with_fakes defaults the advisory OFF
     so existing tests with buffer-state assertions aren't broken
-    by the new startup push."""
+    by the new startup push, even when an InstallService IS
+    injected later."""
     from tests._runtime_helpers import build_runtime_with_fakes
 
     class _StubLLM:
@@ -303,9 +329,10 @@ async def test_runtime_install_advisory_off_by_default_in_helper(
     runtime = build_runtime_with_fakes(
         self_llm=_StubLLM(), hypo_llm=_StubLLM(),
     )
-    monkeypatch.setattr(
-        install_mod, "has_pending_deps",
-        lambda: (True, {"x": ["pkg"]}),
+    # Inject a service that says "yes pending" but leave the
+    # advisory flag at its helper-default (False).
+    runtime._install_service = FakeInstallService(
+        has_pending=(True, {"x": ["pkg"]}),
     )
     await runtime.run(iterations=0)
     assert not any(

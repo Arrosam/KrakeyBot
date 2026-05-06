@@ -157,52 +157,26 @@ class RuntimePluginsService:
         return {"project": project, "path": str(path), "config": values}
 
     # ---- deps install status / install dispatch ----
+    #
+    # Both delegate to the InstallService Protocol implementation
+    # the runtime composition root injected. The dashboard plugin
+    # never imports the concrete impl (or krakey.cli) — the
+    # dependency arrow stays plugin → runtime → interface, never
+    # plugin → cli.
+
+    def _install_service(self):
+        if self._rt is None:
+            raise RuntimeError("runtime not available")
+        svc = getattr(self._rt, "_install_service", None)
+        if svc is None:
+            raise RuntimeError(
+                "no InstallService configured on the runtime — "
+                "the dashboard cannot run install / deps_status",
+            )
+        return svc
 
     def deps_status(self) -> dict[str, Any]:
-        from krakey.cli import install as install_mod
-
-        plugin_deps = install_mod.collect_plugin_dependencies()
-        plugin_post = install_mod.collect_plugin_post_install()
-        state = install_mod.read_install_state() or {}
-        installed_set = set(state.get("installed") or [])
-        live_hash = install_mod.deps_hash(plugin_deps, plugin_post)
-        recorded_hash = state.get("deps_hash")
-        # A plugin counts as "satisfied" when:
-        #   - it appears in the recorded installed list, AND
-        #   - the recorded global hash matches the live one (so a
-        #     plugin whose deps were installed but THEN edited
-        #     correctly shows up as un-satisfied again).
-        # Plugins with no third-party deps are trivially satisfied.
-        plugins_out: dict[str, dict[str, Any]] = {}
-        all_names = sorted(set(plugin_deps) | set(plugin_post))
-        any_pending = False
-        for name in all_names:
-            deps = plugin_deps.get(name) or []
-            post = plugin_post.get(name) or []
-            if not deps and not post:
-                satisfied = True
-            else:
-                satisfied = (
-                    name in installed_set
-                    and recorded_hash == live_hash
-                )
-            if not satisfied:
-                any_pending = True
-            plugins_out[name] = {
-                "dependencies": list(deps),
-                "post_install": list(post),
-                "installed":    name in installed_set,
-                "satisfied":    satisfied,
-            }
-        return {
-            "pending":  any_pending or recorded_hash != live_hash,
-            "plugins":  plugins_out,
-            "state": {
-                "installed_at": state.get("installed_at"),
-                "deps_hash":    recorded_hash,
-                "live_hash":    live_hash,
-            },
-        }
+        return self._install_service().deps_status()
 
     async def hot_reload(self) -> dict[str, Any]:
         """Re-parse the central config.yaml and ask the runtime to
@@ -227,42 +201,17 @@ class RuntimePluginsService:
         return await self._rt.hot_reload_plugins(target_names)
 
     def install(self, body: dict[str, Any]) -> dict[str, Any]:
-        """Run ``krakey install`` programmatically with
-        ``upgrade`` flag from body. Captures stdout / stderr and
-        returns them along with rc. Truncates output so a chatty
-        pip session doesn't blow up the JSON response."""
-        import argparse
-        import contextlib
-        import io
-
-        from krakey.cli import install as install_mod
-
+        """Delegate to the runtime's InstallService. Truncates
+        output so a chatty pip session doesn't blow up the JSON
+        response."""
         upgrade = bool(body.get("upgrade", False))
-        out_buf = io.StringIO()
-        err_buf = io.StringIO()
-
-        try:
-            with (
-                contextlib.redirect_stdout(out_buf),
-                contextlib.redirect_stderr(err_buf),
-            ):
-                rc = install_mod.install(
-                    argparse.Namespace(
-                        dry_run=False, upgrade=upgrade,
-                    ),
-                )
-        except Exception as e:  # noqa: BLE001
-            return {
-                "rc": -1,
-                "stdout": _truncate(out_buf.getvalue(), 8000),
-                "stderr": _truncate(err_buf.getvalue(), 8000)
-                          + f"\n[crash] {type(e).__name__}: {e}",
-            }
-
+        result = self._install_service().install(
+            upgrade=upgrade, dry_run=False,
+        )
         return {
-            "rc": int(rc),
-            "stdout": _truncate(out_buf.getvalue(), 8000),
-            "stderr": _truncate(err_buf.getvalue(), 8000),
+            "rc":     int(result.rc),
+            "stdout": _truncate(result.stdout, 8000),
+            "stderr": _truncate(result.stderr, 8000),
         }
 
 

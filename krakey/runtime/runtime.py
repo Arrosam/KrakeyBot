@@ -19,6 +19,9 @@ from typing import Any
 from krakey.bootstrap import load_self_model_or_default
 from krakey.models.self_model import SelfModelStore
 from krakey.models.stimulus import Stimulus
+from krakey.interfaces.install_service import (
+    InstallService as InstallServiceProto,
+)
 from krakey.interfaces.tool import ToolRegistry
 from krakey.llm.resolve import AsyncEmbedder, ChatLike, resolve_llm_for_tag
 from krakey.memory.graph_memory import GraphMemory
@@ -92,6 +95,14 @@ class RuntimeDeps:
     # ``install`` tool. Tests default to False to avoid surprise
     # stimuli polluting buffer-state assertions.
     enable_install_advisory: bool = True
+    # InstallService impl injected by the composition root (see
+    # ``krakey.main.build_runtime_from_config``). Runtime depends
+    # on the Protocol from ``krakey.interfaces.install_service``,
+    # never on any concrete implementation directly. Tests can
+    # pass a stub. None disables the install advisory + makes
+    # the InstallTool report "no service" — the additive-plugin
+    # invariant extends to advisory infra.
+    install_service: "InstallServiceProto | None" = None
 
 
 class Runtime:
@@ -189,21 +200,27 @@ class Runtime:
             embedder=deps.embedder,
         )
 
+        # InstallService — runtime depends on the Protocol via DI;
+        # composition root (krakey.main) injects DefaultInstallService.
+        # When None, install advisory + InstallTool both no-op
+        # gracefully (additive-plugin invariant). Stashed BEFORE
+        # the InstallTool constructor below reads it.
+        self._install_service: InstallServiceProto | None = (
+            deps.install_service
+        )
+
         self.tools = ToolRegistry()
         # Built-in tools are registered BEFORE the plugin loader runs
         # so plugins can't shadow them by registering a same-named
         # Tool (the registry's register() raises on duplicate name).
-        # Sleep is the only built-in today; it lets Self choose
-        # voluntary sleep without depending on the optional
-        # hypothalamus translator plugin (sleep is a heartbeat-
-        # lifecycle capability, not an add-on).
         from krakey.runtime.builtin_tools import InstallTool, SleepTool
         self.tools.register(SleepTool())
         # InstallTool lets Self self-repair missing plugin deps.
-        # Bootstrapping property: she can call install BEFORE the
-        # plugin she's missing is functional, since the tool lives
-        # in the runtime not in any plugin.
-        self.tools.register(InstallTool())
+        # The service is injected via DI so the tool depends on
+        # ``InstallService`` Protocol, not the concrete impl.
+        self.tools.register(InstallTool(
+            install_service=self._install_service,
+        ))
         # Each plugin's config lives at
         # <plugin_configs_root>/<name>/config.yaml. Same root as the
         # plugin folders themselves (workspace/plugins/) so user config
@@ -644,9 +661,15 @@ class Runtime:
         about this stimulus)."""
         if not self._enable_install_advisory:
             return
+        if self._install_service is None:
+            # No service injected (composition root chose to skip,
+            # or test built Runtime directly without one). Silent
+            # no-op — additive-plugin invariant covers this too.
+            return
         try:
-            from krakey.cli import install as install_mod
-            pending, plugin_deps = install_mod.has_pending_deps()
+            pending, plugin_deps = (
+                self._install_service.has_pending_deps()
+            )
         except Exception:  # noqa: BLE001
             return
         if not pending:

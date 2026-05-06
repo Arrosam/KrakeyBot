@@ -131,12 +131,21 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
     # mapped one (compat shim), else None.
     hypo_llm = _client_for_tag(cfg.llm.core_purposes.get("hypothalamus"))
 
+    # InstallService — composition-root choice. We inject the
+    # DefaultInstallService (krakey.install.service) so the
+    # InstallTool + the startup advisory have a working
+    # implementation. Runtime + dashboard depend on the
+    # InstallService Protocol, never on this concrete class.
+    from krakey.install import DefaultInstallService
+    install_service = DefaultInstallService()
+
     deps = RuntimeDeps(
         config=cfg, self_llm=self_llm, hypo_llm=hypo_llm,
         compact_llm=compact_llm,
         classify_llm=classify_llm, embedder=embedder, reranker=reranker,
         config_path=str(config_path),
         llm_clients_by_tag=client_cache,  # shared with plugin loader
+        install_service=install_service,
     )
     return Runtime(deps)
 
