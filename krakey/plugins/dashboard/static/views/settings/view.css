@@ -1,13 +1,27 @@
 /* Settings view: form grid, toggles, multi-selects, custom dropdowns,
    save/restart bar. All config-form-specific styles live here. */
 
-#settings-form {
+/* Single scroll region wrapping the page hint + install banner +
+   install log + settings form. The page hint and install banner
+   used to be siblings of #settings-form and pinned to the
+   viewport top because the panel was column-flex with
+   overflow:hidden + only the form had .scroll. Wrapping them all
+   in one container makes the hint scroll naturally and keeps the
+   action bar (Save / Apply / Restart) the only sticky element. */
+.settings-scroll {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+#settings-form {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 12px;
-  overflow-y: auto;
 }
 
 .cfg-section {

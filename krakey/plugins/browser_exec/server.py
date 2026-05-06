@@ -483,6 +483,13 @@ def serve(
         "starting: workspace=%s browser=%s headless=%s pid=%s",
         workspace, browser_name, headless, os.getpid(),
     )
+    # Log the interpreter + first few sys.path entries so server.log
+    # is self-explanatory when an import fails. The classic failure
+    # mode is "ModuleNotFoundError: playwright" — at which point the
+    # operator immediately knows WHICH Python tried (and failed) to
+    # find playwright.
+    logger.info("python: %s", sys.executable)
+    logger.info("sys.path[0:5]: %s", sys.path[:5])
 
     # Random token per server lifetime — prevents another process
     # inside the env from driving the browser by guessing the port.

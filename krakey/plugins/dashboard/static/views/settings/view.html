@@ -1,5 +1,11 @@
     <!-- SETTINGS -->
     <section id="tab-settings" class="tab-panel">
+      <!-- Wrap everything above the action bar in a single scroll
+           region so the page hint scrolls WITH the form rather
+           than sticking to the viewport top. Only the action bar
+           (Save / Apply changes / Restart Krakey) stays fixed at
+           the bottom — operators always need it within reach. -->
+      <div class="settings-scroll">
       <p class="hint">Edit config.yaml through this form. Hover over a
         field name to see its help text. Saved changes only take effect
         after a manual restart; every startup auto-backs up the previous
@@ -33,8 +39,9 @@
           <i data-bi="download"></i> Install
         </button>
       </div>
-      <pre id="install-log" class="install-log scroll" hidden></pre>
-      <div id="settings-form" class="scroll">— loading —</div>
+      <pre id="install-log" class="install-log" hidden></pre>
+      <div id="settings-form">— loading —</div>
+      </div>
       <div class="settings-actions">
         <button id="settings-save"><i data-bi="floppy"></i> Save</button>
         <!-- Apply changes WITHOUT restarting: tries to hot-reload

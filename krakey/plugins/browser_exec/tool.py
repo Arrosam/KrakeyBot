@@ -458,9 +458,21 @@ class BrowserExecTool(Tool):
         if not envelope.get("ok"):
             err_msg = envelope.get("error") or "unspecified server error"
             log_tail = envelope.get("log_tail")
+            # Snippet records the interpreter path it tried to spawn
+            # the server with — surfacing it here lets Self / the
+            # operator immediately compare against where playwright
+            # is actually installed (the diagnostic that took the
+            # previous "playwright is in BOTH pythons but
+            # browser_exec still fails" report so long to track
+            # down: a third interpreter was being used).
+            actual_python = (
+                envelope.get("python_cmd")
+                or python_cmd  # falls back to what the tool dispatched
+            )
             content = (
                 f"browser_exec error: env={env_name} "
-                f"action={action} — {err_msg}"
+                f"action={action} — {err_msg}\n"
+                f"interpreter: {actual_python}"
             )
             if log_tail:
                 content += (
@@ -478,6 +490,10 @@ class BrowserExecTool(Tool):
 
         # ---- 6. success — per-op rendering ----
         result = envelope.get("result") or {}
+        # Inject interpreter path so Self can confirm which Python
+        # the in-env subprocess used (especially helpful when the
+        # operator has multiple Python installs in PATH).
+        result.setdefault("_interpreter", python_cmd)
         return Stimulus(
             type="tool_feedback",
             source=f"tool:{self.name}",
@@ -592,7 +608,10 @@ class BrowserExecTool(Tool):
         tabs: list[dict[str, Any]],
     ) -> str:
         header = f"browser_exec env={env_name} action={action} ok"
+        interpreter = result.pop("_interpreter", None)
         body_parts = [header]
+        if interpreter:
+            body_parts.append(f"interpreter: {interpreter}")
 
         if action == "new_tab":
             body_parts.append(

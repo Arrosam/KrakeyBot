@@ -306,11 +306,16 @@ def main():
                 )
             except OSError:
                 tail = '(no server.log yet)'
+            # Include the interpreter path so the operator can
+            # immediately spot a "wrong Python" mismatch (e.g.
+            # playwright is installed in their venv but
+            # PYTHON_CMD points at system Python).
             sys.stdout.write(json.dumps({{
                 'ok':    False,
                 'error': 'browser server failed to start within 30s',
                 'tabs':  [],
                 'log_tail': tail,
+                'python_cmd': PYTHON_CMD,
             }}))
             return 0
 
@@ -320,6 +325,7 @@ def main():
             'ok':    False,
             'error': 'rpc http status ' + str(status) + ': ' + body[:400],
             'tabs':  [],
+            'python_cmd': PYTHON_CMD,
         }}))
         return 0
 

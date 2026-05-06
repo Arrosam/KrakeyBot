@@ -454,6 +454,70 @@ async def test_sandbox_dispatch_uses_configured_python_cmd():
     assert env.calls[0]["cmd"][0] == "/usr/bin/python3"
 
 
+# =====================================================================
+# Interpreter surfacing — diagnostic output so "playwright is in
+# this Python but browser_exec still fails" reports immediately
+# show which interpreter was actually used
+# =====================================================================
+
+
+async def test_success_stimulus_includes_interpreter_path():
+    """Self / operator must be able to confirm which Python the
+    in-env subprocess used by reading the success Stimulus.
+    Eliminates the diagnostic step "but I have playwright in 3
+    pythons, which one did it actually try?" """
+    env = FakeEnv(result=(0, _envelope(
+        result={"foo": "bar"},
+        tabs=[{"id": "t", "url": "u", "title": "x", "label": ""}],
+    ), ""))
+    tool = BrowserExecTool(env_resolver=_resolver_returning(env))
+    s = await tool.execute(
+        "x", {"env": "local", "action": "list_tabs"},
+    )
+    assert "interpreter:" in s.content
+    # Local env always uses sys.executable.
+    assert sys.executable in s.content
+
+
+async def test_error_stimulus_includes_interpreter_from_envelope():
+    """When the dispatch snippet fails to start the server, its
+    error envelope includes the python_cmd it tried — the tool
+    surfaces that verbatim so the operator can compare it against
+    where playwright is actually installed."""
+    env = FakeEnv(result=(0, json.dumps({
+        "ok":         False,
+        "error":      "browser server failed to start within 30s",
+        "tabs":       [],
+        "log_tail":   "ModuleNotFoundError: No module named 'playwright'",
+        "python_cmd": "C:\\Python313\\python.exe",
+    }), ""))
+    tool = BrowserExecTool(env_resolver=_resolver_returning(env))
+    s = await tool.execute(
+        "x", {"env": "local", "action": "list_tabs"},
+    )
+    assert "interpreter: C:\\Python313\\python.exe" in s.content
+    assert "ModuleNotFoundError" in s.content
+
+
+async def test_error_stimulus_falls_back_to_dispatch_python_cmd():
+    """When the snippet's envelope DOESN'T carry python_cmd
+    (older snippet, or rpc-status error path that only added it
+    in this commit), the tool falls back to the python_cmd it
+    just dispatched with — never blank, always a path."""
+    env = FakeEnv(result=(0, json.dumps({
+        "ok":   False,
+        "error": "some other error",
+        "tabs": [],
+        # no python_cmd
+    }), ""))
+    tool = BrowserExecTool(env_resolver=_resolver_returning(env))
+    s = await tool.execute(
+        "x", {"env": "local", "action": "list_tabs"},
+    )
+    assert "interpreter:" in s.content
+    assert sys.executable in s.content
+
+
 async def test_dispatch_threads_args_into_payload_via_json():
     env = FakeEnv(result=(0, _envelope(tabs=[]), ""))
     tool = BrowserExecTool(env_resolver=_resolver_returning(env))
