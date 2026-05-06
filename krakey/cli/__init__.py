@@ -33,6 +33,11 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("run", help="run heartbeat in foreground (Ctrl+C to stop)")
     sub.add_parser("start", help="start heartbeat as background daemon")
     sub.add_parser("stop", help="stop the running daemon")
+    sub.add_parser(
+        "restart",
+        help="stop + start the daemon (use after config / plugin edits "
+             "that need a fresh process)",
+    )
     sub.add_parser("status", help="show whether the daemon is running")
     sub.add_parser("onboard", help="run the interactive onboarding wizard")
 

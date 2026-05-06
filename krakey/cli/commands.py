@@ -27,6 +27,11 @@ def stop(args: argparse.Namespace) -> int:
     return lifecycle.stop_daemon()
 
 
+def restart(args: argparse.Namespace) -> int:
+    from . import lifecycle
+    return lifecycle.restart_daemon()
+
+
 def status(args: argparse.Namespace) -> int:
     from . import lifecycle
     return lifecycle.status()

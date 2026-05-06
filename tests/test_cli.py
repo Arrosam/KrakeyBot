@@ -118,3 +118,120 @@ def test_runtime_banner_prints_when_no_wizard(capsys) -> None:
 
     lifecycle._print_runtime_banner_if_needed(wizard_ran=False)
     assert "d8b" in capsys.readouterr().out
+
+
+# =====================================================================
+# `krakey restart` — stop + start orchestration
+# =====================================================================
+
+
+def test_restart_subcommand_appears_in_help(capsys):
+    """Help should list `restart` in the subcommands so users know
+    it exists without reading docs."""
+    rc = main([])
+    out = capsys.readouterr().out
+    assert "restart" in out
+
+
+def test_restart_calls_start_when_no_daemon_running(monkeypatch):
+    """No pidfile → skip stop, call start_daemon. Returns whatever
+    start_daemon returns."""
+    from krakey.cli import lifecycle
+
+    monkeypatch.setattr(lifecycle, "_read_pid", lambda _p: None)
+    start_calls = []
+    stop_calls = []
+    monkeypatch.setattr(lifecycle, "stop_daemon",
+                          lambda: stop_calls.append(1) or 0)
+    monkeypatch.setattr(lifecycle, "start_daemon",
+                          lambda: start_calls.append(1) or 0)
+
+    rc = lifecycle.restart_daemon()
+    assert rc == 0
+    assert stop_calls == []  # nothing to stop
+    assert len(start_calls) == 1
+
+
+def test_restart_clears_stale_pidfile_then_starts(monkeypatch, tmp_path):
+    """A pidfile pointing at a dead process counts as "no daemon
+    running" — clear the stale file, skip stop, go straight to
+    start so the operator doesn't have to manually rm the file."""
+    from krakey.cli import lifecycle
+
+    monkeypatch.setattr(lifecycle, "_read_pid", lambda _p: 99999)
+    monkeypatch.setattr(lifecycle, "_is_alive", lambda _pid: False)
+
+    cleared = []
+    monkeypatch.setattr(
+        lifecycle, "_clear_pidfile",
+        lambda p: cleared.append(p),
+    )
+    monkeypatch.setattr(lifecycle, "stop_daemon", lambda: 0)
+    started = []
+    monkeypatch.setattr(
+        lifecycle, "start_daemon", lambda: (started.append(1), 0)[1],
+    )
+
+    rc = lifecycle.restart_daemon()
+    assert rc == 0
+    assert len(cleared) == 1
+    assert started == [1]
+
+
+def test_restart_stops_then_starts_when_daemon_running(monkeypatch):
+    """Pidfile + alive process → stop_daemon, then start_daemon.
+    Order matters: start should not run before stop completes."""
+    from krakey.cli import lifecycle
+
+    order: list[str] = []
+    monkeypatch.setattr(lifecycle, "_read_pid", lambda _p: 12345)
+    monkeypatch.setattr(lifecycle, "_is_alive", lambda _pid: True)
+    monkeypatch.setattr(
+        lifecycle, "stop_daemon",
+        lambda: (order.append("stop"), 0)[1],
+    )
+    monkeypatch.setattr(
+        lifecycle, "start_daemon",
+        lambda: (order.append("start"), 0)[1],
+    )
+
+    rc = lifecycle.restart_daemon()
+    assert rc == 0
+    assert order == ["stop", "start"]
+
+
+def test_restart_aborts_when_stop_fails(monkeypatch):
+    """A stop that returns non-zero is a real failure (stop_daemon
+    returns 1 only for "not running", which is filtered above by
+    the _is_alive check). Don't try to start in that case — the
+    operator needs to deal with the leftover process first."""
+    from krakey.cli import lifecycle
+
+    started = []
+    monkeypatch.setattr(lifecycle, "_read_pid", lambda _p: 12345)
+    monkeypatch.setattr(lifecycle, "_is_alive", lambda _pid: True)
+    monkeypatch.setattr(lifecycle, "stop_daemon", lambda: 2)
+    monkeypatch.setattr(
+        lifecycle, "start_daemon",
+        lambda: (started.append(1), 0)[1],
+    )
+
+    rc = lifecycle.restart_daemon()
+    assert rc == 2
+    assert started == []  # never reached
+
+
+def test_commands_restart_dispatches_to_lifecycle(monkeypatch):
+    """The CLI handler in commands.py forwards to lifecycle —
+    main(["restart"]) must end up calling lifecycle.restart_daemon
+    exactly once."""
+    from krakey.cli import lifecycle
+
+    calls = []
+    monkeypatch.setattr(
+        lifecycle, "restart_daemon",
+        lambda: (calls.append(1), 0)[1],
+    )
+    rc = main(["restart"])
+    assert rc == 0
+    assert calls == [1]

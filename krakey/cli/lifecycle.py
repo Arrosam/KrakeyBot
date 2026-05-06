@@ -392,6 +392,52 @@ def stop_daemon() -> int:
     return 0
 
 
+def restart_daemon() -> int:
+    """``krakey restart`` — stop the running daemon (if any), then
+    start_daemon. Idempotent: if no daemon is running, the stop
+    step is a no-op and we go straight to start.
+
+    Used by:
+      * Operator after editing config.yaml (the dashboard's
+        "Restart Krakey" button hits the same code via
+        ``/api/restart``, but that path is for in-process
+        triggers; this function is for the CLI ``krakey restart``
+        command).
+      * Anyone who needs a fresh process — e.g. to hot-remove a
+        plugin (hot-reload is add-only) or pick up a code edit.
+
+    The two phases are sequenced so a stop failure (other than
+    "not running") DOES abort the restart — better to surface the
+    issue than to leave the operator with a half-stopped daemon
+    + a fresh start they didn't expect."""
+    _repo, pidfile, _log = _paths()
+    pid = _read_pid(pidfile)
+
+    if pid is not None and _is_alive(pid):
+        print(f"krakey: stopping running daemon (pid {pid})...")
+        rc = stop_daemon()
+        # stop_daemon returns 0 on success, 1 when nothing to
+        # stop. Any rc != 0 here means stop tried but failed —
+        # don't continue to start, the operator needs to deal
+        # with the leftover process.
+        if rc != 0:
+            print(
+                "krakey: stop failed; not starting a new daemon. "
+                "Investigate and re-run `krakey start` once the "
+                "old process is cleared.",
+                file=sys.stderr,
+            )
+            return rc
+    else:
+        # Clear stale pidfile if any so start_daemon's
+        # already-running check doesn't trip on a dead pid.
+        if pid is not None:
+            _clear_pidfile(pidfile)
+        print("krakey: no running daemon; proceeding to start.")
+
+    return start_daemon()
+
+
 def status() -> int:
     _repo, pidfile, logfile = _paths()
     ver = _meta.version()
