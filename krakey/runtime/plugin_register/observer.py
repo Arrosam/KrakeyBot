@@ -78,16 +78,21 @@ class PluginObserver:
         return infos
 
     def loaded_report(self) -> dict[str, Any]:
-        """Dashboard /api/plugins payload: tools + channels with
-        a ``loaded`` flag (always True for items in the registry).
+        """Dashboard /api/plugins payload: tools + channels +
+        modifiers with a ``loaded`` flag (True for items currently
+        in their respective registry).
 
-        Modifiers are not included in the report because the dashboard's
-        plugins panel only renders tools + channels — modifiers
-        live in their own panel that uses the catalogue scan, not this
-        snapshot."""
+        Modifiers were originally omitted on the assumption the
+        dashboard rendered them in a separate panel, but the unified
+        plugins panel needs them to badge modifier-only plugins like
+        ``hypothalamus`` correctly — without the modifier list,
+        the JS aggregation falls through to "not loaded" even when
+        the modifier IS registered, which has been silently lying
+        to users."""
         infos = self.collect_infos()
         loaded_t = set(self._tools.names())
         loaded_s = set(self._channels.channel_names())
+        loaded_m = set(self._modifiers.names())
 
         def _flatten(infos_subset, loaded_names):
             return [{
@@ -105,6 +110,9 @@ class PluginObserver:
             ),
             "channels": _flatten(
                 [i for i in infos if i.kind == "channel"], loaded_s,
+            ),
+            "modifiers": _flatten(
+                [i for i in infos if i.kind == "modifier"], loaded_m,
             ),
         }
 

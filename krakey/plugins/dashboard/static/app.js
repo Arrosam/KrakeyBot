@@ -3351,12 +3351,15 @@ function _hasServiceKind(plugin) {
 }
 
 // Live load status aggregated per plugin name from /api/plugins
-// (which lists tools + channels separately). Returns
+// (which lists tools + channels + modifiers separately). Returns
 // {loaded:boolean, error:string|null} or undefined when the plugin
-// isn't loaded yet.
+// isn't loaded yet. Modifier-only plugins (e.g. hypothalamus) only
+// appear under "modifiers" — without iterating that bucket the
+// aggregate would say "not loaded" for every such plugin even when
+// the modifier IS registered.
 function _liveStatusByName() {
   const out = {};
-  for (const kind of ["tools", "channels"]) {
+  for (const kind of ["tools", "channels", "modifiers"]) {
     const items = (pluginReport && pluginReport[kind]) || [];
     for (const entry of items) {
       const proj = entry.project || entry.name;

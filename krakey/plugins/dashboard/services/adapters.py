@@ -129,9 +129,15 @@ class RuntimePluginsService:
         if self._rt is None:
             raise RuntimeError("runtime not available")
         if not hasattr(self._rt, "loaded_plugin_report"):
-            return {"tools": [], "channels": []}
+            return {"tools": [], "channels": [], "modifiers": []}
         report = self._rt.loaded_plugin_report()
-        for kind in ("tools", "channels"):
+        # Decorate every kind the runtime emits — tools, channels,
+        # modifiers — with the per-plugin config + UI placeholders so
+        # the JS catalog renderer has a uniform shape. Modifiers were
+        # historically excluded from this enrichment, which made
+        # modifier-only plugin rows in the dashboard panel show as
+        # "not loaded" even when the modifier was registered.
+        for kind in ("tools", "channels", "modifiers"):
             for entry in report.get(kind, []):
                 project = entry.get("project") or ""
                 entry["values"] = (
