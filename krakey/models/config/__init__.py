@@ -236,38 +236,77 @@ def load_config(path: str | Path = "config.yaml") -> Config:
 
 
 def _build_plugins(raw: dict[str, Any]) -> list[str] | None:
-    """Parse the ``plugins:`` field.
+    """Parse the ``plugins:`` + ``modifiers:`` fields into a single
+    ordered enable-list.
+
+    The dashboard intentionally maintains TWO lists in central
+    config.yaml:
+      * ``modifiers:`` — ordered list of plugin names that contribute
+        a modifier component. The order is the heartbeat-chain order
+        (each Modifier runs in turn each beat).
+      * ``plugins:``   — set-style list of plugin names that contribute
+        a tool or channel component.
+
+    A plugin with both kinds shows up in both lists; a modifier-only
+    plugin (e.g. ``hypothalamus``) shows up ONLY in ``modifiers:``.
+    The loader needs both lists merged or modifier-only plugins
+    silently fail to load — symptom: the user sees the dashboard tick
+    them but no warning anywhere, the runtime just doesn't register
+    them. (That's the bug this function fixes.)
 
     Three states:
-      * key absent       → return None (one-line stderr nudge at
-                           runtime so users notice they have no
-                           plugins enabled)
-      * key empty list   → return [] (explicit "zero plugins")
-      * key string list  → return that list, in order
+      * neither field present → return None (one-line stderr nudge at
+                                runtime so users notice they have no
+                                plugins enabled)
+      * both fields empty     → return [] (explicit "zero plugins")
+      * any names present     → merged + de-duplicated list, modifier
+                                chain order first
 
-    Migration: the OLD ``modifiers:`` field is silently translated to
-    ``plugins:`` for one release window so users mid-migration still
-    boot. Non-string entries are dropped with a warning.
+    Migration: a config with ONLY ``modifiers:`` (no ``plugins:``) is a
+    pre-2026-04-26 layout. We still load it but emit a one-time
+    deprecation note so the user knows to add the ``plugins:`` key.
     """
-    # Old `modifiers:` field migration alias
-    if "plugins" not in raw and "modifiers" in raw:
+    has_plugins   = "plugins"   in raw
+    has_modifiers = "modifiers" in raw
+
+    if not has_plugins and not has_modifiers:
+        return None
+
+    if has_modifiers and not has_plugins:
         print(
-            "config: `modifiers:` is deprecated — renamed to `plugins:` "
-            "in the unified plugin refactor (2026-04-26). Treating your "
-            "`modifiers:` list as the plugin list this run; please rename "
-            "the key to silence this warning.",
+            "config: only `modifiers:` is set — pre-2026-04-26 layout. "
+            "Treating it as the active plugin list. Add an empty "
+            "`plugins: []` (or a list of tool/channel plugin names) to "
+            "silence this notice; the loader merges both fields.",
             file=sys.stderr,
         )
-        raw = {**raw, "plugins": raw["modifiers"]}
 
-    if "plugins" not in raw:
-        return None
-    val = raw.get("plugins")
+    plugins_list   = _coerce_name_list(raw.get("plugins"),   "plugins")
+    modifiers_list = _coerce_name_list(raw.get("modifiers"), "modifiers")
+
+    # Modifier chain order first (the chain is order-sensitive), then
+    # any service plugins not already covered. De-dup preserves the
+    # earlier slot — so a plugin in both lists keeps its modifiers-list
+    # position in the chain.
+    merged: list[str] = []
+    seen: set[str] = set()
+    for name in modifiers_list + plugins_list:
+        if name in seen:
+            continue
+        seen.add(name)
+        merged.append(name)
+    return merged
+
+
+def _coerce_name_list(val: Any, field_name: str) -> list[str]:
+    """Validate one of the plugin enable-lists. Drops non-string /
+    empty entries with a per-entry warning so a typo doesn't silently
+    disable the rest of the list."""
     if val is None:
         return []
     if not isinstance(val, list):
         print(
-            f"warning: `plugins:` should be a list, got "
+            f"warning: `{field_name}:` should be a list, got "
             f"{type(val).__name__}; treating as empty.",
             file=sys.stderr,
         )
@@ -276,8 +315,8 @@ def _build_plugins(raw: dict[str, Any]) -> list[str] | None:
     for item in val:
         if not isinstance(item, str) or not item.strip():
             print(
-                f"warning: `plugins:` entry {item!r} is not a non-empty "
-                "string; skipping.",
+                f"warning: `{field_name}:` entry {item!r} is not a "
+                "non-empty string; skipping.",
                 file=sys.stderr,
             )
             continue
