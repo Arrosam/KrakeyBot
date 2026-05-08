@@ -53,6 +53,19 @@ class CoreImplementations:
     sleep_manager: str = ""
     llm_client_factory: str = ""
 
+    # Engine-refactor slots (Engine branch). Declared so the new
+    # ``EngineRegistry.resolve`` mechanism can address them by name;
+    # actual wiring lands as steps 3-12 retire the old slots above.
+    # ``context`` will eventually replace ``prompt_builder``,
+    # ``explicit_history`` replaces ``sliding_window``, and
+    # ``kb_registry`` + ``sleep_manager`` collapse into ``memory``.
+    context: str = ""
+    explicit_history: str = ""
+    decision: str = ""
+    recall: str = ""
+    heartbeat: str = ""
+    dispatch: str = ""
+
     def get(self, slot: str) -> str:
         """Return the override path for a slot, or '' if not set.
 
