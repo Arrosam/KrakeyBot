@@ -1,15 +1,16 @@
 """Reranker slot — verify build_runtime_from_config respects the override.
 
-Three-state contract (see main.build_runtime_from_config):
-  * no override + no tag bound  → runtime.reranker is None
-  * no override + tag bound     → runtime.reranker wraps the LLMClient
-  * override set                → runtime.reranker is the user's class
+Two-state contract (Engine refactor 2026-05-09):
+  * no override                 → runtime.reranker is the
+                                  DefaultRerankerEngine, which embeds
+                                  a no-LLM fallback so it functions
+                                  with or without ``llm.reranker``
+                                  bound.
+  * override set                → runtime.reranker is the user's class.
 
-The "tag bound" cases require a real LLMClient setup which the
-minimal config below provides (note: tag is only RESOLVED at startup
-when the user actually overrides the reranker; for the override path
-we explicitly avoid binding the reranker tag so we don't accidentally
-test both paths in the same fixture).
+The earlier ``runtime.reranker is None`` tri-state was retired when
+RerankerEngine became a required Engine slot — every Engine is always
+populated, fallback behavior is the Engine impl's responsibility.
 """
 from __future__ import annotations
 
@@ -83,21 +84,29 @@ def _write_config(tmp_path, *, override: str = "", reranker_tag: str = ""):
     return p
 
 
-def test_no_override_no_tag_yields_none(tmp_path):
-    """No override + no `llm.reranker` tag → runtime.reranker is None."""
+def test_no_override_no_tag_yields_default_engine(tmp_path):
+    """No override + no `llm.reranker` tag → runtime.reranker is the
+    DefaultRerankerEngine. The Engine has a no-LLM fallback so it's
+    safe to leave the slot wired even when no reranker is configured."""
+    from krakey.engines.reranker.default import DefaultRerankerEngine
+
     p = _write_config(tmp_path, override="", reranker_tag="")
     runtime = build_runtime_from_config(str(p))
-    assert runtime.reranker is None
+    assert isinstance(runtime.reranker, DefaultRerankerEngine)
+    assert isinstance(runtime.reranker, Reranker)
 
 
-def test_no_override_with_tag_yields_default_adapter(tmp_path):
-    """`llm.reranker: t` + no override → runtime.reranker is the default
-    adapter wrapping the tag-resolved LLMClient."""
+def test_no_override_with_tag_yields_default_engine(tmp_path):
+    """`llm.reranker: t` + no override → runtime.reranker is the
+    same DefaultRerankerEngine. The Engine internally walks the
+    factory to reach the configured client; the wiring is identical
+    whether or not a tag is bound."""
+    from krakey.engines.reranker.default import DefaultRerankerEngine
+
     p = _write_config(tmp_path, override="", reranker_tag="t")
     runtime = build_runtime_from_config(str(p))
-    assert runtime.reranker is not None
+    assert isinstance(runtime.reranker, DefaultRerankerEngine)
     assert isinstance(runtime.reranker, Reranker)
-    assert "Reranker" in type(runtime.reranker).__name__
 
 
 def test_override_yields_user_reranker(tmp_path):
