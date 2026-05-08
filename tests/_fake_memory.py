@@ -120,6 +120,12 @@ class InMemoryMemoryService:
     async def count_nodes(self) -> int:
         return len(self._nodes)
 
+    async def count_by_category(self, category: str) -> int:
+        return sum(
+            1 for n in self._nodes.values()
+            if n.get("category") == category
+        )
+
     async def counts_by_category(self) -> dict[str, int]:
         out: dict[str, int] = {}
         for n in self._nodes.values():
@@ -412,3 +418,87 @@ class InMemoryKBRegistryService:
     async def close_all(self) -> None:
         for kb in self._kbs.values():
             await kb.close()
+
+
+# --------------------------------------------------------------------
+# InMemoryMemoryEngine — combined class for the new MemoryEngine slot
+# --------------------------------------------------------------------
+
+
+class InMemoryMemoryEngine(InMemoryMemoryService):
+    """Combined ``MemoryEngine`` test fake.
+
+    The Engine refactor (2026-05) collapsed the ``memory`` and
+    ``kb_registry`` slots into one ``memory`` slot whose Protocol
+    surface includes KB management + sleep_cycle. This class extends
+    ``InMemoryMemoryService`` (the GM-only fake) with KB delegation
+    methods backed by an internal ``InMemoryKBRegistryService`` plus
+    a no-op ``sleep_cycle`` stub. Result: ``InMemoryMemoryEngine``
+    satisfies ``MemoryEngine`` end-to-end.
+
+    Used by ``test_memory_swap_e2e.py`` to drive the engine slot
+    override path. The legacy ``InMemoryMemoryService`` /
+    ``InMemoryKBRegistryService`` classes remain for protocol-shape
+    tests (``test_memory_protocols.py``) and any user code still
+    depending on the older Protocol shape.
+
+    The ``sleep_cycle`` stub records its invocation in
+    ``self.sleep_cycle_calls`` so tests can assert it ran without
+    actually invoking clustering / migration / index-rebuild
+    pipelines (those need a real LLM). Returns an empty stats dict.
+    """
+
+    def __init__(
+        self,
+        *,
+        db_path: str = ":memory:",
+        embedder=None,
+        kb_dir: str = "",
+        auto_ingest_threshold: float = 0.92,
+        extractor_llm=None,
+        classifier_llm=None,
+    ):
+        super().__init__(
+            db_path=db_path, embedder=embedder,
+            auto_ingest_threshold=auto_ingest_threshold,
+            extractor_llm=extractor_llm,
+            classifier_llm=classifier_llm,
+        )
+        self._kb_dir = kb_dir
+        self._kb = InMemoryKBRegistryService(
+            gm=self, kb_dir=kb_dir, embedder=embedder,
+        )
+        self.sleep_cycle_calls: list[dict[str, Any]] = []
+
+    # ---- KB management — delegate to the internal registry ----------
+
+    async def create_kb(self, kb_id, *, name, description="", topics=None):
+        return await self._kb.create_kb(
+            kb_id, name=name, description=description, topics=topics,
+        )
+
+    async def open_kb(self, kb_id):
+        return await self._kb.open_kb(kb_id)
+
+    async def list_kbs(self, *, include_archived=False):
+        return await self._kb.list_kbs(include_archived=include_archived)
+
+    async def set_archived(self, kb_id, archived):
+        return await self._kb.set_archived(kb_id, archived)
+
+    async def set_index_embedding(self, kb_id, embedding):
+        return await self._kb.set_index_embedding(kb_id, embedding)
+
+    async def delete_kb(self, kb_id):
+        return await self._kb.delete_kb(kb_id)
+
+    async def close_all_kbs(self):
+        return await self._kb.close_all()
+
+    # ---- sleep — record + return empty stats ------------------------
+
+    async def sleep_cycle(self, *, channels, log_dir, config):
+        self.sleep_cycle_calls.append({
+            "channels": channels, "log_dir": log_dir, "config": config,
+        })
+        return {}

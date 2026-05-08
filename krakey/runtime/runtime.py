@@ -170,56 +170,44 @@ class Runtime:
             expected_protocol=PromptBuilderLike,
         )
 
+        # Memory Engine — single slot collapses the previous
+        # ``memory`` + ``kb_registry`` split (Engine refactor 2026-05).
+        # The Engine subsumes GM CRUD + KB management + the sleep
+        # cycle, so the runtime holds one ``self.memory`` reference
+        # and aliases ``self.gm`` + ``self.kb_registry`` to it for
+        # back-compat with call sites that still use the old attribute
+        # names. Custom impls override ``cfg.core_implementations.memory``
+        # with a class satisfying ``MemoryEngine`` (the new flat
+        # Protocol); the old ``kb_registry`` slot is no longer
+        # consulted, and any standalone override there will be
+        # silently ignored until step 14 deletes the field.
+        from krakey.engines.registry import EngineRegistry
+        from krakey.interfaces.engines import MemoryEngine
+        self._engine_registry = EngineRegistry(self.config)
         gm_path = self.config.graph_memory.db_path or ":memory:"
-        # Memory + KB registry are slots: empty slot = built-in
-        # GraphMemory / KBRegistry; override via ``core_implementations``
-        # in config.yaml. Wrap the built-in constructors in a thin
-        # factory closure because GraphMemory's ``__init__`` takes
-        # ``db_path`` as the first POSITIONAL argument, and the
-        # resolver calls ``default_factory(**kwargs)``.
-        def _build_default_gm(*, db_path, embedder, auto_ingest_threshold,
-                                extractor_llm, classifier_llm):
-            return GraphMemory(
-                db_path,
-                embedder=embedder,
-                auto_ingest_threshold=auto_ingest_threshold,
-                extractor_llm=extractor_llm,
-                classifier_llm=classifier_llm,
-            )
-
-        self.gm = self._service_resolver.resolve(
+        self.memory = self._engine_registry.resolve(
             "memory",
-            default_factory=_build_default_gm,
-            expected_protocol=MemoryService,
+            default_path=(
+                "krakey.engines.memory.default:GraphMemoryEngine"
+            ),
+            expected_protocol=MemoryEngine,
             db_path=gm_path,
             embedder=deps.embedder,
+            kb_dir=(
+                self.config.knowledge_base.dir
+                or "workspace/data/knowledge_bases"
+            ),
             auto_ingest_threshold=(
                 self.config.graph_memory.auto_ingest_similarity_threshold
             ),
             extractor_llm=deps.classify_llm,
             classifier_llm=deps.classify_llm,
         )
-
-        # KBRegistry takes its memory partner as the first POSITIONAL
-        # argument; wrap in a factory the same way. Note: the default
-        # KBRegistry uses gm's private SQLite connection (gm._require()),
-        # so a user-supplied memory backend that's NOT GraphMemory will
-        # also need a custom kb_registry override; document this in
-        # docs/extending-core.md.
-        def _build_default_kb_registry(*, gm, kb_dir, embedder):
-            return KBRegistry(gm, kb_dir=kb_dir, embedder=embedder)
-
-        self.kb_registry = self._service_resolver.resolve(
-            "kb_registry",
-            default_factory=_build_default_kb_registry,
-            expected_protocol=KBRegistryService,
-            gm=self.gm,
-            kb_dir=(
-                self.config.knowledge_base.dir
-                or "workspace/data/knowledge_bases"
-            ),
-            embedder=deps.embedder,
-        )
+        # Back-compat aliases — call sites still reach for ``runtime.gm``
+        # / ``runtime.kb_registry`` in many places. Eventual cleanup
+        # step migrates them to ``runtime.memory``.
+        self.gm = self.memory
+        self.kb_registry = self.memory
 
         # InstallService — runtime depends on the Protocol via DI;
         # composition root (krakey.main) injects DefaultInstallService.
@@ -810,11 +798,13 @@ class Runtime:
             self.log.hb("bootstrap mode: empty GM + KBs → injecting GENESIS")
 
     async def close(self) -> None:
-        """Shut down persistent resources (GM + open KBs). Channels
-        — including the dashboard plugin's server — are stopped via
-        ``buffer.stop_all()`` in ``run()``'s finally block."""
-        await self.kb_registry.close_all()
-        await self.gm.close()
+        """Shut down persistent resources via the memory Engine.
+        ``MemoryEngine.close()`` is responsible for tearing down both
+        any open KB connections and the underlying graph backend.
+        Channels — including the dashboard plugin's server — are
+        stopped via ``buffer.stop_all()`` in ``run()``'s finally
+        block."""
+        await self.memory.close()
 
     # ---------- heartbeat algorithm ----------
 
