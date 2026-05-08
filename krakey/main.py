@@ -19,7 +19,8 @@ from __future__ import annotations
 import asyncio
 import sys
 
-from krakey.llm.client import LLMClient
+from krakey.engines.registry import EngineRegistry
+from krakey.interfaces.engines import LLMClientFactoryEngine
 from krakey.models.config import load_config
 # Public re-exports — callers used to do ``from krakey.main import Runtime``
 # and we don't want to chase down every test importer just because the
@@ -37,25 +38,40 @@ from krakey.runtime.heartbeat.heartbeat_orchestrator import (  # noqa: F401
 def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
     """Construct a production Runtime from ``config.yaml``.
 
-    Tag-based resolution path (Samuel 2026-04-26 refactor):
+    LLM resolution goes through the ``llm_factory`` Engine slot — the
+    composition root never reads ``cfg.llm`` directly. The default
+    ``DefaultLLMClientFactoryEngine`` wraps the legacy
+    ``resolve_llm_for_tag`` util (so the older ``llm_client_factory``
+    slot that substitutes the ``LLMClient`` class per-tag still works);
+    users override the whole factory by setting
+    ``cfg.core_implementations.llm_factory`` to a dotted path of their
+    own ``LLMClientFactoryEngine`` impl.
+
+    Tag-based resolution layers:
       1. ``cfg.llm.tags`` → name → (provider, model, params)
       2. ``cfg.llm.core_purposes`` → core purpose name → tag name
       3. ``cfg.llm.embedding`` / ``cfg.llm.reranker`` → tag name
          (model-type slots, not "purposes")
 
-    Each LLMClient is built once per tag name and reused across all
-    purposes that share it.
+    Each LLMClient is built once per tag and reused across every
+    purpose that shares it (cache lives inside the factory Engine,
+    mirrored into ``RuntimeDeps.llm_clients_by_tag`` for plugin
+    back-compat during the migration window).
     """
     cfg = load_config(config_path)
 
-    # Build LLMClient cache keyed by tag name. Multiple purposes that
-    # point at the same tag share a single client. The cache is also
-    # passed through to plugin loaders via RuntimeDeps so plugin
-    # purposes resolve from the same cache.
-    client_cache: dict[str, LLMClient] = {}
-
-    def _client_for_tag(tag_name: str | None) -> LLMClient | None:
-        return resolve_llm_for_tag(cfg, tag_name, client_cache)
+    # ---- Engine layer: factory Engine drives all LLM resolution.
+    # Hides ``cfg.llm`` from every other Engine + plugin.
+    registry = EngineRegistry(cfg)
+    llm_factory: LLMClientFactoryEngine = registry.resolve(
+        "llm_factory",
+        default_path=(
+            "krakey.engines.llm_factory.default:"
+            "DefaultLLMClientFactoryEngine"
+        ),
+        expected_protocol=LLMClientFactoryEngine,
+        cfg=cfg,
+    )
 
     # Core purposes (Self / compact / classifier ...). Self is what
     # makes the heartbeat fire; if it isn't bound the runtime starts
@@ -64,10 +80,10 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
     # until the user restarts after configuring. Surfacing this as a
     # crash on startup (the old behavior) was hostile to first-run
     # users who just installed the package and skipped chat config.
-    self_llm = _client_for_tag(cfg.llm.core_purposes.get("self_thinking"))
-    compact_llm = _client_for_tag(cfg.llm.core_purposes.get("compact"))
+    self_llm = llm_factory.client_for_core_purpose("self_thinking")
+    compact_llm = llm_factory.client_for_core_purpose("compact")
     classify_llm = (
-        _client_for_tag(cfg.llm.core_purposes.get("classifier"))
+        llm_factory.client_for_core_purpose("classifier")
         or compact_llm  # historical reuse
     )
     if compact_llm is None:
@@ -77,7 +93,7 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
         compact_llm = self_llm
 
     # Embedding + reranker (model-type slots, not purposes)
-    embed_client = _client_for_tag(cfg.llm.embedding)
+    embed_client = llm_factory.embed_client()
 
     # Default embedder wraps the tag-resolved embedding client. Wrapped
     # in a class (rather than a closure) so it satisfies the
@@ -100,7 +116,7 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
         expected_protocol=AsyncEmbedder,
     )
 
-    reranker_client = _client_for_tag(cfg.llm.reranker)
+    reranker_client = llm_factory.rerank_client()
 
     class _DefaultReranker:
         """Adapts the tag-resolved LLMClient to the Reranker Protocol."""
@@ -129,7 +145,7 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
     # existing plugin factories that pull `deps.hypo_llm`. Resolve
     # from the dedicated `hypothalamus` core purpose if the user
     # mapped one (compat shim), else None.
-    hypo_llm = _client_for_tag(cfg.llm.core_purposes.get("hypothalamus"))
+    hypo_llm = llm_factory.client_for_core_purpose("hypothalamus")
 
     # InstallService — composition-root choice. We inject the
     # DefaultInstallService (krakey.install.service) so the
@@ -144,7 +160,11 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
         compact_llm=compact_llm,
         classify_llm=classify_llm, embedder=embedder, reranker=reranker,
         config_path=str(config_path),
-        llm_clients_by_tag=client_cache,  # shared with plugin loader
+        # Mirror the factory's internal cache onto deps for plugin
+        # back-compat: ``PluginContext.get_llm_for_tag`` still reads
+        # from ``deps.llm_clients_by_tag`` until plugins migrate to
+        # use ``ctx.services["llm_factory"]`` directly.
+        llm_clients_by_tag=llm_factory.client_cache,
         install_service=install_service,
         # Pull the sliding-window state path straight from
         # config.yaml so dashboard edits to ``sliding_window.state_path``

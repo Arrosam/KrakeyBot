@@ -59,12 +59,18 @@ class CoreImplementations:
     # ``context`` will eventually replace ``prompt_builder``,
     # ``explicit_history`` replaces ``sliding_window``, and
     # ``kb_registry`` + ``sleep_manager`` collapse into ``memory``.
+    # ``llm_factory`` sits one layer above ``llm_client_factory``:
+    # the latter still substitutes the LLMClient *class* per tag
+    # (old behavior), the former substitutes the entire factory
+    # Engine that orchestrates tag→client resolution + caching +
+    # cfg access on behalf of every other Engine.
     context: str = ""
     explicit_history: str = ""
     decision: str = ""
     recall: str = ""
     heartbeat: str = ""
     dispatch: str = ""
+    llm_factory: str = ""
 
     def get(self, slot: str) -> str:
         """Return the override path for a slot, or '' if not set.
