@@ -74,14 +74,14 @@ def _delta_str(delta: int) -> str:
 
 
 def _summarize_stimuli(stimuli: list[Stimulus]) -> str:
-    """Render the stimulus list for persistence in a ``ExplicitHistoryRound``.
+    """Render the stimulus list for persistence in an ``ExplicitHistoryRound``.
 
     This text is what Self sees in the ``[HISTORY]`` layer every
     subsequent beat — truncation here is destructive: downstream
-    mechanisms (recall-anchor extraction, compact summarization,
-    bootstrap-signal detection, user-message echo checks) all rely on
-    the full content. The window's token budget handles overflow via
-    compact_if_needed, so we don't need a blunt character cap here.
+    mechanisms (recall, compact summarization, user-message echo
+    checks) rely on the full content. The window's token budget
+    handles overflow via compact_if_needed, so we don't need a blunt
+    character cap here.
     """
     if not stimuli:
         return "(none)"
@@ -525,7 +525,7 @@ class HeartbeatOrchestrator:
         rt.events.publish(IdleEvent(
             heartbeat_id=rt.heartbeat_count, interval_seconds=interval,
         ))
-        rt._recall = self.new_recall()
+        rt._recall = self._rt.recall.new_session()
         await idle_with_recall(
             interval, rt.buffer, rt._recall,
             min_interval=rt._min, max_interval=rt._max,
@@ -637,7 +637,7 @@ class HeartbeatOrchestrator:
                     f"budget-driven compact failed: {e} — round "
                     f"#{oldest.heartbeat_id} dropped without GM write"
                 )
-            fresh = self.new_recall()
+            fresh = self._rt.recall.new_session()
             await fresh.add_stimuli(stimuli)
             recall_result = await fresh.finalize()
             rt._recall = fresh
@@ -673,9 +673,6 @@ class HeartbeatOrchestrator:
             if entry.get("heartbeat_id") == heartbeat_id:
                 entry["raw_output"] = raw
                 return
-
-    def new_recall(self) -> "RecallSession":
-        return self._rt.recall.new_session()
 
     def _capabilities(self) -> list["CapabilityView"]:
         """Tool list for the [CAPABILITIES] layer. Only changes on
@@ -771,4 +768,4 @@ class HeartbeatOrchestrator:
             adrenalin=False,
         ))
         # GM changed underneath us — start a fresh recall
-        rt._recall = self.new_recall()
+        rt._recall = self._rt.recall.new_session()

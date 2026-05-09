@@ -80,7 +80,7 @@ async def _format_status(runtime: "Runtime") -> str:
         f"name={name} "
         f"heartbeats={runtime.heartbeat_count} "
         f"gm_nodes={nodes} gm_edges={edges} fatigue={pct}% "
-        f"sleep_cycles={runtime._sleep_cycles} "
+        f"sleep_cycles={runtime.sleep_cycles} "
         f"bootstrap_complete={not runtime.is_bootstrap}"
     )
 

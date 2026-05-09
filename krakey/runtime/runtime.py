@@ -584,34 +584,27 @@ class Runtime:
 
         return report
 
-    def _new_recall(self) -> RecallSession:
-        # Facade — heartbeat algorithm lives in HeartbeatOrchestrator.
-        return self._orchestrator.new_recall()
-
     @property
     def is_bootstrap(self) -> bool:
-        """Bootstrap mode flag — delegates to the bootstrap plugin's
-        ``BootstrapModifier`` if registered, else falls back to the
-        persisted self_model marker. Property kept on Runtime for
-        back-compat with tests / dashboard code that read
-        ``runtime.is_bootstrap`` directly; new code should query the
-        modifier via ``runtime.modifiers.by_role("bootstrap")``."""
-        anchor = self.modifiers.by_role("bootstrap")
-        if anchor is not None and hasattr(anchor, "is_active"):
-            return bool(anchor.is_active)
-        return not bool(
-            (self.self_model or {})
-            .get("state", {}).get("bootstrap_complete", False)
-        )
+        """True iff the bootstrap plugin is registered AND active.
 
-    @is_bootstrap.setter
-    def is_bootstrap(self, value: bool) -> None:
-        """Test compat: ``runtime.is_bootstrap = True`` forwards to
-        the bootstrap modifier's force_active escape hatch when the
-        plugin is registered. No-op otherwise (no plugin to flip)."""
+        With no plugin loaded the runtime can't drive bootstrap, so
+        the answer is False — the runtime is not in bootstrap mode
+        by definition. Callers that want to inspect the persisted
+        ``state.bootstrap_complete`` marker directly should read
+        ``self.self_model`` themselves; this property is the runtime
+        view, not the on-disk one.
+        """
         anchor = self.modifiers.by_role("bootstrap")
-        if anchor is not None and hasattr(anchor, "force_active"):
-            anchor.force_active(bool(value))
+        if anchor is None:
+            return False
+        return bool(getattr(anchor, "is_active", False))
+
+    @property
+    def sleep_cycles(self) -> int:
+        """Per-process sleep-cycle count, surfaced via /status + the
+        dashboard. Resets across restarts (not persisted)."""
+        return self._sleep_cycles
 
     async def run(self, iterations: int | None = None) -> None:
         await self.memory.initialize()
@@ -638,7 +631,7 @@ class Runtime:
         # dashboard is just a channel like any other.
         await self.buffer.start_all()
 
-        self._recall = self._new_recall()
+        self._recall = self.recall.new_session()
 
         # Pause mode: no Self LLM bound (user skipped chat in onboarding,
         # plans to fix in dashboard). Channels are alive — the dashboard
@@ -762,13 +755,39 @@ class Runtime:
             self.log.hb(f"{env_name} preflight ok: {details}")
 
     async def close(self) -> None:
-        """Shut down persistent resources via the memory Engine.
-        ``MemoryEngine.close()`` is responsible for tearing down both
-        any open KB connections and the underlying graph backend.
-        Channels — including the dashboard plugin's server — are
-        stopped via ``buffer.stop_all()`` in ``run()``'s finally
-        block."""
-        await self.memory.close()
+        """Shut down every Engine slot that exposes ``close()``.
+
+        Engines are not required to define ``close()`` — only ones
+        holding persistent resources (DB connections, sockets,
+        threadpools) need the hook. We probe each Engine for the
+        method and invoke it; missing closes are silent. Channels —
+        including the dashboard plugin's server — are stopped via
+        ``buffer.stop_all()`` in ``run()``'s finally block.
+        """
+        for engine in (
+            self.memory, self.context, self.decision, self.recall,
+            self.dispatch, self.heartbeat, self.explicit_history,
+            self.reranker, self.llm_factory,
+        ):
+            close = getattr(engine, "close", None)
+            if close is None:
+                continue
+            try:
+                result = close()
+                if hasattr(result, "__await__"):
+                    await result
+            except Exception as e:  # noqa: BLE001
+                self.log.runtime_error(
+                    f"engine {type(engine).__name__} close raised "
+                    f"{type(e).__name__}: {e}"
+                )
+
+    def request_stop(self) -> None:
+        """Cooperative shutdown signal — the heartbeat loop checks
+        ``self._stop`` between beats and exits when set. CLI signal
+        handlers + dashboard kill commands call this; nothing else
+        should poke the private flag directly."""
+        self._stop = True
 
     # ---------- heartbeat algorithm ----------
 

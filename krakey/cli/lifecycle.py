@@ -117,17 +117,20 @@ def _exec_runtime(repo: Path) -> int:
 
     rt = build_runtime_from_config()
 
-    # Cooperative shutdown — flip `rt._stop` on Ctrl+C / SIGTERM and let
-    # the runtime exit its loop cleanly. Path differs by platform:
+    # Cooperative shutdown — call ``rt.request_stop()`` on Ctrl+C /
+    # SIGTERM and let the runtime exit its loop cleanly. Path differs
+    # by platform:
     #
-    #   Unix: install via `loop.add_signal_handler` inside the coroutine
-    #         (asyncio integrates with the signal subsystem there).
-    #   Windows: `add_signal_handler` is unsupported; use `signal.signal`
-    #         outside the loop. Handler sets the flag, asyncio.sleep
-    #         (0.25s tick) wakes up, runtime sees `_stop=True`, exits.
+    #   Unix: install via ``loop.add_signal_handler`` inside the
+    #         coroutine (asyncio integrates with the signal subsystem
+    #         there).
+    #   Windows: ``add_signal_handler`` is unsupported; use
+    #         ``signal.signal`` outside the loop. Handler signals the
+    #         runtime, asyncio.sleep (0.25s tick) wakes up, runtime
+    #         sees the stop flag and exits.
     if os.name == "nt":
         def _win_request_stop(_sig, _frame):  # noqa: ARG001
-            rt._stop = True
+            rt.request_stop()
         signal.signal(signal.SIGINT, _win_request_stop)
 
     async def _supervised() -> None:
@@ -135,7 +138,7 @@ def _exec_runtime(repo: Path) -> int:
             loop = asyncio.get_running_loop()
             for sig in (signal.SIGINT, signal.SIGTERM):
                 try:
-                    loop.add_signal_handler(sig, lambda: setattr(rt, "_stop", True))
+                    loop.add_signal_handler(sig, rt.request_stop)
                 except (NotImplementedError, RuntimeError):
                     pass
         try:

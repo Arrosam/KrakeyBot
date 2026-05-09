@@ -112,7 +112,7 @@ async def test_prompt_includes_action_format_with_default_decision_engine(tmp_pa
         gm_path=str(tmp_path / "gm.sqlite"),
     )
     await runtime.memory.initialize()
-    runtime._recall = runtime._new_recall()
+    runtime._recall = runtime.recall.new_session()
     from krakey.interfaces.engines.recall import RecallResult
     counts = SimpleNamespace(node_count=0, edge_count=0,
                               fatigue_pct=0, fatigue_hint="")
@@ -144,7 +144,7 @@ async def test_prompt_omits_action_format_when_hypothalamus_decision_engine(tmp_
     )
 
     await runtime.memory.initialize()
-    runtime._recall = runtime._new_recall()
+    runtime._recall = runtime.recall.new_session()
     from krakey.interfaces.engines.recall import RecallResult
     counts = SimpleNamespace(node_count=0, edge_count=0,
                               fatigue_pct=0, fatigue_hint="")

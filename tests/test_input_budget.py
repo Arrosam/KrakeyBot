@@ -29,7 +29,7 @@ def _counts():
 async def _seed_recall(runtime):
     """The enforcer needs self._recall set (created by Runtime.run but
     not by the test helper's bare construction)."""
-    runtime._recall = runtime._new_recall()
+    runtime._recall = runtime.recall.new_session()
 
 
 async def test_prompt_fitting_budget_is_left_alone(tmp_path):

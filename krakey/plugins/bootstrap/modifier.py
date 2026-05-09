@@ -227,8 +227,7 @@ class BootstrapModifier:
         return self._active
 
     def force_active(self, value: bool) -> None:
-        """Test-only — pin the active flag. Equivalent to the legacy
-        ``runtime.is_bootstrap = ...`` setter."""
+        """Test-only — pin the active flag."""
         self._active = bool(value)
 
 

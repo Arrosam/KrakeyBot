@@ -218,7 +218,7 @@ async def test_runtime_prompt_omits_in_mind_layers_when_no_modifier(
         modifiers=[],  # explicitly nothing
     )
     await runtime.memory.initialize()
-    runtime._recall = runtime._new_recall()
+    runtime._recall = runtime.recall.new_session()
     prompt = runtime._build_self_prompt(
         stimuli=[], recall_result=RecallResult(), counts=_counts(),
     )
@@ -237,7 +237,7 @@ async def test_runtime_prompt_includes_instructions_when_in_mind_active(
         modifiers=["in_mind_note"],
     )
     await runtime.memory.initialize()
-    runtime._recall = runtime._new_recall()
+    runtime._recall = runtime.recall.new_session()
     prompt = runtime._build_self_prompt(
         stimuli=[], recall_result=RecallResult(), counts=_counts(),
     )
@@ -266,7 +266,7 @@ async def test_runtime_prompt_includes_virtual_round_when_state_set(
         focus="port the inner loop",
     )
     await runtime.memory.initialize()
-    runtime._recall = runtime._new_recall()
+    runtime._recall = runtime.recall.new_session()
     prompt = runtime._build_self_prompt(
         stimuli=[], recall_result=RecallResult(), counts=_counts(),
     )

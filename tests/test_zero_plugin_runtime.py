@@ -98,5 +98,5 @@ async def test_runtime_construction_works_with_no_modifiers(tmp_path):
     )
     _strip_all_modifiers(runtime)
     assert runtime.modifiers.has_role("hypothalamus") is False
-    recall = runtime._new_recall()
+    recall = runtime.recall.new_session()
     assert isinstance(recall, RecallSession)
