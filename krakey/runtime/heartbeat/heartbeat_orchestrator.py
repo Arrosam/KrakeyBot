@@ -44,7 +44,6 @@ from krakey.runtime.events.event_types import (
 )
 from krakey.runtime.heartbeat.fatigue import calculate_fatigue
 from krakey.runtime.heartbeat.idle import idle_with_recall
-from krakey.memory.sleep.sleep_manager import enter_sleep_mode
 from krakey.runtime.commands.commands import (
     CommandAction, handle_command, parse_command,
 )
@@ -748,16 +747,24 @@ class HeartbeatOrchestrator:
         rt.events.publish(SleepStartEvent(reason=reason))
         try:
             sl = rt.config.sleep
-            stats = await enter_sleep_mode(
-                rt.gm, rt.kb_registry, rt.buffer,
-                llm=rt.compact_llm, embedder=rt.embedder,
-                reranker=rt.reranker,
+            # Sleep flows through the MemoryEngine — a custom
+            # MemoryEngine impl can override sleep_cycle to ship
+            # consolidation to a remote worker, skip migration
+            # entirely, etc. The default GraphMemoryEngine wraps
+            # the in-tree enter_sleep_mode pipeline.
+            stats = await rt.memory.sleep_cycle(
+                channels=rt.buffer,
                 log_dir=rt.sleep_log_dir,
-                min_community_size=sl.min_community_size,
-                kb_consolidation_threshold=sl.kb_consolidation_threshold,
-                kb_index_max=sl.kb_index_max,
-                kb_archive_pct=sl.kb_archive_pct,
-                kb_revive_threshold=sl.kb_revive_threshold,
+                config={
+                    "llm": rt.compact_llm,
+                    "reranker": rt.reranker,
+                    "min_community_size": sl.min_community_size,
+                    "kb_consolidation_threshold":
+                        sl.kb_consolidation_threshold,
+                    "kb_index_max":          sl.kb_index_max,
+                    "kb_archive_pct":        sl.kb_archive_pct,
+                    "kb_revive_threshold":   sl.kb_revive_threshold,
+                },
             )
         except Exception as e:  # noqa: BLE001
             err = f"{type(e).__name__}: {e}"

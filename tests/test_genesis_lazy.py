@@ -49,6 +49,32 @@ class _FakeEvents:
     def subscribe(self, cb): self.subscribers.append(cb)
 
 
+class _FakePluginConfigStore:
+    """FilePluginConfigStore stand-in — records writes."""
+
+    def __init__(self):
+        self.writes: list = []
+
+    def read(self, name):
+        return {}
+
+    def write(self, name, config):
+        self.writes.append((name, dict(config)))
+
+
+def _make_modifier(*, sm, genesis_path, plugin_config=None):
+    """Construct BootstrapModifier with the post-review constructor
+    signature (auto-complete + own-config write + warning)."""
+    return BootstrapModifier(
+        self_model_store=_FakeStore(sm),
+        memory=_FakeMemory(),
+        events=_FakeEvents(),
+        plugin_config_store=_FakePluginConfigStore(),
+        plugin_config=plugin_config or {},
+        genesis_path=str(genesis_path),
+    )
+
+
 def test_modifier_construction_does_not_read_genesis(tmp_path, monkeypatch):
     """BootstrapModifier.__init__ must NOT touch GENESIS."""
     reads = {"n": 0}
@@ -62,11 +88,9 @@ def test_modifier_construction_does_not_read_genesis(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "read_text", _spy_read)
 
     (tmp_path / "GENESIS.md").write_text("hi", encoding="utf-8")
-    BootstrapModifier(
-        self_model_store=_FakeStore({"state": {"bootstrap_complete": False}}),
-        memory=_FakeMemory(),
-        events=_FakeEvents(),
-        genesis_path=str(tmp_path / "GENESIS.md"),
+    _make_modifier(
+        sm={"state": {"bootstrap_complete": False}},
+        genesis_path=tmp_path / "GENESIS.md",
     )
     assert reads["n"] == 0
 
@@ -86,11 +110,9 @@ def test_modify_prompt_reads_genesis_once_and_caches(tmp_path, monkeypatch):
 
     genesis_file = tmp_path / "GENESIS.md"
     genesis_file.write_text("hello young agent", encoding="utf-8")
-    mod = BootstrapModifier(
-        self_model_store=_FakeStore({"state": {"bootstrap_complete": False}}),
-        memory=_FakeMemory(),
-        events=_FakeEvents(),
-        genesis_path=str(genesis_file),
+    mod = _make_modifier(
+        sm={"state": {"bootstrap_complete": False}},
+        genesis_path=genesis_file,
     )
 
     elements = {}
@@ -117,13 +139,9 @@ def test_inactive_modifier_does_not_read_genesis(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "read_text", _spy_read)
 
     (tmp_path / "GENESIS.md").write_text("placeholder", encoding="utf-8")
-    mod = BootstrapModifier(
-        self_model_store=_FakeStore({
-            "state": {"bootstrap_complete": True},
-        }),
-        memory=_FakeMemory(),
-        events=_FakeEvents(),
-        genesis_path=str(tmp_path / "GENESIS.md"),
+    mod = _make_modifier(
+        sm={"state": {"bootstrap_complete": True}},
+        genesis_path=tmp_path / "GENESIS.md",
     )
     # Active flag was inferred from the persisted complete=True; modifier
     # is inactive.
@@ -139,11 +157,9 @@ def test_inactive_modifier_does_not_read_genesis(tmp_path, monkeypatch):
 def test_missing_genesis_returns_placeholder_lazily(tmp_path):
     """No file at genesis_path → modifier injects the placeholder
     rather than crashing the heartbeat."""
-    mod = BootstrapModifier(
-        self_model_store=_FakeStore({"state": {"bootstrap_complete": False}}),
-        memory=_FakeMemory(),
-        events=_FakeEvents(),
-        genesis_path=str(tmp_path / "does_not_exist.md"),
+    mod = _make_modifier(
+        sm={"state": {"bootstrap_complete": False}},
+        genesis_path=tmp_path / "does_not_exist.md",
     )
     elements = {}
     mod.modify_prompt(elements)

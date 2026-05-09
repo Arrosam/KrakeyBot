@@ -1,17 +1,18 @@
 """KrakeyBot process entry point.
 
 The Runtime class itself lives in ``krakey/runtime/runtime.py`` — this
-file now only owns:
+file owns:
 
-  * ``build_runtime_from_config`` — parse config.yaml, resolve every
-    tag-bound LLM, hand the assembled deps to ``Runtime``.
-  * ``resolve_llm_for_tag`` — the shared cache-aware tag → LLMClient
-    resolver used by both core-purpose loading here and per-plugin
-    purpose loading inside Runtime.
+  * ``build_runtime_from_config`` — parse config.yaml, resolve the
+    LLMClientFactoryEngine + Embedder + Reranker through
+    EngineRegistry, hand the assembled deps to ``Runtime``. Other
+    Engines (memory, context, decision, recall, dispatch, heartbeat,
+    explicit_history) resolve inside ``Runtime.__init__``.
   * The ``__main__`` block.
 
-Re-exports ``Runtime`` and ``RuntimeDeps`` from runtime.py so existing
-``from krakey.main import Runtime`` call sites in tests keep working
+Re-exports ``Runtime`` / ``RuntimeDeps`` / ``AsyncEmbedder`` /
+``ChatLike`` / ``resolve_llm_for_tag`` so existing
+``from krakey.main import …`` call sites in tests keep working
 without churn.
 """
 from __future__ import annotations
@@ -119,12 +120,14 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
         factory=llm_factory,
     )
 
-    # hypo_llm is no longer eagerly required at the core level — it's
-    # bound through the per-plugin config of `hypothalamus`.
-    # We still keep the field on RuntimeDeps for back-compat with
-    # existing plugin factories that pull `deps.hypo_llm`. Resolve
-    # from the dedicated `hypothalamus` core purpose if the user
-    # mapped one (compat shim), else None.
+    # ``hypo_llm`` is the LLM client pre-resolved for the
+    # ``hypothalamus`` core purpose — kept on RuntimeDeps for the
+    # in-tree hypothalamus plugin's factory (it pulls
+    # ``deps.hypo_llm`` rather than going through the factory
+    # Engine). The Decision Engine path doesn't need this field;
+    # the alternative HypothalamusDecisionEngine impl pulls its
+    # client via ``factory.client_for_core_purpose('hypothalamus')``
+    # at translate-time.
     hypo_llm = llm_factory.client_for_core_purpose("hypothalamus")
 
     # InstallService used to be injected here. Step 13 (Engine
@@ -138,10 +141,11 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
         compact_llm=compact_llm,
         classify_llm=classify_llm, embedder=embedder, reranker=reranker,
         config_path=str(config_path),
-        # Mirror the factory's internal cache onto deps for plugin
-        # back-compat: ``PluginContext.get_llm_for_tag`` still reads
-        # from ``deps.llm_clients_by_tag`` until plugins migrate to
-        # use ``ctx.services["llm_factory"]`` directly.
+        # Mirror the factory's internal cache onto deps so
+        # ``PluginContext.get_llm_for_tag`` (which reads
+        # ``deps.llm_clients_by_tag``) sees the same client
+        # instances Engine consumers do. Both paths share the same
+        # dict — no duplicate clients per tag.
         llm_clients_by_tag=llm_factory.client_cache,
         llm_factory=llm_factory,
         # Pull the sliding-window state path straight from

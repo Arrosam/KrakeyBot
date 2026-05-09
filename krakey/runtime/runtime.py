@@ -1,10 +1,11 @@
 """KrakeyBot Runtime — composition root + lifecycle.
 
-Wires up all collaborators (GraphMemory, KBRegistry, the three
-plugin registries, BatchTracker, dispatcher, orchestrator, plugin
-loader/observer, bootstrap coordinator) and drives the per-beat
-loop via ``run()``. Process entry point + ``build_runtime_from_config``
-live in ``krakey/main.py``; per-beat algorithm lives in
+Holds the resolved Engine bundle + the three plugin registries
+(Tool / Channel / Modifier) + lifecycle plumbing (event bus,
+stimulus buffer, plugin loader/observer, environment router) and
+drives the per-beat loop via ``run()``. Process entry point +
+``build_runtime_from_config`` live in ``krakey/main.py``; per-beat
+algorithm lives in
 ``krakey/runtime/heartbeat/heartbeat_orchestrator.py``.
 """
 from __future__ import annotations
@@ -12,26 +13,17 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from krakey.bootstrap import load_self_model_or_default
-from krakey.models.self_model import SelfModelStore
-from krakey.models.stimulus import Stimulus
+from krakey.models.self_model import (
+    SelfModelStore, load_self_model_or_default,
+)
 from krakey.interfaces.tool import ToolRegistry
-from krakey.llm.resolve import AsyncEmbedder, ChatLike, resolve_llm_for_tag
-from krakey.memory.graph_memory import GraphMemory
-from krakey.memory.knowledge_base import KBRegistry
+from krakey.llm.resolve import AsyncEmbedder, ChatLike
 from krakey.memory.recall import RecallLike, Reranker
 from krakey.models.config import Config, LLMParams
 from krakey.models.config_backup import backup_config
-from krakey.interfaces.services.memory import (
-    KBRegistryService,
-    MemoryService,
-)
-from krakey.interfaces.services.prompt_builder import PromptBuilderLike
-from krakey.prompt.builder import PromptBuilder
 from krakey.runtime.stimuli.batch_tracker import BatchTrackerChannel
 from krakey.runtime.events.event_bus import EventBus
 from krakey.environment.local import LocalEnvironment
@@ -39,7 +31,6 @@ from krakey.environment.router import EnvironmentRouter
 from krakey.environment.sandbox import SandboxConfig, SandboxEnvironment
 from krakey.interfaces.environment import Environment
 from krakey.runtime.console.heartbeat_logger import HeartbeatLogger
-from krakey.runtime.heartbeat.sliding_window import SlidingWindow
 from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
@@ -59,7 +50,6 @@ class RuntimeDeps:
     embedder: AsyncEmbedder
     reranker: Reranker | None = None
     self_model_path: str | None = None      # default: workspace/self_model.yaml
-    genesis_path: str | None = None         # default: workspace/GENESIS.md
     config_path: str | None = None          # default: config.yaml — for dashboard
     backup_dir: str | None = None           # default: workspace/backups
     # Root directory holding per-plugin folders. Each plugin's user

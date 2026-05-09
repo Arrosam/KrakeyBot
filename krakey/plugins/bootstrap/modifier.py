@@ -4,30 +4,35 @@ The modifier owns three behaviors that previously lived inside the
 runtime as ``BootstrapCoordinator``:
 
   1. **Prompt injection** — ``modify_prompt`` writes the
-     ``BOOTSTRAP_PROMPT`` (with embedded GENESIS text) into a
-     ``bootstrap_intro`` element when the agent is in bootstrap mode.
+     ``BOOTSTRAP_PROMPT`` (with embedded GENESIS text) into the
+     ``bootstrap_intro`` element when bootstrap is active.
   2. **NOTE signal parsing** — the modifier subscribes to
      ``NoteEvent`` on the EventBus. When Self's [NOTE] contains a
-     ``<self-model>`` JSON block the modifier deep-merges it into the
-     persisted self_model; when it contains the ``bootstrap complete``
-     marker the modifier flips ``state.bootstrap_complete`` and
-     deactivates itself.
-  3. **Active-state refinement** — on ``RuntimeReadyEvent`` the
-     modifier inspects GM node count + KB count; if both are zero
-     AND the persisted self_model isn't marked complete, bootstrap
-     is active. Otherwise the agent has lived experience already
-     and the modifier deactivates without injecting GENESIS.
+     ``<self-model>`` JSON block the modifier deep-merges it into
+     the persisted self_model. The modifier then checks completion
+     criteria and auto-finalizes when met (see below).
+  3. **Auto-completion + auto-disable** — the plugin decides when
+     bootstrap is done; Self does NOT write any completion marker.
+     Criterion: ``self_model.identity.name`` AND
+     ``self_model.identity.persona`` both non-empty. On completion
+     the plugin:
+        * sets ``self_model.state.bootstrap_complete = True``,
+        * writes ``bootstrap_done: true`` into its own
+          ``workspace/plugins/bootstrap/config.yaml``,
+        * deactivates itself for the rest of the session.
 
-Idle cadence is no longer runtime-pinned — Bootstrap teaches Self via
-prompt to output ``[IDLE] 10`` while in bootstrap mode. The runtime
-honors Self's [IDLE] field as it would in any other state.
+If a future runtime starts with the bootstrap plugin enabled in
+``cfg.plugins`` AND the plugin's own config has ``bootstrap_done:
+true``, the factory emits a stderr warning: bootstrap is already
+done; either remove the plugin from ``cfg.plugins`` or set
+``bootstrap_done: false`` to re-bootstrap.
 
-GENESIS.md is loaded lazily on first ``modify_prompt`` call (only
-relevant during bootstrap; steady-state agents never touch the file).
-The path is configurable via the per-plugin ``config.yaml``.
+Idle cadence is no longer runtime-pinned — Bootstrap teaches Self
+via prompt to output ``[IDLE] 10`` while in bootstrap mode. The
+runtime honors Self's [IDLE] field as it would in any state.
 
-The modifier never imports from the runtime; it touches only the
-plugin services dict + the EventBus + the SelfModelStore. Runtime
+The modifier never imports from runtime/ outside the standard
+plugin services dict + EventBus + the SelfModelStore class. Runtime
 core has zero references to bootstrap concepts (CLAUDE.md additive-
 plugin invariant).
 """
@@ -35,11 +40,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from typing import TYPE_CHECKING, Any
 
+from krakey.plugin_system.config import FilePluginConfigStore
 from krakey.plugins.bootstrap.prompt import BOOTSTRAP_PROMPT
 from krakey.plugins.bootstrap.state import (
-    detect_bootstrap_complete,
     load_genesis,
     parse_self_model_update,
 )
@@ -54,10 +60,9 @@ _log = logging.getLogger(__name__)
 
 class BootstrapModifier:
     """Bootstrap-mode owner. Self-contained — every behavior reads
-    from / writes through the services + events it captured at
+    from / writes through the services + events captured at
     construction time. The runtime touches it only via the standard
-    Modifier surface (``modify_prompt`` plus the registry's
-    ``attach`` hook for one-time wiring)."""
+    Modifier surface."""
 
     name = "bootstrap"
     role = "bootstrap"
@@ -68,40 +73,59 @@ class BootstrapModifier:
         self_model_store: "SelfModelStore",
         memory: Any,
         events: Any,
+        plugin_config_store: FilePluginConfigStore,
+        plugin_config: dict[str, Any],
         genesis_path: str = "workspace/GENESIS.md",
     ):
         self._store = self_model_store
         self._memory = memory
         self._events = events
+        self._plugin_config_store = plugin_config_store
+        # Snapshot of the per-plugin config at construction time —
+        # other entries (genesis_path, future fields) are preserved
+        # when the plugin writes back its bootstrap_done flag.
+        self._plugin_config_initial = dict(plugin_config or {})
         self._genesis_path = genesis_path
-        # Provisional active state from the persisted self_model.
-        # Refined once we can probe gm/kb counts (RuntimeReadyEvent).
+        # Two independent "already done" markers must both be False
+        # for the plugin to be active:
+        #   * plugin own config: ``bootstrap_done: true``
+        #   * self_model.state.bootstrap_complete: True
         sm = self._safe_load_self_model()
-        self._active = not bool(
+        own_done = bool(self._plugin_config_initial.get("bootstrap_done"))
+        sm_done = bool(
             (sm or {}).get("state", {}).get("bootstrap_complete", False),
         )
+        self._active = not (own_done or sm_done)
         self._genesis_text: str | None = None
         # Subscribe immediately — EventBus is alive by the time the
         # plugin loader builds this modifier.
         self._events.subscribe(self._on_event)
+        if own_done:
+            # The plugin is in cfg.plugins (otherwise we wouldn't
+            # have been constructed) AND own config says we're done.
+            # Either the user re-enabled the plugin without resetting
+            # bootstrap_done, or they're keeping it enabled by
+            # mistake. Either way: warn loudly so they notice. The
+            # plugin then stays inactive for the session.
+            print(
+                "warning: bootstrap plugin is enabled but already "
+                "marked complete (workspace/plugins/bootstrap/"
+                "config.yaml has bootstrap_done: true). To "
+                "re-bootstrap: set bootstrap_done: false in that "
+                "file. Otherwise remove 'bootstrap' from cfg.plugins "
+                "to silence this notice. The plugin will stay "
+                "inactive until then.",
+                file=sys.stderr,
+            )
 
     # ---- Modifier protocol surface ---------------------------------
 
     def modify_prompt(self, elements) -> None:
-        """Inject the BOOTSTRAP_PROMPT (with GENESIS text) into the
-        prompt high above DNA when bootstrap is active. The element
-        key ``bootstrap_intro`` doesn't exist in the default
-        PromptBuilder element list, so this writes a NEW key — the
-        builder appends unrecognized keys at the end of render.
-
-        For the bootstrap intro to land high in the prompt cache
-        order it would need to be a known element key in the default
-        builder, which would couple the builder to the bootstrap
-        plugin. Trade-off accepted: the intro renders late, which
-        is suboptimal for prefix-cache hit rate during bootstrap
-        but fine in practice (bootstrap is short-lived; the prefix
-        cache rebuilds quickly).
-        """
+        """Inject BOOTSTRAP_PROMPT into the ``bootstrap_intro`` element
+        when bootstrap is active. PromptBuilder's
+        DEFAULT_ELEMENT_KEYS pre-allocates the key at the head of
+        the list so this writes a value into a known position
+        rather than appending late."""
         if not self._active:
             return
         elements["bootstrap_intro"] = BOOTSTRAP_PROMPT.format(
@@ -111,29 +135,27 @@ class BootstrapModifier:
     # ---- Event handlers --------------------------------------------
 
     def _on_event(self, event) -> None:
-        """Single event-bus subscriber that dispatches by event kind.
+        """Single event-bus subscriber dispatching by event kind.
         Cheaper than registering N handlers each filtering with
         isinstance — same total work, simpler subscription."""
         kind = getattr(event, "kind", None)
         if kind == "note":
             self._handle_note(event)
-        elif kind == "runtime_ready":
-            # Refine active state from gm/kb counts. async; schedule.
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                return
-            loop.create_task(self._refine_active())
+        # RuntimeReadyEvent used to refine ``_active`` from GM/KB
+        # emptiness, but that signal is no longer authoritative —
+        # the plugin's own config (bootstrap_done) AND the
+        # self_model marker fully determine activity at construction
+        # time. A user who wants to re-bootstrap an existing agent
+        # resets both flags explicitly.
 
     def _handle_note(self, event) -> None:
-        """Parse Self's [NOTE] for self-model patches + completion
-        marker. Both writes go through the SelfModelStore so disk +
-        the next-beat reload reflect the change atomically."""
+        """Parse Self's [NOTE] for self-model patches. After applying,
+        check completion criteria — the plugin auto-completes when
+        Self has set both identity.name and identity.persona."""
         if not self._active:
             return
         text = getattr(event, "text", "") or ""
         update = parse_self_model_update(text)
-        completed = detect_bootstrap_complete(text)
         if update:
             try:
                 self._store.update(update)
@@ -142,43 +164,51 @@ class BootstrapModifier:
                     "bootstrap: self_model update raised %s; ignoring",
                     e,
                 )
-        if completed:
-            try:
-                self._store.update({"state": {"bootstrap_complete": True}})
-            except Exception as e:  # noqa: BLE001
-                _log.warning(
-                    "bootstrap: completion-marker write raised %s; "
-                    "modifier will retry next beat", e,
-                )
-                return
-            self._active = False
-
-    async def _refine_active(self) -> None:
-        """RuntimeReadyEvent → re-derive active flag from actual
-        workspace state. Bootstrap fires only when the workspace is
-        genuinely empty: zero GM nodes AND zero KBs (active or
-        archived). Otherwise the agent has lived experience and
-        shouldn't re-read GENESIS regardless of what self_model.yaml
-        says.
-        """
-        if not self._active:
-            return
-        try:
-            n_nodes = await self._memory.count_nodes()
-        except Exception:  # noqa: BLE001
-            n_nodes = 0
-        try:
-            kbs = await self._memory.list_kbs(include_archived=True)
-        except Exception:  # noqa: BLE001
-            kbs = []
-        empty = n_nodes == 0 and len(kbs) == 0
-        sm = self._safe_load_self_model()
-        marked_complete = bool(
-            (sm or {}).get("state", {}).get("bootstrap_complete", False),
-        )
-        self._active = empty and not marked_complete
+        self._maybe_complete()
 
     # ---- internals --------------------------------------------------
+
+    def _maybe_complete(self) -> None:
+        """Auto-finalize bootstrap when self_model.identity has both
+        name + persona populated. Atomic-ish: writes self_model first
+        (so the bootstrap_complete marker is visible to anything
+        watching), then writes the plugin's own bootstrap_done flag,
+        then flips the active bit. If the plugin-config write fails
+        (disk error), self_model still says complete — next startup
+        sees that and stays inactive even without the plugin marker."""
+        if not self._active:
+            return
+        sm = self._safe_load_self_model() or {}
+        identity = sm.get("identity") or {}
+        name = (identity.get("name") or "").strip()
+        persona = (identity.get("persona") or "").strip()
+        if not (name and persona):
+            return
+        # Criteria met — finalize.
+        try:
+            self._store.update({"state": {"bootstrap_complete": True}})
+        except Exception as e:  # noqa: BLE001
+            _log.warning(
+                "bootstrap: self_model completion write raised %s; "
+                "modifier will retry next NoteEvent", e,
+            )
+            return
+        try:
+            updated_config = {
+                **self._plugin_config_initial, "bootstrap_done": True,
+            }
+            self._plugin_config_store.write("bootstrap", updated_config)
+            self._plugin_config_initial = updated_config
+        except Exception as e:  # noqa: BLE001
+            _log.warning(
+                "bootstrap: own-config write raised %s; self_model "
+                "still says complete so next startup will skip "
+                "bootstrap regardless", e,
+            )
+        self._active = False
+        _log.info(
+            "bootstrap complete — identity set, plugin auto-disabled",
+        )
 
     def _get_genesis_text(self) -> str:
         """Lazy-load GENESIS.md on first call. Cached — repeat
@@ -210,19 +240,28 @@ def build_modifier(ctx: "PluginContext") -> BootstrapModifier:
     MemoryEngine + EventBus from ``ctx.services`` and the GENESIS
     path from the plugin's own config.yaml.
 
-    A user with a customised workspace layout sets
-    ``genesis_path`` in
-    ``workspace/plugins/bootstrap/config.yaml``; the default points
-    at the repo's standard ``workspace/GENESIS.md``.
+    Also constructs a ``FilePluginConfigStore`` rooted at the same
+    plugin_configs directory the runtime uses, so the modifier can
+    persist its ``bootstrap_done`` flag back to its own config file
+    when bootstrap auto-completes.
     """
+    from pathlib import Path
     services = ctx.services
+    plugin_config = (
+        ctx.config if isinstance(ctx.config, dict) else {}
+    )
     genesis_path = (
-        ctx.config.get("genesis_path") if isinstance(ctx.config, dict)
-        else None
-    ) or "workspace/GENESIS.md"
+        plugin_config.get("genesis_path") or "workspace/GENESIS.md"
+    )
+    plugin_root = Path(
+        ctx.deps.plugin_configs_root or "workspace/plugins",
+    )
+    plugin_config_store = FilePluginConfigStore(plugin_root)
     return BootstrapModifier(
         self_model_store=services["self_model_store"],
         memory=services.get("memory") or services.get("gm"),
         events=services["events"],
+        plugin_config_store=plugin_config_store,
+        plugin_config=plugin_config,
         genesis_path=genesis_path,
     )

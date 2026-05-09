@@ -50,6 +50,14 @@ if TYPE_CHECKING:
 # Default ordered element keys. Runtime constructs a PromptElements
 # with these keys (in order) before letting plugins modify.
 DEFAULT_ELEMENT_KEYS: tuple[str, ...] = (
+    # ``bootstrap_intro`` is empty by default; the bootstrap plugin
+    # populates it via modify_prompt during the bootstrap phase.
+    # Pre-allocating the slot at the head of the list ensures the
+    # injected intro renders BEFORE DNA — without this the plugin's
+    # __setitem__ would append a brand-new key past
+    # heartbeat_question, putting BOOTSTRAP_PROMPT after Self's
+    # trailing prompt.
+    "bootstrap_intro",
     "dna",
     "self_model",
     "capabilities",
@@ -113,6 +121,11 @@ class PromptBuilder:
         (in_mind_instructions, in_mind_round) are reserved for plugins
         to fill in."""
         return PromptElements(initial=[
+            # Empty by default; bootstrap plugin populates this via
+            # modify_prompt when bootstrap is active. Pre-allocated
+            # at the head of the order so the intro lands before
+            # DNA + ahead of every other element.
+            ("bootstrap_intro", ""),
             # ``get_dna()`` re-reads ``krakey/prompt/dna.txt`` only
             # when its mtime changes — live prompt-tuning during
             # development without a runtime restart.
