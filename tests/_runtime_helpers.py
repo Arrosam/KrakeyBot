@@ -46,6 +46,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
                               gm_path: str = ":memory:",
                               kb_dir: str | None = None,
                               skip_bootstrap: bool = True,
+                              self_model_path: str | None = None,
                               modifiers: list[str] | None = None) -> Runtime:
     """In-memory Runtime with injectable doubles. CLI channel disabled.
 
@@ -75,7 +76,10 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     # Ditto for self_model: it's a mutable file, and bootstrap tests
     # rewrite it. Without an override, concurrent test writes trample
     # the production workspace/self_model.yaml.
-    self_model_path = f"{tempfile.mkdtemp(prefix='krakey_test_sm_')}/self_model.yaml"
+    if self_model_path is None:
+        self_model_path = (
+            f"{tempfile.mkdtemp(prefix='krakey_test_sm_')}/self_model.yaml"
+        )
     # And the in_mind Modifier's state file. Tests that enable
     # in_mind_note would otherwise dispatch update_in_mind into
     # the production workspace/data/in_mind.json — same class of

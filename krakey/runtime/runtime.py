@@ -377,6 +377,26 @@ class Runtime:
         # ``ctx.deps.environment_router`` (ctx.environment(...) wrapper).
         deps.environment_router = self.environment_router
 
+        # Self-model setup runs BEFORE the plugin loader so the
+        # bootstrap modifier (and any future plugin) can reach the
+        # SelfModelStore via ``ctx.services["self_model_store"]``.
+        sm_path = deps.self_model_path or "workspace/self_model.yaml"
+        self._self_model_store = SelfModelStore(sm_path)
+        self.self_model, _detected_bootstrap = load_self_model_or_default(
+            sm_path,
+        )
+        # ``is_bootstrap_override`` (test-only kwarg) used to pin the
+        # legacy BootstrapCoordinator's flag. The bootstrap behavior
+        # now lives in a plugin; tests that need a non-bootstrap
+        # runtime should write
+        # ``state.bootstrap_complete: true`` into the test's
+        # self_model.yaml OR force the modifier inactive via
+        # ``runtime.modifiers.by_role("bootstrap").force_active(False)``.
+        # The override kwarg is preserved on the constructor for
+        # back-compat but only honored when the bootstrap plugin is
+        # registered (Runtime.run() applies it post-load).
+        self._is_bootstrap_override = is_bootstrap_override
+
         from krakey.runtime.plugin_register.loader import PluginLoader
         self._plugin_loader = PluginLoader(
             config=self.config,
@@ -387,11 +407,17 @@ class Runtime:
                 "runtime": self,
                 "gm": self.gm,
                 "kb_registry": self.kb_registry,
+                "memory": self.memory,
                 "embedder": self.embedder,
                 "reranker": self.reranker,
                 "buffer": self.buffer,
                 "events": self.events,
                 "config": self.config,
+                # Engine-refactor additions: bootstrap plugin reads
+                # the SelfModelStore through services so it can
+                # update self_model on Self's NOTE without reaching
+                # back into the runtime.
+                "self_model_store": self._self_model_store,
             },
         )
         self._plugin_loader.register_from_config(deps)
@@ -400,36 +426,6 @@ class Runtime:
         # deps. Plugins that need a fresh ctx per call build it
         # inside register_one — deps is the constant boundary.
         self._deps = deps
-
-        # Self-model + Bootstrap state (Phase 2.1)
-        sm_path = deps.self_model_path or "workspace/self_model.yaml"
-        # GENESIS is read lazily (see `_get_genesis_text`) — in steady
-        # state (bootstrap complete, GM populated) the file is never
-        # touched, and `self._genesis_text` stays None to avoid both
-        # the I/O on every start AND the correctness trap of having
-        # stale genesis text sitting in memory when it's not supposed
-        # to influence the prompt.
-        self._genesis_path = deps.genesis_path or "workspace/GENESIS.md"
-        self._genesis_text: str | None = None
-        self._self_model_store = SelfModelStore(sm_path)
-        self.self_model, detected_bootstrap = load_self_model_or_default(sm_path)
-        # Bootstrap-mode state lives in a dedicated coordinator so the
-        # three behaviors it gates (intro-prompt injection, idle
-        # cadence, NOTE-signal parsing) don't have to be expressed as
-        # scattered ``if self.is_bootstrap`` checks. The provisional
-        # value here gets re-derived once gm.initialize() lets us
-        # probe actual data via ``bootstrap.refine_from_data``.
-        from krakey.runtime.bootstrap.bootstrap_coordinator import BootstrapCoordinator
-        # When no test override is supplied, the coordinator initializes
-        # from the self-model's bootstrap_complete marker (equivalent to
-        # the legacy `detected_bootstrap` heuristic) and lets
-        # refine_from_data re-derive from actual GM/KB data later. A
-        # supplied override pins the value and skips the data probe.
-        self.bootstrap = BootstrapCoordinator(
-            self_model=self.self_model,
-            self_model_store=self._self_model_store,
-            override=is_bootstrap_override,
-        )
 
         self.heartbeat_count = 0
         # Sleep cycle counter — runtime-only. Used to be persisted in
@@ -675,21 +671,48 @@ class Runtime:
 
     @property
     def is_bootstrap(self) -> bool:
-        """Bootstrap mode flag — delegates to the coordinator. Kept as
-        a property so tests that read ``runtime.is_bootstrap`` keep
-        working without knowing about the coordinator."""
-        return self.bootstrap.is_active
+        """Bootstrap mode flag — delegates to the bootstrap plugin's
+        ``BootstrapModifier`` if registered, else falls back to the
+        persisted self_model marker. Property kept on Runtime for
+        back-compat with tests / dashboard code that read
+        ``runtime.is_bootstrap`` directly; new code should query the
+        modifier via ``runtime.modifiers.by_role("bootstrap")``."""
+        anchor = self.modifiers.by_role("bootstrap")
+        if anchor is not None and hasattr(anchor, "is_active"):
+            return bool(anchor.is_active)
+        return not bool(
+            (self.self_model or {})
+            .get("state", {}).get("bootstrap_complete", False)
+        )
 
     @is_bootstrap.setter
     def is_bootstrap(self, value: bool) -> None:
-        """Test compat: ``runtime.is_bootstrap = True`` forwards to the
-        coordinator's force_active escape hatch."""
-        self.bootstrap.force_active(bool(value))
+        """Test compat: ``runtime.is_bootstrap = True`` forwards to
+        the bootstrap modifier's force_active escape hatch when the
+        plugin is registered. No-op otherwise (no plugin to flip)."""
+        anchor = self.modifiers.by_role("bootstrap")
+        if anchor is not None and hasattr(anchor, "force_active"):
+            anchor.force_active(bool(value))
 
     async def run(self, iterations: int | None = None) -> None:
         await self.gm.initialize()
         await self._preflight_environments()
-        await self._refine_bootstrap_from_data()
+
+        # Apply test-only bootstrap override (legacy
+        # is_bootstrap_override constructor kwarg) now that plugins
+        # are loaded. No-op when bootstrap plugin isn't registered.
+        if self._is_bootstrap_override is not None:
+            anchor = self.modifiers.by_role("bootstrap")
+            if anchor is not None and hasattr(anchor, "force_active"):
+                anchor.force_active(self._is_bootstrap_override)
+
+        # Signal: runtime resources (memory, environments) are live;
+        # plugins that subscribed to RuntimeReadyEvent (e.g. the
+        # bootstrap modifier probing GM emptiness) can now do their
+        # startup work without ordering surprises.
+        from krakey.runtime.events.event_types import RuntimeReadyEvent
+        self.events.publish(RuntimeReadyEvent())
+
         # buffer.start_all() walks every registered channel and calls its
         # start(); the dashboard plugin's channel uses that hook to spin
         # up the Web UI server. No special-case "start dashboard" path —
@@ -885,14 +908,6 @@ class Runtime:
             )
             self.log.hb(f"{env_name} preflight ok: {details}")
 
-    async def _refine_bootstrap_from_data(self) -> None:
-        """Thin wrapper around ``BootstrapCoordinator.refine_from_data``
-        — kept on Runtime so the call site in ``run()`` stays a single
-        line and the log message stays attached to the heartbeat log."""
-        await self.bootstrap.refine_from_data(self.gm, self.kb_registry)
-        if self.bootstrap.is_active:
-            self.log.hb("bootstrap mode: empty GM + KBs → injecting GENESIS")
-
     async def close(self) -> None:
         """Shut down persistent resources via the memory Engine.
         ``MemoryEngine.close()`` is responsible for tearing down both
@@ -923,8 +938,6 @@ class Runtime:
             stimuli, recall_result, counts,
         )
 
-    def _get_genesis_text(self) -> str:
-        return self._orchestrator.get_genesis_text()
 
 
 

@@ -36,6 +36,15 @@ class _BaseEvent:
 
 
 @dataclass
+class RuntimeReadyEvent(_BaseEvent):
+    """Fires once after Runtime's setup phase completes (memory
+    initialized, environments preflighted) and BEFORE the first
+    heartbeat. Plugins that need to do startup work depending on
+    runtime state (e.g. the bootstrap modifier probing GM emptiness)
+    subscribe to this rather than relying on attach() ordering."""
+
+
+@dataclass
 class HeartbeatStartEvent(_BaseEvent):
     heartbeat_id: int
     stimulus_count: int

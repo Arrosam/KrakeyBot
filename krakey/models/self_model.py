@@ -66,3 +66,80 @@ def _deep_merge(base: dict[str, Any], delta: dict[str, Any]) -> dict[str, Any]:
         else:
             out[k] = copy.deepcopy(v)
     return out
+
+
+def load_self_model_or_default(
+    path: str | Path,
+) -> tuple[dict[str, Any], bool]:
+    """Load self_model.yaml; create default if missing.
+
+    Returns ``(self_model_dict, is_bootstrap)``. ``is_bootstrap``
+    reflects whether the persisted self-model has been marked
+    complete; the bootstrap plugin further refines this from
+    GM/KB emptiness on RuntimeReadyEvent.
+
+    Migration behavior: any keys present in the YAML but NOT in the
+    current ``default_self_model()`` schema are silently dropped —
+    the one-shot 2026-04-25 self-model slim refactor. If anything
+    was dropped the cleaned version is rewritten back so the next
+    boot is fast and the file matches what's actually in use.
+
+    Was previously located at ``krakey.bootstrap``; moved alongside
+    the SelfModelStore class in the Engine refactor (2026-05) so
+    the runtime no longer imports from the soon-to-retire
+    ``krakey.bootstrap`` module.
+    """
+    import logging
+
+    store = SelfModelStore(path)
+    p = Path(path)
+    if not p.exists():
+        data = default_self_model()
+        return data, True
+    data = store.load()
+    merged = _merge_defaults(default_self_model(), data)
+    is_bootstrap = not bool(
+        merged.get("state", {}).get("bootstrap_complete"),
+    )
+    if merged != data:
+        dropped = _diff_keys(data, merged)
+        logging.getLogger(__name__).info(
+            "self_model migration: dropped legacy keys %s; rewriting %s",
+            dropped, path,
+        )
+        store.save(merged)
+    return merged, is_bootstrap
+
+
+def _merge_defaults(defaults: dict, loaded: dict) -> dict:
+    """Left-bounded deep-merge.
+
+    Only keys present in ``defaults`` survive. Loaded values overlay
+    defaults where the key matches; loaded keys not in defaults are
+    silently dropped — this is the migration path for the slim-schema
+    self-model refactor.
+    """
+    out: dict[str, Any] = {}
+    for k, default_v in defaults.items():
+        if k not in loaded:
+            out[k] = copy.deepcopy(default_v)
+            continue
+        loaded_v = loaded[k]
+        if isinstance(default_v, dict) and isinstance(loaded_v, dict):
+            out[k] = _merge_defaults(default_v, loaded_v)
+        else:
+            out[k] = loaded_v
+    return out
+
+
+def _diff_keys(loaded: dict, merged: dict, prefix: str = "") -> list[str]:
+    """Return dotted-paths for every key that appears in ``loaded``
+    but not in ``merged``. Used only for the one-time migration log."""
+    out: list[str] = []
+    for k, v in loaded.items():
+        path = f"{prefix}{k}" if not prefix else f"{prefix}.{k}"
+        if k not in merged:
+            out.append(path)
+        elif isinstance(v, dict) and isinstance(merged.get(k), dict):
+            out.extend(_diff_keys(v, merged[k], prefix=path))
+    return out

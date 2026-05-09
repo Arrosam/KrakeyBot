@@ -1,83 +1,152 @@
-"""GENESIS.md is only read when Bootstrap is active.
+"""GENESIS.md is only read when the bootstrap modifier is ACTIVE
+and Self prompts are being built.
 
-Steady-state Runtimes (bootstrap complete, GM has nodes) must never
-touch the file. This guards against two failure modes:
-  1. wasted I/O on cold-start for the common steady-state case
-  2. stale GENESIS bytes sitting on Runtime that could leak into
-     prompts later via a misrouted code path
+Steady-state runtimes (bootstrap complete; agent has lived
+experience) must never touch the file. After the Engine refactor
+(2026-05) GENESIS handling moved out of Runtime into the bootstrap
+plugin's BootstrapModifier — these tests now exercise the plugin's
+lazy load behavior.
+
+Pinned guarantees:
+  1. Construction touches no GENESIS file.
+  2. ``modify_prompt`` reads GENESIS exactly once (cached) — repeat
+     calls during a long bootstrap don't re-read the file.
+  3. A modifier whose active flag is False does NOT call the
+     loader, regardless of how many times modify_prompt fires.
 """
+from __future__ import annotations
+
 from pathlib import Path
 
-import pytest
-
-from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
+from krakey.plugins.bootstrap.modifier import BootstrapModifier
 
 
-def test_genesis_not_read_in_steady_state(tmp_path, monkeypatch):
-    """Fresh Runtime() in non-bootstrap mode must not open GENESIS."""
-    opened = {"n": 0}
-    real_read_text = Path.read_text
+class _FakeStore:
+    """Minimal SelfModelStore stand-in — load() returns a self_model
+    dict the test controls."""
 
-    def _spy_read(self, *args, **kwargs):
-        if self.name.lower() == "genesis.md":
-            opened["n"] += 1
-        return real_read_text(self, *args, **kwargs)
+    def __init__(self, sm: dict):
+        self._sm = sm
+        self.update_calls: list = []
 
-    monkeypatch.setattr(Path, "read_text", _spy_read)
+    def load(self):
+        return self._sm
 
-    runtime = build_runtime_with_fakes(
-        self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
-        gm_path=str(tmp_path / "gm.sqlite"),
-        skip_bootstrap=True,  # pins is_bootstrap=False
-    )
-    # Sanity: nothing asked for GENESIS during Runtime construction
-    assert opened["n"] == 0
-    assert runtime._genesis_text is None  # lazy slot still empty
+    def update(self, delta):
+        self.update_calls.append(delta)
 
 
-def test_genesis_read_on_first_bootstrap_prompt(tmp_path, monkeypatch):
-    """When Bootstrap is active and we build a Self prompt, the
-    lazy accessor loads GENESIS. Subsequent calls hit the cache
-    (no re-read)."""
+class _FakeMemory:
+    async def count_nodes(self): return 0
+    async def list_kbs(self, *, include_archived=False): return []
+
+
+class _FakeEvents:
+    """EventBus stand-in — records subscribers."""
+    def __init__(self):
+        self.subscribers: list = []
+
+    def subscribe(self, cb): self.subscribers.append(cb)
+
+
+def test_modifier_construction_does_not_read_genesis(tmp_path, monkeypatch):
+    """BootstrapModifier.__init__ must NOT touch GENESIS."""
     reads = {"n": 0}
-    real_read_text = Path.read_text
+    real_read = Path.read_text
 
     def _spy_read(self, *args, **kwargs):
         if self.name.lower() == "genesis.md":
             reads["n"] += 1
-        return real_read_text(self, *args, **kwargs)
+        return real_read(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", _spy_read)
 
-    # Write a real GENESIS file into the runtime workspace
-    (tmp_path / "GENESIS.md").write_text("hello young agent",
-                                            encoding="utf-8")
-    runtime = build_runtime_with_fakes(
-        self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
-        gm_path=str(tmp_path / "gm.sqlite"),
+    (tmp_path / "GENESIS.md").write_text("hi", encoding="utf-8")
+    BootstrapModifier(
+        self_model_store=_FakeStore({"state": {"bootstrap_complete": False}}),
+        memory=_FakeMemory(),
+        events=_FakeEvents(),
+        genesis_path=str(tmp_path / "GENESIS.md"),
     )
-    # Point the genesis path at our fake file + flip bootstrap on.
-    runtime._genesis_path = str(tmp_path / "GENESIS.md")
-    runtime.is_bootstrap = True
+    assert reads["n"] == 0
 
-    # First access reads the file
-    txt1 = runtime._get_genesis_text()
+
+def test_modify_prompt_reads_genesis_once_and_caches(tmp_path, monkeypatch):
+    """First modify_prompt call reads GENESIS; subsequent calls hit
+    the cache (no new disk reads)."""
+    reads = {"n": 0}
+    real_read = Path.read_text
+
+    def _spy_read(self, *args, **kwargs):
+        if self.name.lower() == "genesis.md":
+            reads["n"] += 1
+        return real_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _spy_read)
+
+    genesis_file = tmp_path / "GENESIS.md"
+    genesis_file.write_text("hello young agent", encoding="utf-8")
+    mod = BootstrapModifier(
+        self_model_store=_FakeStore({"state": {"bootstrap_complete": False}}),
+        memory=_FakeMemory(),
+        events=_FakeEvents(),
+        genesis_path=str(genesis_file),
+    )
+
+    elements = {}
+    mod.modify_prompt(elements)
     assert reads["n"] == 1
-    assert "hello young agent" in txt1
-    # Second access is cached — no new read
-    txt2 = runtime._get_genesis_text()
+    assert "hello young agent" in elements.get("bootstrap_intro", "")
+
+    # Second call — cache hit, no new read
+    mod.modify_prompt({})
     assert reads["n"] == 1
-    assert txt1 is txt2
+
+
+def test_inactive_modifier_does_not_read_genesis(tmp_path, monkeypatch):
+    """When the modifier is inactive (bootstrap complete) it must
+    NOT load GENESIS even if modify_prompt fires."""
+    reads = {"n": 0}
+    real_read = Path.read_text
+
+    def _spy_read(self, *args, **kwargs):
+        if self.name.lower() == "genesis.md":
+            reads["n"] += 1
+        return real_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _spy_read)
+
+    (tmp_path / "GENESIS.md").write_text("placeholder", encoding="utf-8")
+    mod = BootstrapModifier(
+        self_model_store=_FakeStore({
+            "state": {"bootstrap_complete": True},
+        }),
+        memory=_FakeMemory(),
+        events=_FakeEvents(),
+        genesis_path=str(tmp_path / "GENESIS.md"),
+    )
+    # Active flag was inferred from the persisted complete=True; modifier
+    # is inactive.
+    assert mod.is_active is False
+
+    elements = {}
+    mod.modify_prompt(elements)
+    assert reads["n"] == 0
+    # No bootstrap_intro injected
+    assert "bootstrap_intro" not in elements
 
 
 def test_missing_genesis_returns_placeholder_lazily(tmp_path):
-    """No file at genesis_path → loader returns the placeholder
-    string (not an exception) so the bot still boots."""
-    runtime = build_runtime_with_fakes(
-        self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
-        gm_path=str(tmp_path / "gm.sqlite"),
+    """No file at genesis_path → modifier injects the placeholder
+    rather than crashing the heartbeat."""
+    mod = BootstrapModifier(
+        self_model_store=_FakeStore({"state": {"bootstrap_complete": False}}),
+        memory=_FakeMemory(),
+        events=_FakeEvents(),
+        genesis_path=str(tmp_path / "does_not_exist.md"),
     )
-    runtime._genesis_path = str(tmp_path / "does_not_exist.md")
-    text = runtime._get_genesis_text()
-    assert text  # non-empty placeholder
-    assert "GENESIS" in text or "\u767d\u677f" in text
+    elements = {}
+    mod.modify_prompt(elements)
+    intro = elements.get("bootstrap_intro", "")
+    assert intro
+    assert "blank-slate" in intro.lower() or "GENESIS" in intro

@@ -28,7 +28,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from krakey.bootstrap import BOOTSTRAP_PROMPT, load_genesis
+# BOOTSTRAP_PROMPT + GENESIS loader used to live here for the
+# orchestrator's inline bootstrap-mode handling. Bootstrap moved to
+# its own plugin in step 11; the orchestrator no longer references
+# either symbol — the plugin's modify_prompt hook + EventBus
+# NoteEvent subscription own that flow.
 from krakey.models.config import LLMParams
 from krakey.models.stimulus import Stimulus
 from krakey.prompt.views import SlidingWindowRound
@@ -179,6 +183,15 @@ class HeartbeatOrchestrator:
         rt = self._rt
         rt.heartbeat_count += 1
         rt.log.set_heartbeat(rt.heartbeat_count)
+        # Reload self_model from disk so plugin writes (e.g. the
+        # bootstrap modifier's self-model patches in response to
+        # Self's NOTE on the previous beat) flow into the prompt
+        # this beat. Cheap (one YAML parse per beat); the file is
+        # rarely re-written so the read is mostly a stat + cache.
+        try:
+            rt.self_model = rt._self_model_store.load()
+        except Exception as e:  # noqa: BLE001
+            rt.log.runtime_error(f"self_model reload failed: {e}")
         stimuli = await self._phase_drain_and_seed_recall()
 
         # Slash-commands run out-of-band (Self never sees /<cmd>).
@@ -207,9 +220,11 @@ class HeartbeatOrchestrator:
         if parsed is None:
             return  # Self LLM error already logged + slept
         self._phase_save_round(parsed, stimuli)
+        # ``_phase_log_self_output`` publishes a ``NoteEvent`` when
+        # parsed.note is non-empty; the bootstrap plugin (and any
+        # future Note observer) subscribes to that event for its
+        # signal parsing — no orchestrator-side branch needed.
         self._phase_log_self_output(parsed)
-        if rt.bootstrap.is_active:
-            self._phase_apply_bootstrap_signals(parsed)
         await self._phase_auto_ingest_feedback(stimuli)
         sleep_requested = await self._phase_apply_decision(
             parsed, recall_result,
@@ -365,19 +380,6 @@ class HeartbeatOrchestrator:
             decision_text=parsed.decision,
             note_text=parsed.note,
         ))
-
-    def _phase_apply_bootstrap_signals(self, parsed) -> None:
-        """During Bootstrap, hand Self's NOTE to the coordinator for
-        self-model patch + completion-marker detection."""
-        rt = self._rt
-        result = rt.bootstrap.apply_note_signals(parsed.note)
-        if result.update or result.completed:
-            rt.self_model = rt._self_model_store.load()
-        if result.update:
-            rt.log.hb(f"bootstrap: self-model updated "
-                          f"({list(result.update.keys())})")
-        if result.completed:
-            rt.log.hb("bootstrap: complete — entering normal operation")
 
     def _phase_log_self_output(self, parsed) -> None:
         rt = self._rt
@@ -549,10 +551,13 @@ class HeartbeatOrchestrator:
         else:
             base = (parsed.idle_seconds
                     or rt.config.idle.default_interval)
-        # Bootstrap-mode cadence (DevSpec §12.2) — coordinator returns
-        # the bootstrap-fixed value when active, else passes ``base``
-        # through unchanged.
-        interval = rt.bootstrap.idle_interval(default=base)
+        # Bootstrap mode used to force a 10s cadence here via the
+        # legacy BootstrapCoordinator. After the plugin uplift
+        # (step 11) the bootstrap modifier teaches Self to output
+        # ``[IDLE] 10`` while in bootstrap state — so the same
+        # short-cadence behavior emerges from Self's own [IDLE]
+        # field rather than runtime-side override.
+        interval = base
         rt.log.hb(f"idle {interval}s")
         rt.events.publish(IdleEvent(
             heartbeat_id=rt.heartbeat_count, interval_seconds=interval,
@@ -593,14 +598,15 @@ class HeartbeatOrchestrator:
                     f"Modifier {modifier.name!r} modify_prompt raised "
                     f"{type(e).__name__}: {e}; ignoring its modifications"
                 )
-        # 3. Bootstrap intro is runtime-owned (BootstrapCoordinator is
-        #    not a plugin). If active, prepend before serializing.
-        prompt = elements.render()
-        if rt.bootstrap.should_inject_intro_prompt():
-            prompt = (BOOTSTRAP_PROMPT.format(
-                          genesis_text=self.get_genesis_text())
-                      + "\n\n" + prompt)
-        return prompt
+        # 3. Render. The bootstrap intro used to be injected here by
+        #    inlining BOOTSTRAP_PROMPT.format(genesis_text=...) above
+        #    elements.render(). After the plugin uplift (step 11) the
+        #    bootstrap modifier writes an ``elements["bootstrap_intro"]``
+        #    entry via its modify_prompt hook (above). The element
+        #    appends late in the prompt rather than prepending — that
+        #    costs some prefix-cache hit rate during bootstrap but is
+        #    acceptable because bootstrap is short-lived.
+        return elements.render()
 
     async def enforce_input_budget(self, stimuli, recall_result,
                                        counts: "_GMCounts"):
@@ -670,23 +676,6 @@ class HeartbeatOrchestrator:
             f"({estimate_tokens(prompt)} > {budget})"
         )
         return prompt, recall_result
-
-    def get_genesis_text(self) -> str:
-        """Lazy-load GENESIS.md on first use.
-
-        Bootstrap is the ONLY consumer of this text — after
-        bootstrap_complete flips to True, the agent should never see
-        GENESIS again. Reading the file unconditionally at startup
-        was both wasteful I/O (80% of runs are steady-state) and a
-        correctness trap.
-
-        Cached on first call so repeat heartbeats during a long
-        Bootstrap don't re-read the file 50 times.
-        """
-        rt = self._rt
-        if rt._genesis_text is None:
-            rt._genesis_text = load_genesis(rt._genesis_path)
-        return rt._genesis_text
 
     def record_prompt(self, heartbeat_id: int, prompt: str) -> None:
         self._rt._prompt_log.append({

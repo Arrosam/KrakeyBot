@@ -1,0 +1,24 @@
+name: bootstrap
+description: |
+  First-boot self-awareness: injects GENESIS.md into Self's prompt high
+  (above DNA) on early beats, parses [NOTE] for self-model patches and
+  the "bootstrap complete" marker, and auto-deactivates once
+  self_model.state.bootstrap_complete is True.
+
+  No LLM purposes — the modifier is structural. Self_model + GENESIS
+  paths are configurable via the per-plugin config.yaml; defaults
+  point at workspace/self_model.yaml + workspace/GENESIS.md.
+
+components:
+  - kind: modifier
+    role: bootstrap
+    factory_module: krakey.plugins.bootstrap.modifier
+    factory_attr: build_modifier
+
+config_schema:
+  - field: genesis_path
+    type: text
+    default: workspace/GENESIS.md
+    help: |
+      Path to the GENESIS.md the modifier reads on first prompt build.
+      Missing file → built-in placeholder so Self still boots.
