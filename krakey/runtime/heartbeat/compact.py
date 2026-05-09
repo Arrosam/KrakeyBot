@@ -10,7 +10,7 @@ import json
 import re
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol
 
-from krakey.runtime.heartbeat.sliding_window import SlidingWindow, SlidingWindowRound
+from krakey.runtime.heartbeat.sliding_window import SlidingWindow, ExplicitHistoryRound
 
 if TYPE_CHECKING:
     # Type-only: compact never instantiates the memory backend, it just
@@ -115,7 +115,7 @@ async def _apply_extraction(gm: "MemoryService", parsed: dict[str, Any]) -> None
             continue  # malformed edge — skip
 
 
-async def _compact_round(round_: SlidingWindowRound, gm: "MemoryService",
+async def _compact_round(round_: ExplicitHistoryRound, gm: "MemoryService",
                           llm: ChatLike, recall_fn: RecallFn) -> None:
     query = round_.stimulus_summary or round_.decision_text or round_.note_text
     existing = await recall_fn(query) if query else []
@@ -155,7 +155,7 @@ async def _split_and_compact_single_round(
     )
     char_budget = max(80, split_chunk_tokens * 4)  # 4 chars ≈ 1 token
     for chunk in _chunks_by_char_budget(full, char_budget):
-        synthetic = SlidingWindowRound(
+        synthetic = ExplicitHistoryRound(
             heartbeat_id=oldest.heartbeat_id,
             stimulus_summary=chunk,
             decision_text="",

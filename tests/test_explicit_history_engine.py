@@ -13,7 +13,7 @@ from krakey.engines.explicit_history.default import (
 from krakey.interfaces.engines import ExplicitHistoryEngine
 from krakey.runtime.heartbeat.sliding_window import (
     SlidingWindow,
-    SlidingWindowRound,
+    ExplicitHistoryRound,
 )
 
 
@@ -35,7 +35,7 @@ def test_history_token_budget_attribute():
 
 def test_append_get_rounds_round_trip():
     eng = SlidingWindowExplicitHistoryEngine(history_token_budget=10_000)
-    r = SlidingWindowRound(
+    r = ExplicitHistoryRound(
         heartbeat_id=1, stimulus_summary="s", decision_text="d",
         note_text="n",
     )
@@ -52,11 +52,11 @@ def test_pop_oldest_returns_none_when_empty():
 
 def test_pop_oldest_removes_first_appended():
     eng = SlidingWindowExplicitHistoryEngine(history_token_budget=10_000)
-    eng.append(SlidingWindowRound(
+    eng.append(ExplicitHistoryRound(
         heartbeat_id=1, stimulus_summary="a",
         decision_text="", note_text="",
     ))
-    eng.append(SlidingWindowRound(
+    eng.append(ExplicitHistoryRound(
         heartbeat_id=2, stimulus_summary="b",
         decision_text="", note_text="",
     ))
@@ -69,7 +69,7 @@ def test_pop_oldest_removes_first_appended():
 def test_needs_compact_reflects_token_total():
     """Tiny budget + a chunky round → needs_compact is True."""
     eng = SlidingWindowExplicitHistoryEngine(history_token_budget=1)
-    eng.append(SlidingWindowRound(
+    eng.append(ExplicitHistoryRound(
         heartbeat_id=1,
         stimulus_summary="lots and lots of words to push tokens",
         decision_text="more text here", note_text="and more",

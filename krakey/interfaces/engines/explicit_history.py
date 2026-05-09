@@ -29,7 +29,7 @@ from typing import Protocol, runtime_checkable
 class ExplicitHistoryRound:
     """One past heartbeat as it appears in the [HISTORY] layer.
 
-    Renamed from ``SlidingWindowRound`` to match the Engine name.
+    Renamed from ``ExplicitHistoryRound`` to match the Engine name.
     Same fields — the data shape is what crosses the boundary, the
     Engine's internal storage strategy is its own business.
     """

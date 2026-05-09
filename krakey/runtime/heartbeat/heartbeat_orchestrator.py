@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any
 # NoteEvent subscription own that flow.
 from krakey.models.config import LLMParams
 from krakey.models.stimulus import Stimulus
-from krakey.prompt.views import SlidingWindowRound
+from krakey.prompt.views import ExplicitHistoryRound
 from krakey.runtime.heartbeat.compact import compact_if_needed
 from krakey.runtime.events.event_types import (
     DecisionEvent, GMStatsEvent, HeartbeatStartEvent, IdleEvent,
@@ -79,7 +79,7 @@ def _delta_str(delta: int) -> str:
 
 
 def _summarize_stimuli(stimuli: list[Stimulus]) -> str:
-    """Render the stimulus list for persistence in a ``SlidingWindowRound``.
+    """Render the stimulus list for persistence in a ``ExplicitHistoryRound``.
 
     This text is what Self sees in the ``[HISTORY]`` layer every
     subsequent beat — truncation here is destructive: downstream
@@ -373,7 +373,7 @@ class HeartbeatOrchestrator:
 
     def _phase_save_round(self, parsed, stimuli) -> None:
         rt = self._rt
-        rt.explicit_history.append(SlidingWindowRound(
+        rt.explicit_history.append(ExplicitHistoryRound(
             heartbeat_id=rt.heartbeat_count,
             stimulus_summary=_summarize_stimuli(stimuli),
             decision_text=parsed.decision,

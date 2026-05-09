@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Protocol
 
 from krakey.main import Runtime, RuntimeDeps
-from krakey.memory.recall import Reranker
 
 
 class ChatLike(Protocol):
@@ -41,7 +40,6 @@ def build_runtime_with_fakes(*, self_llm: ChatLike,
                               compact_llm: ChatLike | None = None,
                               classify_llm: ChatLike | None = None,
                               embedder: AsyncEmbedder | None = None,
-                              reranker: Reranker | None = None,
                               idle_min: float = 0.01,
                               idle_max: float = 5.0,
                               gm_path: str = ":memory:",
@@ -175,12 +173,25 @@ def build_runtime_with_fakes(*, self_llm: ChatLike,
     sliding_window_state_path = (
         f"{tempfile.mkdtemp(prefix='krakey_test_sw_')}/sliding_window.json"
     )
+    # Provide an LLMClientFactoryEngine so Runtime can resolve the
+    # reranker Engine slot (the default reranker constructor takes a
+    # factory). Even if cfg has no reranker tag bound, the factory's
+    # rerank_client() returns None and the Engine falls back to
+    # preserve-order scoring.
+    from krakey.engines.llm_factory.default import (
+        DefaultLLMClientFactoryEngine,
+    )
+    llm_factory = DefaultLLMClientFactoryEngine(cfg)
+    # Re-use the test's pre-cached client dict so plugin lookups via
+    # ctx.get_llm_for_tag share state with the factory's own cache.
+    llm_factory._cache.update(llm_clients_by_tag)
+
     deps = RuntimeDeps(
         config=cfg, self_llm=self_llm,
         compact_llm=compact_llm or ScriptedLLM(),
         classify_llm=classify_llm or ScriptedLLM(),
         embedder=embedder or NullEmbedder(),
-        reranker=reranker,
+        llm_factory=llm_factory,
         plugin_configs_root=plugin_configs_dir,
         self_model_path=self_model_path,
         in_mind_state_path=in_mind_state_path,

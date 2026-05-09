@@ -22,7 +22,6 @@ from krakey.models.self_model import (
 from krakey.interfaces.engines.recall import RecallSession
 from krakey.interfaces.tool import ToolRegistry
 from krakey.llm.resolve import AsyncEmbedder, ChatLike
-from krakey.memory.recall import Reranker
 from krakey.models.config import Config, LLMParams
 from krakey.models.config_backup import backup_config
 from krakey.runtime.stimuli.batch_tracker import BatchTrackerChannel
@@ -48,7 +47,6 @@ class RuntimeDeps:
     compact_llm: ChatLike
     classify_llm: ChatLike
     embedder: AsyncEmbedder
-    reranker: Reranker | None = None
     self_model_path: str | None = None      # default: workspace/self_model.yaml
     config_path: str | None = None          # default: config.yaml — for dashboard
     backup_dir: str | None = None           # default: workspace/backups
@@ -101,7 +99,6 @@ class Runtime:
         self.self_llm = deps.self_llm
         self.compact_llm = deps.compact_llm
         self.embedder = deps.embedder
-        self.reranker = deps.reranker
         # Modifier registry — role-keyed (one Modifier per role; second
         # registration claiming the same role raises). Plugin loader
         # runs LATER (after tools + channels registries exist)
@@ -145,8 +142,23 @@ class Runtime:
             HeartbeatEngine,
             MemoryEngine,
             RecallEngine,
+            RerankerEngine,
         )
         self._engine_registry = EngineRegistry(self.config)
+        self.llm_factory = deps.llm_factory
+        # Reranker Engine — composition root resolves it BEFORE the
+        # recall + dispatch slots that take it as a constructor kwarg.
+        # The default impl wraps the configured reranker tag with a
+        # preserve-order fallback, so the slot is always populated
+        # even when no tag is bound.
+        self.reranker = self._engine_registry.resolve(
+            "reranker",
+            default_path=(
+                "krakey.engines.reranker.default:DefaultRerankerEngine"
+            ),
+            expected_protocol=RerankerEngine,
+            factory=self.llm_factory,
+        )
         self.explicit_history = self._engine_registry.resolve(
             "explicit_history",
             default_path=(
@@ -177,16 +189,10 @@ class Runtime:
         # ``<tool_call>`` parser; users swap in
         # HypothalamusDecisionEngine (or their own LLM-based
         # translator) by setting ``cfg.core_implementations.decision``.
-        # The legacy "modifiers.by_role('hypothalamus')" path still
-        # wins when a Modifier with that role is registered — kept
-        # for back-compat with the in-tree hypothalamus plugin until
-        # step 7b lifts it into the Engine.
-        # Decision Engine receives the shared factory so an
-        # alternative impl (e.g. HypothalamusDecisionEngine) can
+        # Receives the shared factory so an alternative impl can
         # reach LLM clients via the same per-tag cache the rest of
         # the runtime uses. Default ToolCallParserDecisionEngine
         # accepts and ignores the kwarg.
-        self.llm_factory = deps.llm_factory
         self.decision = self._engine_registry.resolve(
             "decision",
             default_path=(
@@ -234,7 +240,7 @@ class Runtime:
             cfg=self.config,
             memory=self.memory,
             embedder=deps.embedder,
-            reranker=deps.reranker,
+            reranker=self.reranker,
         )
 
         # Dispatch Engine — runs the 4 side-effects of a

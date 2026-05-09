@@ -39,7 +39,7 @@ from krakey.prompt.elements import PromptElements
 from krakey.prompt.layers import ACTION_FORMAT_LAYER, HEARTBEAT_QUESTION
 from krakey.prompt.views import (
     CapabilityView,
-    SlidingWindowRound,
+    ExplicitHistoryRound,
     StatusSnapshot,
 )
 
@@ -112,7 +112,7 @@ class PromptBuilder:
         capabilities: list[CapabilityView],
         status: StatusSnapshot,
         recall: "RecallResult",
-        window: list[SlidingWindowRound],
+        window: list[ExplicitHistoryRound],
         stimuli: list[Stimulus],
         current_time: datetime | None = None,
     ) -> PromptElements:
@@ -152,7 +152,7 @@ class PromptBuilder:
         capabilities: list[CapabilityView],
         status: StatusSnapshot,
         recall: "RecallResult",
-        window: list[SlidingWindowRound],
+        window: list[ExplicitHistoryRound],
         stimuli: list[Stimulus],
         current_time: datetime | None = None,
     ) -> str:
@@ -220,7 +220,7 @@ class PromptBuilder:
             )
         return "\n".join(lines)
 
-    def render_history(self, window: list[SlidingWindowRound]) -> str:
+    def render_history(self, window: list[ExplicitHistoryRound]) -> str:
         """Render the [HISTORY] layer from real heartbeat rounds only.
 
         The in-mind virtual round (``--- Heartbeat #now (in mind) ---``)

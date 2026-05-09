@@ -92,15 +92,13 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
         # invokes either path.
         compact_llm = self_llm
 
-    # ---- Embedder + Reranker Engines ---------------------------------
-    # Both default impls take the factory Engine via constructor +
-    # use it to lazily reach the configured client. Shared factory
-    # injection means every engine that holds an LLM client points
-    # at the same per-tag cache — no duplicate clients for the same
-    # tag across engines.
-    from krakey.engines.embedder.default import TagBoundEmbedderEngine  # noqa: F401
-    from krakey.engines.reranker.default import DefaultRerankerEngine  # noqa: F401
-    from krakey.interfaces.engines import EmbedderEngine, RerankerEngine
+    # ---- Embedder Engine ---------------------------------------------
+    # Default impl takes the factory Engine via constructor + uses it
+    # to lazily reach the configured embedding client. Shared factory
+    # injection means every engine that holds an LLM client points at
+    # the same per-tag cache — no duplicate clients for the same tag
+    # across engines.
+    from krakey.interfaces.engines import EmbedderEngine
 
     embedder = registry.resolve(
         "embedder",
@@ -111,19 +109,10 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
         factory=llm_factory,
     )
 
-    reranker = registry.resolve(
-        "reranker",
-        default_path=(
-            "krakey.engines.reranker.default:DefaultRerankerEngine"
-        ),
-        expected_protocol=RerankerEngine,
-        factory=llm_factory,
-    )
-
     deps = RuntimeDeps(
         config=cfg, self_llm=self_llm,
         compact_llm=compact_llm,
-        classify_llm=classify_llm, embedder=embedder, reranker=reranker,
+        classify_llm=classify_llm, embedder=embedder,
         config_path=str(config_path),
         # Mirror the factory's internal cache onto deps so
         # ``PluginContext.get_llm_for_tag`` (which reads

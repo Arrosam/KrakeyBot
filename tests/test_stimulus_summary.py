@@ -2,7 +2,7 @@
 
 History bug (2026-04-25): `_summarize_stimuli` truncated every
 stimulus's content to 60 chars before writing it into a
-SlidingWindowRound, which meant Self's [HISTORY] view only ever saw
+ExplicitHistoryRound, which meant Self's [HISTORY] view only ever saw
 the first ~60 characters of anything it received. That in turn
 poisoned:
   * recall anchor extraction (looking at truncated text)

@@ -30,9 +30,10 @@ import json
 import logging
 import os
 import tempfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pathlib import Path
 
+from krakey.interfaces.engines.explicit_history import ExplicitHistoryRound
 from krakey.utils.tokens import estimate_tokens
 
 _log = logging.getLogger(__name__)
@@ -41,14 +42,6 @@ _log = logging.getLogger(__name__)
 # Bump if the on-disk shape changes. Older files with a different
 # version are ignored (window starts empty + a stderr nudge).
 _STATE_SCHEMA_VERSION = 1
-
-
-@dataclass
-class SlidingWindowRound:
-    heartbeat_id: int
-    stimulus_summary: str
-    decision_text: str
-    note_text: str
 
 
 class SlidingWindow:
@@ -60,52 +53,30 @@ class SlidingWindow:
 
     ``state_path`` is the on-disk mirror. ``None`` opts out of
     persistence (used by tests that build many ephemeral windows).
-
-    ``max_tokens`` is kept as a back-compat alias for callers still
-    passing the old keyword; new code should use
-    ``history_token_budget`` explicitly so budget-math reads the same
-    on both sides.
     """
 
     def __init__(
         self,
-        history_token_budget: int | None = None,
+        history_token_budget: int,
         *,
-        max_tokens: int | None = None,
         state_path: str | Path | None = None,
     ):
-        if history_token_budget is None and max_tokens is None:
-            raise ValueError(
-                "SlidingWindow needs history_token_budget "
-                "(from self_role.max_input_tokens * "
-                "history_token_fraction)"
-            )
-        # Either-or for the deprecation window; history_token_budget
-        # wins if both are passed (new name is authoritative).
-        self.history_token_budget: int = (
-            history_token_budget
-            if history_token_budget is not None else int(max_tokens or 0)
-        )
+        self.history_token_budget: int = int(history_token_budget)
         self._state_path: Path | None = (
             Path(state_path) if state_path is not None else None
         )
-        self.rounds: list[SlidingWindowRound] = []
+        self.rounds: list[ExplicitHistoryRound] = []
         if self._state_path is not None:
             self._load_from_disk()
 
-    # Legacy accessor for tests / logging that used `max_tokens`.
-    @property
-    def max_tokens(self) -> int:
-        return self.history_token_budget
-
-    def append(self, r: SlidingWindowRound) -> None:
+    def append(self, r: ExplicitHistoryRound) -> None:
         self.rounds.append(r)
         self._persist()
 
-    def get_rounds(self) -> list[SlidingWindowRound]:
+    def get_rounds(self) -> list[ExplicitHistoryRound]:
         return list(self.rounds)
 
-    def pop_oldest(self) -> SlidingWindowRound | None:
+    def pop_oldest(self) -> ExplicitHistoryRound | None:
         if not self.rounds:
             return None
         round_ = self.rounds.pop(0)
@@ -170,12 +141,12 @@ class SlidingWindow:
                 self._state_path, type(rounds_raw).__name__,
             )
             return
-        loaded: list[SlidingWindowRound] = []
+        loaded: list[ExplicitHistoryRound] = []
         for entry in rounds_raw:
             if not isinstance(entry, dict):
                 continue
             try:
-                loaded.append(SlidingWindowRound(
+                loaded.append(ExplicitHistoryRound(
                     heartbeat_id=int(entry["heartbeat_id"]),
                     stimulus_summary=str(entry.get("stimulus_summary", "")),
                     decision_text=str(entry.get("decision_text", "")),

@@ -6,7 +6,7 @@ from krakey.interfaces.engines.recall import RecallResult
 from krakey.models.stimulus import Stimulus
 from krakey.prompt.builder import PromptBuilder
 from krakey.prompt.dna import DNA
-from krakey.prompt.views import CapabilityView, SlidingWindowRound, StatusSnapshot
+from krakey.prompt.views import CapabilityView, ExplicitHistoryRound, StatusSnapshot
 
 
 def test_dna_has_all_sections():
@@ -80,7 +80,7 @@ def test_builder_assembles_all_layers():
     )
     capabilities = [CapabilityView(name="action", description="general")]
     recall = RecallResult()
-    window = [SlidingWindowRound(heartbeat_id=1,
+    window = [ExplicitHistoryRound(heartbeat_id=1,
                                   stimulus_summary="hi",
                                   decision_text="reply",
                                   note_text="")]

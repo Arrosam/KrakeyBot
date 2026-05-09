@@ -13,7 +13,7 @@ import pytest
 
 from krakey.interfaces.engines.recall import RecallResult
 from krakey.models.stimulus import Stimulus
-from krakey.runtime.heartbeat.sliding_window import SlidingWindowRound
+from krakey.runtime.heartbeat.sliding_window import ExplicitHistoryRound
 from tests._runtime_helpers import (
     NullEmbedder, ScriptedLLM, build_runtime_with_fakes,
 )
@@ -41,7 +41,7 @@ async def test_prompt_fitting_budget_is_left_alone(tmp_path):
     await runtime.memory.initialize()
     await _seed_recall(runtime)
 
-    runtime.explicit_history.append(SlidingWindowRound(
+    runtime.explicit_history.append(ExplicitHistoryRound(
         heartbeat_id=1, stimulus_summary="hi", decision_text="ok",
         note_text="",
     ))
@@ -84,7 +84,7 @@ async def test_oversized_prompt_prunes_oldest_round(tmp_path):
 
     # Three fat rounds to make sure at least one gets popped.
     for i in range(3):
-        runtime.explicit_history.append(SlidingWindowRound(
+        runtime.explicit_history.append(ExplicitHistoryRound(
             heartbeat_id=i, stimulus_summary="x" * 500,
             decision_text="y" * 500, note_text="",
         ))
@@ -117,7 +117,7 @@ async def test_enforcer_tolerates_compact_llm_failure(tmp_path):
     await _seed_recall(runtime)
 
     runtime.config.llm.core_params("self_thinking").max_input_tokens = 200
-    runtime.explicit_history.append(SlidingWindowRound(
+    runtime.explicit_history.append(ExplicitHistoryRound(
         heartbeat_id=1, stimulus_summary="x" * 500,
         decision_text="y" * 500, note_text="",
     ))
