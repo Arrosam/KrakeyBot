@@ -413,27 +413,26 @@ class HeartbeatOrchestrator:
     async def _phase_apply_decision(self, parsed, recall_result) -> bool:
         """Convert Self's response into tool calls + dispatch.
 
-        Two paths, picked by registry lookup:
+        Two paths, picked by Modifier-role registry then Engine slot:
           * A Modifier with role="hypothalamus" registered → LLM
-            translation of ``parsed.decision``.
-          * No such Modifier → script-only action executor scans
-            ``parsed.raw`` for ``<tool_call>...</tool_call>`` blocks.
+            translation of ``parsed.decision`` (legacy, kept for
+            back-compat with the in-tree hypothalamus plugin until
+            step 7b lifts that into the Engine).
+          * Else → ``rt.decision_engine.translate(...)``. The default
+            engine is the scripted ``<tool_call>`` parser; users can
+            swap in any DecisionEngine impl via
+            ``cfg.core_implementations.decision``.
 
-        On the no-hypothalamus path, malformed blocks (e.g. JSON
-        with stray closing XML tags from model format-drift) are
-        surfaced to Self via a corrective ``system_event`` stimulus
-        on the next beat — the per-block payload + parser error +
-        a tight format reminder. Successful blocks in the same
-        response still dispatch; partial parse must not block what
-        DID parse.
+        On either path, malformed ``<tool_call>`` blocks surface to
+        Self via a corrective ``system_event`` stimulus on the next
+        beat — the per-block payload + parser error + a tight format
+        reminder. Successful blocks in the same response still
+        dispatch; partial parse must not block what DID parse.
 
         Returns True iff Self requested sleep.
         """
         rt = self._rt
         from krakey.interfaces.modifier import DecisionResult
-        from krakey.runtime.heartbeat.action_executor import (
-            parse_tool_calls_with_failures,
-        )
 
         decision = parsed.decision.strip().lower()
         if not decision or decision == "no action":
@@ -443,28 +442,35 @@ class HeartbeatOrchestrator:
         parse_failures: list = []
         try:
             if translator is not None:
+                # Legacy plugin path — modifier returns the modifier-
+                # shape DecisionResult (no parse_failures field).
                 result = await translator.translate(
                     parsed.decision, rt.tools.list_descriptions(),
                 )
             else:
-                # Scope the tool_call parser to the [DECISION] section
-                # only — NOT parsed.raw. Reason: when the corrective
-                # stimulus from a prior beat surfaces format examples
-                # (e.g. quoting "do not write </arg_value>"), Self
-                # tends to echo those examples in [NOTE] for self-
-                # reference. Scanning the whole response would parse
-                # the quoted examples as real <tool_call> blocks,
-                # re-fail on the same drift signature, and re-push
-                # the corrective stimulus next beat — an infinite
-                # learning loop where Self is "punished" for
-                # internalizing the lesson. [DECISION] is the
-                # commitment section by design; [THINKING] is
-                # exploratory and [NOTE] is reflective scratchpad,
-                # neither should trigger dispatch.
-                tool_calls, parse_failures = parse_tool_calls_with_failures(
+                # Engine path. The engine receives the full ``raw``
+                # response so an alternative impl can scan beyond
+                # [DECISION] if it wants (default impl scans
+                # decision-only — see the Engine's docstring for
+                # the [NOTE]-echo rationale).
+                engine_result = await rt.decision_engine.translate(
                     parsed.decision,
+                    parsed.raw,
+                    rt.tools.list_descriptions(),
                 )
-                result = DecisionResult(tool_calls=tool_calls)
+                # Adapt the new dataclass shape to the legacy
+                # DecisionResult the rest of this method + the
+                # dispatcher consume. Field names match (tool_calls
+                # / memory_writes / memory_updates / sleep);
+                # parse_failures lives on the Engine result and
+                # we pull it out into the local var.
+                result = DecisionResult(
+                    tool_calls=list(engine_result.tool_calls),
+                    memory_writes=list(engine_result.memory_writes),
+                    memory_updates=list(engine_result.memory_updates),
+                    sleep=engine_result.sleep,
+                )
+                parse_failures = list(engine_result.parse_failures)
         except Exception as e:  # noqa: BLE001
             err = f"{type(e).__name__}: {e!r}"
             rt.log.hb(f"Decision dispatch error: {err}")

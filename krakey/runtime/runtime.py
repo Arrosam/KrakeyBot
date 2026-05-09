@@ -165,6 +165,7 @@ class Runtime:
         from krakey.engines.registry import EngineRegistry
         from krakey.interfaces.engines import (
             ContextEngine,
+            DecisionEngine,
             ExplicitHistoryEngine,
             MemoryEngine,
         )
@@ -191,6 +192,25 @@ class Runtime:
                 "krakey.engines.context.default:DefaultContextEngine"
             ),
             expected_protocol=ContextEngine,
+        )
+
+        # Decision Engine — translates Self's [DECISION] text into a
+        # structured DecisionResult (tool calls + memory writes +
+        # sleep flag + parse failures). Default impl is the scripted
+        # ``<tool_call>`` parser; users swap in
+        # HypothalamusDecisionEngine (or their own LLM-based
+        # translator) by setting ``cfg.core_implementations.decision``.
+        # The legacy "modifiers.by_role('hypothalamus')" path still
+        # wins when a Modifier with that role is registered — kept
+        # for back-compat with the in-tree hypothalamus plugin until
+        # step 7b lifts it into the Engine.
+        self.decision_engine = self._engine_registry.resolve(
+            "decision",
+            default_path=(
+                "krakey.engines.decision.tool_call_parser:"
+                "ToolCallParserDecisionEngine"
+            ),
+            expected_protocol=DecisionEngine,
         )
 
         # Memory Engine — single slot collapses the previous
