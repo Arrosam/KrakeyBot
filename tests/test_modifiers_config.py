@@ -132,7 +132,6 @@ def test_discover_does_not_import_plugin_modules():
     """
     plugin_modules = (
         "krakey.plugins.hypothalamus.modifier",
-        "krakey.plugins.recall.modifier",
         "krakey.plugins.recall.tool",
     )
     before = {m: m in sys.modules for m in plugin_modules}
@@ -184,13 +183,11 @@ async def test_runtime_registers_explicit_list_in_order(tmp_path, capsys):
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        modifiers=["hypothalamus", "recall"],
+        modifiers=["hypothalamus"],
     )
     err = capsys.readouterr().err
     assert "no `plugins:`" not in err
-    assert set(runtime.modifiers.names()) == {
-        "hypothalamus", "recall_anchor",
-    }
+    assert set(runtime.modifiers.names()) == {"hypothalamus"}
 
 
 async def test_runtime_registers_empty_list_with_no_warning(tmp_path, capsys):
@@ -233,13 +230,11 @@ async def test_runtime_skips_unknown_modifier_names_loudly(tmp_path, capsys):
     )
     runtime.modifiers._by_role.clear(); runtime.modifiers._order.clear()
     runtime.config.plugins = [
-        "recall", "typo_modifier", "hypothalamus",
+        "typo_modifier", "hypothalamus",
     ]
     capsys.readouterr()
 
     runtime._register_plugins_from_config(_minimal_deps_for_runtime(runtime))
     err = capsys.readouterr().err
     assert "typo_modifier" in err
-    assert set(runtime.modifiers.names()) == {
-        "recall_anchor", "hypothalamus",
-    }
+    assert set(runtime.modifiers.names()) == {"hypothalamus"}

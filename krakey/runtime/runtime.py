@@ -19,9 +19,10 @@ from typing import Any
 from krakey.models.self_model import (
     SelfModelStore, load_self_model_or_default,
 )
+from krakey.interfaces.engines.recall import RecallSession
 from krakey.interfaces.tool import ToolRegistry
 from krakey.llm.resolve import AsyncEmbedder, ChatLike
-from krakey.memory.recall import RecallLike, Reranker
+from krakey.memory.recall import Reranker
 from krakey.models.config import Config, LLMParams
 from krakey.models.config_backup import backup_config
 from krakey.runtime.stimuli.batch_tracker import BatchTrackerChannel
@@ -207,28 +208,10 @@ class Runtime:
             factory=self.llm_factory,
         )
 
-        # Recall Engine — per-beat memory recall. Default impl
-        # ``IncrementalRecallEngine`` produces a fresh
-        # IncrementalRecall session via ``new_session()`` on every
-        # call. Engine slot replaces the previous Modifier-role
-        # plugin gimmick (recall_anchor); the plugin stays in place
-        # during the migration window so users with the modifier
-        # wiring keep working — the orchestrator's ``new_recall()``
-        # falls through to the engine only when no Modifier with
-        # role "recall_anchor" is registered. Step 12 retires the
-        # plugin path entirely.
-
-        # Memory Engine — single slot collapses the previous
-        # ``memory`` + ``kb_registry`` split (Engine refactor 2026-05).
-        # The Engine subsumes GM CRUD + KB management + the sleep
-        # cycle. The runtime holds one ``self.memory`` reference; call
-        # sites that previously reached into ``runtime.gm`` or
-        # ``runtime.kb_registry`` now go through the same attribute
-        # since both surfaces are the same Engine. Custom impls
+        # Memory Engine — unified GM CRUD + KB fleet management +
+        # sleep cycle behind one MemoryEngine Protocol. Custom impls
         # override ``cfg.core_implementations.memory`` with a class
-        # satisfying ``MemoryEngine`` (the new flat Protocol); the old
-        # ``kb_registry`` core_implementations slot is no longer
-        # consulted.
+        # satisfying ``MemoryEngine``.
         gm_path = self.config.graph_memory.db_path or ":memory:"
         self.memory = self._engine_registry.resolve(
             "memory",
@@ -400,7 +383,7 @@ class Runtime:
         self._min = idle_min if idle_min is not None else self.config.idle.min_interval
         self._max = idle_max if idle_max is not None else self.config.idle.max_interval
 
-        self._recall: RecallLike | None = None
+        self._recall: RecallSession | None = None
         self._classify_tasks: list[asyncio.Task] = []
         self._last_node_count = 0
         self._last_edge_count = 0
@@ -626,7 +609,7 @@ class Runtime:
 
         return report
 
-    def _new_recall(self) -> RecallLike:
+    def _new_recall(self) -> RecallSession:
         # Facade — heartbeat algorithm lives in HeartbeatOrchestrator.
         return self._orchestrator.new_recall()
 

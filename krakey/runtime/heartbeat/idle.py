@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 
-from krakey.memory.recall import RecallLike
+from krakey.interfaces.engines.recall import RecallSession
 from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
@@ -18,7 +18,7 @@ def clamp(value: float, lo: float, hi: float) -> float:
 
 async def idle_with_recall(
     interval: float, buffer: StimulusBuffer,
-    recall: RecallLike, *,
+    recall: RecallSession, *,
     min_interval: float, max_interval: float,
     poll_slice: float = 0.05,
 ) -> None:

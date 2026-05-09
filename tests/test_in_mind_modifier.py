@@ -22,7 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from krakey.memory.recall import RecallResult
+from krakey.interfaces.engines.recall import RecallResult
 from krakey.plugins.in_mind_note.modifier import (
     InMindModifierImpl, build_modifier,
 )

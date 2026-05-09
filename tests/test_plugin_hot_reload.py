@@ -123,15 +123,13 @@ async def test_hot_reload_removes_plugin_dropped_from_target():
     )
     # recall registers a memory_recall tool; verify it's present.
     assert "memory_recall" in runtime.tools
-    assert runtime.modifiers.by_role("recall_anchor") is not None
 
     report = await runtime.hot_reload_plugins(["hypothalamus"])
 
     removed_plugins = [r["plugin"] for r in report["removed"]]
     assert "recall" in removed_plugins
-    # recall's tool + modifier are gone.
+    # recall's tool is gone.
     assert "memory_recall" not in runtime.tools
-    assert runtime.modifiers.by_role("recall_anchor") is None
 
 
 async def test_hot_reload_starts_newly_registered_channels(monkeypatch):

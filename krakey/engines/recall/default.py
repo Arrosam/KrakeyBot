@@ -4,23 +4,19 @@ Stateless factory. Holds the per-beat-recall configuration captured
 from cfg + the runtime's memory / embedder / reranker references at
 construction time, and yields a fresh ``IncrementalRecall`` session
 on every ``new_session()`` call.
-
-The actual recall driver class (``IncrementalRecall``) still lives
-under ``krakey.plugins.recall.incremental`` during the migration
-window. Step 12 + plugin retirement moves it into
-``krakey.engines.recall.incremental`` as the impl's natural home;
-until then we just import it from the plugin location.
 """
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from krakey.engines.recall.incremental import IncrementalRecall
 from krakey.models.config import LLMParams
 
 if TYPE_CHECKING:
     from krakey.interfaces.engines.memory import MemoryEngine
     from krakey.interfaces.engines.recall import RecallSession
-    from krakey.memory.recall import AsyncEmbedder, Reranker
+    from krakey.llm.resolve import AsyncEmbedder
+    from krakey.memory.recall.scoring import Reranker
     from krakey.models.config import Config
 
 
@@ -30,10 +26,7 @@ class IncrementalRecallEngine:
     Constructor pulls every dependency the per-beat session needs:
     cfg (for tunables), the MemoryEngine (for vec/fts queries +
     neighbor walks), the embedder (for query vectorization), and the
-    optional reranker (with the engine-level fallback always
-    present, this is now also always non-None — but the IncrementalRecall
-    constructor takes ``Reranker | None`` for back-compat with the
-    plugin path).
+    reranker.
     """
 
     def __init__(
@@ -58,8 +51,6 @@ class IncrementalRecallEngine:
         RecallResult. Heartbeat orchestrator calls this once per
         beat (and once during idle preheat for the next beat).
         """
-        from krakey.plugins.recall.incremental import IncrementalRecall
-
         self_params = (
             self._cfg.llm.core_params("self_thinking") or LLMParams()
         )

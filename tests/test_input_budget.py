@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from krakey.memory.recall import RecallResult
+from krakey.interfaces.engines.recall import RecallResult
 from krakey.models.stimulus import Stimulus
 from krakey.runtime.heartbeat.sliding_window import SlidingWindowRound
 from tests._runtime_helpers import (

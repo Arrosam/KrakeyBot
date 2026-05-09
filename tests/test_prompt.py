@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pytest
 
-from krakey.memory.recall import RecallResult
+from krakey.interfaces.engines.recall import RecallResult
 from krakey.models.stimulus import Stimulus
 from krakey.prompt.builder import PromptBuilder
 from krakey.prompt.dna import DNA

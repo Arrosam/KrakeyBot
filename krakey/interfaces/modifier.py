@@ -19,10 +19,7 @@ keeps plugin code free of interface imports it doesn't need.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
-
-if TYPE_CHECKING:
-    from krakey.memory.recall import RecallLike
+from typing import Any, Protocol, runtime_checkable
 
 
 # --------------------------------------------------------------------
@@ -83,16 +80,6 @@ class HypothalamusModifier(Protocol):
     async def translate(
         self, decision: str, tools: list[dict[str, Any]],
     ) -> DecisionResult: ...
-
-
-@runtime_checkable
-class RecallAnchorModifier(Protocol):
-    """Optional shape advised for Modifiers that build the per-beat
-    recall instance."""
-    name: str
-    role: str
-
-    def make_recall(self, runtime: Any) -> "RecallLike": ...
 
 
 @runtime_checkable

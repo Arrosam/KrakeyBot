@@ -44,7 +44,7 @@ from krakey.prompt.views import (
 )
 
 if TYPE_CHECKING:
-    from krakey.memory.recall import RecallResult
+    from krakey.interfaces.engines.recall import RecallResult
 
 
 # Default ordered element keys. Runtime constructs a PromptElements
@@ -78,9 +78,9 @@ def _format_stim(s: Stimulus) -> list[str]:
         f"source: {s.source} | adrenalin: {s.adrenalin}",
         f"content: {s.content}",
     ]
-    # When the recall_anchor plugin couldn't find any GraphMemory
-    # context for this stimulus on the previous beat, the orchestrator
-    # re-pushes it with an incremented `recall_retries` counter. Surface
+    # When recall couldn't find any GraphMemory context for this
+    # stimulus on the previous beat, the orchestrator re-pushes it
+    # with an incremented `recall_retries` counter. Surface
     # that to Self so it knows the [GRAPH MEMORY] layer has nothing to
     # offer for this signal — Self can ask follow-up questions or fall
     # back to its own knowledge instead of assuming silent context.

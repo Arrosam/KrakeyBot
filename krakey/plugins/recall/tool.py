@@ -1,11 +1,12 @@
 """``memory_recall`` tool — Self-driven explicit GM/KB exploration.
 
-Read-side counterpart to ``gm.explicit_write`` (the LLM-extraction
+Read-side counterpart to ``memory.explicit_write`` (the LLM-extraction
 write path). Self emits ``[DECISION]`` like "recall what I know about
 X" → orchestrator dispatches a ``memory_recall`` tool call → this
-tool queries GM (via the shared ``gm_query`` helper) and returns
-the result as a ``tool_feedback`` Stimulus, surfaced under
-``[STIMULUS]`` / ``YOUR RECENT ACTIONS`` on the next heartbeat.
+tool queries GM (via the shared ``gm_query`` helper from the recall
+Engine package) and returns the result as a ``tool_feedback`` Stimulus,
+surfaced under ``[STIMULUS]`` / ``YOUR RECENT ACTIONS`` on the next
+heartbeat.
 
 Two query paths, picked by the presence of ``kb_id`` in params:
   * ``kb_id`` given → bypass GM, query that KnowledgeBase directly.
@@ -24,31 +25,22 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from krakey.engines.recall.gm_query import query_gm_with_fts_fallback
 from krakey.interfaces.tool import Tool
-from krakey.memory.recall import AsyncEmbedder
 from krakey.models.stimulus import Stimulus
-from krakey.plugins.recall.gm_query import query_gm_with_fts_fallback
 
 if TYPE_CHECKING:
-    # Type-only: tool stores the gm/kb_registry it was built with
-    # via PluginContext.services and only invokes Protocol-shaped
-    # methods on them. Decoupling lets a user-supplied MemoryService /
-    # KBRegistryService flow through unchanged.
-    from krakey.interfaces.services.memory import (
-        KBRegistryService,
-        MemoryService,
-    )
+    from krakey.interfaces.engines.memory import MemoryEngine
+    from krakey.llm.resolve import AsyncEmbedder
 
 
 class MemoryRecallTool(Tool):
-    def __init__(self, gm: "MemoryService | None",
-                  embedder: AsyncEmbedder | None,
-                  *, default_top_k: int = 8,
-                  kb_registry: "KBRegistryService | None" = None):
-        self._gm = gm
+    def __init__(self, memory: "MemoryEngine | None",
+                  embedder: "AsyncEmbedder | None",
+                  *, default_top_k: int = 8):
+        self._memory = memory
         self._embedder = embedder
         self._default_top_k = default_top_k
-        self._kb_registry = kb_registry
 
     @property
     def name(self) -> str:
@@ -71,9 +63,9 @@ class MemoryRecallTool(Tool):
 
     async def execute(self, intent: str,
                         params: dict[str, Any]) -> Stimulus:
-        if self._gm is None or self._embedder is None:
+        if self._memory is None or self._embedder is None:
             return self._stim(
-                "memory_recall not configured (gm or embedder missing). "
+                "memory_recall not configured (memory or embedder missing). "
                 "This is a setup error — check the runtime services dict."
             )
         query = (params.get("query") or intent or "").strip()
@@ -81,9 +73,9 @@ class MemoryRecallTool(Tool):
         explicit_kb = params.get("kb_id")
 
         # Direct KB browse — bypass GM entirely
-        if explicit_kb and self._kb_registry is not None:
+        if explicit_kb:
             try:
-                kb = await self._kb_registry.open_kb(explicit_kb)
+                kb = await self._memory.open_kb(explicit_kb)
             except KeyError:
                 return self._stim(f"No KB registered with id {explicit_kb!r}.")
             entries = await kb.search(query, top_k=top_k)
@@ -101,8 +93,8 @@ class MemoryRecallTool(Tool):
             )
 
         node_ids = [n["id"] for n in nodes]
-        neighbor_map = await self._gm.get_neighbor_keywords(node_ids)
-        edges = await self._gm.get_edges_among(node_ids)
+        neighbor_map = await self._memory.get_neighbor_keywords(node_ids)
+        edges = await self._memory.get_edges_among(node_ids)
 
         # KB index expansion: if any recalled node is a KB index, also
         # pull entries from that KB. This is how Self learns a KB
@@ -115,7 +107,7 @@ class MemoryRecallTool(Tool):
     async def _search_gm(self, query: str,
                           top_k: int) -> list[dict[str, Any]]:
         candidates = await query_gm_with_fts_fallback(
-            self._gm, self._embedder, query, top_k=top_k,
+            self._memory, self._embedder, query, top_k=top_k,
         )
         # Dedup + cap to top_k. Defensive — vec_search and fts_search
         # individually shouldn't repeat a node, but the cap layer here
@@ -133,8 +125,6 @@ class MemoryRecallTool(Tool):
 
     async def _expand_kb_indexes(self, nodes: list[dict[str, Any]],
                                    query: str, top_k: int) -> str:
-        if self._kb_registry is None:
-            return ""
         sections: list[str] = []
         for n in nodes:
             meta = n.get("metadata") or {}
@@ -144,7 +134,7 @@ class MemoryRecallTool(Tool):
             if not kb_id:
                 continue
             try:
-                kb = await self._kb_registry.open_kb(kb_id)
+                kb = await self._memory.open_kb(kb_id)
             except KeyError:
                 continue
             entries = await kb.search(query, top_k=top_k)
@@ -198,15 +188,10 @@ def _format(nodes: list[dict[str, Any]],
 
 
 def build_tool(ctx) -> Tool:
-    """Unified-format factory. Pulls memory + embedder from
-    ctx.services. After the Engine refactor (2026-05) ``memory`` is the
-    single MemoryEngine that fulfills both the GM + KB-registry
-    surfaces, so the same ref is wired into both ``gm`` and
-    ``kb_registry`` arguments."""
-    memory = ctx.services["memory"]
+    """Factory invoked by the plugin loader. Pulls memory + embedder
+    from ctx.services."""
     return MemoryRecallTool(
-        gm=memory,
+        memory=ctx.services["memory"],
         embedder=ctx.services["embedder"],
-        kb_registry=memory,
         default_top_k=int(ctx.config.get("default_top_k", 8)),
     )

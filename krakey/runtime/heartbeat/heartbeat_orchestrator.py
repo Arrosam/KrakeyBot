@@ -50,7 +50,7 @@ from krakey.runtime.commands.commands import (
 from krakey.self_agent import parse_self_output
 
 if TYPE_CHECKING:
-    from krakey.memory.recall import RecallLike
+    from krakey.interfaces.engines.recall import RecallSession
     from krakey.prompt.views import CapabilityView, StatusSnapshot
     from krakey.runtime.runtime import Runtime
 
@@ -701,15 +701,7 @@ class HeartbeatOrchestrator:
                 entry["raw_output"] = raw
                 return
 
-    def new_recall(self) -> "RecallLike":
-        # Legacy modifier-role path wins when registered (back-compat
-        # for the in-tree recall plugin until step 12 retires it).
-        # Otherwise the Engine slot provides a fresh session — Engine
-        # is always populated by the registry, so the previous
-        # NoopRecall fallback path is no longer reachable.
-        anchor = self._rt.modifiers.by_role("recall_anchor")
-        if anchor is not None:
-            return anchor.make_recall(self._rt)
+    def new_recall(self) -> "RecallSession":
         return self._rt.recall.new_session()
 
     def _capabilities(self) -> list["CapabilityView"]:
