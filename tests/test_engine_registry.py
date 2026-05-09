@@ -196,9 +196,14 @@ def test_resolve_lists_missing_protocol_attrs_in_error():
     assert "hello" in str(exc_info.value)
 
 
-def test_resolve_raises_on_kwargs_mismatch():
-    """Impl __init__ rejects supplied kwargs → TypeError naming the
-    expected kwargs the slot's contract requires."""
+def test_resolve_silently_drops_unknown_kwargs():
+    """Resolver inspects the class signature and drops kwargs the
+    constructor doesn't accept (back-compat with older custom impls
+    whose signatures predate a kwarg's addition).
+
+    Trade-off: a typo in a user-supplied kwarg name is silently
+    dropped instead of raising. Accepted + documented on
+    _filter_kwargs."""
     def fake_importer(path: str):
         return _NoKwargsImpl
 
@@ -207,12 +212,14 @@ def test_resolve_raises_on_kwargs_mismatch():
         override_path="x:NoKwargs",
         importer=fake_importer,
     )
-    with pytest.raises(TypeError, match="could not be instantiated"):
-        reg.resolve(
-            "memory", default_path="",
-            expected_protocol=_DummyProto,
-            greeting="x",  # _NoKwargsImpl rejects this
-        )
+    # _NoKwargsImpl.__init__(self) accepts NO kwargs; greeting is
+    # silently dropped + the impl is constructed with no args.
+    instance = reg.resolve(
+        "memory", default_path="",
+        expected_protocol=_DummyProto,
+        greeting="x",
+    )
+    assert instance.hello() == "hi"
 
 
 # --------------------------------------------------------------------

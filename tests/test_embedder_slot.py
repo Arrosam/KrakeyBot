@@ -124,11 +124,14 @@ async def test_override_actually_called_for_embedding(tmp_path):
 
 
 def test_bad_override_raises_typeerror_at_startup(tmp_path):
-    """A class that doesn't satisfy AsyncEmbedder fails loud at
-    build_runtime_from_config — not at first .embed() call mid-session."""
+    """A class that doesn't satisfy the embedder Protocol fails loud
+    at build_runtime_from_config — not at first .embed() call mid-
+    session. The Protocol name is now ``EmbedderEngine`` (Engine
+    refactor 2026-05); the legacy ``AsyncEmbedder`` Protocol is the
+    same shape at the structural level."""
     p = _write_minimal_config(
         tmp_path,
         override="tests.test_embedder_slot:BadEmbedder",
     )
-    with pytest.raises(TypeError, match="AsyncEmbedder"):
+    with pytest.raises(TypeError, match="EmbedderEngine|AsyncEmbedder"):
         build_runtime_from_config(str(p))

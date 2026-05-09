@@ -101,21 +101,29 @@ class HypothalamusDecisionEngine:
     LLM client; every ``translate()`` call is an independent
     system+user message pair to the bound translator LLM."""
 
-    def __init__(self, *, cfg: "Config | None" = None):
-        # ``cfg`` is the only constructor input. The Engine builds
-        # its own LLMClientFactoryEngine internally during the
-        # migration window — see module docstring for the duplicate-
-        # cache caveat that step 12 resolves.
-        if cfg is None:
-            raise TypeError(
-                "HypothalamusDecisionEngine requires cfg= kwarg "
-                "(the runtime passes it during EngineRegistry resolution)"
-            )
-        from krakey.engines.llm_factory.default import (
-            DefaultLLMClientFactoryEngine,
-        )
+    def __init__(
+        self, *,
+        cfg: "Config | None" = None,
+        factory: Any = None,
+    ):
+        # Shared-factory injection (step 12): the runtime passes its
+        # own LLMClientFactoryEngine via ``factory`` so this Engine
+        # observes the same per-tag client cache as Embedder /
+        # Reranker / core-purpose lookups. cfg is accepted for
+        # signature uniformity but only used to build a private
+        # factory if the caller didn't supply one.
         self._cfg = cfg
-        self._factory = DefaultLLMClientFactoryEngine(cfg)
+        if factory is None:
+            if cfg is None:
+                raise TypeError(
+                    "HypothalamusDecisionEngine needs either factory= "
+                    "(preferred) or cfg= (to build a private factory)"
+                )
+            from krakey.engines.llm_factory.default import (
+                DefaultLLMClientFactoryEngine,
+            )
+            factory = DefaultLLMClientFactoryEngine(cfg)
+        self._factory = factory
 
     async def translate(
         self,

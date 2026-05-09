@@ -69,8 +69,8 @@ def resolve_llm_for_tag(
     chat tags but break those — keep the embedder / reranker slots
     in mind, or implement those methods on the same class.
     """
+    from krakey.engines.registry import EngineRegistry
     from krakey.llm.client import LLMClient
-    from krakey.runtime.service_resolver import ServiceResolver
 
     if not tag_name:
         return None
@@ -95,13 +95,17 @@ def resolve_llm_for_tag(
             f"{provider_name!r}", file=sys.stderr,
         )
         return None
-    # Transient resolver: ServiceResolver is just a thin wrapper around
-    # cfg.core_implementations + an importer, so building one per
-    # cache-miss is cheap. No state worth caching.
-    resolver = ServiceResolver(cfg)
-    client = resolver.resolve(
+    # Transient registry: EngineRegistry is a thin wrapper around
+    # cfg.core_implementations + importlib, so per-cache-miss
+    # construction is cheap. The legacy ``llm_client_factory`` slot
+    # still substitutes the LLMClient *class* (its old per-tag-class
+    # semantics); the higher-level ``llm_factory`` slot substitutes
+    # the entire factory Engine and is wired separately by the
+    # composition root.
+    registry = EngineRegistry(cfg)
+    client = registry.resolve(
         "llm_client_factory",
-        default_factory=LLMClient,
+        default_path="krakey.llm.client:LLMClient",
         expected_protocol=ChatLike,
         provider=provider,
         model=model_name,

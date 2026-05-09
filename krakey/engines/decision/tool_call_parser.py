@@ -48,8 +48,10 @@ class ToolCallParserDecisionEngine:
     accepts and ignores.
     """
 
-    def __init__(self, *, cfg=None):
-        del cfg  # accepted for contract uniformity, unused
+    def __init__(self, *, cfg=None, factory=None):
+        # cfg + factory accepted for signature uniformity with other
+        # DecisionEngine impls. The script parser uses neither.
+        del cfg, factory
 
     async def translate(
         self,

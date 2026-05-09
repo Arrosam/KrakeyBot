@@ -53,8 +53,10 @@ def test_satisfies_decision_engine_protocol():
     assert isinstance(eng, DecisionEngine)
 
 
-def test_requires_cfg_kwarg():
-    with pytest.raises(TypeError, match="cfg= kwarg"):
+def test_requires_cfg_or_factory():
+    """Either ``cfg`` or ``factory`` must be supplied — pure no-arg
+    construction can't reach an LLM client."""
+    with pytest.raises(TypeError, match="factory|cfg"):
         HypothalamusDecisionEngine()
 
 

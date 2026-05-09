@@ -35,7 +35,6 @@ from krakey.interfaces.services.memory import (
 )
 from krakey.interfaces.services.prompt_builder import PromptBuilderLike
 from krakey.prompt.builder import PromptBuilder
-from krakey.runtime.service_resolver import ServiceResolver
 from krakey.runtime.stimuli.batch_tracker import BatchTrackerChannel
 from krakey.runtime.events.event_bus import EventBus
 from krakey.environment.local import LocalEnvironment
@@ -90,6 +89,13 @@ class RuntimeDeps:
     # map to the same tag share one client (saves connections + keeps
     # rate-limit accounting consistent).
     llm_clients_by_tag: dict[str, Any] = field(default_factory=dict)
+    # Shared LLMClientFactoryEngine instance. composition root builds
+    # one via EngineRegistry and threads it here so Engine resolution
+    # in Runtime can pass it into other engines that need it
+    # (Embedder / Reranker / HypothalamusDecisionEngine). Sharing the
+    # factory means every engine sees the same per-tag client cache —
+    # no duplicate clients for the same tag across engines.
+    llm_factory: Any = None
     # EnvironmentRouter — central dispatch for plugin → environment
     # requests. ``None`` means Runtime will build one from
     # ``config.sandbox`` (and, after commit 6, ``config.environments``)
@@ -157,11 +163,6 @@ class Runtime:
                 deps.sliding_window_state_path
                 or "workspace/data/sliding_window.json"
             )
-        # Service-resolver still in play for the older slots
-        # (``embedder`` / ``reranker``); kept around until step 12
-        # finishes wiring everything through EngineRegistry.
-        self._service_resolver = ServiceResolver(self.config)
-
         from krakey.engines.registry import EngineRegistry
         from krakey.interfaces.engines import (
             ContextEngine,
@@ -207,6 +208,12 @@ class Runtime:
         # wins when a Modifier with that role is registered — kept
         # for back-compat with the in-tree hypothalamus plugin until
         # step 7b lifts it into the Engine.
+        # Decision Engine receives the shared factory so an
+        # alternative impl (e.g. HypothalamusDecisionEngine) can
+        # reach LLM clients via the same per-tag cache the rest of
+        # the runtime uses. Default ToolCallParserDecisionEngine
+        # accepts and ignores the kwarg.
+        self.llm_factory = deps.llm_factory
         self.decision_engine = self._engine_registry.resolve(
             "decision",
             default_path=(
@@ -215,6 +222,7 @@ class Runtime:
             ),
             expected_protocol=DecisionEngine,
             cfg=self.config,
+            factory=self.llm_factory,
         )
 
         # Recall Engine — per-beat memory recall. Default impl

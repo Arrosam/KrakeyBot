@@ -79,6 +79,48 @@ def _missing_protocol_attrs(instance: Any, protocol: type) -> list[str]:
     return sorted(expected - actual)
 
 
+def _filter_kwargs(cls: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Drop kwargs the class's ``__init__`` doesn't accept.
+
+    The runtime often passes cross-cutting deps (cfg, factory,
+    memory) through ``resolve`` kwargs so default impls can pick
+    them up. User-supplied custom classes (e.g. a minimal test
+    embedder fake) may have narrower signatures and would
+    TypeError on unknown kwargs. Inspect the constructor and drop
+    kwargs it can't accept — unless it has ``**kwargs``, in which
+    case we pass everything through.
+
+    This preserves back-compat with overrides that predate a
+    kwarg's addition. Trade-off: a typo in a user kwarg name is
+    silently dropped instead of raising. Acceptable for the
+    migration scope; documented in the registry's docstring.
+    """
+    import inspect
+    try:
+        # ``inspect.signature(cls)`` returns the constructor signature
+        # — when the class doesn't override ``__init__`` Python yields
+        # an empty ``()`` rather than object's ``(self, *args, **kwargs)``.
+        # That's what we want: a class like ``class X: pass`` should
+        # accept zero kwargs, not ALL kwargs.
+        sig = inspect.signature(cls)
+    except (TypeError, ValueError):
+        return kwargs
+    has_var_keyword = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD
+        for p in sig.parameters.values()
+    )
+    if has_var_keyword:
+        return kwargs
+    accepted = {
+        name for name, p in sig.parameters.items()
+        if p.kind in (
+            inspect.Parameter.KEYWORD_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        )
+    }
+    return {k: v for k, v in kwargs.items() if k in accepted}
+
+
 class EngineRegistry:
     """Resolves Engine slots to concrete instances.
 
@@ -129,12 +171,18 @@ class EngineRegistry:
             )
 
         cls = self._import(path)
+        # Filter kwargs to those the class's __init__ accepts — keeps
+        # back-compat with user overrides whose signatures predate a
+        # kwarg's addition (e.g. a custom embedder class that doesn't
+        # know about the ``factory`` kwarg the runtime started passing
+        # in step 12).
+        accepted_kwargs = _filter_kwargs(cls, kwargs)
         try:
-            instance = cls(**kwargs)
+            instance = cls(**accepted_kwargs)
         except TypeError as e:
             raise TypeError(
                 f"engine slot {slot!r} = {path!r} could not be "
-                f"instantiated with kwargs {sorted(kwargs)}: {e}. "
+                f"instantiated with kwargs {sorted(accepted_kwargs)}: {e}. "
                 f"Custom engines for slot {slot!r} must accept the "
                 "same kwargs as the built-in default."
             ) from e

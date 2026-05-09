@@ -29,7 +29,6 @@ from krakey.llm.resolve import (  # noqa: F401
     AsyncEmbedder, ChatLike, resolve_llm_for_tag,
 )
 from krakey.runtime.runtime import Runtime, RuntimeDeps  # noqa: F401
-from krakey.runtime.service_resolver import ServiceResolver
 from krakey.runtime.heartbeat.heartbeat_orchestrator import (  # noqa: F401
     _summarize_stimuli,
 )
@@ -93,37 +92,31 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
         compact_llm = self_llm
 
     # ---- Embedder + Reranker Engines ---------------------------------
-    # Both default impls take the factory Engine via constructor + use
-    # it to lazily reach the configured client. The user can still
-    # override the slot via ``core_implementations.embedder`` /
-    # ``.reranker`` for a no-args custom class (existing slot
-    # semantics preserved).
-    from krakey.engines.embedder.default import TagBoundEmbedderEngine
-    from krakey.engines.reranker.default import DefaultRerankerEngine
+    # Both default impls take the factory Engine via constructor +
+    # use it to lazily reach the configured client. Shared factory
+    # injection means every engine that holds an LLM client points
+    # at the same per-tag cache — no duplicate clients for the same
+    # tag across engines.
+    from krakey.engines.embedder.default import TagBoundEmbedderEngine  # noqa: F401
+    from krakey.engines.reranker.default import DefaultRerankerEngine  # noqa: F401
+    from krakey.interfaces.engines import EmbedderEngine, RerankerEngine
 
-    def _make_default_embedder() -> TagBoundEmbedderEngine:
-        return TagBoundEmbedderEngine(factory=llm_factory)
-
-    def _make_default_reranker() -> DefaultRerankerEngine:
-        return DefaultRerankerEngine(factory=llm_factory)
-
-    service_resolver = ServiceResolver(cfg)
-    embedder = service_resolver.resolve(
+    embedder = registry.resolve(
         "embedder",
-        default_factory=_make_default_embedder,
-        expected_protocol=AsyncEmbedder,
+        default_path=(
+            "krakey.engines.embedder.default:TagBoundEmbedderEngine"
+        ),
+        expected_protocol=EmbedderEngine,
+        factory=llm_factory,
     )
 
-    # Reranker is now always non-None: the default engine embeds a
-    # preserve-order fallback so callers no longer need to guard with
-    # ``if reranker is None``. The pre-existing Reranker / RerankerEngine
-    # Protocols are structurally compatible (both expose ``async
-    # rerank(query, docs)``), so old-slot user overrides keep working.
-    from krakey.memory.recall import Reranker
-    reranker = service_resolver.resolve(
+    reranker = registry.resolve(
         "reranker",
-        default_factory=_make_default_reranker,
-        expected_protocol=Reranker,
+        default_path=(
+            "krakey.engines.reranker.default:DefaultRerankerEngine"
+        ),
+        expected_protocol=RerankerEngine,
+        factory=llm_factory,
     )
 
     # hypo_llm is no longer eagerly required at the core level — it's
@@ -152,6 +145,7 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
         # from ``deps.llm_clients_by_tag`` until plugins migrate to
         # use ``ctx.services["llm_factory"]`` directly.
         llm_clients_by_tag=llm_factory.client_cache,
+        llm_factory=llm_factory,
         install_service=install_service,
         # Pull the sliding-window state path straight from
         # config.yaml so dashboard edits to ``sliding_window.state_path``
