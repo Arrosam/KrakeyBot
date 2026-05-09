@@ -168,6 +168,7 @@ class Runtime:
             DecisionEngine,
             DispatchEngine,
             ExplicitHistoryEngine,
+            HeartbeatEngine,
             MemoryEngine,
             RecallEngine,
         )
@@ -463,6 +464,21 @@ class Runtime:
         from krakey.runtime.heartbeat.heartbeat_orchestrator import HeartbeatOrchestrator
         self._orchestrator = HeartbeatOrchestrator(self)
 
+        # Heartbeat Engine — owns the per-beat run loop. The default
+        # impl wraps the orchestrator just constructed; user impls
+        # via cfg.core_implementations.heartbeat replace the entire
+        # cognitive cadence (phase order, multi-stage thinking,
+        # event-driven scheduling, etc.). Setup + teardown around
+        # the loop stay on Runtime.run().
+        self.heartbeat_engine = self._engine_registry.resolve(
+            "heartbeat",
+            default_path=(
+                "krakey.engines.heartbeat.default:DefaultHeartbeatEngine"
+            ),
+            expected_protocol=HeartbeatEngine,
+            cfg=self.config,
+        )
+
         # Snapshot config.yaml on every startup so a bad save can be rolled
         # back from workspace/backups/.
         if self._config_path:
@@ -711,12 +727,14 @@ class Runtime:
             return
 
         try:
-            count = 0
-            while not self._stop:
-                await self._heartbeat()
-                count += 1
-                if iterations is not None and count >= iterations:
-                    return
+            # Heartbeat Engine drives the loop. Setup (gm.initialize
+            # + channels.start_all + the install advisory + initial
+            # recall session) stayed on Runtime above this try block;
+            # teardown (buffer.stop_all + classify-task cancellation)
+            # stays in the finally below. The Engine's ``run()`` is
+            # purely the iteration loop body — phase ordering happens
+            # inside ``beat()`` per the Engine's own contract.
+            await self.heartbeat_engine.run(self, iterations)
         finally:
             await self.buffer.stop_all()
             # Cancel in-flight background classify tasks so asyncio doesn't warn.
