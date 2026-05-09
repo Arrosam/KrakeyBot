@@ -192,7 +192,6 @@ _EXPECTED_PLUGINS = (
     "dashboard",
     "duckduckgo_search",
     "gui_exec",
-    "hypothalamus",
     "in_mind_note",
     "recall",
     "telegram",

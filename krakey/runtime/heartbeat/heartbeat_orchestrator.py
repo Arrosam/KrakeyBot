@@ -414,64 +414,38 @@ class HeartbeatOrchestrator:
     async def _phase_apply_decision(self, parsed, recall_result) -> bool:
         """Convert Self's response into tool calls + dispatch.
 
-        Two paths, picked by Modifier-role registry then Engine slot:
-          * A Modifier with role="hypothalamus" registered → LLM
-            translation of ``parsed.decision`` (legacy, kept for
-            back-compat with the in-tree hypothalamus plugin until
-            step 7b lifts that into the Engine).
-          * Else → ``rt.decision.translate(...)``. The default
-            engine is the scripted ``<tool_call>`` parser; users can
-            swap in any DecisionEngine impl via
-            ``cfg.core_implementations.decision``.
+        ``rt.decision.translate(...)`` produces the structured
+        ``DecisionResult``. The default engine is the scripted
+        ``<tool_call>`` parser; users swap in any DecisionEngine impl
+        (e.g. ``HypothalamusDecisionEngine`` for LLM-driven
+        translation) via ``cfg.core_implementations.decision``.
 
-        On either path, malformed ``<tool_call>`` blocks surface to
-        Self via a corrective ``system_event`` stimulus on the next
-        beat — the per-block payload + parser error + a tight format
-        reminder. Successful blocks in the same response still
-        dispatch; partial parse must not block what DID parse.
+        Malformed ``<tool_call>`` blocks surface to Self via a
+        corrective ``system_event`` stimulus on the next beat — the
+        per-block payload + parser error + a tight format reminder.
+        Successful blocks in the same response still dispatch; partial
+        parse must not block what DID parse.
 
         Returns True iff Self requested sleep.
         """
         rt = self._rt
-        from krakey.interfaces.modifier import DecisionResult
 
         decision = parsed.decision.strip().lower()
         if not decision or decision == "no action":
             return False
 
-        translator = rt.modifiers.by_role("hypothalamus")
         parse_failures: list = []
         try:
-            if translator is not None:
-                # Legacy plugin path — modifier returns the modifier-
-                # shape DecisionResult (no parse_failures field).
-                result = await translator.translate(
-                    parsed.decision, rt.tools.list_descriptions(),
-                )
-            else:
-                # Engine path. The engine receives the full ``raw``
-                # response so an alternative impl can scan beyond
-                # [DECISION] if it wants (default impl scans
-                # decision-only — see the Engine's docstring for
-                # the [NOTE]-echo rationale).
-                engine_result = await rt.decision.translate(
-                    parsed.decision,
-                    parsed.raw,
-                    rt.tools.list_descriptions(),
-                )
-                # Adapt the new dataclass shape to the legacy
-                # DecisionResult the rest of this method + the
-                # dispatcher consume. Field names match (tool_calls
-                # / memory_writes / memory_updates / sleep);
-                # parse_failures lives on the Engine result and
-                # we pull it out into the local var.
-                result = DecisionResult(
-                    tool_calls=list(engine_result.tool_calls),
-                    memory_writes=list(engine_result.memory_writes),
-                    memory_updates=list(engine_result.memory_updates),
-                    sleep=engine_result.sleep,
-                )
-                parse_failures = list(engine_result.parse_failures)
+            # The engine receives the full ``raw`` response so an
+            # alternative impl can scan beyond [DECISION] if it wants
+            # (default impl scans decision-only — see the Engine's
+            # docstring for the [NOTE]-echo rationale).
+            result = await rt.decision.translate(
+                parsed.decision,
+                parsed.raw,
+                rt.tools.list_descriptions(),
+            )
+            parse_failures = list(result.parse_failures)
         except Exception as e:  # noqa: BLE001
             err = f"{type(e).__name__}: {e!r}"
             rt.log.hb(f"Decision dispatch error: {err}")
@@ -583,7 +557,24 @@ class HeartbeatOrchestrator:
             stimuli=stimuli,
             current_time=datetime.now(),
         )
-        # 2. Each Modifier that defines a modify_prompt hook gets its
+        # 2. The DecisionEngine gets first crack at the elements via
+        #    its optional ``modify_prompt`` hook — used by impls that
+        #    teach Self a different action surface (e.g.
+        #    HypothalamusDecisionEngine drops the [ACTION FORMAT]
+        #    element because its translator handles natural-language
+        #    decisions).
+        decision_modify = getattr(rt.decision, "modify_prompt", None)
+        if decision_modify is not None:
+            try:
+                decision_modify(
+                    elements.for_plugin(f"engine:{type(rt.decision).__name__}"),
+                )
+            except Exception as e:  # noqa: BLE001
+                rt.log.runtime_error(
+                    f"DecisionEngine modify_prompt raised "
+                    f"{type(e).__name__}: {e}; ignoring its modifications"
+                )
+        # 3. Each Modifier that defines a modify_prompt hook gets its
         #    chance to mutate. Modifications are tracked per element;
         #    PromptElements logs a warning on second-write conflicts.
         for modifier in rt.modifiers.all():
@@ -597,14 +588,6 @@ class HeartbeatOrchestrator:
                     f"Modifier {modifier.name!r} modify_prompt raised "
                     f"{type(e).__name__}: {e}; ignoring its modifications"
                 )
-        # 3. Render. The bootstrap intro used to be injected here by
-        #    inlining BOOTSTRAP_PROMPT.format(genesis_text=...) above
-        #    elements.render(). After the plugin uplift (step 11) the
-        #    bootstrap modifier writes an ``elements["bootstrap_intro"]``
-        #    entry via its modify_prompt hook (above). The element
-        #    appends late in the prompt rather than prepending — that
-        #    costs some prefix-cache hit rate during bootstrap but is
-        #    acceptable because bootstrap is short-lived.
         return elements.render()
 
     async def enforce_input_budget(self, stimuli, recall_result,

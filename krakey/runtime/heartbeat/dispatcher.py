@@ -1,20 +1,16 @@
-"""Decision-result side-effects executor — extracted from Runtime.
+"""Decision-result side-effects executor — internal helper for
+``LocalDispatchEngine``.
 
-After the hypothalamus Modifier (or the tool-call executor fallback)
-turns Self's natural-language [DECISION] into a structured
-``DecisionResult``, four side-effects need to fire:
+After the DecisionEngine turns Self's natural-language [DECISION]
+into a structured ``DecisionResult``, four side-effects need to fire:
 
   1. **Log + publish** the summary (counts + sleep flag).
   2. **Dispatch** each ToolCall as an async task and register
      the batch with the BatchTracker so completion can wake Self.
   3. **Apply memory writes** (LLM-extracted nodes/edges via
-     ``GraphMemory.explicit_write``).
+     ``MemoryEngine.explicit_write``).
   4. **Apply memory updates** (category flips like TARGET → FACT
-     via ``GraphMemory.update_node_category``).
-
-These were five Runtime methods that touched the same five
-collaborators (tools, batch_tracker, buffer, gm, log+events)
-and nothing from the heartbeat loop's state. Clean seam.
+     via ``MemoryEngine.update_node_category``).
 
 Each entry method takes ``heartbeat_id`` as a parameter — the
 dispatcher doesn't track the beat counter; Runtime owns it.
@@ -31,9 +27,9 @@ from krakey.runtime.events.event_types import (
 )
 
 if TYPE_CHECKING:
-    from krakey.interfaces.modifier import DecisionResult, ToolCall
+    from krakey.interfaces.engines.decision import DecisionResult, ToolCall
+    from krakey.interfaces.engines.memory import MemoryEngine
     from krakey.interfaces.tool import ToolRegistry
-    from krakey.interfaces.services.memory import MemoryService
     from krakey.runtime.stimuli.batch_tracker import BatchTrackerChannel
     from krakey.runtime.events.event_bus import EventBus
     from krakey.runtime.console.heartbeat_logger import HeartbeatLogger
@@ -49,7 +45,7 @@ class DecisionDispatcher:
         tools: "ToolRegistry",
         batch_tracker: "BatchTrackerChannel",
         buffer: "StimulusBuffer",
-        gm: "MemoryService",
+        gm: "MemoryEngine",
         log: "HeartbeatLogger",
         events: "EventBus",
     ):

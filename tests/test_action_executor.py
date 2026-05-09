@@ -5,7 +5,19 @@ This is the default tool dispatch path when no decision-translator
 Modifier (e.g. the hypothalamus plugin) is registered. Format chosen
 for breadth of training coverage in modern open-source LLMs.
 """
-from krakey.runtime.heartbeat.action_executor import parse_tool_calls
+from krakey.runtime.heartbeat.action_executor import (
+    parse_tool_calls_with_failures,
+)
+
+
+def parse_tool_calls(text):
+    """Test helper — wraps the engine's
+    ``parse_tool_calls_with_failures`` and discards the failure list.
+    Most action-executor tests only care about the successfully-parsed
+    calls; the salvage-failure tests below call
+    ``parse_tool_calls_with_failures`` directly."""
+    calls, _ = parse_tool_calls_with_failures(text)
+    return calls
 
 
 def test_empty_input_returns_empty():
@@ -172,14 +184,6 @@ will check in next beat
 """
     calls = parse_tool_calls(text)
     assert [c.tool for c in calls] == ["web_chat_reply", "search"]
-
-
-def test_back_compat_alias_still_works():
-    """parse_action_block was the old name; kept as alias since two
-    other modules import it."""
-    from krakey.runtime.heartbeat.action_executor import parse_action_block
-    text = '<tool_call>\n{"name": "x"}\n</tool_call>'
-    assert parse_action_block(text) == parse_tool_calls(text)
 
 
 # ---------------- parse_tool_calls_with_failures ----------------

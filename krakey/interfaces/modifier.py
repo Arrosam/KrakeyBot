@@ -10,45 +10,11 @@ unique. The runtime does not interpret role names — it just looks
 up a role and calls its protocol-specific methods. Plugins free to
 mint new role names; they only collide with each other if they
 chose the same string.
-
-Optional advisory protocols below (HypothalamusModifier, ...) document
-the method shapes the runtime expects when a particular role is
-used. Modifiers don't have to inherit from them — structural typing
-keeps plugin code free of interface imports it doesn't need.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
-
-
-# --------------------------------------------------------------------
-# Contract dataclasses — cross the Modifier ↔ runtime boundary
-# --------------------------------------------------------------------
-
-
-@dataclass
-class ToolCall:
-    """Structured tool invocation produced by a decision-translator
-    Modifier's ``translate()``. Consumed by the dispatcher and by the
-    script-only action executor (when no translator is registered)."""
-    tool: str
-    intent: str
-    params: dict[str, Any] = field(default_factory=dict)
-    adrenalin: bool = False
-
-
-@dataclass
-class DecisionResult:
-    """Aggregate result of one decision-translation pass: the tool
-    calls to dispatch, plus any memory side-effects and the sleep
-    flag. Produced by either the hypothalamus role's translate() or
-    the bare tool-call parser fallback; the dispatcher consumes it
-    without caring which path produced it."""
-    tool_calls: list[ToolCall] = field(default_factory=list)
-    memory_writes: list[dict[str, Any]] = field(default_factory=list)
-    memory_updates: list[dict[str, Any]] = field(default_factory=list)
-    sleep: bool = False
 
 
 @dataclass
@@ -68,18 +34,6 @@ class Modifier(Protocol):
     """Base shape — every Modifier has a name + role."""
     name: str
     role: str
-
-
-@runtime_checkable
-class HypothalamusModifier(Protocol):
-    """Optional shape advised for Modifiers that translate Self's
-    [DECISION] text into structured tool calls."""
-    name: str
-    role: str
-
-    async def translate(
-        self, decision: str, tools: list[dict[str, Any]],
-    ) -> DecisionResult: ...
 
 
 @runtime_checkable

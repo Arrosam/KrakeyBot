@@ -125,6 +125,14 @@ class HypothalamusDecisionEngine:
             factory = DefaultLLMClientFactoryEngine(cfg)
         self._factory = factory
 
+    def modify_prompt(self, elements) -> None:
+        """LLM translator owns the [DECISION] → tool-call mapping, so
+        teaching Self the structured ``<tool_call>`` syntax in
+        [ACTION FORMAT] would create competing dispatch paths. Drop the
+        layer when this Engine is wired in."""
+        if "action_format" in elements:
+            del elements["action_format"]
+
     async def translate(
         self,
         decision: str,

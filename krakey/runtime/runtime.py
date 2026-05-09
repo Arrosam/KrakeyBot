@@ -45,7 +45,6 @@ class RuntimeDeps:
     # the user installs Krakey and skips chat config in onboarding,
     # planning to fill it in via the dashboard.
     self_llm: ChatLike | None
-    hypo_llm: ChatLike
     compact_llm: ChatLike
     classify_llm: ChatLike
     embedder: AsyncEmbedder
@@ -90,15 +89,6 @@ class RuntimeDeps:
     # at construction time. Tests pass a pre-built Router (or leave
     # this None for the default empty-allow-list build).
     environment_router: EnvironmentRouter | None = None
-    # ``enable_install_advisory`` and ``install_service`` used to
-    # live here. Removed in step 13 (Engine refactor 2026-05) when
-    # InstallService stopped being a runtime concept: the install
-    # advisory's startup stimulus + the built-in InstallTool both
-    # went away, and ``krakey.install`` is now imported as a plain
-    # utility by the CLI + dashboard plugin. The runtime no longer
-    # knows install exists.
-    # ``enable_install_advisory: bool = True``  (deleted)
-    # ``install_service: ... = None``           (deleted)
 
 
 class Runtime:

@@ -66,13 +66,9 @@ async def test_runtime_heartbeat_with_no_tools_emits_unknown_tool(tmp_path):
         '[IDLE]\n1'
     ])
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=ScriptedLLM([]),
+        self_llm=self_llm,
         gm_path=str(tmp_path / "gm.sqlite"),
     )
-    # Strip the hypothalamus Modifier so dispatch goes via the
-    # DecisionEngine's tool-call parser (the path we want to exercise).
-    runtime.modifiers._by_role.pop("hypothalamus", None)
-    runtime.modifiers._order.remove("hypothalamus")
 
     from krakey.interfaces.tool import ToolRegistry
     runtime.tools = ToolRegistry()

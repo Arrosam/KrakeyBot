@@ -224,14 +224,8 @@ async def test_modifiers_available_lists_metadata(tmp_path):
         r = await c.get("/api/modifiers/available")
     assert r.status_code == 200
     names = {entry["name"] for entry in r.json()["modifiers"]}
-    # All three in-tree built-ins must be discovered
-    assert {"hypothalamus", "recall",
-            "in_mind_note"} <= names
-
-    # Hypothalamus declares its `translator` purpose
-    by_name = {e["name"]: e for e in r.json()["modifiers"]}
-    purposes = by_name["hypothalamus"]["llm_purposes"]
-    assert any(p.get("name") == "translator" for p in purposes)
+    # In-tree built-ins must be discovered
+    assert {"recall", "in_mind_note"} <= names
 
 
 async def test_modifier_config_get_missing_returns_empty(tmp_path):

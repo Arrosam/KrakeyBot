@@ -1,14 +1,14 @@
 """Tool-call parser — extracts ``<tool_call>...</tool_call>`` blocks
 out of Self's raw response into ``ToolCall`` objects.
 
-This is the default tool-dispatch path when no decision-translator
-Modifier (e.g. the hypothalamus plugin) is registered. Format chosen
-for breadth of training coverage in modern open-source models —
-Hermes / Qwen 2.5+ emit this format natively (their tokenizers
-reserve ``<tool_call>`` / ``</tool_call>`` as special tokens), and
-Llama / Mistral / DeepSeek families emit it readily with one or two
-in-prompt examples because the inner ``name``+``arguments`` JSON
-shape matches what they were already trained on.
+This is the default tool-dispatch path used by
+``ToolCallParserDecisionEngine``. Format chosen for breadth of
+training coverage in modern open-source models — Hermes / Qwen 2.5+
+emit this format natively (their tokenizers reserve ``<tool_call>``
+/ ``</tool_call>`` as special tokens), and Llama / Mistral / DeepSeek
+families emit it readily with one or two in-prompt examples because
+the inner ``name``+``arguments`` JSON shape matches what they were
+already trained on.
 
 Format:
 
@@ -24,9 +24,9 @@ object. Fields per call:
     adrenalin:  bool (optional)        — urgency flag; default False
 
 Failure modes are isolated per-block: a single malformed payload is
-skipped, the rest of Self's response still dispatches. The richer
-entry point ``parse_tool_calls_with_failures`` ALSO returns a list
-of ``ParseFailure`` describing each skipped block — the orchestrator
+skipped, the rest of Self's response still dispatches.
+``parse_tool_calls_with_failures`` ALSO returns a list of
+``ParseFailure`` describing each skipped block — the orchestrator
 uses this to push a corrective ``system_event`` stimulus back to
 Self so format drift is visible in-context on the next beat,
 rather than silently absorbed (the trade-off being a wasted beat
@@ -37,10 +37,9 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass
 from typing import Any
 
-from krakey.interfaces.modifier import ToolCall
+from krakey.interfaces.engines.decision import ParseFailure, ToolCall
 
 _log = logging.getLogger(__name__)
 
@@ -51,25 +50,6 @@ _TOOL_CALL_BLOCK = re.compile(
     r"<tool_call>\s*(.*?)\s*</tool_call>",
     re.DOTALL | re.IGNORECASE,
 )
-
-
-@dataclass
-class ParseFailure:
-    """One ``<tool_call>`` block whose parsing surfaced a problem.
-
-    Two flavors:
-      * ``salvaged=False`` (default) — call was lost; orchestrator
-        reports it as a failed dispatch.
-      * ``salvaged=True``  — JSON had trailing junk but the parser
-        recovered the object; the call DID dispatch and a
-        ``ToolCall`` was emitted alongside this ``ParseFailure``.
-        Surfaced so Self gets format-correction feedback even on
-        the salvage path.
-    """
-    payload: str       # raw text inside <tool_call>...</tool_call>
-    error: str         # human-readable reason (JSONDecodeError msg, shape error)
-    block_index: int   # 0-based position among all <tool_call> blocks
-    salvaged: bool = False
 
 
 def parse_tool_calls_with_failures(
@@ -102,23 +82,6 @@ def parse_tool_calls_with_failures(
         if failure is not None:
             failures.append(failure)
     return calls, failures
-
-
-def parse_tool_calls(self_text: str) -> list[ToolCall]:
-    """Extract every ``<tool_call>...</tool_call>`` block from
-    ``self_text`` and return the parsed ``ToolCall`` list.
-
-    Back-compat shim over ``parse_tool_calls_with_failures`` that
-    drops the failure list. Existing callers (tests, the legacy
-    ``parse_action_block`` alias) that only want the call list keep
-    working unchanged.
-    """
-    calls, _ = parse_tool_calls_with_failures(self_text)
-    return calls
-
-
-# Back-compat alias — old name still imported in a couple of places.
-parse_action_block = parse_tool_calls
 
 
 def _parse_one_call(

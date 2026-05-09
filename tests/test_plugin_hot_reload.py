@@ -42,12 +42,12 @@ async def test_hot_reload_adds_plugin_not_currently_loaded():
     cli_exec tool is now registered."""
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
-        modifiers=["hypothalamus"],
+        modifiers=["in_mind_note"],
     )
     assert "cli_exec" not in runtime.tools
 
     report = await runtime.hot_reload_plugins(
-        ["hypothalamus", "cli_exec"],
+        ["in_mind_note", "cli_exec"],
         force_reload=False,
     )
 
@@ -55,7 +55,7 @@ async def test_hot_reload_adds_plugin_not_currently_loaded():
     assert "cli_exec" in added_plugins
     # Already-loaded hypothalamus is skipped (force_reload=False).
     skipped = [s["plugin"] for s in report["skipped"]]
-    assert "hypothalamus" in skipped
+    assert "in_mind_note" in skipped
     assert "cli_exec" in runtime.tools
 
 
@@ -65,20 +65,21 @@ async def test_hot_reload_full_reloads_already_loaded_plugins_when_forced():
     so a config / LLM-binding edit takes effect."""
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
-        modifiers=["hypothalamus", "recall"],
+        modifiers=["in_mind_note", "recall"],
     )
     # Snapshot the original modifier instance so we can compare
-    # identity after reload.
-    before = runtime.modifiers.by_role("hypothalamus")
+    # identity after reload. The in_mind_note plugin's modifier
+    # registers under role "in_mind".
+    before = runtime.modifiers.by_role("in_mind")
     assert before is not None
 
     report = await runtime.hot_reload_plugins(
-        ["hypothalamus", "recall"],   # same set, force_reload=True
+        ["in_mind_note", "recall"],   # same set, force_reload=True
     )
 
     reloaded_plugins = [r["plugin"] for r in report["reloaded"]]
-    assert "hypothalamus" in reloaded_plugins
-    after = runtime.modifiers.by_role("hypothalamus")
+    assert "in_mind_note" in reloaded_plugins
+    after = runtime.modifiers.by_role("in_mind")
     assert after is not None
     # Different instance — proof that re-register happened, not
     # just a no-op.
@@ -90,13 +91,13 @@ async def test_hot_reload_skips_already_loaded_when_force_false():
     entirely (same as the v1 hot-add-only behaviour)."""
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
-        modifiers=["hypothalamus"],
+        modifiers=["in_mind_note"],
     )
     report = await runtime.hot_reload_plugins(
-        ["hypothalamus"], force_reload=False,
+        ["in_mind_note"], force_reload=False,
     )
     skipped = [s["plugin"] for s in report["skipped"]]
-    assert "hypothalamus" in skipped
+    assert "in_mind_note" in skipped
     assert report["reloaded"] == []
 
 
@@ -105,10 +106,10 @@ async def test_hot_reload_unknown_plugin_lands_in_errors():
     entry, not a crash."""
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
-        modifiers=["hypothalamus"],
+        modifiers=["in_mind_note"],
     )
     report = await runtime.hot_reload_plugins(
-        ["hypothalamus", "totally_made_up_plugin_xyz"],
+        ["in_mind_note", "totally_made_up_plugin_xyz"],
     )
     error_plugins = [e["plugin"] for e in report["errors"]]
     assert "totally_made_up_plugin_xyz" in error_plugins
@@ -119,12 +120,12 @@ async def test_hot_reload_removes_plugin_dropped_from_target():
     unregistered (true hot-disable, not just an advisory)."""
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
-        modifiers=["hypothalamus", "recall"],
+        modifiers=["in_mind_note", "recall"],
     )
     # recall registers a memory_recall tool; verify it's present.
     assert "memory_recall" in runtime.tools
 
-    report = await runtime.hot_reload_plugins(["hypothalamus"])
+    report = await runtime.hot_reload_plugins(["in_mind_note"])
 
     removed_plugins = [r["plugin"] for r in report["removed"]]
     assert "recall" in removed_plugins
@@ -137,7 +138,7 @@ async def test_hot_reload_starts_newly_registered_channels(monkeypatch):
     background task never fires."""
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
-        modifiers=["hypothalamus"],
+        modifiers=["in_mind_note"],
     )
     started: list[str] = []
     real_start_one = runtime.buffer.start_one
@@ -149,7 +150,7 @@ async def test_hot_reload_starts_newly_registered_channels(monkeypatch):
     monkeypatch.setattr(runtime.buffer, "start_one", spy)
 
     report = await runtime.hot_reload_plugins(
-        ["hypothalamus", "cli_exec"],
+        ["in_mind_note", "cli_exec"],
     )
     # cli_exec is tool-only, no channel start.
     assert started == []
@@ -167,13 +168,13 @@ async def test_hot_reload_back_to_back_idempotent():
     new (just reloads the same set)."""
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
-        modifiers=["hypothalamus"],
+        modifiers=["in_mind_note"],
     )
     first = await runtime.hot_reload_plugins(
-        ["hypothalamus", "cli_exec"],
+        ["in_mind_note", "cli_exec"],
     )
     second = await runtime.hot_reload_plugins(
-        ["hypothalamus", "cli_exec"],
+        ["in_mind_note", "cli_exec"],
     )
     # First pass: cli_exec added, hypothalamus reloaded.
     assert any(a["plugin"] == "cli_exec" for a in first["added"])
@@ -182,4 +183,4 @@ async def test_hot_reload_back_to_back_idempotent():
     assert second["removed"] == []
     reloaded_2 = [r["plugin"] for r in second["reloaded"]]
     assert "cli_exec" in reloaded_2
-    assert "hypothalamus" in reloaded_2
+    assert "in_mind_note" in reloaded_2

@@ -52,7 +52,6 @@ def _minimal_deps_for_runtime(runtime):
         config=runtime.config,
         plugin_configs_root=runtime._test_modifier_configs_root,
         llm_clients_by_tag=runtime._test_llm_clients_by_tag,
-        hypo_llm=ScriptedLLM([]),
         in_mind_state_path=None,
     )
 
@@ -97,11 +96,11 @@ def test_loader_returns_ordered_list_when_specified(tmp_path):
             self_thinking: t1
         modifiers:
           - recall
-          - hypothalamus
+          - in_mind_note
     """)
     cfg = load_config(p)
     assert cfg.plugins == [
-        "recall", "hypothalamus",
+        "recall", "in_mind_note",
     ]
 
 
@@ -109,21 +108,18 @@ def test_loader_returns_ordered_list_when_specified(tmp_path):
 
 
 def test_discover_finds_builtin_meta_files():
-    """The three in-tree built-in plugins (hypothalamus, recall,
-    in_mind_note) must each be discoverable as a unified-format
-    plugin with at least one component."""
+    """The in-tree built-in plugins must each be discoverable as a
+    unified-format plugin with at least one component."""
     metas = discover_plugins()
-    assert "hypothalamus" in metas
     assert "recall" in metas
     assert "in_mind_note" in metas
-    h = metas["hypothalamus"]
-    assert len(h.components) >= 1
-    refl_comp = next(c for c in h.components if c.kind == "modifier")
-    assert refl_comp.role == "hypothalamus"
-    assert refl_comp.factory_module == (
-        "krakey.plugins.hypothalamus.modifier"
+    im = metas["in_mind_note"]
+    assert len(im.components) >= 1
+    mod_comp = next(c for c in im.components if c.kind == "modifier")
+    assert mod_comp.factory_module == (
+        "krakey.plugins.in_mind_note.modifier"
     )
-    assert refl_comp.factory_attr == "build_modifier"
+    assert mod_comp.factory_attr == "build_modifier"
 
 
 def test_discover_does_not_import_plugin_modules():
@@ -131,13 +127,13 @@ def test_discover_does_not_import_plugin_modules():
     plugin code into sys.modules.
     """
     plugin_modules = (
-        "krakey.plugins.hypothalamus.modifier",
+        "krakey.plugins.in_mind_note.modifier",
         "krakey.plugins.recall.tool",
     )
     before = {m: m in sys.modules for m in plugin_modules}
     metas = discover_plugins()
     after = {m: m in sys.modules for m in plugin_modules}
-    assert "hypothalamus" in metas
+    assert "in_mind_note" in metas
     for m in plugin_modules:
         if not before[m]:
             assert not after[m], (
@@ -147,33 +143,31 @@ def test_discover_does_not_import_plugin_modules():
             )
 
 
-def test_load_component_imports_and_calls_factory():
+def test_load_component_imports_and_calls_factory(tmp_path):
     """load_component is the only path that imports plugin modules.
-    Plugins now resolve LLMs themselves: the factory reads its own
-    ``llm_purposes.translator`` from ``ctx.config`` and calls
-    ``ctx.get_llm_for_tag``. We stub the latter on a SimpleNamespace
-    so no Runtime is needed."""
+    The in_mind_note Modifier's factory writes a state file path
+    pulled from deps; we point it at a tmp file so the test doesn't
+    touch the production workspace."""
     from types import SimpleNamespace
 
     from krakey.interfaces.plugin_context import PluginContext
     metas = discover_plugins()
-    refl_comp = next(c for c in metas["hypothalamus"].components
+    mod_comp = next(c for c in metas["in_mind_note"].components
                      if c.kind == "modifier")
-    fake_llm = ScriptedLLM([])
+    state_path = tmp_path / "in_mind.json"
     ctx = PluginContext(
-        deps=SimpleNamespace(config=None, llm_clients_by_tag={}),
-        plugin_name="hypothalamus",
-        config={"llm_purposes": {"translator": "_fake_tag"}},
+        deps=SimpleNamespace(
+            config=None,
+            llm_clients_by_tag={},
+            in_mind_state_path=str(state_path),
+        ),
+        plugin_name="in_mind_note",
+        config={},
     )
-    # Bypass the runtime resolver — return our scripted LLM whenever
-    # the factory asks for the bound tag.
-    ctx.get_llm_for_tag = lambda tag: (  # type: ignore[assignment]
-        fake_llm if tag == "_fake_tag" else None
-    )
-    r = load_component(refl_comp, ctx)
+    r = load_component(mod_comp, ctx)
     assert r is not None
-    assert r.role == "hypothalamus"
-    assert r.name == "hypothalamus"
+    assert r.role == "in_mind"
+    assert r.name == "in_mind_note"
 
 
 # ---- Runtime registration end-to-end --------------------------------
@@ -181,13 +175,13 @@ def test_load_component_imports_and_calls_factory():
 
 async def test_runtime_registers_explicit_list_in_order(tmp_path, capsys):
     runtime = build_runtime_with_fakes(
-        self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
+        self_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
-        modifiers=["hypothalamus"],
+        modifiers=["in_mind_note"],
     )
     err = capsys.readouterr().err
     assert "no `plugins:`" not in err
-    assert set(runtime.modifiers.names()) == {"hypothalamus"}
+    assert set(runtime.modifiers.names()) == {"in_mind_note"}
 
 
 async def test_runtime_registers_empty_list_with_no_warning(tmp_path, capsys):
@@ -224,17 +218,17 @@ async def test_runtime_warns_when_modifiers_field_is_none(tmp_path, capsys):
 
 async def test_runtime_skips_unknown_modifier_names_loudly(tmp_path, capsys):
     runtime = build_runtime_with_fakes(
-        self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
+        self_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
         modifiers=[],
     )
     runtime.modifiers._by_role.clear(); runtime.modifiers._order.clear()
     runtime.config.plugins = [
-        "typo_modifier", "hypothalamus",
+        "typo_modifier", "in_mind_note",
     ]
     capsys.readouterr()
 
     runtime._register_plugins_from_config(_minimal_deps_for_runtime(runtime))
     err = capsys.readouterr().err
     assert "typo_modifier" in err
-    assert set(runtime.modifiers.names()) == {"hypothalamus"}
+    assert set(runtime.modifiers.names()) == {"in_mind_note"}

@@ -85,6 +85,13 @@ class DecisionEngine(Protocol):
     ``parse_failures``). Reserved exceptions: ``ValueError`` for
     impl-internal config errors, network errors for LLM-based impls
     — the heartbeat catches and surfaces those as system_event stimuli.
+
+    Optional ``modify_prompt(elements)`` hook — invoked by the
+    heartbeat orchestrator BEFORE plugin Modifier hooks. Lets the
+    Engine teach Self a different action surface (e.g. an LLM
+    translator drops the [ACTION FORMAT] element because its
+    translator handles natural-language decisions). Impls that don't
+    define this method leave the prompt elements untouched.
     """
 
     async def translate(

@@ -120,24 +120,8 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
         factory=llm_factory,
     )
 
-    # ``hypo_llm`` is the LLM client pre-resolved for the
-    # ``hypothalamus`` core purpose — kept on RuntimeDeps for the
-    # in-tree hypothalamus plugin's factory (it pulls
-    # ``deps.hypo_llm`` rather than going through the factory
-    # Engine). The Decision Engine path doesn't need this field;
-    # the alternative HypothalamusDecisionEngine impl pulls its
-    # client via ``factory.client_for_core_purpose('hypothalamus')``
-    # at translate-time.
-    hypo_llm = llm_factory.client_for_core_purpose("hypothalamus")
-
-    # InstallService used to be injected here. Step 13 (Engine
-    # refactor 2026-05) removed the runtime's install machinery —
-    # ``krakey.install`` is now a plain utility module imported by
-    # the CLI + dashboard plugin directly. The runtime no longer
-    # knows install exists.
-
     deps = RuntimeDeps(
-        config=cfg, self_llm=self_llm, hypo_llm=hypo_llm,
+        config=cfg, self_llm=self_llm,
         compact_llm=compact_llm,
         classify_llm=classify_llm, embedder=embedder, reranker=reranker,
         config_path=str(config_path),
