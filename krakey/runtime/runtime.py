@@ -169,9 +169,9 @@ class Runtime:
 
         # Context Engine (prompt assembly). Renamed from the
         # ``prompt_builder`` slot because prompt assembly IS the
-        # engine's job; the old slot field stays in
-        # CoreImplementations for round-trip compat but is no longer
-        # consulted by the runtime. Step 14 cleans up the dead field.
+        # engine's job. The old field name was retired from
+        # CoreImplementations in step 14; configs using it now fall
+        # through to the default (silently dropped by the loader).
         self.context = self._engine_registry.resolve(
             "context",
             default_path=(
