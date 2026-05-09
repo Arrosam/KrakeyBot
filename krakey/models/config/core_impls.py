@@ -26,18 +26,6 @@ class CoreImplementations:
 
     Format: ``module.path:ClassName`` (entry-point style). Empty
     string = use the built-in default.
-
-    Step 14 (Engine refactor 2026-05) retired four legacy field
-    names whose semantics merged or renamed in earlier steps:
-
-      * ``prompt_builder``  → renamed to ``context``
-      * ``sliding_window``  → renamed to ``explicit_history``
-      * ``kb_registry``     → merged into ``memory``
-      * ``sleep_manager``   → merged into ``memory``
-
-    User configs still using the old keys raise a TypeError on
-    config load — the dataclass rejects unknown fields. Migration:
-    rename to the new key name (no other change needed).
     """
 
     # Engine slots — every entry maps to an Engine in
@@ -69,13 +57,9 @@ class CoreImplementations:
 def _build_core_implementations(raw: Any) -> CoreImplementations:
     """Parse the ``core_implementations:`` section of config.yaml.
 
-    Unknown keys are silently dropped — a typo here is a no-op
-    (the resolver sees ``''`` for the slot and falls through to
-    the default). The four legacy keys retired in step 14
-    (prompt_builder / sliding_window / kb_registry / sleep_manager)
-    are also silently dropped via this same mechanism, so older
-    configs round-trip without crashing — the user just loses
-    their override silently and falls back to the default.
+    Unknown keys are silently dropped — a typo here is a no-op (the
+    resolver sees ``''`` for the slot and falls through to the
+    default).
     """
     if not isinstance(raw, dict):
         return CoreImplementations()

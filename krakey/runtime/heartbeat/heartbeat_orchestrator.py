@@ -28,11 +28,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-# BOOTSTRAP_PROMPT + GENESIS loader used to live here for the
-# orchestrator's inline bootstrap-mode handling. Bootstrap moved to
-# its own plugin in step 11; the orchestrator no longer references
-# either symbol — the plugin's modify_prompt hook + EventBus
-# NoteEvent subscription own that flow.
 from krakey.models.config import LLMParams
 from krakey.models.stimulus import Stimulus
 from krakey.prompt.views import ExplicitHistoryRound
@@ -312,8 +307,10 @@ class HeartbeatOrchestrator:
             f"edges={edge_count}{_delta_str(edge_delta)}, fatigue={pct}%"
         )
         if pct >= rt.config.fatigue.force_sleep_threshold:
-            rt.log.hb_warn(f"force-sleep threshold reached (fatigue={pct}%);"
-                              " Sleep mode lands in Phase 2.")
+            rt.log.hb_warn(
+                f"force-sleep threshold reached (fatigue={pct}%); "
+                "entering sleep mode."
+            )
         rt.events.publish(GMStatsEvent(
             heartbeat_id=rt.heartbeat_count,
             node_count=node_count, edge_count=edge_count, fatigue_pct=pct,
@@ -498,12 +495,12 @@ class HeartbeatOrchestrator:
                 c for c in result.tool_calls
                 if c.tool != SLEEP_TOOL_NAME
             ]
-        # Engine-mediated dispatch — runs the 4 side-effects in one
-        # call. The DispatchEngine slot lets users replace local
-        # in-process dispatch with a remote worker / VM-backed
-        # executor / approval-gate wrapper without touching this
-        # phase. Default impl wraps the same DecisionDispatcher
-        # behavior the orchestrator used directly before step 9.
+        # Engine-mediated dispatch — runs the 4 side-effects (log +
+        # publish, dispatch tool calls, apply memory writes, apply
+        # memory updates) in one call. The DispatchEngine slot lets
+        # users replace local in-process dispatch with a remote worker
+        # / VM-backed executor / approval-gate wrapper without
+        # touching this phase.
         await rt.dispatch.dispatch(
             rt.heartbeat_count, result, rt,
             recall_context=recall_result.nodes,
@@ -520,17 +517,10 @@ class HeartbeatOrchestrator:
     async def _phase_idle(self, parsed, recall_result) -> None:
         rt = self._rt
         if recall_result.uncovered_stimuli:
-            base = rt.config.idle.min_interval
+            interval = rt.config.idle.min_interval
         else:
-            base = (parsed.idle_seconds
+            interval = (parsed.idle_seconds
                     or rt.config.idle.default_interval)
-        # Bootstrap mode used to force a 10s cadence here via the
-        # legacy BootstrapCoordinator. After the plugin uplift
-        # (step 11) the bootstrap modifier teaches Self to output
-        # ``[IDLE] 10`` while in bootstrap state — so the same
-        # short-cadence behavior emerges from Self's own [IDLE]
-        # field rather than runtime-side override.
-        interval = base
         rt.log.hb(f"idle {interval}s")
         rt.events.publish(IdleEvent(
             heartbeat_id=rt.heartbeat_count, interval_seconds=interval,

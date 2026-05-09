@@ -75,19 +75,12 @@ def load_self_model_or_default(
 
     Returns ``(self_model_dict, is_bootstrap)``. ``is_bootstrap``
     reflects whether the persisted self-model has been marked
-    complete; the bootstrap plugin further refines this from
-    GM/KB emptiness on RuntimeReadyEvent.
+    complete.
 
-    Migration behavior: any keys present in the YAML but NOT in the
-    current ``default_self_model()`` schema are silently dropped —
-    the one-shot 2026-04-25 self-model slim refactor. If anything
+    Any keys present in the YAML but NOT in the current
+    ``default_self_model()`` schema are silently dropped. If anything
     was dropped the cleaned version is rewritten back so the next
     boot is fast and the file matches what's actually in use.
-
-    Was previously located at ``krakey.bootstrap``; moved alongside
-    the SelfModelStore class in the Engine refactor (2026-05) so
-    the runtime no longer imports from the soon-to-retire
-    ``krakey.bootstrap`` module.
     """
     import logging
 

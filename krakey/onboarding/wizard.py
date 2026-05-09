@@ -84,7 +84,7 @@ def _print_intro(output_fn: OutputFn) -> None:
 
 
 def _section(output_fn: OutputFn, title: str) -> None:
-    """Print a `--- Step N/4: title ---` header, cyan + bold."""
+    """Print a ``--- title ---`` section header, cyan + bold."""
     output_fn("\n" + _ui.cyan(_ui.bold(f"--- {title} ---")))
 
 
@@ -779,6 +779,11 @@ def _build_config(
             "self_thinking": "self_main",
             "compact": "self_main",
             "classifier": "self_main",
+            # Bind hypothalamus to the same chat tag so users who
+            # later switch DecisionEngine to HypothalamusDecisionEngine
+            # (LLM translator) don't have to hand-edit config.yaml to
+            # add a tag mapping the engine looks up at translate-time.
+            "hypothalamus": "self_main",
         }
     embedding_tag: str | None = None
     if embed is not None:

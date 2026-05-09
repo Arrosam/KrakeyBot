@@ -1,13 +1,9 @@
-"""``krakey.install`` — concrete implementation of the
-``InstallService`` Protocol (``krakey/interfaces/install_service.py``).
+"""``krakey.install`` — pip + post_install + install_state.json bookkeeping.
 
-Re-exports the module-level functions for back-compat with tests
-and existing scripts that imported them from ``krakey.cli.install``;
-new code should depend on the Protocol via DI:
-
-    from krakey.interfaces.install_service import InstallService
-
-and let the composition root inject the concrete implementation.
+Plain utility module imported by the CLI (``krakey install`` command)
+and the dashboard plugin's deps panel. Has nothing to do with the
+runtime's heartbeat — install is a pre-startup concern, not part of
+the per-beat loop.
 """
 from krakey.install.service import (
     BUILTIN_ROOT,

@@ -1,25 +1,8 @@
-"""Default ``InstallService`` implementation — pip + post_install
-+ install_state.json bookkeeping.
+"""``DefaultInstallService`` + module-level functions for the install
+flow — pip + post_install + install_state.json bookkeeping.
 
-The Protocol lives in ``krakey/interfaces/install_service.py``.
-Consumers (Runtime, InstallTool, dashboard adapter) depend ONLY
-on the Protocol; this module is the single concrete provider.
-
-Why this lives in ``krakey/install/`` and not ``krakey/cli/``:
-
-  - ``cli/install.py`` originally contained both the CLI handler
-    AND the implementation. That coupled the runtime + dashboard
-    to ``krakey.cli`` (the CLI is supposed to be a wrapper around
-    the runtime, not a dependency of it).
-  - Moving the impl up one level lets cli/runtime/dashboard all
-    depend on the same place via the Protocol, and gives a
-    natural home for any future install variants (HTTP-backed
-    installer, dry-run-only fake, etc.).
-
-The module-level functions are kept for back-compat with
-existing tests + scripts that call them directly. Production
-code should construct ``DefaultInstallService()`` and depend on
-the Protocol.
+Imported by the CLI (``krakey install`` subcommand) and the dashboard
+plugin's deps panel. Not part of the heartbeat loop.
 """
 from __future__ import annotations
 
@@ -42,15 +25,7 @@ from krakey.plugin_system.loader import (
 
 @dataclass
 class InstallResult:
-    """Outcome of a single install run.
-
-    Was previously declared on the InstallService Protocol module
-    in ``krakey/interfaces/install_service.py``; that Protocol was
-    retired in step 13 (Engine refactor 2026-05) when install
-    stopped being a runtime concept. The dataclass moved alongside
-    the only remaining consumer — DefaultInstallService below —
-    so the install module is self-contained.
-    """
+    """Outcome of a single install run."""
     rc: int
     stdout: str
     stderr: str

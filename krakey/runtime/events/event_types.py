@@ -117,16 +117,12 @@ class DispatchEvent(_BaseEvent):
     """A tool call has been dispatched. Carries the structured
     args (``params``) so observers can show what was actually run,
     not just the (sometimes empty) human-readable ``intent`` label.
-
-    ``params`` defaults to an empty dict for back-compat with any
-    older event consumer that constructed DispatchEvent without
-    threading args through.
     """
     heartbeat_id: int
     tool: str
     intent: str
     adrenalin: bool
-    params: dict[str, Any] = field(default_factory=dict)
+    params: dict[str, Any]
 
 
 @dataclass

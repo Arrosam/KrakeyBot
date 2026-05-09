@@ -28,11 +28,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from krakey.interfaces.engines.decision import (
-    DecisionResult,
-    ParseFailure,
-    ToolCall,
-)
+from krakey.interfaces.engines.decision import DecisionResult
 from krakey.runtime.heartbeat.action_executor import (
     parse_tool_calls_with_failures,
 )
@@ -41,16 +37,13 @@ from krakey.runtime.heartbeat.action_executor import (
 class ToolCallParserDecisionEngine:
     """Default DecisionEngine — scripts tool_call tag parsing.
 
-    Stateless. Accepts an optional ``cfg`` kwarg for signature
-    uniformity with other DecisionEngine impls (e.g.
-    ``HypothalamusDecisionEngine`` needs cfg to resolve its
-    translator LLM); the parser doesn't use config so it just
-    accepts and ignores.
+    Stateless. Accepts ``cfg`` + ``factory`` kwargs for signature
+    uniformity with other DecisionEngine impls
+    (HypothalamusDecisionEngine needs them); the script parser
+    ignores both.
     """
 
     def __init__(self, *, cfg=None, factory=None):
-        # cfg + factory accepted for signature uniformity with other
-        # DecisionEngine impls. The script parser uses neither.
         del cfg, factory
 
     async def translate(
@@ -67,33 +60,9 @@ class ToolCallParserDecisionEngine:
         # use the live tool list without a separate Protocol.
         del raw, tools
 
-        legacy_calls, legacy_failures = parse_tool_calls_with_failures(
+        tool_calls, parse_failures = parse_tool_calls_with_failures(
             decision,
         )
-
-        # parse_tool_calls_with_failures still produces the legacy
-        # (modifier.py) ToolCall + ParseFailure dataclasses. Convert
-        # to the new (engines/decision.py) shapes so the heartbeat
-        # consumes a single canonical type. Step 14 unifies the
-        # legacy types via re-export, eliminating this conversion.
-        tool_calls = [
-            ToolCall(
-                tool=c.tool,
-                intent=c.intent,
-                params=dict(c.params or {}),
-                adrenalin=c.adrenalin,
-            )
-            for c in legacy_calls
-        ]
-        parse_failures = [
-            ParseFailure(
-                payload=f.payload,
-                error=f.error,
-                block_index=f.block_index,
-                salvaged=f.salvaged,
-            )
-            for f in legacy_failures
-        ]
         return DecisionResult(
             tool_calls=tool_calls,
             memory_writes=[],

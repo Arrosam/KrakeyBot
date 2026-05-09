@@ -102,19 +102,6 @@ async def test_dispatch_event_carries_params_for_observability():
     assert "hi from test" in e.intent
 
 
-def test_dispatch_event_default_params_is_empty_dict():
-    """Back-compat: DispatchEvent constructs without ``params``
-    (any pre-existing caller / test helper that hadn't been
-    updated keeps working). Default is an empty dict, not None."""
-    from krakey.runtime.events.event_types import DispatchEvent
-
-    e = DispatchEvent(
-        heartbeat_id=1, tool="x", intent="y", adrenalin=False,
-    )
-    assert e.params == {}
-    assert isinstance(e.params, dict)
-
-
 async def test_no_action_decision_runs_no_tool():
     self_llm = ScriptedLLM([
         "[DECISION]\nNo action.\n[IDLE]\n1"

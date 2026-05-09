@@ -170,11 +170,7 @@ class Runtime:
             state_path=sw_state_path,
         )
 
-        # Context Engine (prompt assembly). Renamed from the
-        # ``prompt_builder`` slot because prompt assembly IS the
-        # engine's job. The old field name was retired from
-        # CoreImplementations in step 14; configs using it now fall
-        # through to the default (silently dropped by the loader).
+        # Context Engine — prompt assembly.
         self.context = self._engine_registry.resolve(
             "context",
             default_path=(
@@ -263,10 +259,6 @@ class Runtime:
         # Built-in tools registered BEFORE the plugin loader runs so
         # plugins can't shadow them by registering a same-named Tool
         # (the registry's register() raises on duplicate name).
-        # SleepTool is the only built-in remaining after step 13;
-        # InstallTool was retired alongside the runtime's
-        # install_service field — install is now a CLI/dashboard
-        # utility outside the heartbeat loop's concern.
         from krakey.runtime.builtin_tools import SleepTool
         self.tools.register(SleepTool())
         # Each plugin's config lives at
@@ -368,12 +360,8 @@ class Runtime:
         self._deps = deps
 
         self.heartbeat_count = 0
-        # Sleep cycle counter — runtime-only. Used to be persisted in
-        # self_model.statistics.total_sleep_cycles, but stats was the
-        # bulk of self_model's noise (most fields never written) so the
-        # 2026-04-25 slim refactor pulled them all out. Per-process
-        # counter is enough for /status and dashboard display; cross-run
-        # totals weren't actually used by any product feature.
+        # Per-process sleep-cycle counter, surfaced via /status + the
+        # dashboard. Not persisted across restarts.
         self._sleep_cycles = 0
         self._stop = False
         self._min = idle_min if idle_min is not None else self.config.idle.min_interval
@@ -383,15 +371,6 @@ class Runtime:
         self._classify_tasks: list[asyncio.Task] = []
         self._last_node_count = 0
         self._last_edge_count = 0
-
-        # DecisionDispatcher used to be constructed here as
-        # self._dispatcher and called directly from the orchestrator's
-        # _phase_apply_decision in 4 separate calls. After the
-        # DispatchEngine refactor (step 9, 2026-05) the orchestrator
-        # makes one call to ``self.dispatch.dispatch(...)`` and
-        # the engine wraps the same DecisionDispatcher class
-        # internally. No public API change; runtime no longer needs
-        # to hold a direct dispatcher reference.
 
         # Heartbeat algorithm — owns the per-beat orchestration but
         # holds no state. Reads + mutates Runtime fields through the

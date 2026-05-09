@@ -140,12 +140,6 @@ class DecisionDispatcher:
         # from the dispatch: by the time feedback arrives Self has
         # already acted on the urgent upstream signal, and re-waking
         # for the echo just produces avoidable heartbeats.
-        #
-        # All tool output goes through ONE log channel — the
-        # previous internal/chat split was driven by a self-declared
-        # ``Tool.is_internal`` flag, removed because a malicious
-        # plugin could set it True to hide its actions from operator
-        # view. Operator transparency wins over log-color aesthetics.
         self._log.chat(call.tool, stim.content)
         self._events.publish(ToolResultEvent(
             tool=call.tool, content=stim.content,

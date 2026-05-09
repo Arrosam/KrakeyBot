@@ -1,10 +1,5 @@
 """``HypothalamusDecisionEngine`` — LLM-driven DecisionEngine impl.
 
-Lifted from the in-tree ``hypothalamus`` plugin (Engine refactor 2026-05).
-The LLM-translator behavior — turning Self's natural-language [DECISION]
-into structured ``ToolCall``s + memory writes/updates + sleep flag —
-is now an Engine slot impl rather than a Modifier-role plugin.
-
 Users opt in via::
 
     core_implementations:
@@ -18,21 +13,8 @@ core-purpose entry::
         hypothalamus: <some_tag>
 
 When that purpose isn't bound, ``translate()`` raises ``RuntimeError``
-on first invocation. This is the equivalent of the plugin's old
-"factory returned None and the loader skipped the modifier" path
-— previously the runtime fell back to the script parser; now,
-under Engine-only dispatch, the user must either bind the
-purpose or pick a different DecisionEngine impl.
-
-Migration note: during the transitional period (steps 7b → 12)
-this Engine constructs its OWN ``DefaultLLMClientFactoryEngine``
-from ``cfg`` rather than receiving the runtime's central factory.
-Consequence: Hypothalamus's LLM client is cached separately from
-the embedder / reranker / core-purpose clients held by the runtime
-factory, so two clients for the same tag can coexist. The unified
-factory injection lands in step 12 once every Engine takes its
-shared dependencies through the EngineRegistry constructor's
-kwargs uniformly.
+on first invocation; the user must either bind the purpose or pick a
+different DecisionEngine impl.
 """
 from __future__ import annotations
 
@@ -106,12 +88,12 @@ class HypothalamusDecisionEngine:
         cfg: "Config | None" = None,
         factory: Any = None,
     ):
-        # Shared-factory injection (step 12): the runtime passes its
-        # own LLMClientFactoryEngine via ``factory`` so this Engine
-        # observes the same per-tag client cache as Embedder /
-        # Reranker / core-purpose lookups. cfg is accepted for
-        # signature uniformity but only used to build a private
-        # factory if the caller didn't supply one.
+        # ``factory`` is the shared LLMClientFactoryEngine. Runtime
+        # always supplies one in production so this Engine observes
+        # the same per-tag client cache as the Embedder + core-purpose
+        # lookups. ``cfg`` is accepted as a fallback for callers that
+        # construct the engine standalone (tests, ad-hoc scripts) and
+        # is only consulted when ``factory`` is None.
         self._cfg = cfg
         if factory is None:
             if cfg is None:

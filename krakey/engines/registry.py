@@ -1,13 +1,6 @@
 """``EngineRegistry`` — turn ``cfg.core_implementations.<slot>`` dotted
 paths (or built-in defaults) into concrete Engine instances.
 
-Replaces the previous ``ServiceResolver`` mechanism with the same
-fail-fast semantics but a different scope: ServiceResolver was a
-generic single-slot resolver; EngineRegistry is the Engine-only
-resolver that ultimately produces a fully-populated ``EngineBundle``
-in one batch (``resolve_all`` lands in step 12 once every default
-impl exists).
-
 Failure modes (all loud — DIP says fail-fast at startup beats failing
 30 minutes into a session with a confusing AttributeError):
 
@@ -124,13 +117,9 @@ def _filter_kwargs(cls: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
 class EngineRegistry:
     """Resolves Engine slots to concrete instances.
 
-    Constructed once per Runtime from a parsed ``Config``. Step 12
-    will add a ``resolve_all(deps)`` batch method that walks every
-    Engine slot in dependency order and returns an ``EngineBundle``;
-    until then, callers use ``resolve(slot, default_path=..., ...)``
-    one slot at a time.
-
-    The user override is read from ``cfg.core_implementations.<slot>``
+    Constructed once per Runtime from a parsed ``Config``. Callers
+    use ``resolve(slot, default_path=..., ...)`` one slot at a time;
+    the user override is read from ``cfg.core_implementations.<slot>``
     via ``CoreImplementations.get(slot)``, which returns ``""`` for
     unset / unknown slots. Empty override falls back to the supplied
     ``default_path``. Both empty → ``ValueError`` (a slot with neither
@@ -172,10 +161,9 @@ class EngineRegistry:
 
         cls = self._import(path)
         # Filter kwargs to those the class's __init__ accepts — keeps
-        # back-compat with user overrides whose signatures predate a
-        # kwarg's addition (e.g. a custom embedder class that doesn't
-        # know about the ``factory`` kwarg the runtime started passing
-        # in step 12).
+        # user overrides working when they declare a narrower
+        # signature than the runtime supplies (e.g. a custom embedder
+        # that doesn't take ``factory``).
         accepted_kwargs = _filter_kwargs(cls, kwargs)
         try:
             instance = cls(**accepted_kwargs)

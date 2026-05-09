@@ -167,13 +167,9 @@ class RuntimePluginsService:
         return {"project": project, "path": str(path), "config": values}
 
     # ---- deps install status / install dispatch ----
-    #
-    # Both delegate to the DefaultInstallService utility class. After
-    # the Engine refactor (step 13, 2026-05) the runtime no longer
-    # holds an InstallService reference — install is a CLI/dashboard
-    # utility that has nothing to do with the heartbeat. The plugin
-    # imports it directly from ``krakey.install`` (a plain utility
-    # module, not a runtime engine).
+    # Both delegate to the DefaultInstallService utility class
+    # imported from ``krakey.install``. Install is a pre-startup
+    # concern — the runtime has no reference to it.
 
     def _install_service(self):
         from krakey.install import DefaultInstallService
