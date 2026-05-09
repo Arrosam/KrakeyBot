@@ -523,15 +523,16 @@ class HeartbeatOrchestrator:
                 c for c in result.tool_calls
                 if c.tool != SLEEP_TOOL_NAME
             ]
-        rt._dispatcher.log_summary(rt.heartbeat_count, result)
-        await rt._dispatcher.dispatch_tool_calls(
-            rt.heartbeat_count, result.tool_calls,
+        # Engine-mediated dispatch — runs the 4 side-effects in one
+        # call. The DispatchEngine slot lets users replace local
+        # in-process dispatch with a remote worker / VM-backed
+        # executor / approval-gate wrapper without touching this
+        # phase. Default impl wraps the same DecisionDispatcher
+        # behavior the orchestrator used directly before step 9.
+        await rt.dispatch_engine.dispatch(
+            rt.heartbeat_count, result, rt,
+            recall_context=recall_result.nodes,
         )
-        await rt._dispatcher.apply_memory_writes(
-            result.memory_writes, recall_result.nodes,
-            rt.heartbeat_count,
-        )
-        await rt._dispatcher.apply_memory_updates(result.memory_updates)
         return bool(result.sleep)
 
     def _phase_schedule_classify(self) -> None:

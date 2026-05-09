@@ -166,6 +166,7 @@ class Runtime:
         from krakey.interfaces.engines import (
             ContextEngine,
             DecisionEngine,
+            DispatchEngine,
             ExplicitHistoryEngine,
             MemoryEngine,
             RecallEngine,
@@ -275,6 +276,22 @@ class Runtime:
             memory=self.memory,
             embedder=deps.embedder,
             reranker=deps.reranker,
+        )
+
+        # Dispatch Engine — runs the 4 side-effects of a
+        # DecisionResult (log + publish, dispatch tool calls,
+        # apply memory writes, apply memory updates). Default
+        # impl wraps the long-standing DecisionDispatcher class
+        # so behavior is unchanged. Users override via
+        # cfg.core_implementations.dispatch (e.g. RemoteDispatchEngine
+        # ships tool execution to a worker over HTTP).
+        self.dispatch_engine = self._engine_registry.resolve(
+            "dispatch",
+            default_path=(
+                "krakey.engines.dispatch.default:LocalDispatchEngine"
+            ),
+            expected_protocol=DispatchEngine,
+            cfg=self.config,
         )
 
         # InstallService — runtime depends on the Protocol via DI;
@@ -430,21 +447,14 @@ class Runtime:
         self._last_node_count = 0
         self._last_edge_count = 0
 
-        # DecisionDispatcher — executes the 4 side-effects of a
-        # DecisionResult (log+publish summary, dispatch tool calls,
-        # apply memory writes, apply memory updates). Pure composition
-        # over the same 5 collaborators (tools, batch_tracker,
-        # buffer, gm, log+events). Built once; heartbeat passes its
-        # current heartbeat_id on each call.
-        from krakey.runtime.heartbeat.dispatcher import DecisionDispatcher
-        self._dispatcher = DecisionDispatcher(
-            tools=self.tools,
-            batch_tracker=self.batch_tracker,
-            buffer=self.buffer,
-            gm=self.gm,
-            log=self.log,
-            events=self.events,
-        )
+        # DecisionDispatcher used to be constructed here as
+        # self._dispatcher and called directly from the orchestrator's
+        # _phase_apply_decision in 4 separate calls. After the
+        # DispatchEngine refactor (step 9, 2026-05) the orchestrator
+        # makes one call to ``self.dispatch_engine.dispatch(...)`` and
+        # the engine wraps the same DecisionDispatcher class
+        # internally. No public API change; runtime no longer needs
+        # to hold a direct dispatcher reference.
 
         # Heartbeat algorithm — owns the per-beat orchestration but
         # holds no state. Reads + mutates Runtime fields through the

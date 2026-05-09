@@ -56,4 +56,15 @@ class DispatchEngine(Protocol):
         heartbeat_id: int,
         decision_result: "DecisionResult",
         runtime: "Runtime",
-    ) -> None: ...
+        *,
+        recall_context: list[dict] | None = None,
+    ) -> None:
+        """Run the 4 side-effects of a DecisionResult.
+
+        ``recall_context`` is the heartbeat's RecallResult.nodes
+        list; ``apply_memory_writes`` forwards it to
+        ``MemoryEngine.explicit_write`` so the extractor LLM can
+        skip duplicating content already surfaced in recall.
+        Optional — None / [] is acceptable when the caller has no
+        recall context to share."""
+        ...
