@@ -1,4 +1,9 @@
-"""CoreImplementations config section parsing + round-trip."""
+"""CoreImplementations config section parsing + round-trip.
+
+Step 14 (Engine refactor 2026-05) retired four legacy field names:
+prompt_builder → context, sliding_window → explicit_history,
+kb_registry + sleep_manager merged into memory. These tests now
+exercise the canonical names."""
 from __future__ import annotations
 
 import textwrap
@@ -19,7 +24,7 @@ def _write(tmp_path, body):
 def test_default_config_has_empty_core_implementations():
     cfg = Config()
     assert isinstance(cfg.core_implementations, CoreImplementations)
-    assert cfg.core_implementations.prompt_builder == ""
+    assert cfg.core_implementations.context == ""
     assert cfg.core_implementations.embedder == ""
     assert cfg.core_implementations.memory == ""
 
@@ -33,11 +38,11 @@ def test_get_returns_empty_for_unknown_slot():
 def test_load_config_parses_core_implementations(tmp_path):
     p = _write(tmp_path, """
         core_implementations:
-          prompt_builder: "my_pkg.prompts:CustomBuilder"
+          context: "my_pkg.prompts:CustomBuilder"
           embedder: "my_pkg.embed:CustomEmbedder"
     """)
     cfg = load_config(p)
-    assert cfg.core_implementations.prompt_builder == \
+    assert cfg.core_implementations.context == \
         "my_pkg.prompts:CustomBuilder"
     assert cfg.core_implementations.embedder == \
         "my_pkg.embed:CustomEmbedder"
@@ -53,31 +58,45 @@ def test_load_config_missing_section_uses_defaults(tmp_path):
     """)
     cfg = load_config(p)
     assert isinstance(cfg.core_implementations, CoreImplementations)
-    assert cfg.core_implementations.prompt_builder == ""
+    assert cfg.core_implementations.context == ""
 
 
 def test_unknown_keys_are_silently_dropped():
     """A typo in core_implementations doesn't crash; the resolver will
-    later see '' for the slot and use the default. (This is a deliberate
-    permissive choice — a strict mode could be added later.)"""
+    later see '' for the slot and use the default. (Permissive
+    choice — a strict mode could be added later.)
+
+    The four retired legacy keys (prompt_builder / sliding_window /
+    kb_registry / sleep_manager) take this path: silently dropped
+    by the loader, override silently lost. Documented migration
+    path: rename to the new key (no other change needed)."""
     impls = _build_core_implementations({
-        "prompt_builder": "x:Y",
-        "made_up_slot_xyz": "z:W",   # typo or future slot — ignored
+        "context": "x:Y",
+        "made_up_slot_xyz": "z:W",         # typo / future slot
+        "prompt_builder": "legacy:LB",     # retired
+        "sliding_window": "legacy:LSW",    # retired
+        "kb_registry": "legacy:LKB",       # retired
+        "sleep_manager": "legacy:LSM",     # retired
     })
-    assert impls.prompt_builder == "x:Y"
+    assert impls.context == "x:Y"
     assert not hasattr(impls, "made_up_slot_xyz")
+    # Legacy fields are not on the dataclass any more
+    assert not hasattr(impls, "prompt_builder")
+    assert not hasattr(impls, "sliding_window")
+    assert not hasattr(impls, "kb_registry")
+    assert not hasattr(impls, "sleep_manager")
 
 
 def test_dump_round_trip_preserves_overrides(tmp_path):
     """dump_config(cfg) -> load_config(...) preserves core_implementations."""
     cfg = Config(core_implementations=CoreImplementations(
-        prompt_builder="my:PB",
+        context="my:PB",
         embedder="my:E",
     ))
     path = tmp_path / "rt.yaml"
     path.write_text(dump_config(cfg), encoding="utf-8")
     loaded = load_config(path)
-    assert loaded.core_implementations.prompt_builder == "my:PB"
+    assert loaded.core_implementations.context == "my:PB"
     assert loaded.core_implementations.embedder == "my:E"
 
 
@@ -85,6 +104,6 @@ def test_non_dict_input_returns_defaults():
     """A scalar value where a dict was expected → fall back to defaults
     rather than crash. (Loud crash would mask other config errors;
     individual slot validation lives in the resolver.)"""
-    assert _build_core_implementations("garbage").prompt_builder == ""
-    assert _build_core_implementations(None).prompt_builder == ""
-    assert _build_core_implementations(42).prompt_builder == ""
+    assert _build_core_implementations("garbage").context == ""
+    assert _build_core_implementations(None).context == ""
+    assert _build_core_implementations(42).context == ""

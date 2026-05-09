@@ -1,20 +1,18 @@
 """Core service slot overrides — let users replace built-in core
-implementations (memory, prompt builder, embedder, ...) with their own.
+Engine implementations (memory, context, embedder, ...) with their own.
 
-The user writes a dotted path in config.yaml; the runtime imports it
-at startup, instantiates with runtime-supplied kwargs, and validates
-the result satisfies the slot's Protocol. Empty / missing slots fall
-back to the built-in default.
+The user writes a dotted path in config.yaml; the EngineRegistry
+imports it at startup, instantiates with runtime-supplied kwargs,
+and validates the result satisfies the slot's Engine Protocol.
+Empty / missing slots fall back to the built-in default impl.
 
-This file owns ONLY the config dataclass + its loader. The actual
-import + validation lives in
-``krakey.runtime.service_resolver.ServiceResolver``; the per-slot
-Protocols live under ``krakey.interfaces.services.<slot>``.
+The actual import + validation lives in
+``krakey.engines.registry.EngineRegistry``; the per-slot Protocols
+live under ``krakey.interfaces.engines.<slot>``.
 
 Slot fields are ALL declared optional with empty-string defaults so
-omitting the whole section in config.yaml is the same as opting in to
-the built-in defaults across the board — the additive-plugin spirit
-applied to core: nothing happens unless the user opts in.
+omitting the section in config.yaml is the same as opting in to the
+built-in defaults across the board.
 """
 from __future__ import annotations
 
@@ -24,74 +22,60 @@ from typing import Any
 
 @dataclass
 class CoreImplementations:
-    """Optional dotted-path overrides for built-in core services.
+    """Dotted-path overrides for built-in core Engine impls.
 
-    Each field corresponds to a ``slot`` in
-    ``ServiceResolver.resolve(slot=...)``. Format:
-    ``module.path:ClassName`` (standard entry-point style). Empty
+    Format: ``module.path:ClassName`` (entry-point style). Empty
     string = use the built-in default.
 
-    Phase 1 surfaces three slots — ``embedder``, ``reranker``,
-    ``prompt_builder`` — because they already have Protocols (or
-    are stateless enough to give one easily). The remaining fields
-    are reserved for later phases and currently still ignored by
-    the resolver; declared here so config files don't break when
-    later phases ship.
+    Step 14 (Engine refactor 2026-05) retired four legacy field
+    names whose semantics merged or renamed in earlier steps:
+
+      * ``prompt_builder``  → renamed to ``context``
+      * ``sliding_window``  → renamed to ``explicit_history``
+      * ``kb_registry``     → merged into ``memory``
+      * ``sleep_manager``   → merged into ``memory``
+
+    User configs still using the old keys raise a TypeError on
+    config load — the dataclass rejects unknown fields. Migration:
+    rename to the new key name (no other change needed).
     """
 
-    # Phase 1 — wired through resolver:
+    # Engine slots — every entry maps to an Engine in
+    # ``krakey.engines.<slot>`` resolved by EngineRegistry.
     embedder: str = ""
     reranker: str = ""
-    prompt_builder: str = ""
-
-    # Phase 2+ — declared so configs round-trip; resolver does NOT
-    # consult these yet. Setting them today is silently ignored
-    # until the matching phase ships its Protocol + wiring.
     memory: str = ""
-    kb_registry: str = ""
-    sliding_window: str = ""
-    sleep_manager: str = ""
-    llm_client_factory: str = ""
-
-    # Engine-refactor slots (Engine branch). Declared so the new
-    # ``EngineRegistry.resolve`` mechanism can address them by name;
-    # actual wiring lands as steps 3-12 retire the old slots above.
-    # ``context`` will eventually replace ``prompt_builder``,
-    # ``explicit_history`` replaces ``sliding_window``, and
-    # ``kb_registry`` + ``sleep_manager`` collapse into ``memory``.
-    # ``llm_factory`` sits one layer above ``llm_client_factory``:
-    # the latter still substitutes the LLMClient *class* per tag
-    # (old behavior), the former substitutes the entire factory
-    # Engine that orchestrates tag→client resolution + caching +
-    # cfg access on behalf of every other Engine.
     context: str = ""
     explicit_history: str = ""
     decision: str = ""
     recall: str = ""
     heartbeat: str = ""
     dispatch: str = ""
+
+    # ``llm_factory`` substitutes the long-lived
+    # LLMClientFactoryEngine — the only Engine that touches
+    # ``cfg.llm``. ``llm_client_factory`` is one layer below: the
+    # legacy per-tag LLMClient *class* substitution slot used
+    # internally by ``resolve_llm_for_tag``. Both coexist by
+    # design (factory Engine vs. per-tag class).
     llm_factory: str = ""
+    llm_client_factory: str = ""
 
     def get(self, slot: str) -> str:
-        """Return the override path for a slot, or '' if not set.
-
-        Used by ``ServiceResolver`` so it doesn't have to know which
-        slots exist as fields — slots not on this dataclass simply
-        return ''.
-        """
+        """Return the override path for a slot, or '' if not set."""
         return getattr(self, slot, "") or ""
 
 
 def _build_core_implementations(raw: Any) -> CoreImplementations:
     """Parse the ``core_implementations:`` section of config.yaml.
 
-    Robust to:
-      * missing section (raw == {} or None) → all defaults
-      * non-dict input → log nothing, return defaults (loader-level
-        warning would obscure real config errors)
-      * unknown keys → silently dropped (a user typo here is a no-op,
-        not a crash; the resolver will see ``''`` for the slot and
-        fall through to the default)
+    Unknown keys are silently dropped — a typo here is a no-op
+    (the resolver sees ``''`` for the slot and falls through to
+    the default). The four legacy keys retired in step 14
+    (prompt_builder / sliding_window / kb_registry / sleep_manager)
+    are also silently dropped via this same mechanism, so older
+    configs round-trip without crashing — the user just loses
+    their override silently and falls back to the default.
     """
     if not isinstance(raw, dict):
         return CoreImplementations()
