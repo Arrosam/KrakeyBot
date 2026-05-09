@@ -199,8 +199,8 @@ async def test_builtin_sleep_tool_triggers_voluntary_sleep_no_hypothalamus(tmp_p
     runtime.sleep_log_dir = str(tmp_path / "logs")
     runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
     runtime.self_model = default_self_model()
-    await runtime.gm.initialize()
-    await runtime.gm.insert_node(
+    await runtime.memory.initialize()
+    await runtime.memory.insert_node(
         name="apple", category="FACT", description="red fruit",
         embedding=[1.0, 0.0],
     )
@@ -208,7 +208,7 @@ async def test_builtin_sleep_tool_triggers_voluntary_sleep_no_hypothalamus(tmp_p
     await runtime.run(iterations=1)
 
     # Sleep ran end-to-end: FACT migrated out of GM, sleep counter bumped.
-    assert await runtime.gm.list_nodes(category="FACT") == []
+    assert await runtime.memory.list_nodes(category="FACT") == []
     assert runtime._sleep_cycles == 1
     drained = runtime.buffer.drain()
     wake = [s for s in drained if s.source == "system:sleep"]
@@ -396,14 +396,14 @@ async def test_heartbeat_with_connected_recall_nodes_does_not_crash():
         embedder=MapEmbedder(),
     )
     # Initialize GM first so we can seed it before running.
-    await runtime.gm.initialize()
-    a = await runtime.gm.insert_node(name="apple", category="FACT",
+    await runtime.memory.initialize()
+    a = await runtime.memory.insert_node(name="apple", category="FACT",
                                        description="red fruit",
                                        embedding=[1.0, 0.0])
-    f = await runtime.gm.insert_node(name="fruit", category="KNOWLEDGE",
+    f = await runtime.memory.insert_node(name="fruit", category="KNOWLEDGE",
                                        description="category of foods",
                                        embedding=[0.99, 0.14])
-    await runtime.gm.insert_edge_with_cycle_check(a, f, "RELATED_TO")
+    await runtime.memory.insert_edge_with_cycle_check(a, f, "RELATED_TO")
 
     # Seed a user stimulus that embeds close to apple → recall finds both,
     # plus the edge between them, exercising the builder's edge rendering.
@@ -440,8 +440,8 @@ async def test_voluntary_sleep_via_hypothalamus_runs_full_sleep(tmp_path):
     runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
     runtime.self_model = default_self_model()
     # Pre-seed a FACT so sleep has something to migrate
-    await runtime.gm.initialize()
-    await runtime.gm.insert_node(
+    await runtime.memory.initialize()
+    await runtime.memory.insert_node(
         name="apple", category="FACT", description="red fruit",
         embedding=[1.0, 0.0],
     )
@@ -449,10 +449,10 @@ async def test_voluntary_sleep_via_hypothalamus_runs_full_sleep(tmp_path):
     await runtime.run(iterations=1)
 
     # FACT migrated → no longer in GM
-    facts = await runtime.gm.list_nodes(category="FACT")
+    facts = await runtime.memory.list_nodes(category="FACT")
     assert facts == []
     # KB created with 1 entry
-    kbs = await runtime.kb_registry.list_kbs()
+    kbs = await runtime.memory.list_kbs()
     assert len(kbs) == 1
     # Wake-up stimulus pushed
     drained = runtime.buffer.drain()
@@ -479,9 +479,9 @@ async def test_force_sleep_when_fatigue_exceeds_threshold(tmp_path):
     runtime.config.fatigue.gm_node_soft_limit = 5
     runtime.config.fatigue.force_sleep_threshold = 100
     # Pre-seed enough nodes to push fatigue ≥ 100%
-    await runtime.gm.initialize()
+    await runtime.memory.initialize()
     for i in range(6):
-        await runtime.gm.insert_node(
+        await runtime.memory.insert_node(
             name=f"n{i}", category="FACT", description=f"fact {i}",
             embedding=[1.0, 0.01 * i],
         )
@@ -496,7 +496,7 @@ async def test_force_sleep_when_fatigue_exceeds_threshold(tmp_path):
     assert len(wake) == 1
     assert "fatigue" in wake[0].content.lower() or "fell asleep" in wake[0].content.lower()
     # FACTs migrated
-    assert await runtime.gm.list_nodes(category="FACT") == []
+    assert await runtime.memory.list_nodes(category="FACT") == []
     await runtime.close()
 
 
@@ -596,8 +596,8 @@ async def test_command_sleep_triggers_full_sleep(tmp_path):
     runtime.sleep_log_dir = str(tmp_path / "logs")
     runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
     runtime.self_model = default_self_model()
-    await runtime.gm.initialize()
-    await runtime.gm.insert_node(
+    await runtime.memory.initialize()
+    await runtime.memory.insert_node(
         name="apple", category="FACT", description="red fruit",
         embedding=[1.0, 0.0],
     )
@@ -607,7 +607,7 @@ async def test_command_sleep_triggers_full_sleep(tmp_path):
     ))
     await runtime.run(iterations=1)
     # Inspect before close (close shuts down the GM connection).
-    assert await runtime.gm.list_nodes(category="FACT") == []
+    assert await runtime.memory.list_nodes(category="FACT") == []
     # In-memory counter (2026-04-25 self-model slim).
     assert runtime._sleep_cycles == 1
     await runtime.close()
@@ -662,8 +662,8 @@ async def test_self_can_dispatch_memory_recall_and_see_feedback():
         embedder=MapEmbed(),
     )
     # Pre-seed GM with an apple node so recall returns something concrete.
-    await runtime.gm.initialize()
-    await runtime.gm.insert_node(
+    await runtime.memory.initialize()
+    await runtime.memory.insert_node(
         name="apple", category="FACT", description="red fruit",
         embedding=[1.0, 0.0],
     )
@@ -736,7 +736,7 @@ async def test_tool_feedback_auto_ingested_to_gm():
         content="hi", timestamp=datetime.now(), adrenalin=True,
     ))
     await runtime.run(iterations=2)
-    nodes = await runtime.gm.list_nodes()
+    nodes = await runtime.memory.list_nodes()
     contents = [n["description"] for n in nodes]
     # web_chat_reply's feedback "Sent to web chat (N chars)." gets auto_ingested
     assert any("sent to web chat" in c.lower() for c in contents), contents
@@ -807,7 +807,7 @@ async def test_explicit_write_from_hypothalamus_memory_writes():
     ))
     await runtime.run(iterations=1)
 
-    nodes = await runtime.gm.list_nodes()
+    nodes = await runtime.memory.list_nodes()
     names = [n["name"] for n in nodes]
     assert "user pref verbose" in names
 

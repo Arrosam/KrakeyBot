@@ -38,7 +38,6 @@ plugin invariant).
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import sys
 from typing import TYPE_CHECKING, Any
@@ -71,14 +70,12 @@ class BootstrapModifier:
         self,
         *,
         self_model_store: "SelfModelStore",
-        memory: Any,
         events: Any,
         plugin_config_store: FilePluginConfigStore,
         plugin_config: dict[str, Any],
         genesis_path: str = "workspace/GENESIS.md",
     ):
         self._store = self_model_store
-        self._memory = memory
         self._events = events
         self._plugin_config_store = plugin_config_store
         # Snapshot of the per-plugin config at construction time —
@@ -237,8 +234,8 @@ class BootstrapModifier:
 
 def build_modifier(ctx: "PluginContext") -> BootstrapModifier:
     """Factory invoked by ``load_component``. Pulls SelfModelStore +
-    MemoryEngine + EventBus from ``ctx.services`` and the GENESIS
-    path from the plugin's own config.yaml.
+    EventBus from ``ctx.services`` and the GENESIS path from the
+    plugin's own config.yaml.
 
     Also constructs a ``FilePluginConfigStore`` rooted at the same
     plugin_configs directory the runtime uses, so the modifier can
@@ -259,7 +256,6 @@ def build_modifier(ctx: "PluginContext") -> BootstrapModifier:
     plugin_config_store = FilePluginConfigStore(plugin_root)
     return BootstrapModifier(
         self_model_store=services["self_model_store"],
-        memory=services.get("memory") or services.get("gm"),
         events=services["events"],
         plugin_config_store=plugin_config_store,
         plugin_config=plugin_config,

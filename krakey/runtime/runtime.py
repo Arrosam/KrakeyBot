@@ -156,7 +156,7 @@ class Runtime:
             RecallEngine,
         )
         self._engine_registry = EngineRegistry(self.config)
-        self.window = self._engine_registry.resolve(
+        self.explicit_history = self._engine_registry.resolve(
             "explicit_history",
             default_path=(
                 "krakey.engines.explicit_history.default:"
@@ -172,7 +172,7 @@ class Runtime:
         # engine's job; the old slot field stays in
         # CoreImplementations for round-trip compat but is no longer
         # consulted by the runtime. Step 14 cleans up the dead field.
-        self.builder = self._engine_registry.resolve(
+        self.context = self._engine_registry.resolve(
             "context",
             default_path=(
                 "krakey.engines.context.default:DefaultContextEngine"
@@ -196,7 +196,7 @@ class Runtime:
         # the runtime uses. Default ToolCallParserDecisionEngine
         # accepts and ignores the kwarg.
         self.llm_factory = deps.llm_factory
-        self.decision_engine = self._engine_registry.resolve(
+        self.decision = self._engine_registry.resolve(
             "decision",
             default_path=(
                 "krakey.engines.decision.tool_call_parser:"
@@ -221,14 +221,14 @@ class Runtime:
         # Memory Engine — single slot collapses the previous
         # ``memory`` + ``kb_registry`` split (Engine refactor 2026-05).
         # The Engine subsumes GM CRUD + KB management + the sleep
-        # cycle, so the runtime holds one ``self.memory`` reference
-        # and aliases ``self.gm`` + ``self.kb_registry`` to it for
-        # back-compat with call sites that still use the old attribute
-        # names. Custom impls override ``cfg.core_implementations.memory``
-        # with a class satisfying ``MemoryEngine`` (the new flat
-        # Protocol); the old ``kb_registry`` slot is no longer
-        # consulted, and any standalone override there will be
-        # silently ignored until step 14 deletes the field.
+        # cycle. The runtime holds one ``self.memory`` reference; call
+        # sites that previously reached into ``runtime.gm`` or
+        # ``runtime.kb_registry`` now go through the same attribute
+        # since both surfaces are the same Engine. Custom impls
+        # override ``cfg.core_implementations.memory`` with a class
+        # satisfying ``MemoryEngine`` (the new flat Protocol); the old
+        # ``kb_registry`` core_implementations slot is no longer
+        # consulted.
         gm_path = self.config.graph_memory.db_path or ":memory:"
         self.memory = self._engine_registry.resolve(
             "memory",
@@ -248,16 +248,11 @@ class Runtime:
             extractor_llm=deps.classify_llm,
             classifier_llm=deps.classify_llm,
         )
-        # Back-compat aliases — call sites still reach for ``runtime.gm``
-        # / ``runtime.kb_registry`` in many places. Eventual cleanup
-        # step migrates them to ``runtime.memory``.
-        self.gm = self.memory
-        self.kb_registry = self.memory
 
         # Recall Engine resolve — placed AFTER memory because the
         # default IncrementalRecallEngine takes the resolved memory
         # instance as a constructor input.
-        self.recall_engine = self._engine_registry.resolve(
+        self.recall = self._engine_registry.resolve(
             "recall",
             default_path=(
                 "krakey.engines.recall.default:IncrementalRecallEngine"
@@ -276,7 +271,7 @@ class Runtime:
         # so behavior is unchanged. Users override via
         # cfg.core_implementations.dispatch (e.g. RemoteDispatchEngine
         # ships tool execution to a worker over HTTP).
-        self.dispatch_engine = self._engine_registry.resolve(
+        self.dispatch = self._engine_registry.resolve(
             "dispatch",
             default_path=(
                 "krakey.engines.dispatch.default:LocalDispatchEngine"
@@ -374,18 +369,15 @@ class Runtime:
             channels=self.buffer,
             services={
                 "runtime": self,
-                "gm": self.gm,
-                "kb_registry": self.kb_registry,
                 "memory": self.memory,
                 "embedder": self.embedder,
                 "reranker": self.reranker,
                 "buffer": self.buffer,
                 "events": self.events,
                 "config": self.config,
-                # Engine-refactor additions: bootstrap plugin reads
-                # the SelfModelStore through services so it can
-                # update self_model on Self's NOTE without reaching
-                # back into the runtime.
+                # Bootstrap plugin reads SelfModelStore from services
+                # so it can write self_model patches on NoteEvent
+                # without reaching back into the runtime.
                 "self_model_store": self._self_model_store,
             },
         )
@@ -417,7 +409,7 @@ class Runtime:
         # self._dispatcher and called directly from the orchestrator's
         # _phase_apply_decision in 4 separate calls. After the
         # DispatchEngine refactor (step 9, 2026-05) the orchestrator
-        # makes one call to ``self.dispatch_engine.dispatch(...)`` and
+        # makes one call to ``self.dispatch.dispatch(...)`` and
         # the engine wraps the same DecisionDispatcher class
         # internally. No public API change; runtime no longer needs
         # to hold a direct dispatcher reference.
@@ -435,7 +427,7 @@ class Runtime:
         # cognitive cadence (phase order, multi-stage thinking,
         # event-driven scheduling, etc.). Setup + teardown around
         # the loop stay on Runtime.run().
-        self.heartbeat_engine = self._engine_registry.resolve(
+        self.heartbeat = self._engine_registry.resolve(
             "heartbeat",
             default_path=(
                 "krakey.engines.heartbeat.default:DefaultHeartbeatEngine"
@@ -664,7 +656,7 @@ class Runtime:
             anchor.force_active(bool(value))
 
     async def run(self, iterations: int | None = None) -> None:
-        await self.gm.initialize()
+        await self.memory.initialize()
         await self._preflight_environments()
 
         # Apply test-only bootstrap override (legacy
@@ -720,7 +712,7 @@ class Runtime:
             # stays in the finally below. The Engine's ``run()`` is
             # purely the iteration loop body — phase ordering happens
             # inside ``beat()`` per the Engine's own contract.
-            await self.heartbeat_engine.run(self, iterations)
+            await self.heartbeat.run(self, iterations)
         finally:
             await self.buffer.stop_all()
             # Cancel in-flight background classify tasks so asyncio doesn't warn.

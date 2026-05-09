@@ -198,11 +198,15 @@ def _format(nodes: list[dict[str, Any]],
 
 
 def build_tool(ctx) -> Tool:
-    """Unified-format factory. Pulls gm + embedder + kb_registry from
-    ctx.services."""
+    """Unified-format factory. Pulls memory + embedder from
+    ctx.services. After the Engine refactor (2026-05) ``memory`` is the
+    single MemoryEngine that fulfills both the GM + KB-registry
+    surfaces, so the same ref is wired into both ``gm`` and
+    ``kb_registry`` arguments."""
+    memory = ctx.services["memory"]
     return MemoryRecallTool(
-        gm=ctx.services["gm"],
+        gm=memory,
         embedder=ctx.services["embedder"],
-        kb_registry=ctx.services["kb_registry"],
+        kb_registry=memory,
         default_top_k=int(ctx.config.get("default_top_k", 8)),
     )

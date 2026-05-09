@@ -38,10 +38,10 @@ async def test_prompt_fitting_budget_is_left_alone(tmp_path):
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
     )
-    await runtime.gm.initialize()
+    await runtime.memory.initialize()
     await _seed_recall(runtime)
 
-    runtime.window.append(SlidingWindowRound(
+    runtime.explicit_history.append(SlidingWindowRound(
         heartbeat_id=1, stimulus_summary="hi", decision_text="ok",
         note_text="",
     ))
@@ -50,7 +50,7 @@ async def test_prompt_fitting_budget_is_left_alone(tmp_path):
     prompt, result = await runtime._enforce_input_budget(
         stimuli=[], recall_result=empty_recall, counts=_counts(),
     )
-    assert len(runtime.window.rounds) == 1  # nothing popped
+    assert len(runtime.explicit_history.rounds) == 1  # nothing popped
     assert result is empty_recall  # no re-recall triggered
     assert isinstance(prompt, str) and prompt  # something was built
 
@@ -74,7 +74,7 @@ async def test_oversized_prompt_prunes_oldest_round(tmp_path):
         compact_llm=CountingCompact(),
         gm_path=str(tmp_path / "gm.sqlite"),
     )
-    await runtime.gm.initialize()
+    await runtime.memory.initialize()
     await _seed_recall(runtime)
 
     # Starve the budget artificially. 200 tokens is far below DNA's
@@ -84,18 +84,18 @@ async def test_oversized_prompt_prunes_oldest_round(tmp_path):
 
     # Three fat rounds to make sure at least one gets popped.
     for i in range(3):
-        runtime.window.append(SlidingWindowRound(
+        runtime.explicit_history.append(SlidingWindowRound(
             heartbeat_id=i, stimulus_summary="x" * 500,
             decision_text="y" * 500, note_text="",
         ))
     empty_recall = RecallResult(nodes=[], edges=[],
                                   covered_stimuli=[], uncovered_stimuli=[])
 
-    before = len(runtime.window.rounds)
+    before = len(runtime.explicit_history.rounds)
     await runtime._enforce_input_budget(
         stimuli=[], recall_result=empty_recall, counts=_counts(),
     )
-    after = len(runtime.window.rounds)
+    after = len(runtime.explicit_history.rounds)
     assert after < before, "enforcer did not pop any round under pressure"
     assert compact_calls["n"] >= 1, "compact LLM was never invoked"
 
@@ -113,11 +113,11 @@ async def test_enforcer_tolerates_compact_llm_failure(tmp_path):
         compact_llm=FailingCompact(),
         gm_path=str(tmp_path / "gm.sqlite"),
     )
-    await runtime.gm.initialize()
+    await runtime.memory.initialize()
     await _seed_recall(runtime)
 
     runtime.config.llm.core_params("self_thinking").max_input_tokens = 200
-    runtime.window.append(SlidingWindowRound(
+    runtime.explicit_history.append(SlidingWindowRound(
         heartbeat_id=1, stimulus_summary="x" * 500,
         decision_text="y" * 500, note_text="",
     ))
@@ -128,7 +128,7 @@ async def test_enforcer_tolerates_compact_llm_failure(tmp_path):
     await runtime._enforce_input_budget(
         stimuli=[], recall_result=empty_recall, counts=_counts(),
     )
-    assert len(runtime.window.rounds) == 0
+    assert len(runtime.explicit_history.rounds) == 0
 
 
 async def test_enforcer_stops_when_window_empty(tmp_path):
@@ -138,11 +138,11 @@ async def test_enforcer_stops_when_window_empty(tmp_path):
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
     )
-    await runtime.gm.initialize()
+    await runtime.memory.initialize()
     await _seed_recall(runtime)
 
     runtime.config.llm.core_params("self_thinking").max_input_tokens = 50
-    assert len(runtime.window.rounds) == 0
+    assert len(runtime.explicit_history.rounds) == 0
     empty_recall = RecallResult(nodes=[], edges=[],
                                   covered_stimuli=[], uncovered_stimuli=[])
     prompt, result = await runtime._enforce_input_budget(

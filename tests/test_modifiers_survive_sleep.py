@@ -53,8 +53,8 @@ async def test_modifier_registry_unchanged_across_sleep(tmp_path):
     runtime.sleep_log_dir = str(tmp_path / "logs")
     runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
     runtime.self_model = default_self_model()
-    await runtime.gm.initialize()
-    await runtime.gm.insert_node(
+    await runtime.memory.initialize()
+    await runtime.memory.insert_node(
         name="apple", category="FACT", description="red fruit",
         embedding=[1.0, 0.0],
     )
@@ -77,7 +77,7 @@ async def test_modifier_registry_unchanged_across_sleep(tmp_path):
     await runtime.run(iterations=1)
 
     # Sleep ran end-to-end (FACT migrated → no longer in GM).
-    assert await runtime.gm.list_nodes(category="FACT") == [], (
+    assert await runtime.memory.list_nodes(category="FACT") == [], (
         "sleep didn't actually execute — FACT still in GM"
     )
     assert runtime._sleep_cycles == 1
@@ -136,8 +136,8 @@ async def test_hypothalamus_modify_prompt_fires_post_sleep(tmp_path):
     runtime.sleep_log_dir = str(tmp_path / "logs")
     runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
     runtime.self_model = default_self_model()
-    await runtime.gm.initialize()
-    await runtime.gm.insert_node(
+    await runtime.memory.initialize()
+    await runtime.memory.insert_node(
         name="apple", category="FACT", description="red fruit",
         embedding=[1.0, 0.0],
     )
@@ -180,8 +180,8 @@ async def test_modify_prompt_fires_on_post_sleep_beat(tmp_path):
     runtime.sleep_log_dir = str(tmp_path / "logs")
     runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
     runtime.self_model = default_self_model()
-    await runtime.gm.initialize()
-    await runtime.gm.insert_node(
+    await runtime.memory.initialize()
+    await runtime.memory.insert_node(
         name="apple", category="FACT", description="red fruit",
         embedding=[1.0, 0.0],
     )

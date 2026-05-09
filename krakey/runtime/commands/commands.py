@@ -71,8 +71,8 @@ async def handle_command(cmd: str, runtime: "Runtime") -> CommandResult:
 
 
 async def _format_status(runtime: "Runtime") -> str:
-    nodes = await runtime.gm.count_nodes()
-    edges = await runtime.gm.count_edges()
+    nodes = await runtime.memory.count_nodes()
+    edges = await runtime.memory.count_edges()
     pct = int(nodes / runtime.config.fatigue.gm_node_soft_limit * 100) \
         if runtime.config.fatigue.gm_node_soft_limit else 0
     name = runtime.self_model.get("identity", {}).get("name", "(unnamed)")
@@ -86,11 +86,11 @@ async def _format_status(runtime: "Runtime") -> str:
 
 
 async def _format_memory_stats(runtime: "Runtime") -> str:
-    nodes = await runtime.gm.count_nodes()
-    edges = await runtime.gm.count_edges()
-    cat_counts = await runtime.gm.counts_by_category()
-    src_counts = await runtime.gm.counts_by_source()
-    kbs = await runtime.kb_registry.list_kbs()
+    nodes = await runtime.memory.count_nodes()
+    edges = await runtime.memory.count_edges()
+    cat_counts = await runtime.memory.counts_by_category()
+    src_counts = await runtime.memory.counts_by_source()
+    kbs = await runtime.memory.list_kbs()
 
     by_cat = ", ".join(f"{k}={v}" for k, v in cat_counts.items()) or "(none)"
     by_src = ", ".join(f"{k}={v}" for k, v in src_counts.items()) or "(none)"

@@ -5,8 +5,8 @@ short-circuits, command consumption, the prompt-build / Self-call /
 decision-dispatch / idle flow.
 
 Composition over inheritance: takes a ``Runtime`` reference and reads
-state through it (``rt.gm``, ``rt.window``, ``rt.heartbeat_count``,
-…). Almost every Runtime field gets touched here, so wiring the
+state through it (``rt.memory``, ``rt.explicit_history``,
+``rt.heartbeat_count``, …). Almost every Runtime field gets touched here, so wiring the
 orchestrator with 13+ narrow protocols would just reproduce Runtime's
 shape — pass the runtime ref and accept the verbosity. The split
 buys two things anyway:
@@ -296,8 +296,8 @@ class HeartbeatOrchestrator:
 
     async def _phase_compute_fatigue(self) -> _GMCounts:
         rt = self._rt
-        node_count = await rt.gm.count_nodes()
-        edge_count = await rt.gm.count_edges()
+        node_count = await rt.memory.count_nodes()
+        edge_count = await rt.memory.count_edges()
         pct, hint = calculate_fatigue(
             node_count=node_count,
             soft_limit=rt.config.fatigue.gm_node_soft_limit,
@@ -324,8 +324,8 @@ class HeartbeatOrchestrator:
     async def _phase_compact(self) -> None:
         rt = self._rt
         async def _recall_fn(text: str):
-            return await rt.gm.fts_search(text, top_k=10)
-        await compact_if_needed(rt.window, rt.gm, rt.compact_llm,
+            return await rt.memory.fts_search(text, top_k=10)
+        await compact_if_needed(rt.explicit_history, rt.memory, rt.compact_llm,
                                  recall_fn=_recall_fn)
 
     async def _phase_finalize_recall_and_pushback(self):
@@ -373,7 +373,7 @@ class HeartbeatOrchestrator:
 
     def _phase_save_round(self, parsed, stimuli) -> None:
         rt = self._rt
-        rt.window.append(SlidingWindowRound(
+        rt.explicit_history.append(SlidingWindowRound(
             heartbeat_id=rt.heartbeat_count,
             stimulus_summary=_summarize_stimuli(stimuli),
             decision_text=parsed.decision,
@@ -405,7 +405,7 @@ class HeartbeatOrchestrator:
             if s.type != "tool_feedback":
                 continue
             try:
-                await rt.gm.auto_ingest(
+                await rt.memory.auto_ingest(
                     s.content, source_heartbeat=rt.heartbeat_count,
                 )
             except Exception as e:  # noqa: BLE001
@@ -419,7 +419,7 @@ class HeartbeatOrchestrator:
             translation of ``parsed.decision`` (legacy, kept for
             back-compat with the in-tree hypothalamus plugin until
             step 7b lifts that into the Engine).
-          * Else → ``rt.decision_engine.translate(...)``. The default
+          * Else → ``rt.decision.translate(...)``. The default
             engine is the scripted ``<tool_call>`` parser; users can
             swap in any DecisionEngine impl via
             ``cfg.core_implementations.decision``.
@@ -454,7 +454,7 @@ class HeartbeatOrchestrator:
                 # [DECISION] if it wants (default impl scans
                 # decision-only — see the Engine's docstring for
                 # the [NOTE]-echo rationale).
-                engine_result = await rt.decision_engine.translate(
+                engine_result = await rt.decision.translate(
                     parsed.decision,
                     parsed.raw,
                     rt.tools.list_descriptions(),
@@ -530,7 +530,7 @@ class HeartbeatOrchestrator:
         # executor / approval-gate wrapper without touching this
         # phase. Default impl wraps the same DecisionDispatcher
         # behavior the orchestrator used directly before step 9.
-        await rt.dispatch_engine.dispatch(
+        await rt.dispatch.dispatch(
             rt.heartbeat_count, result, rt,
             recall_context=recall_result.nodes,
         )
@@ -540,7 +540,7 @@ class HeartbeatOrchestrator:
         """Background classify+link doesn't block the heartbeat."""
         rt = self._rt
         rt._classify_tasks.append(
-            asyncio.create_task(rt.gm.classify_and_link_pending()),
+            asyncio.create_task(rt.memory.classify_and_link_pending()),
         )
 
     async def _phase_idle(self, parsed, recall_result) -> None:
@@ -573,13 +573,13 @@ class HeartbeatOrchestrator:
                               counts: "_GMCounts") -> str:
         rt = self._rt
         # 1. Runtime constructs the canonical default elements.
-        elements = rt.builder.build_default_elements(
+        elements = rt.context.build_default_elements(
             self_model=rt.self_model,
             capabilities=self._capabilities(),
             status=self._status(counts.node_count, counts.edge_count,
                                   counts.fatigue_pct, counts.fatigue_hint),
             recall=recall_result,
-            window=rt.window.get_rounds(),
+            window=rt.explicit_history.get_rounds(),
             stimuli=stimuli,
             current_time=datetime.now(),
         )
@@ -636,7 +636,7 @@ class HeartbeatOrchestrator:
         budget = int(self_params.max_input_tokens or 128_000)
 
         async def _recall_fn(text: str):
-            return await rt.gm.fts_search(text, top_k=10)
+            return await rt.memory.fts_search(text, top_k=10)
 
         prompt = self.build_self_prompt(stimuli, recall_result, counts)
         max_iters = 10  # safety bound — should never need more than 2-3
@@ -644,20 +644,20 @@ class HeartbeatOrchestrator:
             total = estimate_tokens(prompt)
             if total <= budget:
                 return prompt, recall_result
-            if not rt.window.rounds:
+            if not rt.explicit_history.rounds:
                 rt.log.hb_warn(
                     f"prompt {total} > max_input_tokens {budget} and "
                     "window is empty; sending anyway"
                 )
                 return prompt, recall_result
-            oldest = rt.window.pop_oldest()
+            oldest = rt.explicit_history.pop_oldest()
             assert oldest is not None
             rt.log.hb(
                 f"input budget: prompt {total} > {budget}; pruning oldest "
                 f"round (heartbeat #{oldest.heartbeat_id}) into GM"
             )
             try:
-                await compact_round(oldest, rt.gm, rt.compact_llm,
+                await compact_round(oldest, rt.memory, rt.compact_llm,
                                       _recall_fn)
             except Exception as e:  # noqa: BLE001 — never crash the beat
                 rt.log.hb_warn(
@@ -710,7 +710,7 @@ class HeartbeatOrchestrator:
         anchor = self._rt.modifiers.by_role("recall_anchor")
         if anchor is not None:
             return anchor.make_recall(self._rt)
-        return self._rt.recall_engine.new_session()
+        return self._rt.recall.new_session()
 
     def _capabilities(self) -> list["CapabilityView"]:
         """Tool list for the [CAPABILITIES] layer. Only changes on

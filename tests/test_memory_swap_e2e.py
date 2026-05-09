@@ -70,9 +70,6 @@ def test_no_override_uses_default_memory_engine(tmp_path):
     runtime = build_runtime_from_config(str(p))
     assert isinstance(runtime.memory, GraphMemoryEngine)
     assert isinstance(runtime.memory, MemoryEngine)
-    # Back-compat aliases point at the same Engine.
-    assert runtime.gm is runtime.memory
-    assert runtime.kb_registry is runtime.memory
 
 
 def test_memory_override_uses_user_class(tmp_path):
@@ -85,9 +82,6 @@ def test_memory_override_uses_user_class(tmp_path):
     )
     runtime = build_runtime_from_config(str(p))
     assert isinstance(runtime.memory, InMemoryMemoryEngine)
-    # Aliases also point at the fake.
-    assert runtime.gm is runtime.memory
-    assert runtime.kb_registry is runtime.memory
 
 
 async def test_override_actually_serves_writes(tmp_path):

@@ -70,7 +70,7 @@ def build_modifier(ctx: "PluginContext") -> RecallAnchorModifierImpl:
     cfg = ctx.deps.config
     self_params = cfg.llm.core_params("self_thinking") or LLMParams()
     return RecallAnchorModifierImpl(
-        gm=ctx.services["gm"],
+        gm=ctx.services["memory"],
         embedder=ctx.services["embedder"],
         reranker=ctx.services.get("reranker"),
         per_stimulus_k=cfg.graph_memory.recall_per_stimulus_k,

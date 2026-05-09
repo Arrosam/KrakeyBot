@@ -36,11 +36,6 @@ class _FakeStore:
         self.update_calls.append(delta)
 
 
-class _FakeMemory:
-    async def count_nodes(self): return 0
-    async def list_kbs(self, *, include_archived=False): return []
-
-
 class _FakeEvents:
     """EventBus stand-in — records subscribers."""
     def __init__(self):
@@ -67,7 +62,6 @@ def _make_modifier(*, sm, genesis_path, plugin_config=None):
     signature (auto-complete + own-config write + warning)."""
     return BootstrapModifier(
         self_model_store=_FakeStore(sm),
-        memory=_FakeMemory(),
         events=_FakeEvents(),
         plugin_config_store=_FakePluginConfigStore(),
         plugin_config=plugin_config or {},

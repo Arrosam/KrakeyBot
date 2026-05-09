@@ -227,8 +227,8 @@ async def test_runtime_restart_preserves_sliding_window(tmp_path):
     # Repoint to the shared path. (The helper assigned its own
     # per-test tmpfile; we want both runtimes on the same file.)
     from krakey.runtime.heartbeat.sliding_window import SlidingWindow as SW
-    rt_a.window = SW(
-        history_token_budget=rt_a.window.history_token_budget,
+    rt_a.explicit_history = SW(
+        history_token_budget=rt_a.explicit_history.history_token_budget,
         state_path=sw_path,
     )
 
@@ -238,7 +238,7 @@ async def test_runtime_restart_preserves_sliding_window(tmp_path):
         adrenalin=True,
     ))
     await rt_a.run(iterations=1)
-    rounds_after_first = rt_a.window.get_rounds()
+    rounds_after_first = rt_a.explicit_history.get_rounds()
     assert rounds_after_first, "first runtime didn't append any rounds"
     first_hb_ids = [r.heartbeat_id for r in rounds_after_first]
     first_summaries = [r.stimulus_summary for r in rounds_after_first]
@@ -249,12 +249,12 @@ async def test_runtime_restart_preserves_sliding_window(tmp_path):
         self_llm=ScriptedLLM([]),
         hypo_llm=ScriptedLLM([]),
     )
-    rt_b.window = SW(
-        history_token_budget=rt_b.window.history_token_budget,
+    rt_b.explicit_history = SW(
+        history_token_budget=rt_b.explicit_history.history_token_budget,
         state_path=sw_path,
     )
 
-    rounds_b = rt_b.window.get_rounds()
+    rounds_b = rt_b.explicit_history.get_rounds()
     assert [r.heartbeat_id for r in rounds_b] == first_hb_ids
     assert [r.stimulus_summary for r in rounds_b] == first_summaries
     # Self's most-recent user context survives the restart.

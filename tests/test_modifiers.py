@@ -157,7 +157,7 @@ async def test_prompt_includes_action_format_when_no_hypothalamus(tmp_path):
     runtime.modifiers._order.remove("hypothalamus")
     assert runtime.modifiers.has_role("hypothalamus") is False
 
-    await runtime.gm.initialize()
+    await runtime.memory.initialize()
     runtime._recall = runtime._new_recall()
     from krakey.memory.recall import RecallResult
     counts = SimpleNamespace(node_count=0, edge_count=0,
@@ -179,7 +179,7 @@ async def test_prompt_omits_action_format_when_hypothalamus_active(tmp_path):
     )
     assert runtime.modifiers.has_role("hypothalamus") is True
 
-    await runtime.gm.initialize()
+    await runtime.memory.initialize()
     runtime._recall = runtime._new_recall()
     from krakey.memory.recall import RecallResult
     counts = SimpleNamespace(node_count=0, edge_count=0,
