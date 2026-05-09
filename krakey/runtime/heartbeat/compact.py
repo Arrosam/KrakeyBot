@@ -1,8 +1,8 @@
-"""Compact — evict oldest rounds from sliding window into GM (DevSpec §10).
+"""Compact — evict oldest rounds from sliding window into GM.
 
-Phase 1.4: blocking loop + single-round oversize splitting. Compact LLM
-is stateless per call; recall_fn surfaces existing GM nodes so the LLM
-can prefer edges over duplicates.
+Blocking loop + single-round oversize splitting. Compact LLM is
+stateless per call; ``recall_fn`` surfaces existing GM nodes so the
+LLM can prefer edges over duplicates.
 """
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ from krakey.runtime.heartbeat.sliding_window import SlidingWindow, ExplicitHisto
 if TYPE_CHECKING:
     # Type-only: compact never instantiates the memory backend, it just
     # calls methods on the gm passed in. Decoupling lets a user-supplied
-    # MemoryService (per the slot mechanism) flow through here without
+    # MemoryEngine (per the slot mechanism) flow through here without
     # this module needing to know which concrete class is in use.
-    from krakey.interfaces.services.memory import MemoryService
+    from krakey.interfaces.engines.memory import MemoryEngine
 
 
 COMPACT_PROMPT = """Distill a past conversation segment, extracting information worth remembering.
@@ -86,7 +86,7 @@ def _format_existing(nodes: list[dict[str, Any]]) -> str:
     )
 
 
-async def _apply_extraction(gm: "MemoryService", parsed: dict[str, Any]) -> None:
+async def _apply_extraction(gm: "MemoryEngine", parsed: dict[str, Any]) -> None:
     name_to_id: dict[str, int] = {}
     for n in parsed.get("nodes", []):
         try:
@@ -115,7 +115,7 @@ async def _apply_extraction(gm: "MemoryService", parsed: dict[str, Any]) -> None
             continue  # malformed edge — skip
 
 
-async def _compact_round(round_: ExplicitHistoryRound, gm: "MemoryService",
+async def _compact_round(round_: ExplicitHistoryRound, gm: "MemoryEngine",
                           llm: ChatLike, recall_fn: RecallFn) -> None:
     query = round_.stimulus_summary or round_.decision_text or round_.note_text
     existing = await recall_fn(query) if query else []
@@ -140,7 +140,7 @@ def _chunks_by_char_budget(text: str, chars: int) -> list[str]:
 
 
 async def _split_and_compact_single_round(
-    window: SlidingWindow, gm: "MemoryService", llm: ChatLike,
+    window: SlidingWindow, gm: "MemoryEngine", llm: ChatLike,
     recall_fn: RecallFn, split_chunk_tokens: int,
 ) -> None:
     """Last resort: single round too big to remove in one shot.
@@ -165,7 +165,7 @@ async def _split_and_compact_single_round(
 
 
 async def compact_if_needed(
-    window: SlidingWindow, gm: "MemoryService", llm: ChatLike,
+    window: SlidingWindow, gm: "MemoryEngine", llm: ChatLike,
     *, recall_fn: RecallFn, split_chunk_tokens: int = 1000,
 ) -> None:
     """Blocking compact loop. Evict oldest rounds via LLM summarization until

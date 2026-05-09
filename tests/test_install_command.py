@@ -27,7 +27,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from krakey.cli import install as install_mod
+from krakey.install import service as install_mod
 
 
 # =====================================================================

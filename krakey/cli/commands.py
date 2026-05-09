@@ -66,8 +66,8 @@ def onboard(args: argparse.Namespace) -> int:
 
 
 def install(args: argparse.Namespace) -> int:
-    from . import install as _install
-    return _install.install(args)
+    from krakey.install.service import install as _install
+    return _install(args)
 
 
 def update(args: argparse.Namespace) -> int:

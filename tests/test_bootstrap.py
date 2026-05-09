@@ -4,9 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from krakey.bootstrap import (
-    BOOTSTRAP_PROMPT, detect_bootstrap_complete, load_genesis,
-    load_self_model_or_default, parse_self_model_update,
+from krakey.models.self_model import load_self_model_or_default
+from krakey.plugins.bootstrap.prompt import BOOTSTRAP_PROMPT
+from krakey.plugins.bootstrap.state import (
+    detect_bootstrap_complete,
+    load_genesis,
+    parse_self_model_update,
 )
 
 

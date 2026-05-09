@@ -11,7 +11,6 @@ import pytest
 
 from krakey.engines.memory.default import GraphMemoryEngine
 from krakey.interfaces.engines import KnowledgeBaseLike, MemoryEngine
-from krakey.interfaces.services.memory import MemoryService
 
 
 async def _no_embed(text: str) -> list[float]:
@@ -31,16 +30,6 @@ def test_satisfies_memory_engine_protocol(tmp_path):
         kb_dir=str(tmp_path),
     )
     assert isinstance(eng, MemoryEngine)
-
-
-def test_still_satisfies_legacy_memory_service(tmp_path):
-    """Inheritance preserves the old MemoryService surface — existing
-    tests + impls that type against MemoryService keep working."""
-    eng = GraphMemoryEngine(
-        db_path=":memory:", embedder=_no_embed,
-        kb_dir=str(tmp_path),
-    )
-    assert isinstance(eng, MemoryService)
 
 
 # --------------------------------------------------------------------
