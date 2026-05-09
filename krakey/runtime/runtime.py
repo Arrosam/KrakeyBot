@@ -143,10 +143,13 @@ class Runtime:
             (self_params.max_input_tokens or 128_000)
             * self_params.history_token_fraction
         )
-        # Sliding window persists across restarts so working memory
-        # survives a reboot. ``""`` (empty) opts out — useful for
-        # tests/benchmarks that want pure in-memory windows. ``None``
-        # → default workspace path.
+        # ExplicitHistory Engine — working-memory window. Renamed from
+        # the inline-constructed ``SlidingWindow`` because sliding-of-
+        # rounds is just one possible strategy; future Engines could
+        # implement summary trees, relevance-scored caches, etc.
+        # ``state_path`` semantics carried over: ``""`` opts out of
+        # persistence (tests / pure-memory mode), ``None`` falls
+        # back to the default workspace path.
         if deps.sliding_window_state_path == "":
             sw_state_path: Path | None = None
         else:
@@ -154,20 +157,40 @@ class Runtime:
                 deps.sliding_window_state_path
                 or "workspace/data/sliding_window.json"
             )
-        self.window = SlidingWindow(
+        # Service-resolver still in play for the older slots
+        # (``embedder`` / ``reranker``); kept around until step 12
+        # finishes wiring everything through EngineRegistry.
+        self._service_resolver = ServiceResolver(self.config)
+
+        from krakey.engines.registry import EngineRegistry
+        from krakey.interfaces.engines import (
+            ContextEngine,
+            ExplicitHistoryEngine,
+            MemoryEngine,
+        )
+        self._engine_registry = EngineRegistry(self.config)
+        self.window = self._engine_registry.resolve(
+            "explicit_history",
+            default_path=(
+                "krakey.engines.explicit_history.default:"
+                "SlidingWindowExplicitHistoryEngine"
+            ),
+            expected_protocol=ExplicitHistoryEngine,
             history_token_budget=_history_budget,
             state_path=sw_state_path,
         )
 
-        # Core service slots — each can be replaced via
-        # ``core_implementations.<slot>`` in config.yaml. The resolver
-        # imports the user's dotted path and Protocol-validates at
-        # startup; empty slot = built-in default.
-        self._service_resolver = ServiceResolver(self.config)
-        self.builder = self._service_resolver.resolve(
-            "prompt_builder",
-            default_factory=PromptBuilder,
-            expected_protocol=PromptBuilderLike,
+        # Context Engine (prompt assembly). Renamed from the
+        # ``prompt_builder`` slot because prompt assembly IS the
+        # engine's job; the old slot field stays in
+        # CoreImplementations for round-trip compat but is no longer
+        # consulted by the runtime. Step 14 cleans up the dead field.
+        self.builder = self._engine_registry.resolve(
+            "context",
+            default_path=(
+                "krakey.engines.context.default:DefaultContextEngine"
+            ),
+            expected_protocol=ContextEngine,
         )
 
         # Memory Engine — single slot collapses the previous
@@ -181,9 +204,6 @@ class Runtime:
         # Protocol); the old ``kb_registry`` slot is no longer
         # consulted, and any standalone override there will be
         # silently ignored until step 14 deletes the field.
-        from krakey.engines.registry import EngineRegistry
-        from krakey.interfaces.engines import MemoryEngine
-        self._engine_registry = EngineRegistry(self.config)
         gm_path = self.config.graph_memory.db_path or ":memory:"
         self.memory = self._engine_registry.resolve(
             "memory",
