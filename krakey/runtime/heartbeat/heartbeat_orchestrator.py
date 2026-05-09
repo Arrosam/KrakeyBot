@@ -713,15 +713,15 @@ class HeartbeatOrchestrator:
                 return
 
     def new_recall(self) -> "RecallLike":
-        # Look up the Modifier that claimed the "recall_anchor" role.
-        # Without one, fall back to NoopRecall (Self heartbeats with
-        # an empty [GRAPH MEMORY] layer — graceful degradation per
-        # the additive-plugin invariant).
+        # Legacy modifier-role path wins when registered (back-compat
+        # for the in-tree recall plugin until step 12 retires it).
+        # Otherwise the Engine slot provides a fresh session — Engine
+        # is always populated by the registry, so the previous
+        # NoopRecall fallback path is no longer reachable.
         anchor = self._rt.modifiers.by_role("recall_anchor")
-        if anchor is None:
-            from krakey.memory.recall import NoopRecall
-            return NoopRecall()
-        return anchor.make_recall(self._rt)
+        if anchor is not None:
+            return anchor.make_recall(self._rt)
+        return self._rt.recall_engine.new_session()
 
     def _capabilities(self) -> list["CapabilityView"]:
         """Tool list for the [CAPABILITIES] layer. Only changes on

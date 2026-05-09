@@ -111,13 +111,25 @@ async def test_runtime_heartbeat_with_no_tools_emits_unknown_tool(tmp_path):
 
 async def test_runtime_construction_works_with_no_modifiers(tmp_path):
     """Even Runtime.__init__ should tolerate a state where no Modifiers
-    end up registered."""
+    end up registered. After the Engine refactor (2026-05) recall has
+    moved from a Modifier-role plugin into a required Engine slot;
+    new_recall now returns the Engine's IncrementalRecall session
+    rather than a NoopRecall fallback. The zero-plugin invariant is
+    preserved — every Engine slot is always populated, so the
+    heartbeat keeps ticking with no plugins enabled."""
+    from krakey.interfaces.engines import RecallSession
+
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
     )
     _strip_all_modifiers(runtime)
     assert runtime.modifiers.has_role("hypothalamus") is False
-    # new_recall falls back to NoopRecall via the orchestrator.
+    assert runtime.modifiers.has_role("recall_anchor") is False
+    # No modifiers → orchestrator falls through to the Engine slot.
     recall = runtime._new_recall()
-    assert isinstance(recall, NoopRecall)
+    # Engine returns whatever satisfies RecallSession; the default
+    # impl is IncrementalRecall. The legacy NoopRecall fallback is
+    # gone — a user wanting "recall disabled" must wire their own
+    # noop class via cfg.core_implementations.recall.
+    assert isinstance(recall, RecallSession)

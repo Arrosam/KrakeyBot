@@ -168,6 +168,7 @@ class Runtime:
             DecisionEngine,
             ExplicitHistoryEngine,
             MemoryEngine,
+            RecallEngine,
         )
         self._engine_registry = EngineRegistry(self.config)
         self.window = self._engine_registry.resolve(
@@ -214,6 +215,17 @@ class Runtime:
             cfg=self.config,
         )
 
+        # Recall Engine — per-beat memory recall. Default impl
+        # ``IncrementalRecallEngine`` produces a fresh
+        # IncrementalRecall session via ``new_session()`` on every
+        # call. Engine slot replaces the previous Modifier-role
+        # plugin gimmick (recall_anchor); the plugin stays in place
+        # during the migration window so users with the modifier
+        # wiring keep working — the orchestrator's ``new_recall()``
+        # falls through to the engine only when no Modifier with
+        # role "recall_anchor" is registered. Step 12 retires the
+        # plugin path entirely.
+
         # Memory Engine — single slot collapses the previous
         # ``memory`` + ``kb_registry`` split (Engine refactor 2026-05).
         # The Engine subsumes GM CRUD + KB management + the sleep
@@ -249,6 +261,21 @@ class Runtime:
         # step migrates them to ``runtime.memory``.
         self.gm = self.memory
         self.kb_registry = self.memory
+
+        # Recall Engine resolve — placed AFTER memory because the
+        # default IncrementalRecallEngine takes the resolved memory
+        # instance as a constructor input.
+        self.recall_engine = self._engine_registry.resolve(
+            "recall",
+            default_path=(
+                "krakey.engines.recall.default:IncrementalRecallEngine"
+            ),
+            expected_protocol=RecallEngine,
+            cfg=self.config,
+            memory=self.memory,
+            embedder=deps.embedder,
+            reranker=deps.reranker,
+        )
 
         # InstallService — runtime depends on the Protocol via DI;
         # composition root (krakey.main) injects DefaultInstallService.
