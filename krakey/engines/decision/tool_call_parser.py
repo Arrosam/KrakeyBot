@@ -41,9 +41,15 @@ from krakey.runtime.heartbeat.action_executor import (
 class ToolCallParserDecisionEngine:
     """Default DecisionEngine — scripts tool_call tag parsing.
 
-    Stateless. Construction takes no kwargs (the EngineRegistry will
-    call it with no args via ``cls()``).
+    Stateless. Accepts an optional ``cfg`` kwarg for signature
+    uniformity with other DecisionEngine impls (e.g.
+    ``HypothalamusDecisionEngine`` needs cfg to resolve its
+    translator LLM); the parser doesn't use config so it just
+    accepts and ignores.
     """
+
+    def __init__(self, *, cfg=None):
+        del cfg  # accepted for contract uniformity, unused
 
     async def translate(
         self,

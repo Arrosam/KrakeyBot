@@ -211,6 +211,7 @@ class Runtime:
                 "ToolCallParserDecisionEngine"
             ),
             expected_protocol=DecisionEngine,
+            cfg=self.config,
         )
 
         # Memory Engine — single slot collapses the previous
