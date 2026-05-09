@@ -195,13 +195,6 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         in_mind_state_path=in_mind_state_path,
         sliding_window_state_path=sliding_window_state_path,
         llm_clients_by_tag=llm_clients_by_tag,
-        # Tests almost universally assume a clean stimulus buffer
-        # at startup — the install advisory's runtime push would
-        # surprise existing tests with an extra system_event.
-        # Tests that DO want to exercise the advisory flow opt
-        # in via a direct ``RuntimeDeps`` construction (see
-        # tests/test_install_tool.py).
-        enable_install_advisory=False,
     )
     runtime = Runtime(
         deps, idle_min=idle_min, idle_max=idle_max,

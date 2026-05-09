@@ -138,23 +138,24 @@ def test_project_field_handles_plugin_with_multiple_components():
 
 
 def test_project_falls_back_to_component_name_for_builtin_tools():
-    """Built-in tools (InstallTool, SleepTool) aren't in
-    ``plugin_components`` because the loader didn't register them.
-    Falling back to the component name keeps the existing
-    no-plugin-folder behavior — the dashboard catalog never has a
-    matching row, so the entry just doesn't show up as a plugin
-    status, which is correct."""
+    """Built-in tools (SleepTool) aren't in ``plugin_components``
+    because the loader didn't register them. Falling back to the
+    component name keeps the existing no-plugin-folder behavior —
+    the dashboard catalog never has a matching row, so the entry
+    just doesn't show up as a plugin status, which is correct.
+
+    The other historical built-in (InstallTool) was retired in
+    step 13; only SleepTool remains."""
     obs = _make_observer(
-        tools=["install", "sleep"],
+        tools=["sleep"],
         plugin_components={},  # no plugins loaded
         registered=set(),  # not registered by loader
     )
     report = obs.loaded_report()
     by_name = {e["name"]: e for e in report["tools"]}
-    assert by_name["install"]["project"] == "install"
     assert by_name["sleep"]["project"] == "sleep"
     # source label should be "core" (not loader-registered)
-    assert by_name["install"]["source"] == "core"
+    assert by_name["sleep"]["source"] == "core"
 
 
 def test_loaded_flag_still_true_for_registered_components():

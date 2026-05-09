@@ -28,16 +28,32 @@ import hashlib
 import json
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from krakey.interfaces.install_service import InstallResult
 from krakey.plugin_system.loader import (
     BUILTIN_ROOT,
     WORKSPACE_ROOT,
     parse_meta,
 )
+
+
+@dataclass
+class InstallResult:
+    """Outcome of a single install run.
+
+    Was previously declared on the InstallService Protocol module
+    in ``krakey/interfaces/install_service.py``; that Protocol was
+    retired in step 13 (Engine refactor 2026-05) when install
+    stopped being a runtime concept. The dataclass moved alongside
+    the only remaining consumer — DefaultInstallService below —
+    so the install module is self-contained.
+    """
+    rc: int
+    stdout: str
+    stderr: str
 
 
 INSTALL_STATE_PATH = Path("workspace") / "data" / "install_state.json"

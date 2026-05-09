@@ -19,9 +19,6 @@ from typing import Any
 from krakey.bootstrap import load_self_model_or_default
 from krakey.models.self_model import SelfModelStore
 from krakey.models.stimulus import Stimulus
-from krakey.interfaces.install_service import (
-    InstallService as InstallServiceProto,
-)
 from krakey.interfaces.tool import ToolRegistry
 from krakey.llm.resolve import AsyncEmbedder, ChatLike, resolve_llm_for_tag
 from krakey.memory.graph_memory import GraphMemory
@@ -102,20 +99,15 @@ class RuntimeDeps:
     # at construction time. Tests pass a pre-built Router (or leave
     # this None for the default empty-allow-list build).
     environment_router: EnvironmentRouter | None = None
-    # Whether ``run()`` should push a system:install advisory
-    # Stimulus when ``has_pending_deps()`` is True. Production
-    # leaves this on so Self can self-repair via the built-in
-    # ``install`` tool. Tests default to False to avoid surprise
-    # stimuli polluting buffer-state assertions.
-    enable_install_advisory: bool = True
-    # InstallService impl injected by the composition root (see
-    # ``krakey.main.build_runtime_from_config``). Runtime depends
-    # on the Protocol from ``krakey.interfaces.install_service``,
-    # never on any concrete implementation directly. Tests can
-    # pass a stub. None disables the install advisory + makes
-    # the InstallTool report "no service" — the additive-plugin
-    # invariant extends to advisory infra.
-    install_service: "InstallServiceProto | None" = None
+    # ``enable_install_advisory`` and ``install_service`` used to
+    # live here. Removed in step 13 (Engine refactor 2026-05) when
+    # InstallService stopped being a runtime concept: the install
+    # advisory's startup stimulus + the built-in InstallTool both
+    # went away, and ``krakey.install`` is now imported as a plain
+    # utility by the CLI + dashboard plugin. The runtime no longer
+    # knows install exists.
+    # ``enable_install_advisory: bool = True``  (deleted)
+    # ``install_service: ... = None``           (deleted)
 
 
 class Runtime:
@@ -303,34 +295,16 @@ class Runtime:
             cfg=self.config,
         )
 
-        # InstallService — runtime depends on the Protocol via DI;
-        # composition root (krakey.main) injects DefaultInstallService.
-        # When None, install advisory + InstallTool both no-op
-        # gracefully (additive-plugin invariant). Stashed BEFORE
-        # the InstallTool constructor below reads it.
-        #
-        # Public attribute (no underscore prefix) so peers like the
-        # dashboard's ``RuntimePluginsService`` can read it without
-        # reaching into private state. The runtime is the composition
-        # aggregator that holds long-lived services; exposing the
-        # service slot via a public attribute is the same shape as
-        # ``self.gm`` / ``self.kb_registry`` etc.
-        self.install_service: InstallServiceProto | None = (
-            deps.install_service
-        )
-
         self.tools = ToolRegistry()
-        # Built-in tools are registered BEFORE the plugin loader runs
-        # so plugins can't shadow them by registering a same-named
-        # Tool (the registry's register() raises on duplicate name).
-        from krakey.runtime.builtin_tools import InstallTool, SleepTool
+        # Built-in tools registered BEFORE the plugin loader runs so
+        # plugins can't shadow them by registering a same-named Tool
+        # (the registry's register() raises on duplicate name).
+        # SleepTool is the only built-in remaining after step 13;
+        # InstallTool was retired alongside the runtime's
+        # install_service field — install is now a CLI/dashboard
+        # utility outside the heartbeat loop's concern.
+        from krakey.runtime.builtin_tools import SleepTool
         self.tools.register(SleepTool())
-        # InstallTool lets Self self-repair missing plugin deps.
-        # The service is injected via DI so the tool depends on
-        # ``InstallService`` Protocol, not the concrete impl.
-        self.tools.register(InstallTool(
-            install_service=self.install_service,
-        ))
         # Each plugin's config lives at
         # <plugin_configs_root>/<name>/config.yaml. Same root as the
         # plugin folders themselves (workspace/plugins/) so user config
@@ -340,9 +314,6 @@ class Runtime:
         plugin_root = Path(deps.plugin_configs_root
                             or "workspace/plugins")
         self._plugin_configs_root = plugin_root
-        self._enable_install_advisory = bool(
-            deps.enable_install_advisory,
-        )
 
         # ``self.buffer`` is both the live stimulus queue AND the live
         # channel set (see krakey/runtime/stimuli/stimulus_buffer.py).
@@ -727,12 +698,6 @@ class Runtime:
         # dashboard is just a channel like any other.
         await self.buffer.start_all()
 
-        # Surface "plugin deps need installing" to Self as a
-        # high-priority Stimulus so she can call the built-in
-        # `install` tool herself without operator intervention.
-        # See krakey/runtime/builtin_tools/install_tool.py.
-        await self._maybe_push_install_advisory()
-
         self._recall = self._new_recall()
 
         # Pause mode: no Self LLM bound (user skipped chat in onboarding,
@@ -786,66 +751,6 @@ class Runtime:
         combines this with its own ``FilePluginConfigStore`` reads to
         build the ``/api/plugins`` payload."""
         return self._plugin_observer.loaded_report()
-
-    async def _maybe_push_install_advisory(self) -> None:
-        """If declared plugin deps drifted from the last
-        ``krakey install`` (no install_state.json yet OR hash
-        changed), push a system_event Stimulus so Self sees it on
-        her first heartbeat. She can then call the built-in
-        ``install`` tool to self-repair.
-
-        Best-effort: any exception inside the check is swallowed
-        (the additive-plugin invariant extends to advisories).
-        Doesn't block startup.
-
-        Gated by ``RuntimeDeps.enable_install_advisory`` (default
-        True in production; False in tests via build_runtime_with_fakes
-        so existing buffer-state assertions don't have to know
-        about this stimulus)."""
-        if not self._enable_install_advisory:
-            return
-        if self.install_service is None:
-            # No service injected (composition root chose to skip,
-            # or test built Runtime directly without one). Silent
-            # no-op — additive-plugin invariant covers this too.
-            return
-        try:
-            pending, plugin_deps = (
-                self.install_service.has_pending_deps()
-            )
-        except Exception:  # noqa: BLE001
-            return
-        if not pending:
-            return
-
-        plugins_with_deps = sorted(
-            name for name, deps in plugin_deps.items() if deps
-        )
-        if plugins_with_deps:
-            listed = ", ".join(plugins_with_deps)
-            content = (
-                "Plugin dependencies are out-of-date since the "
-                "last `krakey install`. Plugins with declared "
-                f"deps: {listed}. You have a built-in `install` "
-                "tool — call it to self-repair. If pip fails "
-                "(no network, PyPI unreachable), tell the user "
-                "via your outbound channel and stop trying."
-            )
-        else:
-            content = (
-                "Plugin install_state.json is missing or stale, "
-                "but no plugins declare third-party deps right "
-                "now. Calling the built-in `install` tool is "
-                "harmless and will refresh the state file."
-            )
-
-        await self.buffer.push(Stimulus(
-            type="system_event",
-            source="system:install",
-            content=content,
-            timestamp=datetime.now(),
-            adrenalin=True,
-        ))
 
     def _build_environment_router(self) -> EnvironmentRouter:
         """Compose Local + Sandbox-if-configured into a Router whose

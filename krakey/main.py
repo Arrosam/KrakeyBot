@@ -127,13 +127,11 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
     # mapped one (compat shim), else None.
     hypo_llm = llm_factory.client_for_core_purpose("hypothalamus")
 
-    # InstallService — composition-root choice. We inject the
-    # DefaultInstallService (krakey.install.service) so the
-    # InstallTool + the startup advisory have a working
-    # implementation. Runtime + dashboard depend on the
-    # InstallService Protocol, never on this concrete class.
-    from krakey.install import DefaultInstallService
-    install_service = DefaultInstallService()
+    # InstallService used to be injected here. Step 13 (Engine
+    # refactor 2026-05) removed the runtime's install machinery —
+    # ``krakey.install`` is now a plain utility module imported by
+    # the CLI + dashboard plugin directly. The runtime no longer
+    # knows install exists.
 
     deps = RuntimeDeps(
         config=cfg, self_llm=self_llm, hypo_llm=hypo_llm,
@@ -146,7 +144,6 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
         # use ``ctx.services["llm_factory"]`` directly.
         llm_clients_by_tag=llm_factory.client_cache,
         llm_factory=llm_factory,
-        install_service=install_service,
         # Pull the sliding-window state path straight from
         # config.yaml so dashboard edits to ``sliding_window.state_path``
         # take effect on the next restart. Empty string in YAML →

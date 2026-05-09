@@ -164,22 +164,16 @@ class RuntimePluginsService:
 
     # ---- deps install status / install dispatch ----
     #
-    # Both delegate to the InstallService Protocol implementation
-    # the runtime composition root injected. The dashboard plugin
-    # never imports the concrete impl (or krakey.cli) — the
-    # dependency arrow stays plugin → runtime → interface, never
-    # plugin → cli.
+    # Both delegate to the DefaultInstallService utility class. After
+    # the Engine refactor (step 13, 2026-05) the runtime no longer
+    # holds an InstallService reference — install is a CLI/dashboard
+    # utility that has nothing to do with the heartbeat. The plugin
+    # imports it directly from ``krakey.install`` (a plain utility
+    # module, not a runtime engine).
 
     def _install_service(self):
-        if self._rt is None:
-            raise RuntimeError("runtime not available")
-        svc = getattr(self._rt, "install_service", None)
-        if svc is None:
-            raise RuntimeError(
-                "no InstallService configured on the runtime — "
-                "the dashboard cannot run install / deps_status",
-            )
-        return svc
+        from krakey.install import DefaultInstallService
+        return DefaultInstallService()
 
     def deps_status(self) -> dict[str, Any]:
         return self._install_service().deps_status()
