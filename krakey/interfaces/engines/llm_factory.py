@@ -7,9 +7,10 @@ by tag name or by core-purpose name and never see the providers or
 their API keys.
 
 Replaces the previous ``resolve_llm_for_tag`` free function plus the
-ad-hoc client-cache passing in ``RuntimeDeps.llm_clients_by_tag``. The
-Engine owns the cache internally — one client instance per tag,
-shared across all consumers.
+ad-hoc client-cache passing on ``RuntimeDeps``. The Engine owns the
+cache as a private implementation detail — one client instance per
+tag, shared across all consumers via ``client_for_tag``. Third-party
+factory impls only need to satisfy the methods declared below.
 
 API-key isolation: the factory keeps providers + keys in its own
 state; clients it returns satisfy ``ChatLike`` (defined in

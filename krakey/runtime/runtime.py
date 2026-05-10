@@ -68,18 +68,16 @@ class RuntimeDeps:
     # window stays in-memory only and a process restart loses
     # working memory (the pre-2026-05-07 behavior).
     sliding_window_state_path: str | None = None
-    # Shared LLMClient cache keyed by tag name. Populated by
-    # build_runtime_from_config for core purposes; Runtime adds plugin
-    # purpose entries on top. Sharing the cache means two purposes that
-    # map to the same tag share one client (saves connections + keeps
-    # rate-limit accounting consistent).
-    llm_clients_by_tag: dict[str, Any] = field(default_factory=dict)
     # Shared LLMClientFactoryEngine instance. composition root builds
     # one via EngineRegistry and threads it here so Engine resolution
     # in Runtime can pass it into other engines that need it
     # (Embedder / Reranker / HypothalamusDecisionEngine). Sharing the
     # factory means every engine sees the same per-tag client cache —
-    # no duplicate clients for the same tag across engines.
+    # no duplicate clients for the same tag across engines. Plugins
+    # reach the factory via ``PluginContext.get_llm_for_tag`` which
+    # routes through ``factory.client_for_tag`` (the documented
+    # Protocol method); the per-tag cache is the factory's private
+    # implementation detail.
     llm_factory: Any = None
     # EnvironmentRouter — central dispatch for plugin → environment
     # requests. ``None`` means Runtime will build one from

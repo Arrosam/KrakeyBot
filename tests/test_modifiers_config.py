@@ -43,15 +43,15 @@ def _minimal_deps_for_runtime(runtime):
     helper, so tests can re-invoke ``_register_modifiers_from_config``
     with the same plugin-isolation setup the helper provisioned.
 
-    Includes ``config`` because plugin factories now resolve their own
-    LLMs via ``ctx.get_llm_for_tag`` → ``resolve_llm_for_tag(deps.config,
-    tag, deps.llm_clients_by_tag)``.
+    Includes ``config`` + ``llm_factory`` because plugin factories
+    resolve their own LLMs via ``ctx.get_llm_for_tag`` →
+    ``llm_factory.client_for_tag``.
     """
     from types import SimpleNamespace
     return SimpleNamespace(
         config=runtime.config,
         plugin_configs_root=runtime._test_modifier_configs_root,
-        llm_clients_by_tag=runtime._test_llm_clients_by_tag,
+        llm_factory=runtime._test_llm_factory,
         in_mind_state_path=None,
     )
 
@@ -158,7 +158,7 @@ def test_load_component_imports_and_calls_factory(tmp_path):
     ctx = PluginContext(
         deps=SimpleNamespace(
             config=None,
-            llm_clients_by_tag={},
+            llm_factory=None,
             in_mind_state_path=str(state_path),
         ),
         plugin_name="in_mind_note",

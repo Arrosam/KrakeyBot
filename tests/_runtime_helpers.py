@@ -143,13 +143,15 @@ def build_runtime_with_fakes(*, self_llm: ChatLike,
                                max_consecutive_no_action=50),
     )
     # Pre-cache the LLMClient slots that plugins will resolve through
-    # ctx.get_llm_for_tag. The "_test_default" tag is used by any
-    # plugin (or Engine) that calls ``client_for_core_purpose`` /
-    # ``ctx.get_llm_for_tag`` during a test — point it at the
-    # scripted hypo_llm fake when the caller supplied one, otherwise
-    # at an empty ScriptedLLM so callers don't have to wire one up
-    # for tests that never touch the LLM-translator path.
-    llm_clients_by_tag: dict = {
+    # ctx.get_llm_for_tag (which routes through
+    # llm_factory.client_for_tag). The "_test_default" tag is used by
+    # any plugin (or Engine) that calls ``client_for_core_purpose`` /
+    # ``ctx.get_llm_for_tag`` during a test — point it at the scripted
+    # hypo_llm fake when the caller supplied one, otherwise at an empty
+    # ScriptedLLM so callers don't have to wire one up for tests that
+    # never touch the LLM-translator path. Seeded straight into the
+    # factory's cache below.
+    seed_clients: dict = {
         "_test_default": hypo_llm if hypo_llm is not None else ScriptedLLM(),
     }
     # Dashboard plugin (which now owns the embedded web chat). Plant
@@ -183,9 +185,10 @@ def build_runtime_with_fakes(*, self_llm: ChatLike,
         DefaultLLMClientFactoryEngine,
     )
     llm_factory = DefaultLLMClientFactoryEngine(cfg)
-    # Re-use the test's pre-cached client dict so plugin lookups via
-    # ctx.get_llm_for_tag share state with the factory's own cache.
-    llm_factory._cache.update(llm_clients_by_tag)
+    # Seed the test fakes into the factory's cache so plugin lookups
+    # via ctx.get_llm_for_tag (which routes through
+    # llm_factory.client_for_tag) return them.
+    llm_factory._cache.update(seed_clients)
 
     deps = RuntimeDeps(
         config=cfg, self_llm=self_llm,
@@ -197,7 +200,6 @@ def build_runtime_with_fakes(*, self_llm: ChatLike,
         self_model_path=self_model_path,
         in_mind_state_path=in_mind_state_path,
         sliding_window_state_path=sliding_window_state_path,
-        llm_clients_by_tag=llm_clients_by_tag,
     )
     runtime = Runtime(
         deps, idle_min=idle_min, idle_max=idle_max,
@@ -220,14 +222,13 @@ def build_runtime_with_fakes(*, self_llm: ChatLike,
         # so the engine's ``factory.client_for_core_purpose("hypothalamus")``
         # call returns it without needing a real cfg entry.
         cfg.llm.core_purposes["hypothalamus"] = "_test_translator"
-        llm_clients_by_tag["_test_translator"] = decision_translator_llm
         llm_factory._cache["_test_translator"] = decision_translator_llm
         runtime.decision = HypothalamusDecisionEngine(
             cfg=cfg, factory=llm_factory,
         )
-    # Stash a copy of the resolved test paths + LLM cache so test
-    # helpers (e.g. _minimal_deps_for_runtime) can reconstruct an
-    # equivalent deps when re-invoking _register_modifiers_from_config.
+    # Stash the resolved test paths + factory so test helpers
+    # (e.g. _minimal_deps_for_runtime) can reconstruct an equivalent
+    # deps when re-invoking _register_modifiers_from_config.
     runtime._test_modifier_configs_root = plugin_configs_dir
-    runtime._test_llm_clients_by_tag = llm_clients_by_tag
+    runtime._test_llm_factory = llm_factory
     return runtime

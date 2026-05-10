@@ -110,8 +110,9 @@ def build_modifier(ctx: PluginContext) -> Modifier | None:
 
 **LLMClient sharing**: multiple purposes mapped to the same tag share
 one client instance (saves connections + a single rate-limit counter).
-The shared cache `deps.llm_clients_by_tag` is reused across the core
-and plugin paths.
+The shared cache lives privately inside the `LLMClientFactoryEngine`;
+plugins reach it through `PluginContext.get_llm_for_tag`, which routes
+to the factory's `client_for_tag` Protocol method.
 
 **Migration**: the old `llm.roles:` shape has been removed. The loader
 detects it and **fails loudly with a detailed migration message**, then

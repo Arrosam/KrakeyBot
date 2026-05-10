@@ -384,7 +384,7 @@ def test_engine_components_are_skipped_by_runtime_plugin_loader(tmp_path):
         )
         deps = SimpleNamespace(
             plugin_configs_root=str(tmp_path / "configs"),
-            llm_clients_by_tag={}, config=SimpleNamespace(),
+            llm_factory=None, config=SimpleNamespace(),
         )
         report = loader.register_one("fake_engine_plugin", deps)
         # No engine ever invoked; loader treats this as "all components
