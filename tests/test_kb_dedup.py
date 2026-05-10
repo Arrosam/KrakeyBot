@@ -6,8 +6,8 @@ the migration end-to-end wiring is covered separately in
 """
 import pytest
 
-from krakey.memory.knowledge_base import KBRegistry
-from krakey.memory.graph_memory import GraphMemory
+from krakey.engines.memory._internal.knowledge_base import KBRegistry
+from krakey.engines.memory._internal.graph_memory import GraphMemory
 
 
 class FixedEmbed:

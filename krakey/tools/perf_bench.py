@@ -14,7 +14,11 @@ import statistics
 import time
 from typing import Any
 
-from krakey.memory.graph_memory import GraphMemory
+# Dev benchmark — reaches into the memory engine's internals on
+# purpose to measure raw GM latency below the MemoryEngine Protocol
+# (going through the engine surface would pollute the numbers with
+# adapter overhead).
+from krakey.engines.memory._internal.graph_memory import GraphMemory
 
 
 class _DeterministicEmbedder:

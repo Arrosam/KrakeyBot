@@ -1,7 +1,7 @@
 """Phase 1.3e helpers: neighbor keywords + edges among a node set."""
 import pytest
 
-from krakey.memory.graph_memory import GraphMemory
+from krakey.engines.memory._internal.graph_memory import GraphMemory
 
 
 class Embed:

@@ -1,10 +1,10 @@
 """Phase 2.3b: migrate FACT/RELATION/KNOWLEDGE GM nodes into KBs by community."""
 import pytest
 
-from krakey.memory.graph_memory import GraphMemory
-from krakey.memory.knowledge_base import KBRegistry
-from krakey.memory.sleep.clustering import run_leiden_clustering
-from krakey.memory.sleep.migration import migrate_gm_to_kb
+from krakey.engines.memory._internal.graph_memory import GraphMemory
+from krakey.engines.memory._internal.knowledge_base import KBRegistry
+from krakey.engines.memory._internal.sleep.clustering import run_leiden_clustering
+from krakey.engines.memory._internal.sleep.migration import migrate_gm_to_kb
 
 
 class FixedEmbed:
@@ -187,7 +187,7 @@ async def test_migration_revives_archived_kb_on_summary_cosine_match(tmp_path):
     # 2) Stage a community whose summary_embedding is highly similar.
     #    Easiest path: insert a community row directly + map a node to it.
     db = gm._require()  # noqa: SLF001
-    from krakey.memory._db import encode_embedding
+    from krakey.engines.memory._internal._db import encode_embedding
     cur = await db.execute(
         "INSERT INTO gm_communities(name, summary, summary_embedding, "
         "member_count) VALUES(?, ?, ?, 1)",
@@ -224,7 +224,7 @@ async def test_migration_creates_new_kb_when_no_archive_matches(tmp_path):
 
     # New community embedding is orthogonal → no match
     db = gm._require()  # noqa: SLF001
-    from krakey.memory._db import encode_embedding
+    from krakey.engines.memory._internal._db import encode_embedding
     cur = await db.execute(
         "INSERT INTO gm_communities(name, summary, summary_embedding, "
         "member_count) VALUES(?, ?, ?, 1)",
@@ -366,7 +366,7 @@ async def test_dedup_uses_reranker_to_reorder_candidates(tmp_path):
 
     # New GM FACT in a community whose KB will be reused by id collision —
     # for this test we exercise dedup directly via _dedup_or_write.
-    from krakey.memory.sleep.migration import _dedup_or_write
+    from krakey.engines.memory._internal.sleep.migration import _dedup_or_write
     judge = ScriptedLLM(responses=["1"])
     rer = InvertingReranker()
 

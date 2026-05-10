@@ -14,8 +14,8 @@ import json
 import re
 from typing import Any, Protocol
 
-from krakey.memory.graph_memory import GraphMemory
-from krakey.memory.knowledge_base import KBRegistry
+from krakey.engines.memory._internal.graph_memory import GraphMemory
+from krakey.engines.memory._internal.knowledge_base import KBRegistry
 
 
 KB_RELATION_PROMPT = """Below is the metadata for all current Knowledge Bases (the post-Sleep index layer):

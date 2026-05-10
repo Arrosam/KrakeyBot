@@ -5,10 +5,10 @@ from pathlib import Path
 import pytest
 
 from krakey.interfaces.channel import PushCallback, Channel
-from krakey.memory.graph_memory import GraphMemory
-from krakey.memory.knowledge_base import KBRegistry
+from krakey.engines.memory._internal.graph_memory import GraphMemory
+from krakey.engines.memory._internal.knowledge_base import KBRegistry
 from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
-from krakey.memory.sleep.sleep_manager import enter_sleep_mode
+from krakey.engines.memory._internal.sleep.sleep_manager import enter_sleep_mode
 
 
 class FixedEmbed:

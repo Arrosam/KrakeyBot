@@ -23,7 +23,7 @@ import re
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from krakey.memory.graph_memory import GraphMemory
+    from krakey.engines.memory._internal.graph_memory import GraphMemory
 
 
 class AsyncChatLLM(Protocol):

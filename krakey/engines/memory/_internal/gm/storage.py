@@ -24,7 +24,7 @@ from typing import Any, Protocol
 
 import aiosqlite
 
-from krakey.memory._db import (
+from krakey.engines.memory._internal._db import (
     apply_schema, decode_embedding as _decode_embedding,
     encode_embedding as _encode_embedding, open_db_with_vec,
 )

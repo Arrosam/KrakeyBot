@@ -22,10 +22,10 @@ from typing import TYPE_CHECKING, Any
 
 from typing import Protocol
 
-from krakey.memory._db import decode_embedding
-from krakey.memory.graph_memory import GraphMemory
-from krakey.memory.knowledge_base import KBRegistry, KnowledgeBase
-from krakey.memory.sleep.kb_lifecycle import find_revive_target, revive_kb
+from krakey.engines.memory._internal._db import decode_embedding
+from krakey.engines.memory._internal.graph_memory import GraphMemory
+from krakey.engines.memory._internal.knowledge_base import KBRegistry, KnowledgeBase
+from krakey.engines.memory._internal.sleep.kb_lifecycle import find_revive_target, revive_kb
 
 if TYPE_CHECKING:
     from krakey.interfaces.engines.reranker import RerankerEngine
@@ -165,7 +165,7 @@ async def _fetch_migratable(db) -> list[dict[str, Any]]:
     ) as cur:
         rows = await cur.fetchall()
     # Avoid circular import at module load
-    from krakey.memory.graph_memory import _row_to_node
+    from krakey.engines.memory._internal.graph_memory import _row_to_node
     return [_row_to_node(r) for r in rows]
 
 

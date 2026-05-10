@@ -7,7 +7,7 @@ import pytest
 from krakey.engines.recall._scoring import ScoringWeights
 from krakey.engines.recall.incremental import IncrementalRecall
 from krakey.interfaces.engines.recall import RecallResult
-from krakey.memory.graph_memory import GraphMemory
+from krakey.engines.memory._internal.graph_memory import GraphMemory
 from krakey.models.stimulus import Stimulus
 
 

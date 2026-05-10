@@ -5,8 +5,8 @@ import httpx
 import pytest
 
 from krakey.plugins.dashboard.app_factory import create_app
-from krakey.memory.graph_memory import GraphMemory
-from krakey.memory.knowledge_base import KBRegistry
+from krakey.engines.memory._internal.graph_memory import GraphMemory
+from krakey.engines.memory._internal.knowledge_base import KBRegistry
 
 
 class StubEmbed:

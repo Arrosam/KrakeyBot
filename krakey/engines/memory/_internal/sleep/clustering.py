@@ -12,8 +12,8 @@ from typing import Any, Protocol
 import igraph as ig
 import leidenalg as la
 
-from krakey.memory._db import encode_embedding
-from krakey.memory.graph_memory import GraphMemory, _row_to_node
+from krakey.engines.memory._internal._db import encode_embedding
+from krakey.engines.memory._internal.graph_memory import GraphMemory, _row_to_node
 
 
 COMMUNITY_SUMMARY_PROMPT = """Below is a tightly related set of memory nodes (discovered by Sleep clustering):

@@ -12,12 +12,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from krakey.memory.graph_memory import GraphMemory
-from krakey.memory.knowledge_base import KBRegistry
-from krakey.memory.sleep.clustering import run_leiden_clustering
-from krakey.memory.sleep.index_rebuild import rebuild_index_graph
-from krakey.memory.sleep.kb_lifecycle import archive_excess_kbs, consolidate_kbs
-from krakey.memory.sleep.migration import migrate_gm_to_kb
+from krakey.engines.memory._internal.graph_memory import GraphMemory
+from krakey.engines.memory._internal.knowledge_base import KBRegistry
+from krakey.engines.memory._internal.sleep.clustering import run_leiden_clustering
+from krakey.engines.memory._internal.sleep.index_rebuild import rebuild_index_graph
+from krakey.engines.memory._internal.sleep.kb_lifecycle import archive_excess_kbs, consolidate_kbs
+from krakey.engines.memory._internal.sleep.migration import migrate_gm_to_kb
 
 if TYPE_CHECKING:
     from krakey.interfaces.engines.reranker import RerankerEngine

@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from krakey.memory._db import cosine_similarity
-from krakey.memory.graph_memory import GraphMemory
-from krakey.memory.knowledge_base import KBRegistry, KnowledgeBase
+from krakey.engines.memory._internal._db import cosine_similarity
+from krakey.engines.memory._internal.graph_memory import GraphMemory
+from krakey.engines.memory._internal.knowledge_base import KBRegistry, KnowledgeBase
 
 
 # ---------------- index vector + importance ----------------
@@ -28,7 +28,7 @@ async def compute_kb_index_embedding(kb: KnowledgeBase) -> list[float] | None:
         "WHERE is_active = 1 AND embedding IS NOT NULL"
     ) as cur:
         rows = await cur.fetchall()
-    from krakey.memory._db import decode_embedding
+    from krakey.engines.memory._internal._db import decode_embedding
     vecs = [decode_embedding(r[0]) for r in rows]
     vecs = [v for v in vecs if v]
     if not vecs:
@@ -117,7 +117,7 @@ async def _move_entries(src: KnowledgeBase, dst: KnowledgeBase) -> int:
     ) as cur:
         rows = await cur.fetchall()
     import json as _json
-    from krakey.memory._db import decode_embedding
+    from krakey.engines.memory._internal._db import decode_embedding
     n = 0
     for r in rows:
         await dst.write_entry(

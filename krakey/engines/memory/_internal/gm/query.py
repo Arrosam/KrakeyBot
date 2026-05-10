@@ -35,8 +35,8 @@ class GMQueryMixin:
         Adequate for Phase 1 scale (≤ soft_limit nodes). Returns
         (node_dict, similarity) pairs sorted descending by similarity.
         """
-        from krakey.memory.gm.storage import _row_to_node
-        from krakey.memory.tools.vec_search import vec_scan
+        from krakey.engines.memory._internal.gm.storage import _row_to_node
+        from krakey.engines.memory._internal.tools.vec_search import vec_scan
         return await vec_scan(
             self._require(), table="gm_nodes",
             query_vec=query_vec, row_decoder=_row_to_node,
@@ -49,8 +49,8 @@ class GMQueryMixin:
                            top_k: int = 5) -> list[dict[str, Any]]:
         """Full-text search fallback used when embeddings are unavailable.
         Tokens are sanitized so MATCH never sees FTS5 operators."""
-        from krakey.memory.gm.storage import _row_to_node
-        from krakey.memory.tools.fts_search import fts_scan
+        from krakey.engines.memory._internal.gm.storage import _row_to_node
+        from krakey.engines.memory._internal.tools.fts_search import fts_scan
         return await fts_scan(
             self._require(), table="gm_nodes", fts_table="gm_nodes_fts",
             query=query, row_decoder=_row_to_node, top_k=top_k,
@@ -61,7 +61,7 @@ class GMQueryMixin:
     async def would_create_cycle(self, a: int, b: int) -> bool:
         """Undirected connectivity check (DevSpec §7.7) — thin wrapper
         around the generic ``tools.graph`` walker."""
-        from krakey.memory.tools.graph import would_create_cycle as _cycle
+        from krakey.engines.memory._internal.tools.graph import would_create_cycle as _cycle
         return await _cycle(self._require(), edges_table="gm_edges",
                               a=a, b=b)
 
@@ -69,7 +69,7 @@ class GMQueryMixin:
                                              predicate: str) -> dict[str, Any]:
         """Normalize (a<b) and skip the edge if it would close a cycle.
         Delegates to ``tools.graph.insert_edge_with_cycle_check``."""
-        from krakey.memory.tools.graph import (
+        from krakey.engines.memory._internal.tools.graph import (
             insert_edge_with_cycle_check as _insert,
         )
         return await _insert(
@@ -84,7 +84,7 @@ class GMQueryMixin:
         """For each node in `node_ids`, return a de-duplicated list of
         neighbor names (DevSpec §9.3 keyword hints). Phase 1 supports
         depth=1. Delegates to the generic graph walker."""
-        from krakey.memory.tools.graph import (
+        from krakey.engines.memory._internal.tools.graph import (
             get_neighbor_keywords as _neighbors,
         )
         return await _neighbors(
@@ -97,7 +97,7 @@ class GMQueryMixin:
         """Return edges whose both endpoints are within `node_ids`,
         with source/target names. Delegates to the generic graph
         walker. Keys match DevSpec §3.6 Layer-2 renderer."""
-        from krakey.memory.tools.graph import get_edges_among as _among
+        from krakey.engines.memory._internal.tools.graph import get_edges_among as _among
         return await _among(
             self._require(), nodes_table="gm_nodes",
             edges_table="gm_edges", node_ids=node_ids,

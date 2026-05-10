@@ -20,7 +20,7 @@ from typing import Any, Protocol
 
 import aiosqlite
 
-from krakey.memory._db import (
+from krakey.engines.memory._internal._db import (
     apply_schema, build_fts_query, decode_embedding, encode_embedding,
     open_db_with_vec,
 )
@@ -205,7 +205,7 @@ class KnowledgeBase:
         string-query path) and by the sleep-migration dedup pass
         (which already has a pre-computed embedding).
         """
-        from krakey.memory.tools.vec_search import vec_scan
+        from krakey.engines.memory._internal.tools.vec_search import vec_scan
         return await vec_scan(
             self._require(), table="kb_entries",
             query_vec=query_vec, row_decoder=_row_to_entry,
@@ -215,7 +215,7 @@ class KnowledgeBase:
 
     async def fts_search(self, query: str, *,
                            top_k: int = 5) -> list[dict[str, Any]]:
-        from krakey.memory.tools.fts_search import fts_scan
+        from krakey.engines.memory._internal.tools.fts_search import fts_scan
         return await fts_scan(
             self._require(), table="kb_entries", fts_table="kb_entries_fts",
             query=query, row_decoder=_row_to_entry, top_k=top_k,

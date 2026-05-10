@@ -22,8 +22,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from krakey.memory.graph_memory import AsyncChatLLM, GraphMemory
-from krakey.memory.knowledge_base import KBRegistry
+from krakey.engines.memory._internal.graph_memory import (
+    AsyncChatLLM, GraphMemory,
+)
+from krakey.engines.memory._internal.knowledge_base import KBRegistry
 
 if TYPE_CHECKING:
     from krakey.interfaces.engines.memory import KnowledgeBaseLike
@@ -159,7 +161,9 @@ class GraphMemoryEngine(GraphMemory):
           * kb_revive_threshold          — revive an archived KB when
                                             new community is this close
         """
-        from krakey.memory.sleep.sleep_manager import enter_sleep_mode
+        from krakey.engines.memory._internal.sleep.sleep_manager import (
+            enter_sleep_mode,
+        )
 
         registry = self._require_kb_registry()
         return await enter_sleep_mode(
