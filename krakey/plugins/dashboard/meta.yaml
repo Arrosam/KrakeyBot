@@ -25,6 +25,11 @@ config_schema:
     default: workspace/data/web_chat.jsonl
     help: where the embedded chat's JSONL log is persisted
 
+dependencies:
+  - "fastapi>=0.115"
+  - "python-multipart>=0.0.9"
+  - "uvicorn[standard]>=0.30"
+
 components:
   - kind: channel
     factory_module: krakey.plugins.dashboard

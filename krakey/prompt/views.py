@@ -1,9 +1,14 @@
-"""Typed input shapes for ``PromptBuilder.build()``.
+"""Typed input shapes for the Context Engine.
 
-Three dataclasses crossing the runtime → builder boundary, replacing
+Two dataclasses crossing the runtime → context boundary, replacing
 the previous loose ``dict[str, Any]`` parameters. Defining them
-together (vs scattering by consumer) makes "what does the prompt
-builder consume?" answerable from one file.
+together (vs scattering by consumer) makes "what does the context
+engine consume?" answerable from one file.
+
+The history-round dataclass lives next to its producing Engine in
+``krakey.interfaces.engines.explicit_history`` (``ExplicitHistoryRound``);
+this module re-exports it so callers building prompt inputs still
+import every shape from one place.
 
 Every field a producer typoes is a TypeError at construction; every
 field a renderer reads wrong is an AttributeError. Both surface long
@@ -13,14 +18,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
-@dataclass
-class SlidingWindowRound:
-    """One past heartbeat as it appears in the [HISTORY] layer."""
-    heartbeat_id: int
-    stimulus_summary: str
-    decision_text: str
-    note_text: str
+from krakey.interfaces.engines.explicit_history import (  # noqa: F401
+    ExplicitHistoryRound,
+)
 
 
 @dataclass

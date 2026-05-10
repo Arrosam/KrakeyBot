@@ -1,12 +1,56 @@
     <!-- SETTINGS -->
     <section id="tab-settings" class="tab-panel">
+      <!-- Wrap everything above the action bar in a single scroll
+           region so the page hint scrolls WITH the form rather
+           than sticking to the viewport top. Only the action bar
+           (Save / Apply changes / Restart Krakey) stays fixed at
+           the bottom — operators always need it within reach. -->
+      <div class="settings-scroll">
       <p class="hint">Edit config.yaml through this form. Hover over a
         field name to see its help text. Saved changes only take effect
         after a manual restart; every startup auto-backs up the previous
         config to <code>workspace/backups/</code>.</p>
-      <div id="settings-form" class="scroll">— loading —</div>
+      <!-- Install banner. Always visible (so the Install button's
+           purpose is never a mystery) — its left-side text changes
+           based on /api/plugins/deps_status: pending plugins → list
+           of names + "click to install"; satisfied → "all deps
+           installed; Install refreshes the venv". Self also gets a
+           system:install Stimulus on startup so autonomous self-
+           repair works without the operator ever seeing this banner.
+           ``--upgrade`` passes ``--upgrade`` to pip so already-
+           installed wheels get re-resolved (force re-resolution
+           after a manual ``pip uninstall`` etc.). -->
+      <div id="install-banner" class="install-banner">
+        <span class="install-banner-text" id="install-banner-text">
+          <strong>Install plugin dependencies.</strong>
+          Runs <code>pip install</code> for every enabled plugin's
+          declared <code>dependencies</code> +
+          each plugin's <code>post_install</code> hook (e.g.
+          <code>playwright install chromium</code> for browser_exec)
+          inside the runtime's venv.
+        </span>
+        <label class="install-banner-upgrade"
+               title="Pass --upgrade to pip — re-resolves already-installed wheels (force refresh)">
+          <input type="checkbox" id="install-upgrade">
+          <span>--upgrade</span>
+        </label>
+        <button id="install-run" class="primary"
+                title="Install or refresh plugin dependencies (pip + post_install). Takes ~1 minute on first run; idempotent thereafter.">
+          <i data-bi="download"></i> Install
+        </button>
+      </div>
+      <pre id="install-log" class="install-log" hidden></pre>
+      <div id="settings-form">— loading —</div>
+      </div>
       <div class="settings-actions">
         <button id="settings-save"><i data-bi="floppy"></i> Save</button>
+        <!-- Apply changes WITHOUT restarting: tries to hot-reload
+             newly-enabled plugins. Bigger changes (LLM swap,
+             memory backend, plugin REMOVAL) still need the
+             Restart button. The endpoint reports back which
+             plugins are still pending removal so the toast
+             tells the operator. -->
+        <button id="settings-apply" title="Hot-add newly enabled plugins without process restart"><i data-bi="arrow-repeat"></i> Apply changes</button>
         <button id="settings-restart" class="danger"><i data-bi="arrow-clockwise"></i> Restart Krakey</button>
         <span id="settings-toast"></span>
       </div>

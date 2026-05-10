@@ -78,16 +78,21 @@ class PluginObserver:
         return infos
 
     def loaded_report(self) -> dict[str, Any]:
-        """Dashboard /api/plugins payload: tools + channels with
-        a ``loaded`` flag (always True for items in the registry).
+        """Dashboard /api/plugins payload: tools + channels +
+        modifiers with a ``loaded`` flag (True for items currently
+        in their respective registry).
 
-        Modifiers are not included in the report because the dashboard's
-        plugins panel only renders tools + channels — modifiers
-        live in their own panel that uses the catalogue scan, not this
-        snapshot."""
+        Modifiers were originally omitted on the assumption the
+        dashboard rendered them in a separate panel, but the unified
+        plugins panel needs them to badge modifier-only plugins like
+        ``hypothalamus`` correctly — without the modifier list,
+        the JS aggregation falls through to "not loaded" even when
+        the modifier IS registered, which has been silently lying
+        to users."""
         infos = self.collect_infos()
         loaded_t = set(self._tools.names())
         loaded_s = set(self._channels.channel_names())
+        loaded_m = set(self._modifiers.names())
 
         def _flatten(infos_subset, loaded_names):
             return [{
@@ -106,6 +111,9 @@ class PluginObserver:
             "channels": _flatten(
                 [i for i in infos if i.kind == "channel"], loaded_s,
             ),
+            "modifiers": _flatten(
+                [i for i in infos if i.kind == "modifier"], loaded_m,
+            ),
         }
 
     def _info(self, kind: str, name: str) -> PluginInfo:
@@ -113,5 +121,26 @@ class PluginObserver:
             else "core"
         return PluginInfo(
             name=name, kind=kind, source=source,
-            path="", project=name,
+            path="", project=self._lookup_project(kind, name),
         )
+
+    def _lookup_project(self, kind: str, name: str) -> str:
+        """Resolve which plugin folder owns this ``(kind, name)`` tuple.
+
+        The loader records every successful registration in its
+        ``plugin_components`` manifest as ``plugin_name → [(kind,
+        instance_name), ...]``. We invert that lookup here so the
+        dashboard's per-plugin status badge can match the report
+        against the catalog (which is keyed by plugin folder name,
+        not component instance name — e.g. the ``duckduckgo_search``
+        plugin contributes a tool whose ``.name`` is ``"search"``).
+
+        Falls back to the component name for entries the loader
+        didn't install (built-in tools, BatchTracker, modifier
+        ``attach()`` extras) — those have no plugin folder, so the
+        component name is the only stable identifier.
+        """
+        for plugin_name, components in self._loader.plugin_components.items():
+            if (kind, name) in components:
+                return plugin_name
+        return name

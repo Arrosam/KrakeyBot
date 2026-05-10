@@ -4,8 +4,8 @@ import json
 import pytest
 
 from krakey.memory.graph_memory import GraphMemory
-from krakey.runtime.heartbeat.compact import compact_if_needed
-from krakey.runtime.heartbeat.sliding_window import SlidingWindow, SlidingWindowRound
+from krakey.engines.heartbeat.compact import compact_if_needed
+from krakey.engines.explicit_history.sliding_window import SlidingWindow, ExplicitHistoryRound
 
 
 class Embed:
@@ -45,8 +45,8 @@ def _recall_none():
 
 async def test_compact_noop_when_window_within_limit(tmp_path):
     gm = await _gm(tmp_path)
-    w = SlidingWindow(max_tokens=4096)
-    w.append(SlidingWindowRound(1, "small", "small", ""))
+    w = SlidingWindow(history_token_budget=4096)
+    w.append(ExplicitHistoryRound(1, "small", "small", ""))
     await compact_if_needed(w, gm, NeverCallLLM(), recall_fn=_recall_none())
     assert len(w.rounds) == 1
     await gm.close()
@@ -62,9 +62,9 @@ async def test_compact_evicts_and_writes_nodes_to_gm(tmp_path):
         "edges": [],
     })])
 
-    w = SlidingWindow(max_tokens=5)  # tight limit
-    w.append(SlidingWindowRound(1, "user: I like tea", "reply greet", ""))
-    w.append(SlidingWindowRound(2, "user: thanks", "no action", ""))
+    w = SlidingWindow(history_token_budget=5)  # tight limit
+    w.append(ExplicitHistoryRound(1, "user: I like tea", "reply greet", ""))
+    w.append(ExplicitHistoryRound(2, "user: thanks", "no action", ""))
     assert w.needs_compact() is True
 
     await compact_if_needed(w, gm, llm, recall_fn=_recall_none())
@@ -86,9 +86,9 @@ async def test_compact_writes_edges_among_extracted_nodes(tmp_path):
                     "predicate": "CAUSES"}],
     })])
 
-    w = SlidingWindow(max_tokens=5)
-    w.append(SlidingWindowRound(1, "a" * 40, "b" * 40, ""))
-    w.append(SlidingWindowRound(2, "short", "", ""))
+    w = SlidingWindow(history_token_budget=5)
+    w.append(ExplicitHistoryRound(1, "a" * 40, "b" * 40, ""))
+    w.append(ExplicitHistoryRound(2, "short", "", ""))
 
     await compact_if_needed(w, gm, llm, recall_fn=_recall_none())
 
@@ -102,9 +102,9 @@ async def test_compact_loops_until_under_limit(tmp_path):
     # Always return empty extraction — pure eviction behavior
     llm = ScriptedLLM([json.dumps({"nodes": [], "edges": []})] * 10)
 
-    w = SlidingWindow(max_tokens=10)
+    w = SlidingWindow(history_token_budget=10)
     for i in range(5):
-        w.append(SlidingWindowRound(i, "x" * 200, "y" * 200, ""))
+        w.append(ExplicitHistoryRound(i, "x" * 200, "y" * 200, ""))
     assert w.needs_compact()
 
     await compact_if_needed(w, gm, llm, recall_fn=_recall_none())
@@ -125,9 +125,9 @@ async def test_compact_references_existing_nodes_from_recall(tmp_path):
     async def recall_fn(text):
         return await gm.fts_search(text, top_k=5)
 
-    w = SlidingWindow(max_tokens=5)
-    w.append(SlidingWindowRound(1, "tea " * 40, "", ""))
-    w.append(SlidingWindowRound(2, "short", "", ""))
+    w = SlidingWindow(history_token_budget=5)
+    w.append(ExplicitHistoryRound(1, "tea " * 40, "", ""))
+    w.append(ExplicitHistoryRound(2, "short", "", ""))
 
     await compact_if_needed(w, gm, llm, recall_fn=recall_fn)
 
@@ -143,9 +143,9 @@ async def test_compact_tolerates_markdown_fenced_json(tmp_path):
         "edges": [],
     }) + "\n```"])
 
-    w = SlidingWindow(max_tokens=5)
-    w.append(SlidingWindowRound(1, "a" * 50, "", ""))
-    w.append(SlidingWindowRound(2, "b", "", ""))
+    w = SlidingWindow(history_token_budget=5)
+    w.append(ExplicitHistoryRound(1, "a" * 50, "", ""))
+    w.append(ExplicitHistoryRound(2, "b", "", ""))
 
     await compact_if_needed(w, gm, llm, recall_fn=_recall_none())
     assert await gm.count_nodes() >= 1
@@ -163,9 +163,9 @@ async def test_single_oversized_round_is_split_into_chunks(tmp_path):
     }) for i in range(20)]
     llm = ScriptedLLM(responses)
 
-    w = SlidingWindow(max_tokens=20)  # very tight
+    w = SlidingWindow(history_token_budget=20)  # very tight
     big_text = "x" * 1000
-    w.append(SlidingWindowRound(1, big_text, big_text, ""))
+    w.append(ExplicitHistoryRound(1, big_text, big_text, ""))
     assert w.needs_compact()
     assert len(w.rounds) == 1  # only one round but oversized
 

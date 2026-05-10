@@ -33,7 +33,7 @@ _SHELL_PATH = _STATIC_DIR / "index.template.html"
 
 # Order matters: the shell's nav renders tabs in this order too, and
 # styles cascade predictably when loaded in the same sequence.
-_VIEW_ORDER = ["thoughts", "chat", "memory", "prompts", "settings"]
+_VIEW_ORDER = ["thoughts", "chat", "memory", "prompts", "log", "settings"]
 
 # Shared stylesheets in load order. `theme.css` first (defines vars
 # consumed by everything else), then `layout.css` (tabs + header +

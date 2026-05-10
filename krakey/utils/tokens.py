@@ -75,7 +75,7 @@ def estimate_tokens(text: str) -> int:
 
 def estimate_tokens_many(texts: list[str]) -> int:
     """Sum ``estimate_tokens`` over a list. Convenience for callers
-    that want the total of several fields (e.g. a SlidingWindowRound's
+    that want the total of several fields (e.g. a ExplicitHistoryRound's
     stimulus_summary + decision_text + note_text) without writing the
     sum themselves.
     """

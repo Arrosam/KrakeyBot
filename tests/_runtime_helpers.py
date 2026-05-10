@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Protocol
 
 from krakey.main import Runtime, RuntimeDeps
-from krakey.memory.recall import Reranker
 
 
 class ChatLike(Protocol):
@@ -36,16 +35,18 @@ class ScriptedLLM:
         return self._responses.pop(0)
 
 
-def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
+def build_runtime_with_fakes(*, self_llm: ChatLike,
+                              decision_translator_llm: ChatLike | None = None,
+                              hypo_llm: ChatLike | None = None,
                               compact_llm: ChatLike | None = None,
                               classify_llm: ChatLike | None = None,
                               embedder: AsyncEmbedder | None = None,
-                              reranker: Reranker | None = None,
                               idle_min: float = 0.01,
                               idle_max: float = 5.0,
                               gm_path: str = ":memory:",
                               kb_dir: str | None = None,
                               skip_bootstrap: bool = True,
+                              self_model_path: str | None = None,
                               modifiers: list[str] | None = None) -> Runtime:
     """In-memory Runtime with injectable doubles. CLI channel disabled.
 
@@ -75,7 +76,10 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
     # Ditto for self_model: it's a mutable file, and bootstrap tests
     # rewrite it. Without an override, concurrent test writes trample
     # the production workspace/self_model.yaml.
-    self_model_path = f"{tempfile.mkdtemp(prefix='krakey_test_sm_')}/self_model.yaml"
+    if self_model_path is None:
+        self_model_path = (
+            f"{tempfile.mkdtemp(prefix='krakey_test_sm_')}/self_model.yaml"
+        )
     # And the in_mind Modifier's state file. Tests that enable
     # in_mind_note would otherwise dispatch update_in_mind into
     # the production workspace/data/in_mind.json — same class of
@@ -124,7 +128,6 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
             list(modifiers)
             if modifiers is not None
             else [
-                "hypothalamus",
                 "recall",
                 "dashboard",
             ]
@@ -140,24 +143,15 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
                                max_consecutive_no_action=50),
     )
     # Pre-cache the LLMClient slots that plugins will resolve through
-    # ctx.get_llm_for_tag. We point the helper's "_test_default" tag at
-    # the caller's hypo_llm (ScriptedLLM in most tests) so the
-    # hypothalamus Modifier's `translator` purpose lands on the
-    # scripted fake instead of trying to make a real HTTP call.
-    llm_clients_by_tag: dict = {"_test_default": hypo_llm}
-
-    # Plant a per-plugin config for hypothalamus that binds
-    # its `translator` purpose to "_test_default" — without this, the
-    # plugin's factory reads no purposes from ctx.config,
-    # ctx.get_llm_for_tag(None) returns None, and the factory skips
-    # registration (correct behavior, but would break tests that
-    # expect the Modifier to be registered).
-    Path(plugin_configs_dir, "hypothalamus").mkdir(
-        parents=True, exist_ok=True,
-    )
-    Path(plugin_configs_dir, "hypothalamus", "config.yaml").write_text(
-        "llm_purposes:\n  translator: _test_default\n", encoding="utf-8",
-    )
+    # ctx.get_llm_for_tag. The "_test_default" tag is used by any
+    # plugin (or Engine) that calls ``client_for_core_purpose`` /
+    # ``ctx.get_llm_for_tag`` during a test — point it at the
+    # scripted hypo_llm fake when the caller supplied one, otherwise
+    # at an empty ScriptedLLM so callers don't have to wire one up
+    # for tests that never touch the LLM-translator path.
+    llm_clients_by_tag: dict = {
+        "_test_default": hypo_llm if hypo_llm is not None else ScriptedLLM(),
+    }
     # Dashboard plugin (which now owns the embedded web chat). Plant
     # config that:
     #   * points history at a tmpdir so tests don't pollute
@@ -172,21 +166,65 @@ def build_runtime_with_fakes(*, self_llm: ChatLike, hypo_llm: ChatLike,
         encoding="utf-8",
     )
 
+    # Sliding window state file: per-test tmpdir so heartbeat
+    # rounds don't bleed across runs. Tests that want to verify
+    # cross-restart persistence (test_sliding_window.py) pass an
+    # explicit path via build_runtime_with_fakes' kwargs and
+    # construct two runtimes pointing at the same file.
+    sliding_window_state_path = (
+        f"{tempfile.mkdtemp(prefix='krakey_test_sw_')}/sliding_window.json"
+    )
+    # Provide an LLMClientFactoryEngine so Runtime can resolve the
+    # reranker Engine slot (the default reranker constructor takes a
+    # factory). Even if cfg has no reranker tag bound, the factory's
+    # rerank_client() returns None and the Engine falls back to
+    # preserve-order scoring.
+    from krakey.engines.llm_factory.default import (
+        DefaultLLMClientFactoryEngine,
+    )
+    llm_factory = DefaultLLMClientFactoryEngine(cfg)
+    # Re-use the test's pre-cached client dict so plugin lookups via
+    # ctx.get_llm_for_tag share state with the factory's own cache.
+    llm_factory._cache.update(llm_clients_by_tag)
+
     deps = RuntimeDeps(
-        config=cfg, self_llm=self_llm, hypo_llm=hypo_llm,
+        config=cfg, self_llm=self_llm,
         compact_llm=compact_llm or ScriptedLLM(),
         classify_llm=classify_llm or ScriptedLLM(),
         embedder=embedder or NullEmbedder(),
-        reranker=reranker,
+        llm_factory=llm_factory,
         plugin_configs_root=plugin_configs_dir,
         self_model_path=self_model_path,
         in_mind_state_path=in_mind_state_path,
+        sliding_window_state_path=sliding_window_state_path,
         llm_clients_by_tag=llm_clients_by_tag,
     )
     runtime = Runtime(
         deps, idle_min=idle_min, idle_max=idle_max,
-        is_bootstrap_override=False if skip_bootstrap else None,
     )
+    if skip_bootstrap:
+        anchor = runtime.modifiers.by_role("bootstrap")
+        if anchor is not None and hasattr(anchor, "force_active"):
+            anchor.force_active(False)
+    # When the caller wants the LLM-translator decision path, pass
+    # ``decision_translator_llm=ScriptedLLM([...json...])``: we swap
+    # the resolved DecisionEngine to ``HypothalamusDecisionEngine``
+    # and bind its ``hypothalamus`` core-purpose tag to the supplied
+    # fake. Otherwise the default ``ToolCallParserDecisionEngine``
+    # (scripted ``<tool_call>`` parser) stays in place.
+    if decision_translator_llm is not None:
+        from krakey.engines.decision.hypothalamus import (
+            HypothalamusDecisionEngine,
+        )
+        # Bind the fake under the ``hypothalamus`` core-purpose tag
+        # so the engine's ``factory.client_for_core_purpose("hypothalamus")``
+        # call returns it without needing a real cfg entry.
+        cfg.llm.core_purposes["hypothalamus"] = "_test_translator"
+        llm_clients_by_tag["_test_translator"] = decision_translator_llm
+        llm_factory._cache["_test_translator"] = decision_translator_llm
+        runtime.decision = HypothalamusDecisionEngine(
+            cfg=cfg, factory=llm_factory,
+        )
     # Stash a copy of the resolved test paths + LLM cache so test
     # helpers (e.g. _minimal_deps_for_runtime) can reconstruct an
     # equivalent deps when re-invoking _register_modifiers_from_config.

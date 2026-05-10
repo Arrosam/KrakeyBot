@@ -1,4 +1,4 @@
-/* Inner Thoughts view: thinking + decision + hypothalamus + pending stimuli + status. */
+/* Inner Thoughts view: thinking + decision + tool usage + stimulus stream + status. */
 
 .thoughts-grid {
   display: grid;
@@ -10,22 +10,42 @@
 
 #thinking-stream { color: var(--cyan); }
 #decision-stream { color: var(--cyan); }
-#hypo-stream { color: var(--yellow); }
+#tool-stream { color: var(--yellow); padding: 6px 8px; }
 
-#stim-list { list-style: none; padding: 8px 10px; margin: 0; }
-#stim-list li {
-  padding: 4px 6px;
-  margin-bottom: 4px;
+/* Stimulus panel — one group per heartbeat. Each group has a
+   muted header (#hb_id  N stimuluses) followed by the individual
+   stimuli rows. Adrenalin stimuli keep their red left-rule. */
+#stim-stream { padding: 6px 8px; }
+#stim-stream .stim-group {
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px dashed var(--border);
+}
+#stim-stream .stim-group:last-child { border-bottom: none; }
+#stim-stream .stim-head {
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+#stim-stream .stim-head .hb-tag {
+  color: var(--cyan);
+  font-size: 11px;
+  margin-right: 4px;
+}
+#stim-stream .stim-row {
+  padding: 3px 4px;
+  margin: 2px 0 2px 12px;
   background: var(--panel-2);
   border-radius: 3px;
   font-size: 11px;
+  word-break: break-word;
 }
-#stim-list li.adrenalin { border-left: 2px solid var(--red); }
-#stim-list li .src { color: var(--muted); margin-right: 6px; }
+#stim-stream .stim-row.adrenalin { border-left: 2px solid var(--red); }
+#stim-stream .stim-row .src { color: var(--muted); margin-right: 4px; }
 
-/* Bottom-right cell: Pending Stimuli + Status share the slot.
-   60/40 split favors Pending Stimuli since it carries more text
-   per item; Status is mostly compact key/value pairs. */
+/* Bottom-right cell: Stimulus Stream + Status share the slot.
+   60/40 split favours the stream since it carries more text per
+   item; Status is mostly compact key/value pairs. */
 .thoughts-bottom-right {
   display: grid;
   grid-template-columns: 3fr 2fr;

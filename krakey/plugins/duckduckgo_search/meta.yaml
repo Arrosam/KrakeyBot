@@ -8,7 +8,12 @@ config_schema:
   - field: max_results
     type: number
     default: 5
-    help: Upper bound on results per query.
+    help: >
+      Default result count when Self doesn't pass ``max_results`` in the
+      tool call. Self can override per-call (up to a hard cap of 25);
+      this just sets the no-argument default.
+dependencies:
+  - "ddgs>=9.0"
 components:
   - kind: tool
     factory_module: krakey.plugins.duckduckgo_search

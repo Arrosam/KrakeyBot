@@ -25,19 +25,23 @@ from krakey.models.config_backup import backup_config
 class _MemoryRuntime(Protocol):
     """Narrow shape this module needs from Runtime \u2014 declared here so
     the adapter doesn't depend on the full Runtime class. Lets tests
-    substitute a stand-in with just ``gm`` and ``kb_registry``."""
-    gm: Any
-    kb_registry: Any
+    substitute a stand-in with just ``memory``."""
+    memory: Any
 
 
 class RuntimeMemoryService:
-    """Adapts Runtime.gm + Runtime.kb_registry to MemoryService."""
+    """Adapts Runtime.memory to MemoryService.
+
+    After the Engine refactor (2026-05) the runtime exposes a single
+    MemoryEngine that fulfills both the GM + KB-registry surfaces, so
+    this adapter routes every call through ``rt.memory``.
+    """
 
     def __init__(self, runtime: _MemoryRuntime | None):
         self._rt = runtime
 
     def _require(self) -> _MemoryRuntime:
-        if self._rt is None or not hasattr(self._rt, "gm"):
+        if self._rt is None or not hasattr(self._rt, "memory"):
             raise RuntimeError("runtime not available")
         return self._rt
 
@@ -45,36 +49,36 @@ class RuntimeMemoryService:
         self, *, category: str | None, limit: int,
     ) -> list[dict[str, Any]]:
         rt = self._require()
-        nodes = await rt.gm.list_nodes(category=category, limit=limit)
+        nodes = await rt.memory.list_nodes(category=category, limit=limit)
         return [_serialize_node(n) for n in nodes]
 
     async def list_gm_edges(
         self, *, limit: int,
     ) -> list[dict[str, Any]]:
         rt = self._require()
-        return await rt.gm.list_edges_named(limit=limit)
+        return await rt.memory.list_edges_named(limit=limit)
 
     async def gm_stats(self) -> dict[str, Any]:
         rt = self._require()
-        total_nodes = await rt.gm.count_nodes()
-        total_edges = await rt.gm.count_edges()
+        total_nodes = await rt.memory.count_nodes()
+        total_edges = await rt.memory.count_edges()
         return {
             "total_nodes": total_nodes,
             "total_edges": total_edges,
-            "by_category": await rt.gm.counts_by_category(),
-            "by_source": await rt.gm.counts_by_source(),
+            "by_category": await rt.memory.counts_by_category(),
+            "by_source": await rt.memory.counts_by_source(),
         }
 
     async def list_kbs(self) -> list[dict[str, Any]]:
         rt = self._require()
-        return await rt.kb_registry.list_kbs()
+        return await rt.memory.list_kbs()
 
     async def kb_entries(
         self, *, kb_id: str, limit: int,
     ) -> list[dict[str, Any]]:
         rt = self._require()
         try:
-            kb = await rt.kb_registry.open_kb(kb_id)
+            kb = await rt.memory.open_kb(kb_id)
         except KeyError:
             raise LookupError(f"KB {kb_id!r} not found")
         return await kb.list_active_entries(limit=limit)
@@ -129,9 +133,15 @@ class RuntimePluginsService:
         if self._rt is None:
             raise RuntimeError("runtime not available")
         if not hasattr(self._rt, "loaded_plugin_report"):
-            return {"tools": [], "channels": []}
+            return {"tools": [], "channels": [], "modifiers": []}
         report = self._rt.loaded_plugin_report()
-        for kind in ("tools", "channels"):
+        # Decorate every kind the runtime emits — tools, channels,
+        # modifiers — with the per-plugin config + UI placeholders so
+        # the JS catalog renderer has a uniform shape. Modifiers were
+        # historically excluded from this enrichment, which made
+        # modifier-only plugin rows in the dashboard panel show as
+        # "not loaded" even when the modifier was registered.
+        for kind in ("tools", "channels", "modifiers"):
             for entry in report.get(kind, []):
                 project = entry.get("project") or ""
                 entry["values"] = (
@@ -155,6 +165,60 @@ class RuntimePluginsService:
         values.pop("enabled", None)  # central config.yaml owns enable/disable
         path = self._store.write(project, values)
         return {"project": project, "path": str(path), "config": values}
+
+    # ---- deps install status / install dispatch ----
+    # Both delegate to the DefaultInstallService utility class
+    # imported from ``krakey.install``. Install is a pre-startup
+    # concern — the runtime has no reference to it.
+
+    def _install_service(self):
+        from krakey.install import DefaultInstallService
+        return DefaultInstallService()
+
+    def deps_status(self) -> dict[str, Any]:
+        return self._install_service().deps_status()
+
+    async def hot_reload(self) -> dict[str, Any]:
+        """Re-parse the central config.yaml and ask the runtime to
+        hot-add any newly-enabled plugins. Returns the runtime's
+        report verbatim."""
+        if self._rt is None:
+            raise RuntimeError("runtime not available")
+        # Re-read config.yaml from disk so the latest edit is what
+        # we diff against (the runtime's in-memory ``config.plugins``
+        # was set at startup and may be stale). The plugin enable/
+        # disable surface is the dashboard's settings page; users
+        # save then click "Apply changes".
+        if hasattr(self._rt, "config"):
+            target_names = list(self._rt.config.plugins or [])
+        else:
+            target_names = []
+        if not hasattr(self._rt, "hot_reload_plugins"):
+            raise RuntimeError(
+                "runtime does not support hot reload "
+                "(older Runtime; restart required)",
+            )
+        return await self._rt.hot_reload_plugins(target_names)
+
+    def install(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Delegate to the runtime's InstallService. Truncates
+        output so a chatty pip session doesn't blow up the JSON
+        response."""
+        upgrade = bool(body.get("upgrade", False))
+        result = self._install_service().install(
+            upgrade=upgrade, dry_run=False,
+        )
+        return {
+            "rc":     int(result.rc),
+            "stdout": _truncate(result.stdout, 8000),
+            "stderr": _truncate(result.stderr, 8000),
+        }
+
+
+def _truncate(s: str, limit: int) -> str:
+    if len(s) <= limit:
+        return s
+    return s[:limit] + f"\n...[truncated, total {len(s)} chars]"
 
 
 # ---------------- config ----------------

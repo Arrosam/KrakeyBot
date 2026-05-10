@@ -13,16 +13,28 @@ from krakey.runtime.events.event_bus import EventBus
 SocketSend = Callable[[dict[str, Any]], Awaitable[None]]
 
 
+# Event kinds we DO NOT keep in the reconnect-snapshot ring buffer.
+# Each carries a full text blob (the heartbeat prompt for
+# ``prompt_built``; the raw Self LLM response for ``self_output``),
+# so saving 50+ of them in memory and shipping them all on every WS
+# connect blows up the snapshot size to multiple MB. The Prompts
+# tab fetches /api/prompts directly when the user opens it
+# (canonical source \u2014 its entries carry both fields); live events
+# still flow through the broadcaster in real time, they just don't
+# get replayed on reconnect.
+_HISTORY_EXCLUDE_KINDS = frozenset({"prompt_built", "self_output"})
+
+
 class EventBroadcaster:
-    """One bus \u2192 many sockets. Keeps `history_size` recent serialized
-    events for new connections.
+    """One bus \u2192 many sockets. Keeps a small ring of recent serialized
+    events so new connections can repaint timelines instantly.
 
     Captures the WS server's event loop on first socket attach so that
     publish() called from any thread/loop can hand the send back to the
-    correct loop via `run_coroutine_threadsafe`.
+    correct loop via ``run_coroutine_threadsafe``.
     """
 
-    def __init__(self, bus: EventBus, *, history_size: int = 200):
+    def __init__(self, bus: EventBus, *, history_size: int = 50):
         self._bus = bus
         self._recent: deque[dict[str, Any]] = deque(maxlen=history_size)
         self._sockets: list[SocketSend] = []
@@ -48,7 +60,10 @@ class EventBroadcaster:
 
     def _on_event(self, event: _BaseEvent) -> None:
         msg = serialize_event(event)
-        self._recent.append(msg)
+        # Save to history ONLY if this event kind isn't on the
+        # exclude list. Live broadcast still happens for every event.
+        if msg.get("kind") not in _HISTORY_EXCLUDE_KINDS:
+            self._recent.append(msg)
         if not self._sockets or self._loop is None:
             return
         for send in list(self._sockets):

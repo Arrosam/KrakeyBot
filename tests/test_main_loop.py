@@ -40,7 +40,7 @@ async def test_single_iteration_user_message_triggers_tool_dispatch():
         "memory_writes": [], "memory_updates": [], "sleep": False,
     })])
 
-    runtime = build_runtime_with_fakes(self_llm=self_llm, hypo_llm=hypo_llm)
+    runtime = build_runtime_with_fakes(self_llm=self_llm, decision_translator_llm=hypo_llm)
 
     await runtime.buffer.push(Stimulus(
         type="user_message", source="channel:cli_input",
@@ -57,6 +57,51 @@ async def test_single_iteration_user_message_triggers_tool_dispatch():
     assert any("Sent to web chat" in c for c in contents)
 
 
+async def test_dispatch_event_carries_params_for_observability():
+    """DispatchEvent must include the structured ``params`` dict so
+    observers (the dashboard's tool-usage panel, the log feed, any
+    custom subscriber) can show what was actually run, not just
+    the LLM-supplied ``intent`` label which is often empty / generic.
+
+    Pre-fix the event only carried (heartbeat_id, tool, intent,
+    adrenalin); cli_exec invocations all looked the same in the
+    dashboard regardless of the cmd[] argv they were running."""
+    from krakey.runtime.events.event_types import DispatchEvent
+
+    self_llm = ScriptedLLM([
+        "[THINKING]\nrun a command.\n"
+        "[DECISION]\nrun python --version.\n"
+        '<tool_call>{"name":"web_chat_reply","arguments":'
+        '{"text":"hi from test"}}</tool_call>\n'
+        "[IDLE]\n1"
+    ])
+    # ``modifiers`` is misnamed — it's the plugin list. Drop
+    # hypothalamus so the script-only action_executor parses the
+    # <tool_call> block and synthesizes the intent itself. Keep
+    # ``dashboard`` so web_chat_reply (the tool we dispatch to)
+    # stays registered.
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]),
+        modifiers=["dashboard"],
+    )
+
+    captured: list[DispatchEvent] = []
+    runtime.events.subscribe(
+        lambda e: captured.append(e)
+        if isinstance(e, DispatchEvent) else None,
+    )
+
+    await runtime.run(iterations=1)
+    await asyncio.sleep(0.05)
+
+    assert len(captured) >= 1
+    e = next(d for d in captured if d.tool == "web_chat_reply")
+    assert e.params == {"text": "hi from test"}
+    # Synthesized intent shows the value preview, not just the key.
+    assert "text=" in e.intent
+    assert "hi from test" in e.intent
+
+
 async def test_no_action_decision_runs_no_tool():
     self_llm = ScriptedLLM([
         "[DECISION]\nNo action.\n[IDLE]\n1"
@@ -66,11 +111,205 @@ async def test_no_action_decision_runs_no_tool():
         "sleep": False,
     })])
 
-    runtime = build_runtime_with_fakes(self_llm=self_llm, hypo_llm=hypo_llm)
+    runtime = build_runtime_with_fakes(self_llm=self_llm, decision_translator_llm=hypo_llm)
     await runtime.run(iterations=1)
     await asyncio.sleep(0.05)
     stims = runtime.buffer.drain()
     assert [s for s in stims if s.type == "tool_feedback"] == []
+
+
+async def test_tool_call_parse_failure_pushes_corrective_stimulus():
+    """When Self emits <tool_call> blocks whose payload doesn't
+    JSON-parse cleanly (real-world failure: model fine-tune drift
+    appends </arg_value> after the JSON), the runtime must push a
+    system_event stimulus on system:tool_call_parse with the
+    offending payload + parser error + a tight format reminder so
+    Self can self-correct on the next beat. No hypothalamus —
+    this exercises the script-only action_executor path."""
+    self_llm = ScriptedLLM([
+        # DECISION non-empty + non-"no action" so apply_decision
+        # actually walks the tool_call parser path.
+        '[THINKING]\nReply and search.\n'
+        '[DECISION]\nReply to user, then search the web.\n'
+        '<tool_call>{"name": "web_chat_reply", "arguments": {"text": "hi"}}'
+        '</arg_value></tool_call>\n'
+        '<tool_call>{"name": "search", "arguments": {"query": "foo"}}'
+        '</arg_value></tool_call>\n'
+        '[IDLE]\n1',
+    ])
+    # modifiers=[] strips hypothalamus so dispatch goes through the
+    # action_executor parser (the path under test).
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]),
+        modifiers=[],
+    )
+    await runtime.run(iterations=1)
+    await runtime.close()
+
+    stims = runtime.buffer.drain()
+    parse_errs = [s for s in stims
+                  if s.type == "system_event"
+                  and s.source == "system:tool_call_parse"]
+    assert parse_errs, "expected system:tool_call_parse stimulus"
+    msg = parse_errs[0].content
+    assert parse_errs[0].adrenalin is True
+    # Failure count + total surfaced
+    assert "2 of 2" in msg
+    # Each block's payload preview included
+    assert "web_chat_reply" in msg
+    assert "search" in msg
+    # The drift signature is named explicitly
+    assert "</arg_value>" in msg
+    # JSON error message echoed verbatim so Self sees the diagnosis
+    assert "Extra data" in msg
+    # Format reminder embedded
+    assert "<tool_call>" in msg
+    assert '"name"' in msg
+
+
+async def test_builtin_sleep_tool_triggers_voluntary_sleep_no_hypothalamus(tmp_path):
+    """Voluntary sleep without depending on the hypothalamus plugin.
+    Self emits <tool_call>{"name":"sleep"}</tool_call> in [DECISION];
+    orchestrator intercepts the reserved name, sets result.sleep,
+    and the heartbeat loop runs the full sleep cycle. FACT in GM
+    migrates to KB → confirms _perform_sleep actually executed."""
+    self_llm = ScriptedLLM([
+        '[DECISION]\nTime to sleep.\n'
+        '<tool_call>{"name": "sleep"}</tool_call>\n[IDLE]\n1',
+    ])
+    sleep_llm = ScriptedLLM(["summary"] * 5)
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]),
+        compact_llm=sleep_llm,
+        modifiers=[],  # no hypothalamus — only the built-in path
+    )
+    runtime.sleep_log_dir = str(tmp_path / "logs")
+    runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
+    runtime.self_model = default_self_model()
+    await runtime.memory.initialize()
+    await runtime.memory.insert_node(
+        name="apple", category="FACT", description="red fruit",
+        embedding=[1.0, 0.0],
+    )
+
+    await runtime.run(iterations=1)
+
+    # Sleep ran end-to-end: FACT migrated out of GM, sleep counter bumped.
+    assert await runtime.memory.list_nodes(category="FACT") == []
+    assert runtime._sleep_cycles == 1
+    drained = runtime.buffer.drain()
+    wake = [s for s in drained if s.source == "system:sleep"]
+    assert wake, "expected a system:sleep wake-up stimulus"
+    await runtime.close()
+
+
+async def test_builtin_sleep_tool_appears_in_capabilities():
+    """Self learns about every tool through [CAPABILITIES]. The
+    built-in sleep tool must show up there alongside plugin tools
+    so Self knows the option exists without needing a separate
+    teaching layer."""
+    runtime = build_runtime_with_fakes(
+        self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
+        modifiers=[],
+    )
+    descriptions = runtime.tools.list_descriptions()
+    sleep_entries = [t for t in descriptions if t["name"] == "sleep"]
+    assert len(sleep_entries) == 1
+    assert "sleep mode" in sleep_entries[0]["description"].lower()
+
+
+async def test_sleep_failure_surfaces_via_three_channels(tmp_path, monkeypatch, capsys):
+    """When _perform_sleep's enter_sleep_mode raises, the failure
+    must NOT be silently absorbed — it goes to (1) stderr via
+    hb_warn, (2) the event bus as SleepFailedEvent, (3) Self as a
+    system:sleep stimulus on the next beat. The previous behavior
+    (single hb log line on stdout) was easy to miss; users were
+    seeing 'sleep doesn't fire' without realizing it was actually
+    firing-and-crashing."""
+    from krakey.runtime.events.event_bus import EventBus
+
+    self_llm = ScriptedLLM([
+        '[DECISION]\nSleep now.\n<tool_call>{"name": "sleep"}</tool_call>\n[IDLE]\n1',
+    ])
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]),
+        modifiers=[],
+    )
+    bus = EventBus()
+    runtime.events = bus
+    received = []
+    bus.subscribe(received.append)
+
+    # Force MemoryEngine.sleep_cycle to raise so we exercise the
+    # orchestrator's sleep-failure exception branch without needing
+    # a real misconfiguration. After the Engine refactor (step C
+    # in the post-review patch) sleep flows through
+    # ``rt.memory.sleep_cycle`` rather than the legacy
+    # enter_sleep_mode module fn.
+    async def _boom(*a, **k):
+        raise RuntimeError("simulated sleep crash")
+    monkeypatch.setattr(runtime.memory, "sleep_cycle", _boom)
+
+    await runtime.run(iterations=1)
+    await runtime.close()
+
+    # (1) stderr — hb_warn writes there
+    err_out = capsys.readouterr().err
+    assert "sleep failed" in err_out.lower()
+    assert "simulated sleep crash" in err_out
+
+    # (2) event bus — dashboard sees a SleepFailed card
+    sleep_failed = [e for e in received if e.kind == "sleep_failed"]
+    assert len(sleep_failed) == 1
+    assert "simulated sleep crash" in sleep_failed[0].error
+
+    # (3) Self stimulus — corrective awareness on the next beat
+    drained = runtime.buffer.drain()
+    sleep_stims = [s for s in drained
+                   if s.type == "system_event"
+                   and s.source == "system:sleep"]
+    assert len(sleep_stims) == 1
+    assert "Sleep transition failed" in sleep_stims[0].content
+    assert "simulated sleep crash" in sleep_stims[0].content
+    assert sleep_stims[0].adrenalin is True
+
+
+async def test_tool_call_inside_note_section_does_not_dispatch_or_fail():
+    """Regression for the 'corrective-stimulus echo' loop: when
+    Self has internalized the format reminder and writes a clean
+    [DECISION] but ALSO quotes the bad example in [NOTE] for
+    self-reference (which the prior corrective stimulus literally
+    showed Self), the parser must NOT scan [NOTE] — otherwise the
+    quoted example re-fails JSON parse, re-pushes the corrective
+    stimulus, and Self is punished for learning. [DECISION] is the
+    commitment section; [NOTE] is reflective scratchpad."""
+    self_llm = ScriptedLLM([
+        '[THINKING]\nUnderstood the format requirement.\n'
+        '[DECISION]\nReply to user.\n'
+        '<tool_call>{"name": "web_chat_reply", "arguments": {"text": "ok"}}</tool_call>\n'
+        '[NOTE]\nReminder for me: do NOT write '
+        '<tool_call>{"name": "x"}</arg_value></tool_call> '
+        'with that closing tag — last beat I made that mistake.\n'
+        '[IDLE]\n1',
+    ])
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]),
+        modifiers=[],  # no hypothalamus → script-only path
+    )
+    await runtime.run(iterations=1)
+    await asyncio.sleep(0.05)  # let the dispatched tool task complete
+    await runtime.close()
+
+    stims = runtime.buffer.drain()
+    parse_errs = [s for s in stims
+                  if s.type == "system_event"
+                  and s.source == "system:tool_call_parse"]
+    assert not parse_errs, (
+        "the quoted </arg_value> example in [NOTE] must not trigger "
+        "a parse-failure stimulus; only [DECISION] is the dispatch "
+        "section. Got stimulus(es): "
+        + repr([s.content[:200] for s in parse_errs])
+    )
 
 
 async def test_hypothalamus_error_pushes_system_event_stimulus():
@@ -83,7 +322,7 @@ async def test_hypothalamus_error_pushes_system_event_stimulus():
     # Invalid JSON → Hypothalamus._parse_json raises → caught → pushed
     hypo_llm = ScriptedLLM(["not json at all"])
 
-    runtime = build_runtime_with_fakes(self_llm=self_llm, hypo_llm=hypo_llm)
+    runtime = build_runtime_with_fakes(self_llm=self_llm, decision_translator_llm=hypo_llm)
     await runtime.run(iterations=1)
 
     stims = runtime.buffer.drain()
@@ -111,7 +350,7 @@ async def test_tool_feedback_does_not_inherit_adrenalin_from_hypothalamus():
         "memory_writes": [], "memory_updates": [], "sleep": False,
     })])
 
-    runtime = build_runtime_with_fakes(self_llm=self_llm, hypo_llm=hypo_llm)
+    runtime = build_runtime_with_fakes(self_llm=self_llm, decision_translator_llm=hypo_llm)
     await runtime.run(iterations=1)
 
     await asyncio.sleep(0.05)
@@ -140,18 +379,18 @@ async def test_heartbeat_with_connected_recall_nodes_does_not_crash():
             return [0.0, 1.0]
 
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
         embedder=MapEmbedder(),
     )
     # Initialize GM first so we can seed it before running.
-    await runtime.gm.initialize()
-    a = await runtime.gm.insert_node(name="apple", category="FACT",
+    await runtime.memory.initialize()
+    a = await runtime.memory.insert_node(name="apple", category="FACT",
                                        description="red fruit",
                                        embedding=[1.0, 0.0])
-    f = await runtime.gm.insert_node(name="fruit", category="KNOWLEDGE",
+    f = await runtime.memory.insert_node(name="fruit", category="KNOWLEDGE",
                                        description="category of foods",
                                        embedding=[0.99, 0.14])
-    await runtime.gm.insert_edge_with_cycle_check(a, f, "RELATED_TO")
+    await runtime.memory.insert_edge_with_cycle_check(a, f, "RELATED_TO")
 
     # Seed a user stimulus that embeds close to apple → recall finds both,
     # plus the edge between them, exercising the builder's edge rendering.
@@ -180,7 +419,7 @@ async def test_voluntary_sleep_via_hypothalamus_runs_full_sleep(tmp_path):
         json.dumps({"edges": []}),  # KB relations (when 1 KB, not called)
     ])
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
         compact_llm=sleep_llm,
     )
     runtime.sleep_log_dir = str(tmp_path / "logs")
@@ -188,8 +427,8 @@ async def test_voluntary_sleep_via_hypothalamus_runs_full_sleep(tmp_path):
     runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
     runtime.self_model = default_self_model()
     # Pre-seed a FACT so sleep has something to migrate
-    await runtime.gm.initialize()
-    await runtime.gm.insert_node(
+    await runtime.memory.initialize()
+    await runtime.memory.insert_node(
         name="apple", category="FACT", description="red fruit",
         embedding=[1.0, 0.0],
     )
@@ -197,10 +436,10 @@ async def test_voluntary_sleep_via_hypothalamus_runs_full_sleep(tmp_path):
     await runtime.run(iterations=1)
 
     # FACT migrated → no longer in GM
-    facts = await runtime.gm.list_nodes(category="FACT")
+    facts = await runtime.memory.list_nodes(category="FACT")
     assert facts == []
     # KB created with 1 entry
-    kbs = await runtime.kb_registry.list_kbs()
+    kbs = await runtime.memory.list_kbs()
     assert len(kbs) == 1
     # Wake-up stimulus pushed
     drained = runtime.buffer.drain()
@@ -219,7 +458,7 @@ async def test_force_sleep_when_fatigue_exceeds_threshold(tmp_path):
     hypo_llm = ScriptedLLM([])
     sleep_llm = ScriptedLLM(["summary"] * 10)
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
         compact_llm=sleep_llm,
     )
     runtime.sleep_log_dir = str(tmp_path / "logs")
@@ -227,9 +466,9 @@ async def test_force_sleep_when_fatigue_exceeds_threshold(tmp_path):
     runtime.config.fatigue.gm_node_soft_limit = 5
     runtime.config.fatigue.force_sleep_threshold = 100
     # Pre-seed enough nodes to push fatigue ≥ 100%
-    await runtime.gm.initialize()
+    await runtime.memory.initialize()
     for i in range(6):
-        await runtime.gm.insert_node(
+        await runtime.memory.insert_node(
             name=f"n{i}", category="FACT", description=f"fact {i}",
             embedding=[1.0, 0.01 * i],
         )
@@ -244,14 +483,15 @@ async def test_force_sleep_when_fatigue_exceeds_threshold(tmp_path):
     assert len(wake) == 1
     assert "fatigue" in wake[0].content.lower() or "fell asleep" in wake[0].content.lower()
     # FACTs migrated
-    assert await runtime.gm.list_nodes(category="FACT") == []
+    assert await runtime.memory.list_nodes(category="FACT") == []
     await runtime.close()
 
 
 async def test_bootstrap_self_model_update_and_completion(tmp_path):
-    """Phase 2.1 end-to-end: Self in Bootstrap mode writes a <self-model>
-    update and signals 'bootstrap complete' in [NOTE]; runtime persists the
-    update to self_model.yaml and flips bootstrap_complete=True."""
+    """End-to-end: Self in Bootstrap mode writes a <self-model> update
+    and signals 'bootstrap complete' in [NOTE]; the bootstrap plugin
+    persists the update to self_model.yaml and flips
+    bootstrap_complete=True."""
     sm_path = tmp_path / "self_model.yaml"
 
     # HB #1: partial self-model update
@@ -265,28 +505,23 @@ async def test_bootstrap_self_model_update_and_completion(tmp_path):
     ])
     hypo_llm = ScriptedLLM([])
 
-    # Pre-seed the self-model file with defaults so the runtime + the
-    # BootstrapCoordinator both anchor to the SAME file from
-    # construction. (Post-construction swap of runtime._self_model_store
-    # used to work but broke when the coordinator started holding its
-    # own store reference — passing the path up-front is cleaner anyway.)
+    # Pre-seed the self-model file with defaults so the runtime +
+    # the bootstrap plugin both anchor to the SAME file from
+    # construction.
     sm_path.write_text(
-        # Yaml-dump default content; SelfModelStore.load handles missing
-        # too but we want a non-empty starting state for the test.
         "identity: {}\nstate: {bootstrap_complete: false}\n",
         encoding="utf-8",
     )
+    # Build runtime with the bootstrap plugin enabled + the test's
+    # self_model_path so plugin's services["self_model_store"]
+    # points at sm_path.
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
+        self_model_path=str(sm_path),
         skip_bootstrap=False,
+        modifiers=["bootstrap", "hypothalamus", "recall", "dashboard"],
     )
-    # Re-anchor BOTH runtime + coordinator to the tmp self-model file.
-    runtime._self_model_store = SelfModelStore(sm_path)
-    runtime.bootstrap._store = runtime._self_model_store
-    runtime.self_model = default_self_model()
-    runtime.is_bootstrap = True
-    # Tighten idle so the test isn't slow (bootstrap forces 10s default,
-    # but max_interval=5 from fakes already clamps it).
+    # Tighten idle so the test isn't slow.
     runtime._max = 0.1
 
     await runtime.run(iterations=2)
@@ -347,8 +582,8 @@ async def test_command_sleep_triggers_full_sleep(tmp_path):
     runtime.sleep_log_dir = str(tmp_path / "logs")
     runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
     runtime.self_model = default_self_model()
-    await runtime.gm.initialize()
-    await runtime.gm.insert_node(
+    await runtime.memory.initialize()
+    await runtime.memory.insert_node(
         name="apple", category="FACT", description="red fruit",
         embedding=[1.0, 0.0],
     )
@@ -358,7 +593,7 @@ async def test_command_sleep_triggers_full_sleep(tmp_path):
     ))
     await runtime.run(iterations=1)
     # Inspect before close (close shuts down the GM connection).
-    assert await runtime.gm.list_nodes(category="FACT") == []
+    assert await runtime.memory.list_nodes(category="FACT") == []
     # In-memory counter (2026-04-25 self-model slim).
     assert runtime._sleep_cycles == 1
     await runtime.close()
@@ -409,12 +644,12 @@ async def test_self_can_dispatch_memory_recall_and_see_feedback():
             return [1.0, 0.0] if "apple" in text else [0.0, 1.0]
 
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
         embedder=MapEmbed(),
     )
     # Pre-seed GM with an apple node so recall returns something concrete.
-    await runtime.gm.initialize()
-    await runtime.gm.insert_node(
+    await runtime.memory.initialize()
+    await runtime.memory.insert_node(
         name="apple", category="FACT", description="red fruit",
         embedding=[1.0, 0.0],
     )
@@ -440,7 +675,7 @@ async def test_uncovered_stimulus_push_back_capped_at_one_retry():
     ])
     hypo_llm = ScriptedLLM([])
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
     )
 
     # Seed one user stimulus that will never match (GM empty).
@@ -479,7 +714,7 @@ async def test_tool_feedback_auto_ingested_to_gm():
     ])
 
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
     )
 
     await runtime.buffer.push(Stimulus(
@@ -487,7 +722,7 @@ async def test_tool_feedback_auto_ingested_to_gm():
         content="hi", timestamp=datetime.now(), adrenalin=True,
     ))
     await runtime.run(iterations=2)
-    nodes = await runtime.gm.list_nodes()
+    nodes = await runtime.memory.list_nodes()
     contents = [n["description"] for n in nodes]
     # web_chat_reply's feedback "Sent to web chat (N chars)." gets auto_ingested
     assert any("sent to web chat" in c.lower() for c in contents), contents
@@ -511,7 +746,7 @@ async def test_batch_complete_stimulus_wakes_next_heartbeat():
                      "memory_updates": [], "sleep": False}),
     ])
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
         idle_min=0.01, idle_max=5.0,
     )
 
@@ -548,7 +783,7 @@ async def test_explicit_write_from_hypothalamus_memory_writes():
     })])
 
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
         classify_llm=extract_llm,
     )
 
@@ -558,7 +793,7 @@ async def test_explicit_write_from_hypothalamus_memory_writes():
     ))
     await runtime.run(iterations=1)
 
-    nodes = await runtime.gm.list_nodes()
+    nodes = await runtime.memory.list_nodes()
     names = [n["name"] for n in nodes]
     assert "user pref verbose" in names
 
@@ -575,7 +810,7 @@ async def test_idle_interrupts_on_adrenalin_stimulus():
                     "memory_updates": [], "sleep": False}),
     ])
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
         idle_min=0.01, idle_max=5.0)
 
     # Push adrenalin stimulus just after first iteration enters idle

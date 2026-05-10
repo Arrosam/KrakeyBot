@@ -105,6 +105,18 @@ class StimulusBuffer:
                 await s.start(self.push)
                 self._running.add(s.name)
 
+    async def start_one(self, name: str) -> None:
+        """Start a single channel by name (idempotent: no-op if
+        already running). Used by hot-reload paths that register a
+        new channel AFTER ``start_all()`` has already fired during
+        runtime startup."""
+        if name not in self._channels:
+            raise ValueError(f"channel '{name}' not registered")
+        if name in self._running:
+            return
+        await self._channels[name].start(self.push)
+        self._running.add(name)
+
     async def pause_non_urgent(self) -> None:
         """Sleep phase-1: stop channels whose ``default_adrenalin`` is
         False (the calm ones). Urgent channels (e.g. user-message
@@ -129,3 +141,27 @@ class StimulusBuffer:
             if s.name in self._running:
                 await s.stop()
                 self._running.discard(s.name)
+
+    async def deregister(self, name: str) -> "Channel | None":
+        """Stop (if running) and remove a channel from the
+        registry. Used by hot-reload paths that need to swap a
+        plugin's channel implementation. Returns the removed
+        instance or ``None`` if not registered. The channel's
+        ``stop()`` method must drain any background task it
+        spawned in ``start()``; the runtime relies on that
+        contract for clean teardown."""
+        channel = self._channels.pop(name, None)
+        if channel is None:
+            return None
+        if name in self._running:
+            try:
+                await channel.stop()
+            except Exception:  # noqa: BLE001
+                # Stop is best-effort during deregister — don't
+                # leave the registry inconsistent if the channel's
+                # stop hook crashes. The caller already decided
+                # this channel is being torn down.
+                pass
+            self._running.discard(name)
+        self._paused.discard(name)
+        return channel

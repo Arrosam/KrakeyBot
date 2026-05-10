@@ -44,6 +44,24 @@ class WebChatChannel(Channel):
     def name(self) -> str:
         return "web_chat"
 
+    @property
+    def default_adrenalin(self) -> bool:
+        # MUST be True. ``pause_non_urgent`` (sleep phase 1) calls
+        # ``stop()`` on every channel whose ``default_adrenalin`` is
+        # False, and our ``stop()`` shuts down the dashboard HTTP/WS
+        # server. ``start()`` only re-binds the push callback — it does
+        # NOT restart the server, and ``self._server`` is set to None in
+        # ``stop()`` so ``resume_all`` couldn't restart it even if it
+        # tried. With ``default_adrenalin=False`` we'd kill the dashboard
+        # at every sleep and never bring it back, leaving the user with
+        # nothing to look at while sleep takes its 7-phase tour through
+        # clustering + KB migration + index rebuild (often minutes).
+        # Telegram's channel sets this for the same reason: a user-
+        # facing channel should stay reachable so the user can both
+        # observe sleep progress and send urgent messages that interrupt
+        # idle on wake.
+        return True
+
     def attach_server(self, server: _StoppableServer) -> None:
         """Attach the dashboard server so ``stop()`` shuts it down too.
 

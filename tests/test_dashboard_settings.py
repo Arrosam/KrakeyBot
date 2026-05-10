@@ -150,6 +150,105 @@ async def test_post_settings_requires_parsed_or_raw(tmp_path):
     assert r.status_code == 400
 
 
+async def test_engines_available_includes_config_schema(tmp_path):
+    """Each catalog entry's ``config_schema`` ships through the
+    endpoint so the dashboard can render a per-engine form below the
+    slot dropdown without a second round-trip. Plugin engines reuse
+    the plugin's top-level ``config_schema``.
+    """
+    p = tmp_path / "config.yaml"
+    p.write_text("a: 1\n", encoding="utf-8")
+    async with _client(config_path=p) as c:
+        r = await c.get("/api/engines/available")
+    assert r.status_code == 200
+    body = r.json()
+    # Every option must carry a config_schema (possibly empty list)
+    # so the JS can iterate without null-checks.
+    for slot_meta in body["engines"].values():
+        for opt in slot_meta["options"]:
+            assert "config_schema" in opt
+            assert isinstance(opt["config_schema"], list)
+
+
+async def test_engines_available_lists_builtin_catalog(tmp_path):
+    """The dashboard's slot dropdown is sourced from this endpoint.
+    Every slot declared on CoreImplementations must show up with at
+    least one option (the built-in default) so the user always has a
+    valid pick."""
+    p = tmp_path / "config.yaml"
+    p.write_text("a: 1\n", encoding="utf-8")
+    async with _client(config_path=p) as c:
+        r = await c.get("/api/engines/available")
+    assert r.status_code == 200
+    body = r.json()
+    engines = body["engines"]
+    # Every slot present, with default + at least one option.
+    expected_slots = {
+        "memory", "context", "embedder", "reranker",
+        "explicit_history", "decision", "recall", "heartbeat",
+        "dispatch", "llm_factory", "llm_client_factory",
+    }
+    assert expected_slots <= set(engines)
+    for slot in expected_slots:
+        slot_meta = engines[slot]
+        assert slot_meta["default"]
+        names = [o["name"] for o in slot_meta["options"]]
+        assert slot_meta["default"] in names
+        assert all(o["source"] in {"builtin", "plugin"}
+                   for o in slot_meta["options"])
+    # Decision slot lists both built-in impls.
+    decision_names = [o["name"] for o in engines["decision"]["options"]]
+    assert {"tool_call_parser", "hypothalamus"} <= set(decision_names)
+
+
+async def test_post_settings_round_trips_engine_configs(tmp_path):
+    """The dashboard's per-engine config form writes to
+    ``engine_configs.<slot>.<short_name>``. The settings POST must
+    round-trip the nested mapping so the runtime sees the user's
+    tunables on its next config load."""
+    p = tmp_path / "config.yaml"
+    p.write_text("a: 1\n", encoding="utf-8")
+    parsed = {
+        "engine_configs": {
+            "decision": {
+                "hypothalamus": {"temperature": 0.42, "retries": 3},
+            },
+        },
+    }
+    async with _client(config_path=p) as c:
+        r = await c.post(
+            "/api/settings",
+            json={"parsed": parsed,
+                  "backup_dir": str(tmp_path / "bk")},
+        )
+    assert r.status_code == 200
+    written = yaml.safe_load(p.read_text(encoding="utf-8"))
+    assert written == parsed
+
+
+async def test_post_settings_round_trips_core_implementations(tmp_path):
+    """Engine slot overrides (the dashboard's "Engine Overrides"
+    section) are written under ``core_implementations``. The settings
+    POST must round-trip the field through to disk so the runtime
+    sees the overrides on its next config load."""
+    p = tmp_path / "config.yaml"
+    p.write_text("a: 1\n", encoding="utf-8")
+    overrides = {
+        "decision":
+            "krakey.engines.decision.hypothalamus:HypothalamusDecisionEngine",
+        "memory": "",  # empty = use default; must persist as-is
+    }
+    async with _client(config_path=p) as c:
+        r = await c.post(
+            "/api/settings",
+            json={"parsed": {"core_implementations": overrides},
+                  "backup_dir": str(tmp_path / "bk")},
+        )
+    assert r.status_code == 200
+    written = yaml.safe_load(p.read_text(encoding="utf-8"))
+    assert written == {"core_implementations": overrides}
+
+
 # ---------------- /api/config/schema ----------------
 
 
@@ -224,14 +323,8 @@ async def test_modifiers_available_lists_metadata(tmp_path):
         r = await c.get("/api/modifiers/available")
     assert r.status_code == 200
     names = {entry["name"] for entry in r.json()["modifiers"]}
-    # All three in-tree built-ins must be discovered
-    assert {"hypothalamus", "recall",
-            "in_mind_note"} <= names
-
-    # Hypothalamus declares its `translator` purpose
-    by_name = {e["name"]: e for e in r.json()["modifiers"]}
-    purposes = by_name["hypothalamus"]["llm_purposes"]
-    assert any(p.get("name") == "translator" for p in purposes)
+    # In-tree built-ins must be discovered
+    assert {"recall", "in_mind_note"} <= names
 
 
 async def test_modifier_config_get_missing_returns_empty(tmp_path):

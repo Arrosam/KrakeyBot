@@ -8,7 +8,7 @@ only publishes.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -33,6 +33,15 @@ class _BaseEvent:
         if name.endswith("Event"):
             name = name[:-5]
         return _to_snake(name)
+
+
+@dataclass
+class RuntimeReadyEvent(_BaseEvent):
+    """Fires once after Runtime's setup phase completes (memory
+    initialized, environments preflighted) and BEFORE the first
+    heartbeat. Plugins that need to do startup work depending on
+    runtime state (e.g. the bootstrap modifier probing GM emptiness)
+    subscribe to this rather than relying on attach() ordering."""
 
 
 @dataclass
@@ -81,6 +90,20 @@ class NoteEvent(_BaseEvent):
 
 
 @dataclass
+class SelfOutputEvent(_BaseEvent):
+    """Raw, unparsed Self LLM response for this heartbeat.
+
+    Fires after ``self_llm.chat`` returns, before parsing. Carries
+    the full string so the dashboard can show the raw output
+    side-by-side with the prompt that produced it (anything the
+    parser drops — formatting, garbage between tags, partial
+    sections — stays visible here).
+    """
+    heartbeat_id: int
+    raw: str
+
+
+@dataclass
 class DecisionExecutedEvent(_BaseEvent):
     heartbeat_id: int
     tool_calls_count: int
@@ -91,10 +114,15 @@ class DecisionExecutedEvent(_BaseEvent):
 
 @dataclass
 class DispatchEvent(_BaseEvent):
+    """A tool call has been dispatched. Carries the structured
+    args (``params``) so observers can show what was actually run,
+    not just the (sometimes empty) human-readable ``intent`` label.
+    """
     heartbeat_id: int
     tool: str
     intent: str
     adrenalin: bool
+    params: dict[str, Any]
 
 
 @dataclass
@@ -117,3 +145,12 @@ class SleepStartEvent(_BaseEvent):
 @dataclass
 class SleepDoneEvent(_BaseEvent):
     stats: dict[str, Any]
+
+
+@dataclass
+class SleepFailedEvent(_BaseEvent):
+    """Sleep transition was attempted but ``enter_sleep_mode`` raised.
+    Runtime continues without entering sleep state; the dashboard +
+    Self both need to know so the failure isn't silent."""
+    reason: str    # the reason _perform_sleep was called
+    error: str     # ``"<ExceptionType>: <message>"``

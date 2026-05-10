@@ -36,8 +36,10 @@ import yaml
 from krakey.models.config.heartbeat import (  # noqa: F401
     FatigueSection,
     IdleSection,
+    SlidingWindowSection,
     _build_fatigue,
     _build_idle,
+    _build_sliding_window,
     _validate_fatigue_thresholds,
 )
 from krakey.models.config.environments import (  # noqa: F401
@@ -70,6 +72,10 @@ from krakey.models.config.memory import (  # noqa: F401
     _build_safety,
     _build_sleep,
 )
+from krakey.models.config.core_impls import (  # noqa: F401
+    CoreImplementations,
+    _build_core_implementations,
+)
 
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -83,11 +89,14 @@ class Config:
     llm: LLMSection = field(default_factory=LLMSection)
     idle: IdleSection = field(default_factory=IdleSection)
     fatigue: FatigueSection = field(default_factory=FatigueSection)
-    # `sliding_window` removed in the prompt-budget refactor — the
-    # window's size is now derived from the Self role's LLMParams
-    # (`max_input_tokens * history_token_fraction`). See
-    # `_warn_about_removed_sections` below for the deprecation
-    # message on old configs.
+    # The sliding window's SIZE budget is derived from the Self
+    # role's LLMParams (max_input_tokens * history_token_fraction)
+    # — that's why `sliding_window.max_tokens` is not a config
+    # field. ``sliding_window`` here only carries persistence
+    # settings (state_path) — see SlidingWindowSection.
+    sliding_window: SlidingWindowSection = field(
+        default_factory=SlidingWindowSection
+    )
     graph_memory: GraphMemorySection = field(
         default_factory=GraphMemorySection
     )
@@ -109,6 +118,26 @@ class Config:
     safety: SafetySection = field(default_factory=SafetySection)
     environments: EnvironmentsSection = field(
         default_factory=EnvironmentsSection
+    )
+    # Optional dotted-path overrides for built-in core services
+    # (memory, prompt builder, embedder, ...). See
+    # krakey/models/config/core_impls.py + krakey/runtime/service_resolver.py.
+    # Empty fields → built-in defaults; non-empty → import + Protocol-validate
+    # the user's class at startup.
+    core_implementations: CoreImplementations = field(
+        default_factory=CoreImplementations
+    )
+    # Per-engine user config keyed by ``(slot, short_name)``. Each
+    # selected engine's dict is passed to its constructor as a
+    # ``config`` kwarg (engines that don't take one ignore it via
+    # ``EngineRegistry._filter_kwargs``). Schema for each engine
+    # comes from ``EngineImpl.config_schema`` in the slot's
+    # BUILTIN_ENGINES catalog (or, for plugin engines, from the
+    # plugin's top-level ``config_schema:``). Dashboard renders the
+    # form under the slot's dropdown when a schema-bearing impl is
+    # selected.
+    engine_configs: dict[str, dict[str, dict[str, Any]]] = field(
+        default_factory=dict,
     )
 
 
@@ -203,48 +232,116 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         llm=_build_llm(raw.get("llm") or {}),
         idle=_build_idle(raw.get("idle") or {}),
         fatigue=fatigue,
+        sliding_window=_build_sliding_window(
+            raw.get("sliding_window") or {}
+        ),
         graph_memory=_build_graph_memory(raw.get("graph_memory") or {}),
         knowledge_base=_build_kb(raw.get("knowledge_base") or {}),
         plugins=_build_plugins(raw),
         sleep=_build_sleep(raw.get("sleep") or {}),
         safety=_build_safety(raw.get("safety") or {}),
         environments=_build_environments(raw.get("environments")),
+        core_implementations=_build_core_implementations(
+            raw.get("core_implementations") or {}
+        ),
+        engine_configs=_build_engine_configs(
+            raw.get("engine_configs") or {}
+        ),
     )
 
 
+def _build_engine_configs(
+    raw: Any,
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Parse the ``engine_configs:`` block — ``{slot: {short_name:
+    {field: value}}}``. Tolerates a missing block or wrong-shape
+    nesting; the registry only ever consults the leaf dict so a
+    ragged structure just degrades to "no config" silently. Strict
+    schema validation against each engine's ``config_schema`` is
+    handled at engine-construction time, not here."""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, dict[str, Any]]] = {}
+    for slot, slot_cfg in raw.items():
+        if not isinstance(slot_cfg, dict):
+            continue
+        slot_out: dict[str, dict[str, Any]] = {}
+        for short_name, impl_cfg in slot_cfg.items():
+            if isinstance(impl_cfg, dict):
+                slot_out[str(short_name)] = dict(impl_cfg)
+        out[str(slot)] = slot_out
+    return out
+
+
 def _build_plugins(raw: dict[str, Any]) -> list[str] | None:
-    """Parse the ``plugins:`` field.
+    """Parse the ``plugins:`` + ``modifiers:`` fields into a single
+    ordered enable-list.
+
+    The dashboard intentionally maintains TWO lists in central
+    config.yaml:
+      * ``modifiers:`` — ordered list of plugin names that contribute
+        a modifier component. The order is the heartbeat-chain order
+        (each Modifier runs in turn each beat).
+      * ``plugins:``   — set-style list of plugin names that contribute
+        a tool or channel component.
+
+    A plugin with both kinds shows up in both lists; a modifier-only
+    plugin shows up ONLY in ``modifiers:``. The loader merges both
+    lists so modifier-only plugins still register.
 
     Three states:
-      * key absent       → return None (one-line stderr nudge at
-                           runtime so users notice they have no
-                           plugins enabled)
-      * key empty list   → return [] (explicit "zero plugins")
-      * key string list  → return that list, in order
+      * neither field present → return None (one-line stderr nudge at
+                                runtime so users notice they have no
+                                plugins enabled)
+      * both fields empty     → return [] (explicit "zero plugins")
+      * any names present     → merged + de-duplicated list, modifier
+                                chain order first
 
-    Migration: the OLD ``modifiers:`` field is silently translated to
-    ``plugins:`` for one release window so users mid-migration still
-    boot. Non-string entries are dropped with a warning.
+    Migration: a config with ONLY ``modifiers:`` (no ``plugins:``) is a
+    pre-2026-04-26 layout. We still load it but emit a one-time
+    deprecation note so the user knows to add the ``plugins:`` key.
     """
-    # Old `modifiers:` field migration alias
-    if "plugins" not in raw and "modifiers" in raw:
+    has_plugins   = "plugins"   in raw
+    has_modifiers = "modifiers" in raw
+
+    if not has_plugins and not has_modifiers:
+        return None
+
+    if has_modifiers and not has_plugins:
         print(
-            "config: `modifiers:` is deprecated — renamed to `plugins:` "
-            "in the unified plugin refactor (2026-04-26). Treating your "
-            "`modifiers:` list as the plugin list this run; please rename "
-            "the key to silence this warning.",
+            "config: only `modifiers:` is set — pre-2026-04-26 layout. "
+            "Treating it as the active plugin list. Add an empty "
+            "`plugins: []` (or a list of tool/channel plugin names) to "
+            "silence this notice; the loader merges both fields.",
             file=sys.stderr,
         )
-        raw = {**raw, "plugins": raw["modifiers"]}
 
-    if "plugins" not in raw:
-        return None
-    val = raw.get("plugins")
+    plugins_list   = _coerce_name_list(raw.get("plugins"),   "plugins")
+    modifiers_list = _coerce_name_list(raw.get("modifiers"), "modifiers")
+
+    # Modifier chain order first (the chain is order-sensitive), then
+    # any service plugins not already covered. De-dup preserves the
+    # earlier slot — so a plugin in both lists keeps its modifiers-list
+    # position in the chain.
+    merged: list[str] = []
+    seen: set[str] = set()
+    for name in modifiers_list + plugins_list:
+        if name in seen:
+            continue
+        seen.add(name)
+        merged.append(name)
+    return merged
+
+
+def _coerce_name_list(val: Any, field_name: str) -> list[str]:
+    """Validate one of the plugin enable-lists. Drops non-string /
+    empty entries with a per-entry warning so a typo doesn't silently
+    disable the rest of the list."""
     if val is None:
         return []
     if not isinstance(val, list):
         print(
-            f"warning: `plugins:` should be a list, got "
+            f"warning: `{field_name}:` should be a list, got "
             f"{type(val).__name__}; treating as empty.",
             file=sys.stderr,
         )
@@ -253,8 +350,8 @@ def _build_plugins(raw: dict[str, Any]) -> list[str] | None:
     for item in val:
         if not isinstance(item, str) or not item.strip():
             print(
-                f"warning: `plugins:` entry {item!r} is not a non-empty "
-                "string; skipping.",
+                f"warning: `{field_name}:` entry {item!r} is not a "
+                "non-empty string; skipping.",
                 file=sys.stderr,
             )
             continue
@@ -279,12 +376,15 @@ def _warn_about_removed_sections(raw: dict[str, Any]) -> None:
     """
     sw = raw.get("sliding_window") or {}
     if isinstance(sw, dict) and "max_tokens" in sw:
+        # Note (2026-05-07): `sliding_window` is back as a section
+        # (carrying state_path for persistence), but `max_tokens`
+        # specifically is still derived, never user-configured.
         print(
             "deprecated: `sliding_window.max_tokens` is no longer used.\n"
-            "  History budget is now derived from "
-            "`llm.roles.self.params.max_input_tokens * "
-            "history_token_fraction`. Remove the sliding_window section "
-            "from your config. Your previous value is being ignored.",
+            "  History budget is derived from "
+            "`llm.tags.<self_tag>.params.max_input_tokens * "
+            "history_token_fraction`. Remove just the `max_tokens` "
+            "key — `sliding_window.state_path` is still honored.",
             file=sys.stderr,
         )
     gm = raw.get("graph_memory") or {}

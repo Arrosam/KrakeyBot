@@ -22,7 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from krakey.memory.recall import RecallResult
+from krakey.interfaces.engines.recall import RecallResult
 from krakey.plugins.in_mind_note.modifier import (
     InMindModifierImpl, build_modifier,
 )
@@ -217,8 +217,8 @@ async def test_runtime_prompt_omits_in_mind_layers_when_no_modifier(
         gm_path=str(tmp_path / "gm.sqlite"),
         modifiers=[],  # explicitly nothing
     )
-    await runtime.gm.initialize()
-    runtime._recall = runtime._new_recall()
+    await runtime.memory.initialize()
+    runtime._recall = runtime.recall.new_session()
     prompt = runtime._build_self_prompt(
         stimuli=[], recall_result=RecallResult(), counts=_counts(),
     )
@@ -236,8 +236,8 @@ async def test_runtime_prompt_includes_instructions_when_in_mind_active(
         gm_path=str(tmp_path / "gm.sqlite"),
         modifiers=["in_mind_note"],
     )
-    await runtime.gm.initialize()
-    runtime._recall = runtime._new_recall()
+    await runtime.memory.initialize()
+    runtime._recall = runtime.recall.new_session()
     prompt = runtime._build_self_prompt(
         stimuli=[], recall_result=RecallResult(), counts=_counts(),
     )
@@ -265,8 +265,8 @@ async def test_runtime_prompt_includes_virtual_round_when_state_set(
         thoughts="thinking about Cython hot loops",
         focus="port the inner loop",
     )
-    await runtime.gm.initialize()
-    runtime._recall = runtime._new_recall()
+    await runtime.memory.initialize()
+    runtime._recall = runtime.recall.new_session()
     prompt = runtime._build_self_prompt(
         stimuli=[], recall_result=RecallResult(), counts=_counts(),
     )

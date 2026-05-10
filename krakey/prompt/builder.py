@@ -34,22 +34,30 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from krakey.models.stimulus import Stimulus
-from krakey.prompt.dna import DNA
+from krakey.prompt.dna import get_dna
 from krakey.prompt.elements import PromptElements
-from krakey.prompt.layers import ACTION_FORMAT_LAYER, HEARTBEAT_QUESTION
+from krakey.prompt.layers import HEARTBEAT_QUESTION
 from krakey.prompt.views import (
     CapabilityView,
-    SlidingWindowRound,
+    ExplicitHistoryRound,
     StatusSnapshot,
 )
 
 if TYPE_CHECKING:
-    from krakey.memory.recall import RecallResult
+    from krakey.interfaces.engines.recall import RecallResult
 
 
 # Default ordered element keys. Runtime constructs a PromptElements
 # with these keys (in order) before letting plugins modify.
 DEFAULT_ELEMENT_KEYS: tuple[str, ...] = (
+    # ``bootstrap_intro`` is empty by default; the bootstrap plugin
+    # populates it via modify_prompt during the bootstrap phase.
+    # Pre-allocating the slot at the head of the list ensures the
+    # injected intro renders BEFORE DNA — without this the plugin's
+    # __setitem__ would append a brand-new key past
+    # heartbeat_question, putting BOOTSTRAP_PROMPT after Self's
+    # trailing prompt.
+    "bootstrap_intro",
     "dna",
     "self_model",
     "capabilities",
@@ -70,9 +78,9 @@ def _format_stim(s: Stimulus) -> list[str]:
         f"source: {s.source} | adrenalin: {s.adrenalin}",
         f"content: {s.content}",
     ]
-    # When the recall_anchor plugin couldn't find any GraphMemory
-    # context for this stimulus on the previous beat, the orchestrator
-    # re-pushes it with an incremented `recall_retries` counter. Surface
+    # When recall couldn't find any GraphMemory context for this
+    # stimulus on the previous beat, the orchestrator re-pushes it
+    # with an incremented `recall_retries` counter. Surface
     # that to Self so it knows the [GRAPH MEMORY] layer has nothing to
     # offer for this signal — Self can ask follow-up questions or fall
     # back to its own knowledge instead of assuming silent context.
@@ -104,7 +112,7 @@ class PromptBuilder:
         capabilities: list[CapabilityView],
         status: StatusSnapshot,
         recall: "RecallResult",
-        window: list[SlidingWindowRound],
+        window: list[ExplicitHistoryRound],
         stimuli: list[Stimulus],
         current_time: datetime | None = None,
     ) -> PromptElements:
@@ -113,10 +121,23 @@ class PromptBuilder:
         (in_mind_instructions, in_mind_round) are reserved for plugins
         to fill in."""
         return PromptElements(initial=[
-            ("dna", DNA),
+            # Empty by default; bootstrap plugin populates this via
+            # modify_prompt when bootstrap is active. Pre-allocated
+            # at the head of the order so the intro lands before
+            # DNA + ahead of every other element.
+            ("bootstrap_intro", ""),
+            # ``get_dna()`` re-reads ``krakey/prompt/dna.txt`` only
+            # when its mtime changes — live prompt-tuning during
+            # development without a runtime restart.
+            ("dna", get_dna()),
             ("self_model", self.render_self_model(self_model)),
             ("capabilities", self.render_capabilities(capabilities)),
-            ("action_format", ACTION_FORMAT_LAYER),
+            # The decision engine owns this slot; its modify_prompt
+            # hook fills it (see e.g. ToolCallParserDecisionEngine
+            # and HypothalamusDecisionEngine). Builder stays
+            # engine-agnostic — pre-allocated empty string here just
+            # pins the position in the rendered prompt order.
+            ("action_format", ""),
             ("in_mind_instructions", ""),
             ("stimulus", self.render_stimulus(stimuli, current_time)),
             ("recall", self.render_recall(recall)),
@@ -136,7 +157,7 @@ class PromptBuilder:
         capabilities: list[CapabilityView],
         status: StatusSnapshot,
         recall: "RecallResult",
-        window: list[SlidingWindowRound],
+        window: list[ExplicitHistoryRound],
         stimuli: list[Stimulus],
         current_time: datetime | None = None,
     ) -> str:
@@ -204,7 +225,7 @@ class PromptBuilder:
             )
         return "\n".join(lines)
 
-    def render_history(self, window: list[SlidingWindowRound]) -> str:
+    def render_history(self, window: list[ExplicitHistoryRound]) -> str:
         """Render the [HISTORY] layer from real heartbeat rounds only.
 
         The in-mind virtual round (``--- Heartbeat #now (in mind) ---``)

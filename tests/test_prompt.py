@@ -2,11 +2,11 @@ from datetime import datetime
 
 import pytest
 
-from krakey.memory.recall import RecallResult
+from krakey.interfaces.engines.recall import RecallResult
 from krakey.models.stimulus import Stimulus
 from krakey.prompt.builder import PromptBuilder
 from krakey.prompt.dna import DNA
-from krakey.prompt.views import CapabilityView, SlidingWindowRound, StatusSnapshot
+from krakey.prompt.views import CapabilityView, ExplicitHistoryRound, StatusSnapshot
 
 
 def test_dna_has_all_sections():
@@ -18,13 +18,17 @@ def test_dna_has_all_sections():
 
 
 def test_dna_disambiguates_sleep_and_idle():
-    """Regression: DNA must teach that Sleep and Idle are different
-    mechanisms + warn against ambiguous 'rest' wording that would
-    otherwise slip past the Hypothalamus as a sleep trigger."""
+    """DNA must teach that Sleep and Idle are different mechanisms +
+    warn against ambiguous wording ("rest", "pause") that should NOT
+    enter Sleep. The exact Sleep trigger shape (sleep tool call vs.
+    NL phrase) lives in the per-engine [ACTION FORMAT] layer, not
+    DNA — so this test no longer asserts a specific phrasing."""
     assert "Idle" in DNA and "Sleep" in DNA
     assert "rest" in DNA.lower()
-    # The explicit trigger phrase the Hypothalamus recognises must be stated
-    assert "enter sleep mode" in DNA.lower()
+    # DNA must point Self at [ACTION FORMAT] for the actual trigger
+    # (since it varies by decision engine), instead of pinning a
+    # specific phrase or call shape itself.
+    assert "[ACTION FORMAT]" in DNA
 
 
 def test_dna_mentions_active_memory_recall():
@@ -80,7 +84,7 @@ def test_builder_assembles_all_layers():
     )
     capabilities = [CapabilityView(name="action", description="general")]
     recall = RecallResult()
-    window = [SlidingWindowRound(heartbeat_id=1,
+    window = [ExplicitHistoryRound(heartbeat_id=1,
                                   stimulus_summary="hi",
                                   decision_text="reply",
                                   note_text="")]
@@ -234,11 +238,11 @@ def test_builder_splits_stimulus_by_source_type():
 
 
 def test_builder_marks_recall_retry_stimuli():
-    """When the recall_anchor plugin couldn't find any GraphMemory
-    context for a stimulus on the prior beat, the orchestrator
-    re-pushes it with `recall_retries` incremented. The prompt must
-    surface that flag so Self knows the [GRAPH MEMORY] layer has no
-    related context for that signal."""
+    """When recall couldn't find any GraphMemory context for a
+    stimulus on the prior beat, the orchestrator re-pushes it with
+    ``recall_retries`` incremented. The prompt must surface that flag
+    so Self knows the [GRAPH MEMORY] layer has no related context for
+    that signal."""
     fresh = Stimulus(
         type="user_message", source="channel:cli",
         content="brand new question",

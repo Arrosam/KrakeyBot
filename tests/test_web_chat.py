@@ -152,6 +152,51 @@ async def test_channel_push_after_stop_silently_drops():
     assert pushed == []
 
 
+def test_channel_default_adrenalin_is_urgent():
+    """The dashboard's web_chat channel MUST be urgent (default_adrenalin=True).
+
+    Regression guard for the "dashboard dies after every sleep" bug:
+    sleep phase 1's ``pause_non_urgent`` calls stop() on every channel
+    whose ``default_adrenalin`` is False, and our stop() shuts down
+    the dashboard server. start() doesn't restart it, so a False here
+    leaves the dashboard permanently dead until the user restarts the
+    process. Treat any future change to this property with extreme
+    suspicion.
+    """
+    from krakey.plugins.dashboard.channel import WebChatChannel
+
+    assert WebChatChannel().default_adrenalin is True
+
+
+async def test_pause_non_urgent_does_not_stop_web_chat():
+    """Drive ``pause_non_urgent`` on a buffer registered with the
+    dashboard's web_chat channel; assert the channel's stop() was NOT
+    called. Pairs with the property test above so renaming the field
+    or flipping its truth value would fail at the integration boundary
+    too, not just the unit-property level."""
+    from krakey.plugins.dashboard.channel import WebChatChannel
+    from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
+
+    stop_calls = 0
+
+    class _SpyChannel(WebChatChannel):
+        async def stop(self) -> None:
+            nonlocal stop_calls
+            stop_calls += 1
+            await super().stop()
+
+    buffer = StimulusBuffer()
+    chan = _SpyChannel()
+    buffer.register(chan)
+    await buffer.start_all()
+    await buffer.pause_non_urgent()
+    assert stop_calls == 0, (
+        "pause_non_urgent should leave default_adrenalin=True "
+        "channels (web_chat) running"
+    )
+    await buffer.stop_all()
+
+
 # ---------------- WebChatTool ----------------
 
 def test_tool_metadata():

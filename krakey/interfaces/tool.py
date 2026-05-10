@@ -58,3 +58,12 @@ class ToolRegistry:
 
     def __contains__(self, name: str) -> bool:
         return name in self._tools
+
+    def deregister(self, name: str) -> "Tool | None":
+        """Remove a tool by name. Returns the removed instance or
+        ``None`` if it wasn't registered. Used by hot-reload paths
+        that need to swap a plugin's tool implementation
+        (deregister old + register new). Tools are stateless so
+        no teardown hook is needed; the registry just drops its
+        reference and Python GC handles the rest."""
+        return self._tools.pop(name, None)

@@ -10,48 +10,11 @@ unique. The runtime does not interpret role names — it just looks
 up a role and calls its protocol-specific methods. Plugins free to
 mint new role names; they only collide with each other if they
 chose the same string.
-
-Optional advisory protocols below (HypothalamusModifier, ...) document
-the method shapes the runtime expects when a particular role is
-used. Modifiers don't have to inherit from them — structural typing
-keeps plugin code free of interface imports it doesn't need.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
-
-if TYPE_CHECKING:
-    from krakey.memory.recall import RecallLike
-
-
-# --------------------------------------------------------------------
-# Contract dataclasses — cross the Modifier ↔ runtime boundary
-# --------------------------------------------------------------------
-
-
-@dataclass
-class ToolCall:
-    """Structured tool invocation produced by a decision-translator
-    Modifier's ``translate()``. Consumed by the dispatcher and by the
-    script-only action executor (when no translator is registered)."""
-    tool: str
-    intent: str
-    params: dict[str, Any] = field(default_factory=dict)
-    adrenalin: bool = False
-
-
-@dataclass
-class DecisionResult:
-    """Aggregate result of one decision-translation pass: the tool
-    calls to dispatch, plus any memory side-effects and the sleep
-    flag. Produced by either the hypothalamus role's translate() or
-    the bare tool-call parser fallback; the dispatcher consumes it
-    without caring which path produced it."""
-    tool_calls: list[ToolCall] = field(default_factory=list)
-    memory_writes: list[dict[str, Any]] = field(default_factory=list)
-    memory_updates: list[dict[str, Any]] = field(default_factory=list)
-    sleep: bool = False
+from dataclasses import dataclass
+from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass
@@ -71,28 +34,6 @@ class Modifier(Protocol):
     """Base shape — every Modifier has a name + role."""
     name: str
     role: str
-
-
-@runtime_checkable
-class HypothalamusModifier(Protocol):
-    """Optional shape advised for Modifiers that translate Self's
-    [DECISION] text into structured tool calls."""
-    name: str
-    role: str
-
-    async def translate(
-        self, decision: str, tools: list[dict[str, Any]],
-    ) -> DecisionResult: ...
-
-
-@runtime_checkable
-class RecallAnchorModifier(Protocol):
-    """Optional shape advised for Modifiers that build the per-beat
-    recall instance."""
-    name: str
-    role: str
-
-    def make_recall(self, runtime: Any) -> "RecallLike": ...
 
 
 @runtime_checkable
@@ -182,6 +123,30 @@ class ModifierRegistry:
     def all(self) -> list[Modifier]:
         """All registered Modifiers, in registration order."""
         return [self._by_role[r] for r in self._order]
+
+    # ---- deregistration (hot-reload) --------------------------------
+
+    def deregister_by_name(self, name: str) -> "Modifier | None":
+        """Remove a Modifier by its instance name. Returns the
+        removed instance or ``None`` if not found. Used by hot-
+        reload to swap a plugin's modifier implementation. If the
+        modifier defines an optional ``detach(runtime)`` method,
+        the caller is responsible for invoking it BEFORE this
+        call so the modifier can release runtime-coupled assets
+        (the registry itself doesn't carry a runtime reference)."""
+        target_role: str | None = None
+        for role, mod in self._by_role.items():
+            if getattr(mod, "name", None) == name:
+                target_role = role
+                break
+        if target_role is None:
+            return None
+        removed = self._by_role.pop(target_role)
+        try:
+            self._order.remove(target_role)
+        except ValueError:
+            pass
+        return removed
 
     # ---- lifecycle hook ---------------------------------------------
 

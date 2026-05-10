@@ -4,9 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from krakey.bootstrap import (
-    BOOTSTRAP_PROMPT, detect_bootstrap_complete, load_genesis,
-    load_self_model_or_default, parse_self_model_update,
+from krakey.models.self_model import load_self_model_or_default
+from krakey.plugins.bootstrap.prompt import BOOTSTRAP_PROMPT
+from krakey.plugins.bootstrap.state import (
+    detect_bootstrap_complete,
+    load_genesis,
+    parse_self_model_update,
 )
 
 
@@ -142,6 +145,11 @@ def test_load_self_model_incomplete_flag_starts_bootstrap(tmp_path):
 
 def test_bootstrap_prompt_contains_genesis_placeholder():
     assert "{genesis_text}" in BOOTSTRAP_PROMPT
-    # Must instruct Self how to update self_model and signal completion
+    # Must teach Self the <self-model> JSON tag. Completion is now
+    # plugin-driven (auto-detect on identity fields), not Self-
+    # driven, so the prompt no longer mentions a "bootstrap
+    # complete" marker — instead it explains the auto-complete
+    # mechanic.
     assert "<self-model>" in BOOTSTRAP_PROMPT
-    assert "bootstrap complete" in BOOTSTRAP_PROMPT.lower()
+    lower = BOOTSTRAP_PROMPT.lower()
+    assert "auto-complete" in lower or "auto-disable" in lower

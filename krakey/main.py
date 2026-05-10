@@ -1,17 +1,18 @@
 """KrakeyBot process entry point.
 
 The Runtime class itself lives in ``krakey/runtime/runtime.py`` — this
-file now only owns:
+file owns:
 
-  * ``build_runtime_from_config`` — parse config.yaml, resolve every
-    tag-bound LLM, hand the assembled deps to ``Runtime``.
-  * ``resolve_llm_for_tag`` — the shared cache-aware tag → LLMClient
-    resolver used by both core-purpose loading here and per-plugin
-    purpose loading inside Runtime.
+  * ``build_runtime_from_config`` — parse config.yaml, resolve the
+    LLMClientFactoryEngine + Embedder + Reranker through
+    EngineRegistry, hand the assembled deps to ``Runtime``. Other
+    Engines (memory, context, decision, recall, dispatch, heartbeat,
+    explicit_history) resolve inside ``Runtime.__init__``.
   * The ``__main__`` block.
 
-Re-exports ``Runtime`` and ``RuntimeDeps`` from runtime.py so existing
-``from krakey.main import Runtime`` call sites in tests keep working
+Re-exports ``Runtime`` / ``RuntimeDeps`` / ``AsyncEmbedder`` /
+``ChatLike`` / ``resolve_llm_for_tag`` so existing
+``from krakey.main import …`` call sites in tests keep working
 without churn.
 """
 from __future__ import annotations
@@ -19,7 +20,8 @@ from __future__ import annotations
 import asyncio
 import sys
 
-from krakey.llm.client import LLMClient
+from krakey.engines.registry import EngineRegistry
+from krakey.interfaces.engines import LLMClientFactoryEngine
 from krakey.models.config import load_config
 # Public re-exports — callers used to do ``from krakey.main import Runtime``
 # and we don't want to chase down every test importer just because the
@@ -28,7 +30,7 @@ from krakey.llm.resolve import (  # noqa: F401
     AsyncEmbedder, ChatLike, resolve_llm_for_tag,
 )
 from krakey.runtime.runtime import Runtime, RuntimeDeps  # noqa: F401
-from krakey.runtime.heartbeat.heartbeat_orchestrator import (  # noqa: F401
+from krakey.engines.heartbeat.orchestrator import (  # noqa: F401
     _summarize_stimuli,
 )
 
@@ -36,25 +38,36 @@ from krakey.runtime.heartbeat.heartbeat_orchestrator import (  # noqa: F401
 def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
     """Construct a production Runtime from ``config.yaml``.
 
-    Tag-based resolution path (Samuel 2026-04-26 refactor):
+    LLM resolution goes through the ``llm_factory`` Engine slot — the
+    composition root never reads ``cfg.llm`` directly. The default
+    ``DefaultLLMClientFactoryEngine`` wraps the legacy
+    ``resolve_llm_for_tag`` util (so the older ``llm_client_factory``
+    slot that substitutes the ``LLMClient`` class per-tag still works);
+    users override the whole factory by setting
+    ``cfg.core_implementations.llm_factory`` to a dotted path of their
+    own ``LLMClientFactoryEngine`` impl.
+
+    Tag-based resolution layers:
       1. ``cfg.llm.tags`` → name → (provider, model, params)
       2. ``cfg.llm.core_purposes`` → core purpose name → tag name
       3. ``cfg.llm.embedding`` / ``cfg.llm.reranker`` → tag name
          (model-type slots, not "purposes")
 
-    Each LLMClient is built once per tag name and reused across all
-    purposes that share it.
+    Each LLMClient is built once per tag and reused across every
+    purpose that shares it (cache lives inside the factory Engine,
+    mirrored into ``RuntimeDeps.llm_clients_by_tag`` for plugin
+    back-compat during the migration window).
     """
     cfg = load_config(config_path)
 
-    # Build LLMClient cache keyed by tag name. Multiple purposes that
-    # point at the same tag share a single client. The cache is also
-    # passed through to plugin loaders via RuntimeDeps so plugin
-    # purposes resolve from the same cache.
-    client_cache: dict[str, LLMClient] = {}
-
-    def _client_for_tag(tag_name: str | None) -> LLMClient | None:
-        return resolve_llm_for_tag(cfg, tag_name, client_cache)
+    # ---- Engine layer: factory Engine drives all LLM resolution.
+    # Hides ``cfg.llm`` from every other Engine + plugin.
+    registry = EngineRegistry(cfg)
+    llm_factory: LLMClientFactoryEngine = registry.resolve(
+        "llm_factory",
+        expected_protocol=LLMClientFactoryEngine,
+        cfg=cfg,
+    )
 
     # Core purposes (Self / compact / classifier ...). Self is what
     # makes the heartbeat fire; if it isn't bound the runtime starts
@@ -63,10 +76,10 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
     # until the user restarts after configuring. Surfacing this as a
     # crash on startup (the old behavior) was hostile to first-run
     # users who just installed the package and skipped chat config.
-    self_llm = _client_for_tag(cfg.llm.core_purposes.get("self_thinking"))
-    compact_llm = _client_for_tag(cfg.llm.core_purposes.get("compact"))
+    self_llm = llm_factory.client_for_core_purpose("self_thinking")
+    compact_llm = llm_factory.client_for_core_purpose("compact")
     classify_llm = (
-        _client_for_tag(cfg.llm.core_purposes.get("classifier"))
+        llm_factory.client_for_core_purpose("classifier")
         or compact_llm  # historical reuse
     )
     if compact_llm is None:
@@ -75,39 +88,38 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
         # invokes either path.
         compact_llm = self_llm
 
-    # Embedding + reranker (model-type slots, not purposes)
-    embed_client = _client_for_tag(cfg.llm.embedding)
+    # ---- Embedder Engine ---------------------------------------------
+    # Default impl takes the factory Engine via constructor + uses it
+    # to lazily reach the configured embedding client. Shared factory
+    # injection means every engine that holds an LLM client points at
+    # the same per-tag cache — no duplicate clients for the same tag
+    # across engines.
+    from krakey.interfaces.engines import EmbedderEngine
 
-    async def embedder(text: str) -> list[float]:
-        if embed_client is None:
-            raise RuntimeError(
-                "no embedding tag bound — set llm.embedding to a tag name "
-                "in config.yaml (or use the dashboard's LLM section)"
-            )
-        return await embed_client.embed(text)
-
-    reranker = None
-    reranker_client = _client_for_tag(cfg.llm.reranker)
-    if reranker_client is not None:
-        class _RerankerAdapter:
-            async def rerank(self, query, docs):
-                return await reranker_client.rerank(query, docs)
-        reranker = _RerankerAdapter()
-
-    # hypo_llm is no longer eagerly required at the core level — it's
-    # bound through the per-plugin config of `hypothalamus`.
-    # We still keep the field on RuntimeDeps for back-compat with
-    # existing plugin factories that pull `deps.hypo_llm`. Resolve
-    # from the dedicated `hypothalamus` core purpose if the user
-    # mapped one (compat shim), else None.
-    hypo_llm = _client_for_tag(cfg.llm.core_purposes.get("hypothalamus"))
+    embedder = registry.resolve(
+        "embedder",
+        expected_protocol=EmbedderEngine,
+        factory=llm_factory,
+    )
 
     deps = RuntimeDeps(
-        config=cfg, self_llm=self_llm, hypo_llm=hypo_llm,
+        config=cfg, self_llm=self_llm,
         compact_llm=compact_llm,
-        classify_llm=classify_llm, embedder=embedder, reranker=reranker,
+        classify_llm=classify_llm, embedder=embedder,
         config_path=str(config_path),
-        llm_clients_by_tag=client_cache,  # shared with plugin loader
+        # Mirror the factory's internal cache onto deps so
+        # ``PluginContext.get_llm_for_tag`` (which reads
+        # ``deps.llm_clients_by_tag``) sees the same client
+        # instances Engine consumers do. Both paths share the same
+        # dict — no duplicate clients per tag.
+        llm_clients_by_tag=llm_factory.client_cache,
+        llm_factory=llm_factory,
+        # Pull the sliding-window state path straight from
+        # config.yaml so dashboard edits to ``sliding_window.state_path``
+        # take effect on the next restart. Empty string in YAML →
+        # in-memory only (RuntimeDeps respects "" as the opt-out
+        # sentinel).
+        sliding_window_state_path=cfg.sliding_window.state_path,
     )
     return Runtime(deps)
 

@@ -79,3 +79,59 @@ async def test_results_truncate_long_body():
     stim = await t.execute("q", {})
     # Body should be truncated for prompt friendliness
     assert len(stim.content) < 5000
+
+
+# ---------------------------------------------------------------------
+# max_results: Self autonomously controls breadth per call
+# ---------------------------------------------------------------------
+
+
+def test_parameters_schema_advertises_max_results_range():
+    """Schema must surface the int type + cap so Self knows the
+    contract from [CAPABILITIES] alone."""
+    schema = SearchTool(backend=FakeBackend()).parameters_schema
+    assert schema["type"] == "object"
+    assert schema["properties"]["max_results"]["type"] == "integer"
+    assert schema["properties"]["max_results"]["minimum"] == 1
+    assert schema["properties"]["max_results"]["maximum"] == 25
+    assert schema["properties"]["query"]["type"] == "string"
+
+
+def test_description_mentions_self_control_of_count():
+    desc = SearchTool(backend=FakeBackend()).description
+    assert "max_results" in desc
+    # Should hint at the scaling decision Self makes.
+    assert "25" in desc
+
+
+async def test_self_can_request_more_than_default():
+    """Per-call override beats the constructor default."""
+    backend = FakeBackend(results=[])
+    t = SearchTool(backend=backend, max_results=5)
+    await t.execute("q", {"max_results": 15})
+    assert backend.calls[0][1] == 15
+
+
+async def test_max_results_clamped_to_cap():
+    """A wild value gets soft-clamped, not rejected — Self still
+    gets results, just capped at the ceiling."""
+    backend = FakeBackend(results=[])
+    t = SearchTool(backend=backend, max_results=5)
+    await t.execute("q", {"max_results": 9999})
+    assert backend.calls[0][1] == 25
+
+
+async def test_max_results_rejects_non_integer():
+    backend = FakeBackend(results=[])
+    t = SearchTool(backend=backend)
+    stim = await t.execute("q", {"max_results": "abc"})
+    assert "must be an integer" in stim.content
+    assert backend.calls == []  # backend never called
+
+
+async def test_max_results_rejects_zero_or_negative():
+    backend = FakeBackend(results=[])
+    t = SearchTool(backend=backend)
+    stim = await t.execute("q", {"max_results": 0})
+    assert "must be >= 1" in stim.content
+    assert backend.calls == []

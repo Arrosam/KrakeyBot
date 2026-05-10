@@ -9,8 +9,7 @@ names listed in ``config.yaml`` ``plugins:``. Catalogue scanning
 A "plugin" is the unit of distribution + enable. A plugin can declare
 any combination of components, each one of:
 
-  * ``modifier``  — heartbeat hook (hypothalamus / recall_anchor /
-                   in_mind / future kinds)
+  * ``modifier``  — heartbeat prompt-element hook
   * ``tool`` — outbound action
   * ``channel``  — inbound stimulus producer
 
@@ -30,6 +29,12 @@ any combination of components, each one of:
 name: my_plugin
 description: "..."
 config_schema: []          # plugin-level config fields (UI hints)
+dependencies:              # pip-installable spec strings
+  - "some-package>=1.0"    # installed by ``krakey install``
+post_install:              # secondary install steps after pip
+  - args: ["{python}", "-m", "playwright", "install", "chromium"]
+    description: "Download Chromium (~200MB, one-time)"
+    optional: false        # true = swallow failure; false = abort install
 
 components:
   - kind: modifier
@@ -80,11 +85,13 @@ WORKSPACE_ROOT = Path("workspace") / "plugins"
 @dataclass
 class ComponentMetadata:
     """One entry in a plugin's ``components:`` list."""
-    kind: str  # "modifier" | "tool" | "channel"
+    kind: str  # "modifier" | "tool" | "channel" | "engine"
     factory_module: str
     factory_attr: str
     role: str | None = None  # for kind="modifier": role string the
                               # Modifier claims; runtime errors on dup
+    slot: str | None = None  # for kind="engine": which Engine slot
+                              # this impl plugs into (e.g. "decision")
     llm_purposes: list[dict[str, Any]] = field(default_factory=list)
     # Anything else from the component dict is preserved as `extra` so
     # plugin-specific options can ride along without schema changes.
@@ -101,11 +108,29 @@ class PluginMetadata:
     by ``config.environments`` allow-lists (the runtime preflights
     every env that has at least one assigned plugin), not by a
     self-declared flag in meta.yaml.
+
+    ``dependencies`` (added 2026-05-05) is a list of pip-installable
+    spec strings (e.g. ``"playwright>=1.40"``, ``"aiohttp~=3.9"``).
+    Each plugin declares its own third-party deps so plugins behave
+    "like an independent project". The ``krakey install`` CLI walks
+    every plugin under BUILTIN_ROOT + WORKSPACE_ROOT, collects the
+    union, and pip-installs in one shot.
+
+    ``post_install`` (added 2026-05-06) is a list of secondary
+    install commands run AFTER pip — for things pip can't drive
+    (e.g. Playwright's ``playwright install chromium`` to download
+    browser binaries). Each entry is
+    ``{args: list[str], description: str, optional: bool=False}``.
+    The token ``{python}`` inside ``args`` is replaced with
+    ``sys.executable`` at run-time so commands always invoke the
+    runtime's own interpreter.
     """
     name: str
     description: str
     components: list[ComponentMetadata] = field(default_factory=list)
     config_schema: list[dict[str, Any]] = field(default_factory=list)
+    dependencies: list[str] = field(default_factory=list)
+    post_install: list[dict[str, Any]] = field(default_factory=list)
     source_path: Path | None = None
 
 
@@ -161,6 +186,26 @@ def parse_meta(path: Path) -> PluginMetadata:
     schema = raw.get("config_schema") or []
     if not isinstance(schema, list):
         raise ValueError("meta.yaml `config_schema:` must be a list")
+    deps_raw = raw.get("dependencies") or []
+    if not isinstance(deps_raw, list):
+        raise ValueError("meta.yaml `dependencies:` must be a list")
+    dependencies: list[str] = []
+    for i, d in enumerate(deps_raw):
+        if not isinstance(d, str) or not d.strip():
+            raise ValueError(
+                f"meta.yaml `dependencies[{i}]` must be a non-empty "
+                "pip-installable string (e.g. 'playwright>=1.40')"
+            )
+        dependencies.append(d.strip())
+    post_install_raw = raw.get("post_install") or []
+    if not isinstance(post_install_raw, list):
+        raise ValueError(
+            "meta.yaml `post_install:` must be a list of "
+            "{args: [...], description: str, optional?: bool}"
+        )
+    post_install: list[dict[str, Any]] = []
+    for i, entry in enumerate(post_install_raw):
+        post_install.append(_parse_post_install(entry, i))
     if "requires_sandbox" in raw:
         # Quietly tolerated for one release window — old plugin
         # meta.yamls in the wild had this field. Drop it from yours
@@ -177,11 +222,50 @@ def parse_meta(path: Path) -> PluginMetadata:
         description=str(raw.get("description", "")),
         components=components,
         config_schema=list(schema),
+        dependencies=dependencies,
+        post_install=post_install,
         source_path=path,
     )
 
 
-_KNOWN_COMPONENT_KINDS = {"modifier", "tool", "channel"}
+def _parse_post_install(entry: Any, index: int) -> dict[str, Any]:
+    """Validate one ``post_install`` entry. Returns a dict shape
+    ``{args: list[str], description: str, optional: bool}``."""
+    if not isinstance(entry, dict):
+        raise ValueError(
+            f"meta.yaml `post_install[{index}]` must be a mapping "
+            "with `args:` (and optional `description:`, `optional:`)"
+        )
+    args = entry.get("args")
+    if (
+        not isinstance(args, list)
+        or not args
+        or not all(isinstance(a, str) and a for a in args)
+    ):
+        raise ValueError(
+            f"meta.yaml `post_install[{index}].args` must be a "
+            "non-empty list of non-empty strings (argv-style)"
+        )
+    description = entry.get("description", "")
+    if not isinstance(description, str):
+        raise ValueError(
+            f"meta.yaml `post_install[{index}].description` must "
+            "be a string if provided"
+        )
+    optional = entry.get("optional", False)
+    if not isinstance(optional, bool):
+        raise ValueError(
+            f"meta.yaml `post_install[{index}].optional` must be "
+            "a boolean if provided"
+        )
+    return {
+        "args":        [str(a) for a in args],
+        "description": description,
+        "optional":    optional,
+    }
+
+
+_KNOWN_COMPONENT_KINDS = {"modifier", "tool", "channel", "engine"}
 
 
 def _parse_component(c: Any) -> ComponentMetadata:
@@ -195,16 +279,22 @@ def _parse_component(c: Any) -> ComponentMetadata:
         )
     if not c.get("factory_module") or not c.get("factory_attr"):
         raise ValueError("component missing factory_module / factory_attr")
+    if kind == "engine" and not c.get("slot"):
+        raise ValueError(
+            "component kind=engine requires `slot:` (which Engine "
+            "slot this impl plugs into, e.g. 'decision')"
+        )
     purposes = c.get("llm_purposes") or []
     if not isinstance(purposes, list):
         raise ValueError("component `llm_purposes:` must be a list")
-    # Stash the rest (role already pulled, factory_* already pulled)
-    known = {"kind", "role", "factory_module", "factory_attr",
+    # Stash the rest (role/slot already pulled, factory_* already pulled)
+    known = {"kind", "role", "slot", "factory_module", "factory_attr",
              "llm_purposes"}
     extra = {k: v for k, v in c.items() if k not in known}
     return ComponentMetadata(
         kind=kind,
         role=str(c["role"]) if c.get("role") else None,
+        slot=str(c["slot"]) if c.get("slot") else None,
         factory_module=str(c["factory_module"]),
         factory_attr=str(c["factory_attr"]),
         llm_purposes=list(purposes),

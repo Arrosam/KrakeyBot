@@ -1,13 +1,27 @@
 /* Settings view: form grid, toggles, multi-selects, custom dropdowns,
    save/restart bar. All config-form-specific styles live here. */
 
-#settings-form {
+/* Single scroll region wrapping the page hint + install banner +
+   install log + settings form. The page hint and install banner
+   used to be siblings of #settings-form and pinned to the
+   viewport top because the panel was column-flex with
+   overflow:hidden + only the form had .scroll. Wrapping them all
+   in one container makes the hint scroll naturally and keeps the
+   action bar (Save / Apply / Restart) the only sticky element. */
+.settings-scroll {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+#settings-form {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 12px;
-  overflow-y: auto;
 }
 
 .cfg-section {
@@ -40,6 +54,39 @@
 .cfg-section.collapsed > h3 { border-bottom: none; }
 .cfg-section.collapsed > .body { display: none; }
 .cfg-section > .body { padding: 10px; }
+
+/* Inline hint under a section heading — used today by Safety to
+   note the fields are advisory-only. Quiet enough not to compete
+   with the actual config rows beneath. */
+.cfg-section .section-hint {
+  margin: 0 0 8px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg);
+  border-left: 2px solid var(--yellow);
+  border-radius: 0 3px 3px 0;
+}
+
+/* Per-section heading tint. The leading icon + the title text both
+   pick up the colour via inheritance (svg fill: currentColor); the
+   collapse caret keeps its muted grey since it's a navigation
+   affordance, not part of the section identity. The section border
+   gets a subtle tint of the same colour so the panel is still
+   scannable when scrolling past collapsed sections. */
+.cfg-section.tint-cyan    > h3 { color: var(--cyan); }
+.cfg-section.tint-cyan          { border-color: rgba(108, 213, 213, 0.4); }
+.cfg-section.tint-magenta > h3 { color: var(--magenta); }
+.cfg-section.tint-magenta       { border-color: rgba(197, 133, 197, 0.4); }
+.cfg-section.tint-green   > h3 { color: var(--green); }
+.cfg-section.tint-green         { border-color: rgba(126, 199, 126, 0.4); }
+.cfg-section.tint-yellow  > h3 { color: var(--yellow); }
+.cfg-section.tint-yellow        { border-color: rgba(232, 192, 96, 0.4); }
+.cfg-section.tint-red     > h3 { color: var(--red); }
+.cfg-section.tint-red           { border-color: rgba(210, 117, 117, 0.4); }
+.cfg-section.tint-muted   > h3 { color: var(--muted); }
+/* Caret stays neutral regardless of tint. */
+.cfg-section > h3 > .section-caret { color: var(--muted); }
 
 .cfg-row {
   display: grid;
@@ -119,6 +166,30 @@
 }
 .subblock > h4 .actions { margin-left: auto; display: flex; gap: 4px; }
 
+/* Click-to-rename label for keyed entries (provider names, tag
+   names, custom core-purpose names). Hover hints that the text is
+   editable; click swaps in an .editable-key-input that commits on
+   blur or Enter. Replaces the old "rename" button + prompt() flow. */
+.editable-key {
+  cursor: text;
+  border-bottom: 1px dashed transparent;
+  padding: 0 1px;
+}
+.editable-key:hover {
+  border-bottom-color: var(--muted);
+}
+.editable-key-input {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--cyan);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  min-width: 120px;
+}
+
 /* Plugin row in the unified Plugins panel. Enabled rows get a full
    box so the boundary between adjacent plugins (especially when the
    top one is expanded with a config body) is unambiguous. Disabled
@@ -138,12 +209,52 @@
   margin: 0;
 }
 
+/* Plugin description, surfaced inside the expanded card body
+   (used to be a hover tooltip on the title — see app.js
+   _renderPluginCard). Quiet enough not to compete with the
+   config rows beneath, but always visible when the row is
+   open so the operator never has to discover hover. */
+.plugin-description {
+  margin: 6px 0 8px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg);
+  border-left: 2px solid var(--cyan);
+  border-radius: 0 3px 3px 0;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
 .model-row {
   display: grid;
   grid-template-columns: 1fr 1fr auto;
   gap: 6px;
   margin-bottom: 4px;
-  align-items: start;
+  /* Centre the delete X with the surrounding inputs/chip-picker —
+     start-alignment was leaving it floating high while the
+     cap-multi container expanded below it. */
+  align-items: center;
+}
+
+/* Unified "×" delete button. One look across the settings panel
+   (model rows, tag rows, custom-purpose rows, fatigue thresholds)
+   so the visual reads as the same affordance everywhere. */
+.btn-mini.btn-x {
+  min-width: 28px;
+  height: 26px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  border-color: var(--border);
+}
+.btn-mini.btn-x:hover {
+  color: var(--red);
+  border-color: var(--red);
 }
 
 .cap-multi {
@@ -217,6 +328,29 @@
 }
 .dd-item:hover { background: var(--panel-2); color: var(--text); }
 .dd-item.custom { color: var(--muted); border-top: 1px dashed var(--border); }
+/* Keyboard-highlighted item in the typeahead menu (ArrowUp /
+   ArrowDown). Same hover-tint so mouse + keyboard navigation
+   read identically. */
+.dd-item.active { background: var(--panel-2); color: var(--cyan); }
+
+/* Typeahead host inside chip-list (.cap-multi). The input shares
+   the strip with chips, but its dropdown anchors to this host so
+   it pops open under the input column rather than under the
+   whole strip. */
+.string-list-input-host {
+  position: relative;
+  flex: 1;
+  min-width: 80px;
+  display: inline-flex;
+}
+.string-list-input-host.has-typeahead .typeahead-menu {
+  /* Inherits .dd-menu styling — full panel-themed dropdown. The
+     position is anchored to the input host so the menu sits
+     directly beneath the input as the user types. */
+  left: 0;
+  right: auto;
+  min-width: 100%;
+}
 
 /* Style native <select> as far as the browser allows (role pickers etc.) */
 #settings-form select {
@@ -256,9 +390,110 @@
 }
 .settings-actions button:hover { filter: brightness(1.1); }
 
+/* Install banner — appears above the settings form when one or
+   more enabled plugins have unsatisfied pip / post_install deps.
+   Yellow border so it reads as advisory, not destructive. */
+.install-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--yellow);
+  border-radius: 4px;
+  font-size: 12px;
+}
+.install-banner.installing {
+  border-color: var(--cyan);
+  color: var(--muted);
+}
+.install-banner.success {
+  border-color: var(--green);
+}
+.install-banner.failed {
+  border-color: var(--red);
+}
+.install-banner-text {
+  flex: 1;
+  color: var(--text);
+  line-height: 1.5;
+}
+.install-banner-text strong { color: var(--yellow); }
+.install-banner.success .install-banner-text strong { color: var(--green); }
+.install-banner.installing .install-banner-text strong { color: var(--cyan); }
+.install-banner.failed .install-banner-text strong { color: var(--red); }
+.install-banner-text code {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 1px 4px;
+  font-family: ui-monospace, "Consolas", monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+.install-banner-text em {
+  font-style: normal;
+  font-weight: bold;
+  color: var(--text);
+}
+.install-banner-upgrade {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.install-banner button {
+  padding: 5px 12px;
+  background: var(--text);
+  border: none;
+  border-radius: 3px;
+  color: var(--bg);
+  font-weight: bold;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.install-banner button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Inline log pane — shown post-install with the captured pip
+   stdout / stderr so the operator sees what happened (esp.
+   useful when rc != 0). */
+.install-log {
+  font-family: ui-monospace, "Consolas", monospace;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 8px 10px;
+  max-height: 200px;
+  margin: 0 0 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 #settings-toast {
   font-size: 12px;
   margin-left: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: bold;
 }
-#settings-toast.ok { color: var(--text); font-weight: bold; }
-#settings-toast.err { color: var(--text); font-weight: bold; }
+/* Toast levels — Bootstrap-Icons SVG inherits via fill:currentColor,
+   so we only set `color` on the host and the icon follows. */
+#settings-toast.ok      { color: var(--green); }
+#settings-toast.err     { color: var(--red); }
+#settings-toast.warn    { color: var(--yellow); }
+#settings-toast.info    { color: var(--cyan); }
+#settings-toast.pending { color: var(--cyan); }

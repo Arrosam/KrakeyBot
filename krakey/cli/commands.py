@@ -27,6 +27,11 @@ def stop(args: argparse.Namespace) -> int:
     return lifecycle.stop_daemon()
 
 
+def restart(args: argparse.Namespace) -> int:
+    from . import lifecycle
+    return lifecycle.restart_daemon()
+
+
 def status(args: argparse.Namespace) -> int:
     from . import lifecycle
     return lifecycle.status()
@@ -58,6 +63,11 @@ def onboard(args: argparse.Namespace) -> int:
     # daemon and pid-files itself, so this is safe even if the user
     # had a stray daemon running.
     return lifecycle.run_foreground()
+
+
+def install(args: argparse.Namespace) -> int:
+    from krakey.install.service import install as _install
+    return _install(args)
 
 
 def update(args: argparse.Namespace) -> int:

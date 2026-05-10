@@ -11,19 +11,29 @@
         </div>
       </div>
       <div class="thoughts-grid">
+        <!-- Tool Usage — each beat logs dispatch (chevron-right icon),
+             tool result (chevron-left), idle interval (stopwatch),
+             and sleep boundaries (moon / sunrise) so the user has
+             a full per-beat record of what Krakey did with her
+             decisions. All icons flow through window.biIcon — no
+             emoji per repo memo. -->
         <div class="panel yellow">
-          <h3>Hypothalamus (dispatch)</h3>
-          <div class="scroll small" id="hypo-stream"></div>
+          <h3>Tool Usage</h3>
+          <div class="scroll small" id="tool-stream"></div>
         </div>
-        <!-- Bottom-right cell is split: Pending Stimuli on the left,
-             live Status on the right. Status renders GM counts,
-             fatigue, heartbeat id, sleep bookkeeping — what the top
-             status-bar already tracks but in a persistent readable
-             block inside the Inner Thoughts view. -->
+        <!-- Bottom-right cell is split: Stimulus on top, live Status
+             below. The Stimulus panel groups every received stimulus
+             under the heartbeat that drained it — replaces the old
+             "Pending Stimuli" snapshot (which never quite worked
+             since the snapshot was post-drain). Status renders GM
+             counts, fatigue, heartbeat id, sleep bookkeeping —
+             what the top status-bar already tracks but in a
+             persistent readable block inside the Inner Thoughts
+             view. -->
         <div class="thoughts-bottom-right">
           <div class="panel white">
-            <h3>Pending Stimuli</h3>
-            <ul id="stim-list" class="scroll small"></ul>
+            <h3>Stimulus</h3>
+            <div class="scroll small" id="stim-stream"></div>
           </div>
           <div class="panel">
             <h3>Status (runtime state)</h3>

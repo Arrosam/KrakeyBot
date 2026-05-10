@@ -33,8 +33,31 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("run", help="run heartbeat in foreground (Ctrl+C to stop)")
     sub.add_parser("start", help="start heartbeat as background daemon")
     sub.add_parser("stop", help="stop the running daemon")
+    sub.add_parser(
+        "restart",
+        help="stop + start the daemon (use after config / plugin edits "
+             "that need a fresh process)",
+    )
     sub.add_parser("status", help="show whether the daemon is running")
     sub.add_parser("onboard", help="run the interactive onboarding wizard")
+
+    inst = sub.add_parser(
+        "install",
+        help="pip-install main project deps + every plugin's "
+             "declared dependencies",
+    )
+    inst.add_argument(
+        "--dry-run",
+        action="store_true",
+        dest="dry_run",
+        help="print what would be installed and exit, don't invoke pip",
+    )
+    inst.add_argument(
+        "--upgrade",
+        action="store_true",
+        help="pass --upgrade to pip (re-resolve already-installed deps)",
+    )
+
     sub.add_parser("update", help="fetch the newest release tag and reinstall")
     sub.add_parser(
         "repair",

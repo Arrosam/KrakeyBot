@@ -28,7 +28,7 @@ Passed to ``build_<component>(ctx)`` for every plugin kind
     truly need it. Reading ``deps.config.llm.providers`` from a
     plugin breaks API-key isolation; don't.
 
-Built by ``Runtime._register_plugins_from_config`` per plugin.
+Built by the plugin loader per plugin.
 """
 from __future__ import annotations
 

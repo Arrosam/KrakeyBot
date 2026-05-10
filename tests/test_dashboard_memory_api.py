@@ -14,11 +14,32 @@ class StubEmbed:
         return [0.0]
 
 
-class _Stub:
-    """Minimal runtime stand-in exposing gm + kb_registry."""
+class _MemoryFacade:
+    """Stitches GM + KBRegistry into the unified MemoryEngine surface
+    the dashboard adapter consumes (``list_nodes``, ``list_edges_named``,
+    ``count_nodes``, ``count_edges``, ``counts_by_category``,
+    ``counts_by_source``, ``list_kbs``, ``open_kb``). Tests pre-date
+    the GraphMemoryEngine wrapper class so this facade keeps them
+    runnable without standing up the full Engine bundle."""
+
     def __init__(self, gm, reg):
-        self.gm = gm
-        self.kb_registry = reg
+        self._gm = gm
+        self._reg = reg
+
+    def __getattr__(self, name):
+        # GM-side methods first; fall back to KB registry. The two
+        # surfaces don't overlap (no shared method names), so the
+        # ordering is decisive without ambiguity.
+        if hasattr(self._gm, name):
+            return getattr(self._gm, name)
+        return getattr(self._reg, name)
+
+
+class _Stub:
+    """Minimal runtime stand-in exposing the unified ``memory``
+    attribute the dashboard adapter consumes after the Engine refactor."""
+    def __init__(self, gm, reg):
+        self.memory = _MemoryFacade(gm, reg)
 
 
 async def _make_runtime(tmp_path):

@@ -117,17 +117,20 @@ def _exec_runtime(repo: Path) -> int:
 
     rt = build_runtime_from_config()
 
-    # Cooperative shutdown — flip `rt._stop` on Ctrl+C / SIGTERM and let
-    # the runtime exit its loop cleanly. Path differs by platform:
+    # Cooperative shutdown — call ``rt.request_stop()`` on Ctrl+C /
+    # SIGTERM and let the runtime exit its loop cleanly. Path differs
+    # by platform:
     #
-    #   Unix: install via `loop.add_signal_handler` inside the coroutine
-    #         (asyncio integrates with the signal subsystem there).
-    #   Windows: `add_signal_handler` is unsupported; use `signal.signal`
-    #         outside the loop. Handler sets the flag, asyncio.sleep
-    #         (0.25s tick) wakes up, runtime sees `_stop=True`, exits.
+    #   Unix: install via ``loop.add_signal_handler`` inside the
+    #         coroutine (asyncio integrates with the signal subsystem
+    #         there).
+    #   Windows: ``add_signal_handler`` is unsupported; use
+    #         ``signal.signal`` outside the loop. Handler signals the
+    #         runtime, asyncio.sleep (0.25s tick) wakes up, runtime
+    #         sees the stop flag and exits.
     if os.name == "nt":
         def _win_request_stop(_sig, _frame):  # noqa: ARG001
-            rt._stop = True
+            rt.request_stop()
         signal.signal(signal.SIGINT, _win_request_stop)
 
     async def _supervised() -> None:
@@ -135,7 +138,7 @@ def _exec_runtime(repo: Path) -> int:
             loop = asyncio.get_running_loop()
             for sig in (signal.SIGINT, signal.SIGTERM):
                 try:
-                    loop.add_signal_handler(sig, lambda: setattr(rt, "_stop", True))
+                    loop.add_signal_handler(sig, rt.request_stop)
                 except (NotImplementedError, RuntimeError):
                     pass
         try:
@@ -198,14 +201,83 @@ def _print_runtime_banner_if_needed(wizard_ran: bool) -> None:
     _banner.print_banner()
 
 
+def _warn_if_install_pending(repo: Path) -> None:
+    """At runtime startup, look up
+    ``workspace/data/install_state.json`` (relative to repo) and
+    compare its recorded deps_hash against the live one. If they
+    differ — i.e. a plugin was added / removed / changed its
+    declared deps since the last ``krakey install`` — print a
+    one-line warning to stderr telling the operator to run install.
+
+    Best-effort and fail-silent: any exception inside the check
+    is swallowed so a malformed install_state.json or unreadable
+    plugin meta.yaml never blocks the heartbeat from starting.
+    Sleep / heartbeat / plugin loading already have their own
+    additive-fallback paths; this is only an advisory."""
+    try:
+        prev_cwd = os.getcwd()
+        os.chdir(str(repo))
+        try:
+            from . import install as _install
+            pending, plugin_deps = _install.has_pending_deps()
+        finally:
+            os.chdir(prev_cwd)
+    except Exception:  # noqa: BLE001
+        return
+
+    if not pending:
+        return
+
+    plugins_with_deps = sorted(
+        name for name, deps in plugin_deps.items() if deps
+    )
+    if plugins_with_deps:
+        listed = ", ".join(plugins_with_deps)
+        print(
+            "krakey: plugin dependencies look out-of-date. Run "
+            "`krakey install` to install the latest declared "
+            f"deps for: {listed}.",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            "krakey: no plugin dependencies declared yet — run "
+            "`krakey install` once to record install state and "
+            "silence this message.",
+            file=sys.stderr,
+        )
+
+
+def _consume_restart_takeover_pid() -> int | None:
+    """Pop ``KRAKEY_RESTART_PARENT_PID`` from the env if present.
+
+    The dashboard's restart path sets this to its own pid right
+    before Popen-ing the new process and then ``os._exit``s. The
+    new process races the parent's exit and almost always reads the
+    pidfile while the parent is still alive — without this signal
+    it would refuse to start with "krakey already running". When
+    set, the new process is allowed to take over the pidfile from
+    that specific dying parent.
+
+    Popped (not just read) so it doesn't propagate to a NEXT
+    restart's child as a stale pid.
+    """
+    raw = os.environ.pop("KRAKEY_RESTART_PARENT_PID", "")
+    try:
+        return int(raw) if raw else None
+    except ValueError:
+        return None
+
+
 def run_foreground() -> int:
     repo, pidfile, _log = _paths()
     rc, wizard_ran = _ensure_config(repo)
     if rc is not None:
         return rc
 
+    takeover_pid = _consume_restart_takeover_pid()
     existing = _read_pid(pidfile)
-    if existing and _is_alive(existing):
+    if existing and _is_alive(existing) and existing != takeover_pid:
         print(f"krakey already running (pid {existing}); use `krakey stop` first",
               file=sys.stderr)
         return 1
@@ -213,6 +285,7 @@ def run_foreground() -> int:
         _clear_pidfile(pidfile)
 
     _print_runtime_banner_if_needed(wizard_ran)
+    _warn_if_install_pending(repo)
     _write_pidfile(pidfile, os.getpid())
     _install_pidfile_cleanup(pidfile)
     return _exec_runtime(repo)
@@ -224,8 +297,9 @@ def start_daemon() -> int:
     if rc is not None:
         return rc
 
+    takeover_pid = _consume_restart_takeover_pid()
     existing = _read_pid(pidfile)
-    if existing and _is_alive(existing):
+    if existing and _is_alive(existing) and existing != takeover_pid:
         print(f"krakey already running (pid {existing})")
         return 1
     if existing:
@@ -234,6 +308,7 @@ def start_daemon() -> int:
     logfile.parent.mkdir(parents=True, exist_ok=True)
 
     _print_runtime_banner_if_needed(wizard_ran)
+    _warn_if_install_pending(repo)
     if os.name == "nt":
         return _spawn_daemon_windows(repo, pidfile, logfile)
     return _spawn_daemon_unix(repo, pidfile, logfile)
@@ -341,6 +416,52 @@ def stop_daemon() -> int:
     _clear_pidfile(pidfile)
     print(f"krakey force-killed (pid {pid})")
     return 0
+
+
+def restart_daemon() -> int:
+    """``krakey restart`` — stop the running daemon (if any), then
+    start_daemon. Idempotent: if no daemon is running, the stop
+    step is a no-op and we go straight to start.
+
+    Used by:
+      * Operator after editing config.yaml (the dashboard's
+        "Restart Krakey" button hits the same code via
+        ``/api/restart``, but that path is for in-process
+        triggers; this function is for the CLI ``krakey restart``
+        command).
+      * Anyone who needs a fresh process — e.g. to hot-remove a
+        plugin (hot-reload is add-only) or pick up a code edit.
+
+    The two phases are sequenced so a stop failure (other than
+    "not running") DOES abort the restart — better to surface the
+    issue than to leave the operator with a half-stopped daemon
+    + a fresh start they didn't expect."""
+    _repo, pidfile, _log = _paths()
+    pid = _read_pid(pidfile)
+
+    if pid is not None and _is_alive(pid):
+        print(f"krakey: stopping running daemon (pid {pid})...")
+        rc = stop_daemon()
+        # stop_daemon returns 0 on success, 1 when nothing to
+        # stop. Any rc != 0 here means stop tried but failed —
+        # don't continue to start, the operator needs to deal
+        # with the leftover process.
+        if rc != 0:
+            print(
+                "krakey: stop failed; not starting a new daemon. "
+                "Investigate and re-run `krakey start` once the "
+                "old process is cleared.",
+                file=sys.stderr,
+            )
+            return rc
+    else:
+        # Clear stale pidfile if any so start_daemon's
+        # already-running check doesn't trip on a dead pid.
+        if pid is not None:
+            _clear_pidfile(pidfile)
+        print("krakey: no running daemon; proceeding to start.")
+
+    return start_daemon()
 
 
 def status() -> int:

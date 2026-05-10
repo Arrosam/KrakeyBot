@@ -33,3 +33,53 @@ class PluginsService(Protocol):
         if present in the body. Returns a summary dict (project name,
         file path, resulting config).
         """
+
+    def deps_status(self) -> dict[str, Any]:
+        """Snapshot of plugin-dependency install state.
+
+        Returns::
+
+            {
+              "pending":  bool,            # any plugin needs install?
+              "plugins": {
+                "<name>": {
+                  "dependencies": [...pip-spec strings],
+                  "post_install": [{args, description, optional}],
+                  "installed":    bool,    # in install_state.json's
+                                            # installed list
+                  "satisfied":    bool,    # currently importable +
+                                            # post_install marker present
+                },
+                ...
+              },
+              "state": {
+                  "installed_at": "iso-ts" | null,
+                  "deps_hash":    "..."   | null,
+              },
+            }
+
+        Used by the dashboard's plugin list to show ⚠ next to
+        plugins whose deps haven't been installed in this venv.
+        """
+
+    async def hot_reload(self) -> dict[str, Any]:
+        """Re-read ``config.yaml``'s ``plugins:`` list and hot-add
+        any plugins enabled there but not currently loaded. Returns
+        the runtime's ``hot_reload_plugins`` report (added /
+        skipped / errors / still_pending_remove). Plugins flagged
+        as ``still_pending_remove`` need a full restart — the
+        dashboard surfaces this as a "Restart Krakey" hint."""
+
+    def install(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Run ``krakey install`` programmatically. Body fields::
+
+            {
+              "upgrade":  bool,    # default false
+            }
+
+        Returns ``{rc: int, stdout: str, stderr: str}``. Output
+        truncated to keep the JSON response from blowing up on a
+        chatty pip session — full log goes to the runtime log if
+        the dashboard is attached to one. State file IS written
+        if rc==0; subsequent /api/plugins/deps_status reflects
+        the new state."""

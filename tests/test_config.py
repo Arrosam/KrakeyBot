@@ -236,3 +236,200 @@ def test_default_config_is_loadable():
     parsed = yaml.safe_load(text)
     assert "llm" in parsed
     assert "tags" in parsed["llm"]
+
+
+# ---------------- sliding_window section (2026-05-07) ----------------
+
+
+def test_sliding_window_default_state_path_is_workspace_data():
+    """Default Config exposes the persistence path so users see
+    where the file lives without having to dig into source."""
+    cfg = Config()
+    assert cfg.sliding_window.state_path == "workspace/data/sliding_window.json"
+
+
+def test_sliding_window_dumped_then_reloaded(tmp_path):
+    """Dashboard edits write YAML, runtime restart reloads. The
+    section must round-trip through dump → load."""
+    cfg = Config()
+    cfg.sliding_window.state_path = "/tmp/custom/sw.json"
+    p = tmp_path / "config.yaml"
+    p.write_text(dump_config(cfg), encoding="utf-8")
+    reloaded = load_config(p)
+    assert reloaded.sliding_window.state_path == "/tmp/custom/sw.json"
+
+
+def test_sliding_window_empty_string_means_in_memory_only(tmp_path):
+    """Setting state_path to "" in YAML opts out of persistence —
+    matches the RuntimeDeps sentinel ("" → in-memory only)."""
+    p = _write(tmp_path, """
+        llm:
+          providers: {}
+          tags: {}
+          core_purposes: {}
+        plugins: []
+        graph_memory:
+          db_path: ":memory:"
+        sliding_window:
+          state_path: ""
+    """)
+    cfg = load_config(p)
+    assert cfg.sliding_window.state_path == ""
+
+
+def test_sliding_window_section_absent_falls_back_to_default(tmp_path):
+    """Old config.yaml files without a sliding_window section keep
+    working — the default path is auto-applied."""
+    p = _write(tmp_path, """
+        llm:
+          providers: {}
+          tags: {}
+          core_purposes: {}
+        plugins: []
+        graph_memory:
+          db_path: ":memory:"
+    """)
+    cfg = load_config(p)
+    assert cfg.sliding_window.state_path == "workspace/data/sliding_window.json"
+
+
+def _minimal_config_body(extra: str) -> str:
+    """Return a syntactically valid config.yaml body with the
+    plugin-enable section provided by the test."""
+    return f"""
+        llm:
+          providers: {{}}
+          tags: {{}}
+          core_purposes: {{}}
+        graph_memory:
+          db_path: ":memory:"
+{extra}
+    """
+
+
+def test_plugins_field_alone_loads_as_before(tmp_path):
+    """Pure ``plugins:`` config — no legacy field — loads verbatim."""
+    p = _write(tmp_path, _minimal_config_body(
+        "        plugins:\n"
+        "          - dashboard\n"
+        "          - cli_exec\n"
+    ))
+    cfg = load_config(p)
+    assert cfg.plugins == ["dashboard", "cli_exec"]
+
+
+def test_modifiers_alone_treated_as_plugin_list_with_deprecation(
+    tmp_path, capsys,
+):
+    """Pre-2026-04-26 layout: only ``modifiers:`` present. Loads,
+    but emits a deprecation note pointing to the new field."""
+    p = _write(tmp_path, _minimal_config_body(
+        "        modifiers:\n"
+        "          - hypothalamus\n"
+    ))
+    cfg = load_config(p)
+    err = capsys.readouterr().err
+    assert cfg.plugins == ["hypothalamus"]
+    assert "modifiers" in err
+    assert "pre-2026" in err.lower() or "deprecated" in err.lower() \
+        or "silence" in err.lower()
+
+
+def test_both_lists_merged_modifier_only_plugin_loads(tmp_path):
+    """Regression: dashboard's split UX writes modifier-only plugins
+    (e.g. ``hypothalamus``) ONLY to ``modifiers:`` and tool/channel
+    plugins to ``plugins:``. The loader must merge both or
+    modifier-only plugins silently never load — symptom: hypothalamus
+    in dashboard ticked, but the [ACTION FORMAT] layer never gets
+    swapped to its NL flavor because no modifier was ever registered."""
+    p = _write(tmp_path, _minimal_config_body(
+        "        plugins:\n"
+        "          - dashboard\n"
+        "          - cli_exec\n"
+        "        modifiers:\n"
+        "          - hypothalamus\n"
+    ))
+    cfg = load_config(p)
+    assert "hypothalamus" in cfg.plugins
+    assert "dashboard" in cfg.plugins
+    assert "cli_exec" in cfg.plugins
+
+
+def test_both_lists_merged_modifier_chain_order_first(tmp_path):
+    """The modifier list is order-sensitive (heartbeat chain order).
+    Merge must put modifier entries BEFORE plugins-list entries so
+    chain order is preserved."""
+    p = _write(tmp_path, _minimal_config_body(
+        "        plugins:\n"
+        "          - cli_exec\n"
+        "        modifiers:\n"
+        "          - hypothalamus\n"
+        "          - recall\n"
+    ))
+    cfg = load_config(p)
+    # Modifier-list entries land first, in their declared order.
+    assert cfg.plugins.index("hypothalamus") < cfg.plugins.index("cli_exec")
+    assert cfg.plugins.index("recall") < cfg.plugins.index("cli_exec")
+    assert cfg.plugins.index("hypothalamus") < cfg.plugins.index("recall")
+
+
+def test_both_lists_merged_dedupes_plugins_in_both(tmp_path):
+    """A plugin with both modifier + tool components (e.g. ``recall``,
+    ``in_mind_note``) appears in both lists. Merge must de-dup,
+    keeping the modifier-list slot so chain order is honored."""
+    p = _write(tmp_path, _minimal_config_body(
+        "        plugins:\n"
+        "          - cli_exec\n"
+        "          - recall\n"
+        "        modifiers:\n"
+        "          - hypothalamus\n"
+        "          - recall\n"
+    ))
+    cfg = load_config(p)
+    # ``recall`` should appear once and at the modifier-list slot
+    # (before ``cli_exec``), not duplicated.
+    assert cfg.plugins.count("recall") == 1
+    assert cfg.plugins.index("recall") < cfg.plugins.index("cli_exec")
+
+
+def test_both_lists_empty_returns_empty_list(tmp_path):
+    """``plugins: []`` + ``modifiers: []`` is the canonical
+    "explicitly zero" shape. Result is empty list, not None."""
+    p = _write(tmp_path, _minimal_config_body(
+        "        plugins: []\n"
+        "        modifiers: []\n"
+    ))
+    cfg = load_config(p)
+    assert cfg.plugins == []
+
+
+def test_neither_field_yields_none(tmp_path):
+    """When both fields are absent the loader returns None so the
+    runtime prints its no-plugins nudge."""
+    p = _write(tmp_path, _minimal_config_body(""))
+    cfg = load_config(p)
+    assert cfg.plugins is None
+
+
+def test_sliding_window_max_tokens_still_warns(tmp_path, capsys):
+    """The deprecated `sliding_window.max_tokens` field has been
+    removed but users may still have it from old configs. Warn
+    explicitly so they remove it; honor `state_path` alongside."""
+    p = _write(tmp_path, """
+        llm:
+          providers: {}
+          tags: {}
+          core_purposes: {}
+        plugins: []
+        graph_memory:
+          db_path: ":memory:"
+        sliding_window:
+          max_tokens: 4096
+          state_path: /tmp/sw.json
+    """)
+    cfg = load_config(p)
+    err = capsys.readouterr().err
+    assert "max_tokens" in err
+    assert "deprecated" in err.lower()
+    # state_path still applied even when max_tokens triggers the warning.
+    assert cfg.sliding_window.state_path == "/tmp/sw.json"

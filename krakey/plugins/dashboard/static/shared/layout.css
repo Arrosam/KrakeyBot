@@ -103,6 +103,31 @@ header {
   background: var(--panel-2);
   border-color: var(--border);
 }
+/* Unread state — chat tab when a Krakey-side message landed while
+   the user was away. Tints the label cyan so it pops in the muted
+   header strip; the count badge is the actual eye-catcher. */
+.tab-btn.has-unread { color: var(--cyan); }
+.tab-btn .unread-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  padding: 0 5px;
+  height: 14px;
+  min-width: 14px;
+  background: var(--magenta);
+  color: var(--bg);
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: bold;
+  line-height: 1;
+  /* Slow pulse so the dot is alive but not seizure-inducing. */
+  animation: tab-unread-pulse 1.6s ease-in-out infinite;
+}
+@keyframes tab-unread-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.15); opacity: 0.85; }
+}
 
 .status-bar {
   font-size: 11px;
@@ -233,6 +258,40 @@ main {
   font-size: 10px;
   margin-right: 6px;
 }
+/* Bootstrap-Icons SVG sitting between the .hb-tag and the entry's
+   text body (e.g. dispatch's chevron-right, idle's stopwatch).
+   Same flex alignment as other inline icon hosts; categorical
+   tints flow through .entry.dispatch / .idle / .sleep-* etc. */
+.scroll .entry-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 4px;
+  color: var(--muted);
+}
+.scroll .entry.dispatch    .entry-icon { color: var(--cyan); }
+.scroll .entry.tool-result .entry-icon { color: var(--green); }
+.scroll .entry.idle        .entry-icon { color: var(--muted); }
+.scroll .entry.sleep-start .entry-icon { color: var(--magenta); }
+.scroll .entry.sleep-done  .entry-icon { color: var(--yellow); }
+
+/* Sleep banner — pinned under the header. The runtime is busy
+   compacting GM during sleep and any /api/gm/* read would queue
+   behind it on the shared aiosqlite worker thread. We surface the
+   state here so the user knows the dashboard is intentionally
+   limited (rather than wondering why Memory hangs). */
+.runtime-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 12px 0;
+  padding: 5px 10px;
+  font-size: 11px;
+  color: var(--bg);
+  background: var(--magenta);
+  border-radius: 4px;
+  font-weight: bold;
+}
+.runtime-banner.hidden { display: none; }
 
 /* Shared hint paragraph (prompts + settings). */
 .hint {

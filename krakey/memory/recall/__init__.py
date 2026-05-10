@@ -1,31 +1,10 @@
-"""Recall subsystem (DevSpec §9): per-stimulus search → score → bound.
+"""Embedder Protocol + scoring helpers shared across the memory subsystem.
 
-Two modules:
-
-  * ``scoring``     — pure functions + ``ScoringWeights``. Category
-                       weights, time decay, scripted score, reranker
-                       orchestration, ``Reranker`` Protocol.
-  * ``incremental`` — Protocols + null object: ``RecallLike``
-                       (the duck-typed surface runtime types
-                       against), ``RecallResult`` dataclass,
-                       ``NoopRecall`` (zero-plugin fallback),
-                       ``AsyncEmbedder`` Protocol.
-
-Public API re-exported at this package root so
-``from krakey.memory.recall import RecallLike, NoopRecall,
-RecallResult, Reranker`` keeps working unchanged.
-
-Note: the concrete ``IncrementalRecall`` driver lives in the
-``recall_anchor`` plugin and is NOT re-exported from core.
-Disabling that plugin removes the class from the import graph
-entirely.
+The per-beat recall driver lives in
+``krakey.engines.recall.incremental``; this package only exposes the
+math + the embedder callable shape.
 """
-from krakey.memory.recall.incremental import (  # noqa: F401
-    AsyncEmbedder,
-    NoopRecall,
-    RecallLike,
-    RecallResult,
-)
+from krakey.memory.recall.incremental import AsyncEmbedder  # noqa: F401
 from krakey.memory.recall.scoring import (  # noqa: F401
     CATEGORY_WEIGHTS,
     Reranker,

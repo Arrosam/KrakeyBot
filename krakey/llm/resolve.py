@@ -20,26 +20,37 @@ system addresses an LLM without knowing the concrete implementation:
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from krakey.llm.client import LLMClient
     from krakey.models.config import Config
 
 
+@runtime_checkable
 class ChatLike(Protocol):
     async def chat(self, messages, **kwargs) -> str: ...
 
 
+@runtime_checkable
 class AsyncEmbedder(Protocol):
+    """Async-callable returning an embedding vector for one text.
+
+    ``@runtime_checkable`` so ``ServiceResolver`` can isinstance-check
+    user-supplied embedder slots at startup. Caveat: Python's
+    runtime-checkable Protocol with ``__call__`` only verifies the
+    method exists — it can't check the signature, so any callable
+    technically passes. Documentation discipline beats type-system
+    enforcement here.
+    """
     async def __call__(self, text: str) -> list[float]: ...
 
 
 def resolve_llm_for_tag(
     cfg: "Config", tag_name: str | None,
     cache: dict[str, "LLMClient"],
-) -> "LLMClient | None":
-    """Build (or fetch from cache) the LLMClient for a tag name.
+) -> "ChatLike | None":
+    """Build (or fetch from cache) the LLM client for a tag name.
 
     Returns ``None`` for: empty ``tag_name``, missing tag in
     ``cfg.llm.tags``, malformed provider field, or provider name not
@@ -47,7 +58,18 @@ def resolve_llm_for_tag(
     warning so the user can see what to fix; callers continue without
     that LLM (strictly additive plugin model — bad config doesn't
     crash startup).
+
+    Construction goes through ``ServiceResolver`` so the
+    ``llm_client_factory`` core slot can replace the built-in
+    ``LLMClient`` with a user-supplied implementation. Per-tag caching
+    is preserved: each unique tag triggers at most one factory call,
+    same as before. Caveat for users who override the factory: the
+    resolved client is also used for embedding/reranker tags, so a
+    user class that lacks ``embed()`` / ``rerank()`` will work for
+    chat tags but break those — keep the embedder / reranker slots
+    in mind, or implement those methods on the same class.
     """
+    from krakey.engines.registry import EngineRegistry
     from krakey.llm.client import LLMClient
 
     if not tag_name:
@@ -73,6 +95,20 @@ def resolve_llm_for_tag(
             f"{provider_name!r}", file=sys.stderr,
         )
         return None
-    client = LLMClient(provider, model_name, params=tag.params)
+    # Transient registry: EngineRegistry is a thin wrapper around
+    # cfg.core_implementations + importlib, so per-cache-miss
+    # construction is cheap. The legacy ``llm_client_factory`` slot
+    # still substitutes the LLMClient *class* (its old per-tag-class
+    # semantics); the higher-level ``llm_factory`` slot substitutes
+    # the entire factory Engine and is wired separately by the
+    # composition root.
+    registry = EngineRegistry(cfg)
+    client = registry.resolve(
+        "llm_client_factory",
+        expected_protocol=ChatLike,
+        provider=provider,
+        model=model_name,
+        params=tag.params,
+    )
     cache[tag_name] = client
     return client

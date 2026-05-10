@@ -1,12 +1,13 @@
-"""Phase 1.3f: IncrementalRecall — per-stimulus search, weighted merge,
+"""IncrementalRecall — per-stimulus search, weighted merge,
 finalize with covered/uncovered + neighbor keywords + edges."""
 from datetime import datetime
 
 import pytest
 
+from krakey.engines.recall.incremental import IncrementalRecall
+from krakey.interfaces.engines.recall import RecallResult
 from krakey.memory.graph_memory import GraphMemory
-from krakey.memory.recall import RecallResult, ScoringWeights
-from krakey.plugins.recall.incremental import IncrementalRecall
+from krakey.memory.recall import ScoringWeights
 from krakey.models.stimulus import Stimulus
 
 
@@ -164,7 +165,7 @@ def test_screening_top_k_capped_by_per_k(tmp_path):
     """Multiplier × budget produces a soft target larger than per_k —
     top_k must clamp to the per_k hard ceiling."""
     r = IncrementalRecall(
-        gm=None, embedder=None,  # type: ignore[arg-type]
+        memory=None, embedder=None,  # type: ignore[arg-type]
         per_stimulus_k=10,
         recall_token_budget=600,
         screening_token_multiplier=3.0,  # target ≈ 1800 / 30 = 60 nodes
@@ -176,7 +177,7 @@ def test_screening_top_k_uses_target_when_below_per_k():
     """When the soft target fits inside per_k, top_k follows the
     multiplier × budget sizing instead of saturating per_k."""
     r = IncrementalRecall(
-        gm=None, embedder=None,  # type: ignore[arg-type]
+        memory=None, embedder=None,  # type: ignore[arg-type]
         per_stimulus_k=200,
         recall_token_budget=600,
         screening_token_multiplier=3.0,  # target = 1800 / 30 = 60
@@ -188,7 +189,7 @@ def test_screening_top_k_default_multiplier_disables_oversampling():
     """multiplier=1.0 means screening pool ≈ final cut — equivalent
     to no oversampling."""
     r = IncrementalRecall(
-        gm=None, embedder=None,  # type: ignore[arg-type]
+        memory=None, embedder=None,  # type: ignore[arg-type]
         per_stimulus_k=200,
         recall_token_budget=600,
         screening_token_multiplier=1.0,  # target = 600 / 30 = 20
@@ -200,7 +201,7 @@ def test_screening_top_k_floors_at_one():
     """Degenerate config (zero budget or zero multiplier) must still
     pull at least one candidate per stimulus or recall silently dies."""
     r = IncrementalRecall(
-        gm=None, embedder=None,  # type: ignore[arg-type]
+        memory=None, embedder=None,  # type: ignore[arg-type]
         per_stimulus_k=50,
         recall_token_budget=0,
         screening_token_multiplier=3.0,

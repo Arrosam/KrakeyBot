@@ -3,22 +3,22 @@ disabled.
 
 Set 2026-04-25 as a load-bearing design rule: disabling or removing
 any plugin (Modifiers, tools, channels) must NOT break the
-runtime's core loop.
+runtime's core loop. Engines are a separate concern — they are
+required and always populated; the runtime cannot run without
+them.
 
 Specific paths exercised:
-  * No recall_anchor role registered → ``new_recall`` returns
-    ``NoopRecall``, heartbeat completes with empty ``[GRAPH MEMORY]``.
-  * No hypothalamus role registered → tool-call fallback parses
+  * No hypothalamus role registered → DecisionEngine fallback parses
     ``<tool_call>...</tool_call>`` blocks out of the raw Self response.
   * Zero registered tools → Self's tool calls produce
     ``Unknown tool: X`` system events, runtime keeps heartbeating.
-  * All three at once → cold runtime + empty stimulus → still
-    completes a heartbeat without raising.
+  * All Modifiers stripped + cold runtime → still completes a
+    heartbeat without raising (recall flows through the
+    RecallEngine slot, which is always populated).
 """
 import pytest
 
-from krakey.memory.recall import NoopRecall, RecallResult
-from krakey.interfaces.modifier import ModifierRegistry
+from krakey.interfaces.engines.recall import RecallSession
 from tests._runtime_helpers import (
     NullEmbedder, ScriptedLLM, build_runtime_with_fakes,
 )
@@ -29,23 +29,6 @@ def _strip_all_modifiers(runtime) -> None:
     end up doing once the toggles land."""
     runtime.modifiers._by_role.clear()
     runtime.modifiers._order.clear()
-
-
-# ---- noop recall when no anchor is registered -----------------------
-
-
-async def test_noop_recall_satisfies_runtime_lifecycle(tmp_path):
-    """The NoopRecall must respond to the same calls IncrementalRecall
-    does (add_stimuli, finalize) without errors and without producing
-    side effects Self would notice."""
-    rec = NoopRecall()
-    assert rec.processed_stimuli == []
-    await rec.add_stimuli(["fake stimulus 1", "fake stimulus 2"])  # type: ignore[list-item]
-    assert len(rec.processed_stimuli) == 2
-    result = await rec.finalize()
-    assert isinstance(result, RecallResult)
-    assert result.nodes == []
-    assert result.edges == []
 
 
 # ---- runtime end-to-end with all Modifiers stripped -------------------
@@ -67,7 +50,6 @@ async def test_runtime_heartbeat_survives_all_modifiers_unregistered(tmp_path):
     )
     _strip_all_modifiers(runtime)
     assert runtime.modifiers.has_role("hypothalamus") is False
-    assert runtime.modifiers.by_role("recall_anchor") is None
 
     await runtime.run(iterations=1)
 
@@ -84,13 +66,9 @@ async def test_runtime_heartbeat_with_no_tools_emits_unknown_tool(tmp_path):
         '[IDLE]\n1'
     ])
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=ScriptedLLM([]),
+        self_llm=self_llm,
         gm_path=str(tmp_path / "gm.sqlite"),
     )
-    # Strip the hypothalamus Modifier so dispatch goes via the action
-    # executor (the path we want to exercise here).
-    runtime.modifiers._by_role.pop("hypothalamus", None)
-    runtime.modifiers._order.remove("hypothalamus")
 
     from krakey.interfaces.tool import ToolRegistry
     runtime.tools = ToolRegistry()
@@ -111,13 +89,14 @@ async def test_runtime_heartbeat_with_no_tools_emits_unknown_tool(tmp_path):
 
 async def test_runtime_construction_works_with_no_modifiers(tmp_path):
     """Even Runtime.__init__ should tolerate a state where no Modifiers
-    end up registered."""
+    end up registered. Recall flows through the RecallEngine slot,
+    which the registry always populates — the heartbeat keeps ticking
+    with no plugins enabled."""
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
     )
     _strip_all_modifiers(runtime)
     assert runtime.modifiers.has_role("hypothalamus") is False
-    # new_recall falls back to NoopRecall via the orchestrator.
-    recall = runtime._new_recall()
-    assert isinstance(recall, NoopRecall)
+    recall = runtime.recall.new_session()
+    assert isinstance(recall, RecallSession)

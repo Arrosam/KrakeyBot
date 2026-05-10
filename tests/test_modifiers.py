@@ -1,59 +1,20 @@
 """Modifier protocol + registry tests.
 
 Pins:
-  * Built-ins implement the role contract (each declares a unique
-    role string).
   * Registry is role-keyed; second registration claiming the same
     role raises.
-  * Runtime auto-registers the default modifiers.
-  * Prompt suppression: [ACTION FORMAT] layer is included iff no
-    Modifier has claimed role="hypothalamus".
+  * Prompt suppression: [ACTION FORMAT] layer is included by default
+    (scripted DecisionEngine) and dropped when the LLM-translator
+    DecisionEngine is wired in.
 """
-import json
-from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
 
-from krakey.interfaces.modifier import (
-    HypothalamusModifier, DecisionResult, RecallAnchorModifier,
-    Modifier, ModifierRegistry,
-)
-from krakey.plugins.hypothalamus.modifier import HypothalamusModifierImpl
-from krakey.plugins.recall.modifier import RecallAnchorModifierImpl
+from krakey.interfaces.modifier import Modifier, ModifierRegistry
 from tests._runtime_helpers import (
     NullEmbedder, ScriptedLLM, build_runtime_with_fakes,
 )
-
-
-# ---- protocol compliance ----------------------------------------------
-
-
-def _stub_recall_anchor() -> RecallAnchorModifierImpl:
-    """Build a RecallAnchorModifierImpl with placeholder state for
-    tests that only inspect protocol attributes (role/name/registry
-    behavior). make_recall is never invoked on these stubs."""
-    return RecallAnchorModifierImpl(
-        gm=None, embedder=None, reranker=None,  # type: ignore[arg-type]
-        per_stimulus_k=0, neighbor_depth=0, recall_token_budget=0,
-        screening_token_multiplier=1.0,
-    )
-
-
-def test_hypothalamus_satisfies_protocol():
-    r = HypothalamusModifierImpl(ScriptedLLM([]))
-    assert isinstance(r, Modifier)
-    assert isinstance(r, HypothalamusModifier)
-    assert r.role == "hypothalamus"
-    assert r.name == "hypothalamus"
-
-
-def test_recall_anchor_satisfies_protocol():
-    r = _stub_recall_anchor()
-    assert isinstance(r, Modifier)
-    assert isinstance(r, RecallAnchorModifier)
-    assert r.role == "recall_anchor"
-    assert r.name == "recall_anchor"
 
 
 # ---- registry --------------------------------------------------------
@@ -61,15 +22,21 @@ def test_recall_anchor_satisfies_protocol():
 
 def test_registry_keys_by_role():
     reg = ModifierRegistry()
-    h = HypothalamusModifierImpl(ScriptedLLM([]))
-    r = _stub_recall_anchor()
-    reg.register(h)
-    reg.register(r)
 
-    assert reg.by_role("hypothalamus") is h
-    assert reg.by_role("recall_anchor") is r
+    class _A:
+        name, role = "a", "alpha"
+
+    class _B:
+        name, role = "b", "beta"
+
+    a, b = _A(), _B()
+    reg.register(a)
+    reg.register(b)
+
+    assert reg.by_role("alpha") is a
+    assert reg.by_role("beta") is b
     assert reg.by_role("nonexistent") is None
-    assert reg.has_role("hypothalamus") is True
+    assert reg.has_role("alpha") is True
     assert reg.has_role("nonexistent") is False
 
 
@@ -79,10 +46,10 @@ def test_registry_rejects_duplicate_role():
     reg = ModifierRegistry()
 
     class A:
-        name, role = "a", "hypothalamus"
+        name, role = "a", "alpha"
 
     class B:
-        name, role = "b", "hypothalamus"
+        name, role = "b", "alpha"
 
     reg.register(A())
     with pytest.raises(ValueError, match="role.*already claimed"):
@@ -98,7 +65,7 @@ def test_registry_rejects_missing_name_or_role():
 
     class NoName:
         name = ""
-        role = "hypothalamus"
+        role = "alpha"
 
     with pytest.raises(ValueError, match="role"):
         reg.register(NoRole())
@@ -108,58 +75,46 @@ def test_registry_rejects_missing_name_or_role():
 
 def test_registry_iteration_in_registration_order():
     reg = ModifierRegistry()
-    h = HypothalamusModifierImpl(ScriptedLLM([]))
-    r = _stub_recall_anchor()
-    reg.register(r)
-    reg.register(h)
-    assert reg.roles() == ["recall_anchor", "hypothalamus"]
-    assert reg.all() == [r, h]
-    assert reg.names() == ["recall_anchor", "hypothalamus"]
+
+    class _A:
+        name, role = "a", "alpha"
+
+    class _B:
+        name, role = "b", "beta"
+
+    a, b = _A(), _B()
+    reg.register(b)
+    reg.register(a)
+    assert reg.roles() == ["beta", "alpha"]
+    assert reg.all() == [b, a]
+    assert reg.names() == ["b", "a"]
 
 
-# ---- runtime integration --------------------------------------------
+# ---- Modifier base Protocol -----------------------------------------
 
 
-async def test_runtime_registers_default_modifiers(tmp_path):
-    runtime = build_runtime_with_fakes(
-        self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
-        gm_path=str(tmp_path / "gm.sqlite"),
-    )
-    assert "hypothalamus" in runtime.modifiers.names()
-    assert "recall_anchor" in runtime.modifiers.names()
-    # Roles registered:
-    assert runtime.modifiers.has_role("hypothalamus")
-    assert runtime.modifiers.has_role("recall_anchor")
+def test_base_protocol_requires_name_and_role():
+    class _M:
+        name, role = "m", "m"
 
-
-async def test_runtime_no_longer_holds_hypothalamus_attribute(tmp_path):
-    """Regression: Runtime used to expose `self.hypothalamus`. Now it's
-    looked up via modifiers.by_role("hypothalamus")."""
-    runtime = build_runtime_with_fakes(
-        self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
-        gm_path=str(tmp_path / "gm.sqlite"),
-    )
-    assert not hasattr(runtime, "hypothalamus")
+    assert isinstance(_M(), Modifier)
 
 
 # ---- prompt suppression --------------------------------------------
 
 
-async def test_prompt_includes_action_format_when_no_hypothalamus(tmp_path):
-    """No translator role registered → Self prompt MUST include the
-    [ACTION FORMAT] block teaching the JSONL syntax."""
+async def test_prompt_includes_action_format_with_default_decision_engine(tmp_path):
+    """Default DecisionEngine (scripted ``<tool_call>`` parser) → Self
+    prompt MUST include the [ACTION FORMAT] block teaching the
+    structured JSON syntax + the parser-flavored worked beat
+    examples."""
     runtime = build_runtime_with_fakes(
-        self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
+        self_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
     )
-    # Drop the auto-registered hypothalamus.
-    runtime.modifiers._by_role.pop("hypothalamus", None)
-    runtime.modifiers._order.remove("hypothalamus")
-    assert runtime.modifiers.has_role("hypothalamus") is False
-
-    await runtime.gm.initialize()
-    runtime._recall = runtime._new_recall()
-    from krakey.memory.recall import RecallResult
+    await runtime.memory.initialize()
+    runtime._recall = runtime.recall.new_session()
+    from krakey.interfaces.engines.recall import RecallResult
     counts = SimpleNamespace(node_count=0, edge_count=0,
                               fatigue_pct=0, fatigue_hint="")
     prompt = runtime._build_self_prompt(
@@ -168,20 +123,35 @@ async def test_prompt_includes_action_format_when_no_hypothalamus(tmp_path):
         counts=counts,
     )
     assert "[ACTION FORMAT]" in prompt
-    assert '{"name":' in prompt or '"name"' in prompt
+    # Tool-call JSON syntax must be taught
+    assert "<tool_call>" in prompt
+    assert '"name"' in prompt
+    # Worked examples must surface
+    assert "Worked beat examples" in prompt
 
 
-async def test_prompt_omits_action_format_when_hypothalamus_active(tmp_path):
-    """Translator role registered → suppress [ACTION FORMAT]."""
+async def test_prompt_swaps_action_format_when_hypothalamus_decision_engine(tmp_path):
+    """``HypothalamusDecisionEngine`` owns the LLM-translator path —
+    it overwrites the [ACTION FORMAT] slot with the natural-language
+    teaching layer (with NL-flavored worked examples) so Self isn't
+    taught two competing dispatch syntaxes."""
     runtime = build_runtime_with_fakes(
-        self_llm=ScriptedLLM([]), hypo_llm=ScriptedLLM([]),
+        self_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
     )
-    assert runtime.modifiers.has_role("hypothalamus") is True
+    # Swap in the LLM translator engine. Same Engine type the user
+    # would wire via cfg.core_implementations.decision; we plug it
+    # in directly here so the test doesn't need a full config rebuild.
+    from krakey.engines.decision.hypothalamus import (
+        HypothalamusDecisionEngine,
+    )
+    runtime.decision = HypothalamusDecisionEngine(
+        cfg=runtime.config, factory=runtime.llm_factory,
+    )
 
-    await runtime.gm.initialize()
-    runtime._recall = runtime._new_recall()
-    from krakey.memory.recall import RecallResult
+    await runtime.memory.initialize()
+    runtime._recall = runtime.recall.new_session()
+    from krakey.interfaces.engines.recall import RecallResult
     counts = SimpleNamespace(node_count=0, edge_count=0,
                               fatigue_pct=0, fatigue_hint="")
     prompt = runtime._build_self_prompt(
@@ -189,4 +159,10 @@ async def test_prompt_omits_action_format_when_hypothalamus_active(tmp_path):
         recall_result=RecallResult(),
         counts=counts,
     )
-    assert "[ACTION FORMAT]" not in prompt
+    # Slot is still present, but with NL-flavored teaching.
+    assert "[ACTION FORMAT]" in prompt
+    assert "natural language" in prompt
+    assert "Worked beat examples" in prompt
+    # Parser-flavored content must be ABSENT — no <tool_call> JSON
+    # being taught when the hypothalamus owns dispatch.
+    assert "<tool_call>" not in prompt

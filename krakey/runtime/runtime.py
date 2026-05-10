@@ -1,31 +1,29 @@
 """KrakeyBot Runtime — composition root + lifecycle.
 
-Wires up all collaborators (GraphMemory, KBRegistry, the three
-plugin registries, BatchTracker, dispatcher, orchestrator, plugin
-loader/observer, bootstrap coordinator) and drives the per-beat
-loop via ``run()``. Process entry point + ``build_runtime_from_config``
-live in ``krakey/main.py``; per-beat algorithm lives in
-``krakey/runtime/heartbeat/heartbeat_orchestrator.py``.
+Holds the resolved Engine bundle + the three plugin registries
+(Tool / Channel / Modifier) + lifecycle plumbing (event bus,
+stimulus buffer, plugin loader/observer, environment router) and
+drives the per-beat loop via ``run()``. Process entry point +
+``build_runtime_from_config`` live in ``krakey/main.py``; per-beat
+algorithm lives in
+``krakey/engines/heartbeat/orchestrator.py``.
 """
 from __future__ import annotations
 
 import asyncio
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from krakey.bootstrap import load_self_model_or_default
-from krakey.models.self_model import SelfModelStore
+from krakey.models.self_model import (
+    SelfModelStore, load_self_model_or_default,
+)
+from krakey.interfaces.engines.recall import RecallSession
 from krakey.interfaces.tool import ToolRegistry
-from krakey.llm.resolve import AsyncEmbedder, ChatLike, resolve_llm_for_tag
-from krakey.memory.graph_memory import GraphMemory
-from krakey.memory.knowledge_base import KBRegistry
-from krakey.memory.recall import RecallLike, Reranker
+from krakey.llm.resolve import AsyncEmbedder, ChatLike
 from krakey.models.config import Config, LLMParams
 from krakey.models.config_backup import backup_config
-from krakey.prompt.builder import PromptBuilder
 from krakey.runtime.stimuli.batch_tracker import BatchTrackerChannel
 from krakey.runtime.events.event_bus import EventBus
 from krakey.environment.local import LocalEnvironment
@@ -33,7 +31,6 @@ from krakey.environment.router import EnvironmentRouter
 from krakey.environment.sandbox import SandboxConfig, SandboxEnvironment
 from krakey.interfaces.environment import Environment
 from krakey.runtime.console.heartbeat_logger import HeartbeatLogger
-from krakey.runtime.heartbeat.sliding_window import SlidingWindow
 from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
@@ -47,13 +44,10 @@ class RuntimeDeps:
     # the user installs Krakey and skips chat config in onboarding,
     # planning to fill it in via the dashboard.
     self_llm: ChatLike | None
-    hypo_llm: ChatLike
     compact_llm: ChatLike
     classify_llm: ChatLike
     embedder: AsyncEmbedder
-    reranker: Reranker | None = None
     self_model_path: str | None = None      # default: workspace/self_model.yaml
-    genesis_path: str | None = None         # default: workspace/GENESIS.md
     config_path: str | None = None          # default: config.yaml — for dashboard
     backup_dir: str | None = None           # default: workspace/backups
     # Root directory holding per-plugin folders. Each plugin's user
@@ -67,12 +61,26 @@ class RuntimeDeps:
     # Tests pass a tmpdir so update_in_mind dispatches don't bleed
     # into the production state.
     in_mind_state_path: str | None = None
+    # Sliding window persistence file. None → workspace/data/
+    # sliding_window.json. Tests pass a tmpdir so per-test
+    # heartbeat history doesn't bleed across runs. Set to ""
+    # (empty string) to opt out of persistence entirely — the
+    # window stays in-memory only and a process restart loses
+    # working memory (the pre-2026-05-07 behavior).
+    sliding_window_state_path: str | None = None
     # Shared LLMClient cache keyed by tag name. Populated by
     # build_runtime_from_config for core purposes; Runtime adds plugin
     # purpose entries on top. Sharing the cache means two purposes that
     # map to the same tag share one client (saves connections + keeps
     # rate-limit accounting consistent).
     llm_clients_by_tag: dict[str, Any] = field(default_factory=dict)
+    # Shared LLMClientFactoryEngine instance. composition root builds
+    # one via EngineRegistry and threads it here so Engine resolution
+    # in Runtime can pass it into other engines that need it
+    # (Embedder / Reranker / HypothalamusDecisionEngine). Sharing the
+    # factory means every engine sees the same per-tag client cache —
+    # no duplicate clients for the same tag across engines.
+    llm_factory: Any = None
     # EnvironmentRouter — central dispatch for plugin → environment
     # requests. ``None`` means Runtime will build one from
     # ``config.sandbox`` (and, after commit 6, ``config.environments``)
@@ -85,13 +93,11 @@ class Runtime:
     def __init__(self, deps: RuntimeDeps, *, idle_min: float | None = None,
                  idle_max: float | None = None,
                  logger: HeartbeatLogger | None = None,
-                 is_bootstrap_override: bool | None = None,
                  event_bus: EventBus | None = None):
         self.config = deps.config
         self.self_llm = deps.self_llm
         self.compact_llm = deps.compact_llm
         self.embedder = deps.embedder
-        self.reranker = deps.reranker
         # Modifier registry — role-keyed (one Modifier per role; second
         # registration claiming the same role raises). Plugin loader
         # runs LATER (after tools + channels registries exist)
@@ -112,25 +118,96 @@ class Runtime:
             (self_params.max_input_tokens or 128_000)
             * self_params.history_token_fraction
         )
-        self.window = SlidingWindow(history_token_budget=_history_budget)
-        self.builder = PromptBuilder()
-
+        # ExplicitHistory Engine — working-memory window. Renamed from
+        # the inline-constructed ``SlidingWindow`` because sliding-of-
+        # rounds is just one possible strategy; future Engines could
+        # implement summary trees, relevance-scored caches, etc.
+        # ``state_path`` semantics carried over: ``""`` opts out of
+        # persistence (tests / pure-memory mode), ``None`` falls
+        # back to the default workspace path.
+        if deps.sliding_window_state_path == "":
+            sw_state_path: Path | None = None
+        else:
+            sw_state_path = Path(
+                deps.sliding_window_state_path
+                or "workspace/data/sliding_window.json"
+            )
+        from krakey.engines.registry import EngineRegistry
+        from krakey.interfaces.engines import (
+            ContextEngine,
+            DecisionEngine,
+            DispatchEngine,
+            ExplicitHistoryEngine,
+            HeartbeatEngine,
+            MemoryEngine,
+            RecallEngine,
+            RerankerEngine,
+        )
+        self._engine_registry = EngineRegistry(self.config)
+        self.llm_factory = deps.llm_factory
+        # Reranker resolves first because recall + dispatch take it as
+        # a constructor kwarg. The default impl ships a preserve-order
+        # fallback so the slot is always populated.
+        self.reranker = self._engine_registry.resolve(
+            "reranker",
+            expected_protocol=RerankerEngine,
+            factory=self.llm_factory,
+        )
+        self.explicit_history = self._engine_registry.resolve(
+            "explicit_history",
+            expected_protocol=ExplicitHistoryEngine,
+            history_token_budget=_history_budget,
+            state_path=sw_state_path,
+        )
+        self.context = self._engine_registry.resolve(
+            "context",
+            expected_protocol=ContextEngine,
+        )
+        self.decision = self._engine_registry.resolve(
+            "decision",
+            expected_protocol=DecisionEngine,
+            cfg=self.config,
+            factory=self.llm_factory,
+        )
         gm_path = self.config.graph_memory.db_path or ":memory:"
-        self.gm = GraphMemory(
-            gm_path,
+        self.memory = self._engine_registry.resolve(
+            "memory",
+            expected_protocol=MemoryEngine,
+            db_path=gm_path,
             embedder=deps.embedder,
-            auto_ingest_threshold=self.config.graph_memory.auto_ingest_similarity_threshold,
+            kb_dir=(
+                self.config.knowledge_base.dir
+                or "workspace/data/knowledge_bases"
+            ),
+            auto_ingest_threshold=(
+                self.config.graph_memory.auto_ingest_similarity_threshold
+            ),
             extractor_llm=deps.classify_llm,
             classifier_llm=deps.classify_llm,
         )
-
-        self.kb_registry = KBRegistry(
-            self.gm,
-            kb_dir=self.config.knowledge_base.dir or "workspace/data/knowledge_bases",
+        # Recall resolve is placed AFTER memory because the default
+        # IncrementalRecallEngine takes the resolved memory instance
+        # as a constructor input.
+        self.recall = self._engine_registry.resolve(
+            "recall",
+            expected_protocol=RecallEngine,
+            cfg=self.config,
+            memory=self.memory,
             embedder=deps.embedder,
+            reranker=self.reranker,
+        )
+        self.dispatch = self._engine_registry.resolve(
+            "dispatch",
+            expected_protocol=DispatchEngine,
+            cfg=self.config,
         )
 
         self.tools = ToolRegistry()
+        # Built-in tools registered BEFORE the plugin loader runs so
+        # plugins can't shadow them by registering a same-named Tool
+        # (the registry's register() raises on duplicate name).
+        from krakey.runtime.builtin_tools import SleepTool
+        self.tools.register(SleepTool())
         # Each plugin's config lives at
         # <plugin_configs_root>/<name>/config.yaml. Same root as the
         # plugin folders themselves (workspace/plugins/) so user config
@@ -182,6 +259,15 @@ class Runtime:
         # ``ctx.deps.environment_router`` (ctx.environment(...) wrapper).
         deps.environment_router = self.environment_router
 
+        # Self-model setup runs BEFORE the plugin loader so the
+        # bootstrap modifier (and any future plugin) can reach the
+        # SelfModelStore via ``ctx.services["self_model_store"]``.
+        sm_path = deps.self_model_path or "workspace/self_model.yaml"
+        self._self_model_store = SelfModelStore(sm_path)
+        self.self_model, _detected_bootstrap = load_self_model_or_default(
+            sm_path,
+        )
+
         from krakey.runtime.plugin_register.loader import PluginLoader
         self._plugin_loader = PluginLoader(
             config=self.config,
@@ -190,86 +276,56 @@ class Runtime:
             channels=self.buffer,
             services={
                 "runtime": self,
-                "gm": self.gm,
-                "kb_registry": self.kb_registry,
+                "memory": self.memory,
                 "embedder": self.embedder,
                 "reranker": self.reranker,
                 "buffer": self.buffer,
                 "events": self.events,
                 "config": self.config,
+                # Bootstrap plugin reads SelfModelStore from services
+                # so it can write self_model patches on NoteEvent
+                # without reaching back into the runtime.
+                "self_model_store": self._self_model_store,
             },
         )
         self._plugin_loader.register_from_config(deps)
-
-        # Self-model + Bootstrap state (Phase 2.1)
-        sm_path = deps.self_model_path or "workspace/self_model.yaml"
-        # GENESIS is read lazily (see `_get_genesis_text`) — in steady
-        # state (bootstrap complete, GM populated) the file is never
-        # touched, and `self._genesis_text` stays None to avoid both
-        # the I/O on every start AND the correctness trap of having
-        # stale genesis text sitting in memory when it's not supposed
-        # to influence the prompt.
-        self._genesis_path = deps.genesis_path or "workspace/GENESIS.md"
-        self._genesis_text: str | None = None
-        self._self_model_store = SelfModelStore(sm_path)
-        self.self_model, detected_bootstrap = load_self_model_or_default(sm_path)
-        # Bootstrap-mode state lives in a dedicated coordinator so the
-        # three behaviors it gates (intro-prompt injection, idle
-        # cadence, NOTE-signal parsing) don't have to be expressed as
-        # scattered ``if self.is_bootstrap`` checks. The provisional
-        # value here gets re-derived once gm.initialize() lets us
-        # probe actual data via ``bootstrap.refine_from_data``.
-        from krakey.runtime.bootstrap.bootstrap_coordinator import BootstrapCoordinator
-        # When no test override is supplied, the coordinator initializes
-        # from the self-model's bootstrap_complete marker (equivalent to
-        # the legacy `detected_bootstrap` heuristic) and lets
-        # refine_from_data re-derive from actual GM/KB data later. A
-        # supplied override pins the value and skips the data probe.
-        self.bootstrap = BootstrapCoordinator(
-            self_model=self.self_model,
-            self_model_store=self._self_model_store,
-            override=is_bootstrap_override,
-        )
+        # Stashed so hot_reload_plugins (called later from the
+        # dashboard) can re-invoke ``register_one`` with the same
+        # deps. Plugins that need a fresh ctx per call build it
+        # inside register_one — deps is the constant boundary.
+        self._deps = deps
 
         self.heartbeat_count = 0
-        # Sleep cycle counter — runtime-only. Used to be persisted in
-        # self_model.statistics.total_sleep_cycles, but stats was the
-        # bulk of self_model's noise (most fields never written) so the
-        # 2026-04-25 slim refactor pulled them all out. Per-process
-        # counter is enough for /status and dashboard display; cross-run
-        # totals weren't actually used by any product feature.
+        # Per-process sleep-cycle counter, surfaced via /status + the
+        # dashboard. Not persisted across restarts.
         self._sleep_cycles = 0
         self._stop = False
         self._min = idle_min if idle_min is not None else self.config.idle.min_interval
         self._max = idle_max if idle_max is not None else self.config.idle.max_interval
 
-        self._recall: RecallLike | None = None
+        self._recall: RecallSession | None = None
         self._classify_tasks: list[asyncio.Task] = []
         self._last_node_count = 0
         self._last_edge_count = 0
-
-        # DecisionDispatcher — executes the 4 side-effects of a
-        # DecisionResult (log+publish summary, dispatch tool calls,
-        # apply memory writes, apply memory updates). Pure composition
-        # over the same 5 collaborators (tools, batch_tracker,
-        # buffer, gm, log+events). Built once; heartbeat passes its
-        # current heartbeat_id on each call.
-        from krakey.runtime.heartbeat.dispatcher import DecisionDispatcher
-        self._dispatcher = DecisionDispatcher(
-            tools=self.tools,
-            batch_tracker=self.batch_tracker,
-            buffer=self.buffer,
-            gm=self.gm,
-            log=self.log,
-            events=self.events,
-        )
 
         # Heartbeat algorithm — owns the per-beat orchestration but
         # holds no state. Reads + mutates Runtime fields through the
         # `runtime` ref. Built last (after all collaborators exist) so
         # nothing in its phase methods sees a half-constructed Runtime.
-        from krakey.runtime.heartbeat.heartbeat_orchestrator import HeartbeatOrchestrator
+        from krakey.engines.heartbeat.orchestrator import HeartbeatOrchestrator
         self._orchestrator = HeartbeatOrchestrator(self)
+
+        # Heartbeat Engine — owns the per-beat run loop. The default
+        # impl wraps the orchestrator just constructed; user impls
+        # via cfg.core_implementations.heartbeat replace the entire
+        # cognitive cadence (phase order, multi-stage thinking,
+        # event-driven scheduling, etc.). Setup + teardown around
+        # the loop stay on Runtime.run().
+        self.heartbeat = self._engine_registry.resolve(
+            "heartbeat",
+            expected_protocol=HeartbeatEngine,
+            cfg=self.config,
+        )
 
         # Snapshot config.yaml on every startup so a bad save can be rolled
         # back from workspace/backups/.
@@ -302,40 +358,199 @@ class Runtime:
             loader=self._plugin_loader,
         )
 
-    # Test-only facade — two modifier-config tests rebuild registries by
-    # clearing them and re-running registration. New code should reach
-    # for ``self._plugin_loader.register_from_config(deps)`` directly.
-    def _register_plugins_from_config(self, deps: "RuntimeDeps") -> None:
-        self._plugin_loader.register_from_config(deps)
+    async def hot_reload_plugins(
+        self,
+        target_plugin_names: list[str],
+        *,
+        force_reload: bool = True,
+    ) -> dict[str, Any]:
+        """Reconcile loaded plugins with ``target_plugin_names``.
 
-    def _new_recall(self) -> RecallLike:
-        # Facade — heartbeat algorithm lives in HeartbeatOrchestrator.
-        return self._orchestrator.new_recall()
+        Three actions per plugin:
+
+          - target ∈ loaded, force_reload=True
+                → unregister + register (full reload, picks up
+                  config edits + LLM-binding changes)
+          - target ∉ loaded
+                → register_one (hot-add)
+          - loaded ∉ target
+                → unregister_one (hot-disable)
+
+        Newly-registered channels are started immediately via
+        ``buffer.start_one(name)``. Removed channels are stopped
+        by ``buffer.deregister(name)`` inside ``unregister_one``.
+
+        Set ``force_reload=False`` to make this method hot-ADD
+        only — same shape as the original v1 behaviour. The
+        dashboard's "Apply changes" button uses force_reload=True
+        because the operator just edited config and expects every
+        relevant change (LLM bindings, plugin config) to take
+        effect.
+
+        Returns::
+
+            {
+              "reloaded": [{plugin, components: [...]}],
+              "added":    [{plugin, components: [...]}],
+              "removed":  [{plugin, components: [...]}],
+              "skipped":  [{plugin, reason}],   # only when
+                                                 # force_reload=False
+              "errors":   [{plugin, error}],
+            }
+        """
+        report: dict[str, Any] = {
+            "reloaded": [], "added": [], "removed": [],
+            "skipped":  [], "errors":  [],
+        }
+        target_set = set(target_plugin_names)
+        # Snapshot before we start mutating; unregister + register
+        # both rewrite this set.
+        loaded_snapshot = set(
+            self._plugin_loader.loaded_plugin_names,
+        )
+
+        # 1. REMOVE plugins that dropped out of target.
+        for plugin_name in sorted(loaded_snapshot - target_set):
+            sub = await self._plugin_loader.unregister_one(plugin_name)
+            if sub["errors"]:
+                report["errors"].extend([
+                    {"plugin": plugin_name,
+                     "error":
+                         f"during unregister: "
+                         f"{e['kind']}/{e['name']}: {e['error']}"}
+                    for e in sub["errors"]
+                ])
+            if sub["removed"]:
+                report["removed"].append({
+                    "plugin":     plugin_name,
+                    "components": sub["removed"],
+                })
+
+        # 2. RELOAD plugins still in target that were already
+        # loaded (force_reload=True path).
+        for plugin_name in target_plugin_names:
+            if plugin_name not in loaded_snapshot:
+                continue  # handled in step 3
+            if not force_reload:
+                report["skipped"].append({
+                    "plugin": plugin_name,
+                    "reason":
+                        "already loaded; force_reload=False "
+                        "(call again with force_reload=True to "
+                        "pick up config / LLM binding changes)",
+                })
+                continue
+            sub_unreg = await self._plugin_loader.unregister_one(
+                plugin_name,
+            )
+            if sub_unreg["errors"]:
+                report["errors"].extend([
+                    {"plugin": plugin_name,
+                     "error":
+                         f"during unregister: "
+                         f"{e['kind']}/{e['name']}: {e['error']}"}
+                    for e in sub_unreg["errors"]
+                ])
+            sub_reg = self._plugin_loader.register_one(
+                plugin_name, self._deps,
+            )
+            if sub_reg["ok"]:
+                for comp in sub_reg["components"]:
+                    if comp["kind"] == "channel":
+                        try:
+                            await self.buffer.start_one(comp["name"])
+                        except Exception as e:  # noqa: BLE001
+                            report["errors"].append({
+                                "plugin": plugin_name,
+                                "error":
+                                    f"channel {comp['name']} "
+                                    f"failed to start: "
+                                    f"{type(e).__name__}: {e}",
+                            })
+                report["reloaded"].append({
+                    "plugin":     plugin_name,
+                    "components": sub_reg["components"],
+                })
+            else:
+                report["errors"].append({
+                    "plugin": plugin_name,
+                    "error":
+                        f"during re-register: "
+                        f"{sub_reg['error'] or 'unknown'}",
+                })
+
+        # 3. ADD plugins that weren't loaded before.
+        for plugin_name in target_plugin_names:
+            if plugin_name in loaded_snapshot:
+                continue  # handled in step 2
+            sub = self._plugin_loader.register_one(
+                plugin_name, self._deps,
+            )
+            if sub["ok"]:
+                for comp in sub["components"]:
+                    if comp["kind"] == "channel":
+                        try:
+                            await self.buffer.start_one(comp["name"])
+                        except Exception as e:  # noqa: BLE001
+                            report["errors"].append({
+                                "plugin": plugin_name,
+                                "error":
+                                    f"channel {comp['name']} "
+                                    f"failed to start: "
+                                    f"{type(e).__name__}: {e}",
+                            })
+                report["added"].append({
+                    "plugin":     plugin_name,
+                    "components": sub["components"],
+                })
+            else:
+                report["errors"].append({
+                    "plugin": plugin_name,
+                    "error":  sub["error"] or "unknown",
+                })
+
+        return report
 
     @property
     def is_bootstrap(self) -> bool:
-        """Bootstrap mode flag — delegates to the coordinator. Kept as
-        a property so tests that read ``runtime.is_bootstrap`` keep
-        working without knowing about the coordinator."""
-        return self.bootstrap.is_active
+        """True iff the bootstrap plugin is registered AND active.
 
-    @is_bootstrap.setter
-    def is_bootstrap(self, value: bool) -> None:
-        """Test compat: ``runtime.is_bootstrap = True`` forwards to the
-        coordinator's force_active escape hatch."""
-        self.bootstrap.force_active(bool(value))
+        With no plugin loaded the runtime can't drive bootstrap, so
+        the answer is False — the runtime is not in bootstrap mode
+        by definition. Callers that want to inspect the persisted
+        ``state.bootstrap_complete`` marker directly should read
+        ``self.self_model`` themselves; this property is the runtime
+        view, not the on-disk one.
+        """
+        anchor = self.modifiers.by_role("bootstrap")
+        if anchor is None:
+            return False
+        return bool(getattr(anchor, "is_active", False))
+
+    @property
+    def sleep_cycles(self) -> int:
+        """Per-process sleep-cycle count, surfaced via /status + the
+        dashboard. Resets across restarts (not persisted)."""
+        return self._sleep_cycles
 
     async def run(self, iterations: int | None = None) -> None:
-        await self.gm.initialize()
+        await self.memory.initialize()
         await self._preflight_environments()
-        await self._refine_bootstrap_from_data()
+
+        # Signal: runtime resources (memory, environments) are live;
+        # plugins that subscribed to RuntimeReadyEvent (e.g. the
+        # bootstrap modifier probing GM emptiness) can now do their
+        # startup work without ordering surprises.
+        from krakey.runtime.events.event_types import RuntimeReadyEvent
+        self.events.publish(RuntimeReadyEvent())
+
         # buffer.start_all() walks every registered channel and calls its
         # start(); the dashboard plugin's channel uses that hook to spin
         # up the Web UI server. No special-case "start dashboard" path —
         # dashboard is just a channel like any other.
         await self.buffer.start_all()
 
-        self._recall = self._new_recall()
+        self._recall = self.recall.new_session()
 
         # Pause mode: no Self LLM bound (user skipped chat in onboarding,
         # plans to fix in dashboard). Channels are alive — the dashboard
@@ -360,12 +575,14 @@ class Runtime:
             return
 
         try:
-            count = 0
-            while not self._stop:
-                await self._heartbeat()
-                count += 1
-                if iterations is not None and count >= iterations:
-                    return
+            # Heartbeat Engine drives the loop. Setup (gm.initialize
+            # + channels.start_all + the install advisory + initial
+            # recall session) stayed on Runtime above this try block;
+            # teardown (buffer.stop_all + classify-task cancellation)
+            # stays in the finally below. The Engine's ``run()`` is
+            # purely the iteration loop body — phase ordering happens
+            # inside ``beat()`` per the Engine's own contract.
+            await self.heartbeat.run(self, iterations)
         finally:
             await self.buffer.stop_all()
             # Cancel in-flight background classify tasks so asyncio doesn't warn.
@@ -456,20 +673,46 @@ class Runtime:
             )
             self.log.hb(f"{env_name} preflight ok: {details}")
 
-    async def _refine_bootstrap_from_data(self) -> None:
-        """Thin wrapper around ``BootstrapCoordinator.refine_from_data``
-        — kept on Runtime so the call site in ``run()`` stays a single
-        line and the log message stays attached to the heartbeat log."""
-        await self.bootstrap.refine_from_data(self.gm, self.kb_registry)
-        if self.bootstrap.is_active:
-            self.log.hb("bootstrap mode: empty GM + KBs → injecting GENESIS")
-
     async def close(self) -> None:
-        """Shut down persistent resources (GM + open KBs). Channels
-        — including the dashboard plugin's server — are stopped via
-        ``buffer.stop_all()`` in ``run()``'s finally block."""
-        await self.kb_registry.close_all()
-        await self.gm.close()
+        """Shut down every Engine slot that exposes ``close()``.
+
+        Engines are not required to define ``close()`` — only ones
+        holding persistent resources (DB connections, sockets,
+        threadpools) need the hook. We probe each Engine for the
+        method and invoke it; missing closes are silent. Channels —
+        including the dashboard plugin's server — are stopped via
+        ``buffer.stop_all()`` in ``run()``'s finally block.
+        """
+        for engine in (
+            self.memory, self.context, self.decision, self.recall,
+            self.dispatch, self.heartbeat, self.explicit_history,
+            self.reranker, self.llm_factory,
+        ):
+            close = getattr(engine, "close", None)
+            if close is None:
+                continue
+            try:
+                result = close()
+                if hasattr(result, "__await__"):
+                    await result
+            except Exception as e:  # noqa: BLE001
+                self.log.runtime_error(
+                    f"engine {type(engine).__name__} close raised "
+                    f"{type(e).__name__}: {e}"
+                )
+
+    def request_stop(self) -> None:
+        """Cooperative shutdown signal — sets a flag the heartbeat
+        loop checks between beats. CLI signal handlers + dashboard
+        kill commands + the orchestrator's /kill path call this;
+        the private storage stays an implementation detail."""
+        self._stop = True
+
+    @property
+    def stop_requested(self) -> bool:
+        """Public read-side of ``request_stop`` — what the heartbeat
+        Engine polls between beats."""
+        return self._stop
 
     # ---------- heartbeat algorithm ----------
 
@@ -492,8 +735,6 @@ class Runtime:
             stimuli, recall_result, counts,
         )
 
-    def _get_genesis_text(self) -> str:
-        return self._orchestrator.get_genesis_text()
 
 
 

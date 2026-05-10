@@ -58,9 +58,34 @@ $$(".tab-btn").forEach((btn) => {
       requestAnimationFrame(() => {
         chatHistory.scrollTop = chatHistory.scrollHeight;
       });
+      // Opening the tab is the user acknowledging anything that
+      // arrived while they were elsewhere — clear the unread badge,
+      // dot, and document-title counter.
+      if (typeof _clearChatUnread === "function") _clearChatUnread();
     }
   });
 });
+
+// ============== RUNTIME-STATE BANNER ==============
+// Shown under the header when the runtime enters sleep (or other
+// known-busy states later). Toggled from the SleepStartEvent /
+// SleepDoneEvent handlers below; the rest of the SPA reads
+// `lastStats.mode` to decide whether to throttle GM-bound work.
+function _showSleepBanner(reason) {
+  const el = document.getElementById("runtime-banner");
+  if (!el) return;
+  const txt = el.querySelector(".banner-text");
+  if (txt) {
+    txt.textContent =
+      "Krakey is sleeping (" + (reason || "compacting memory") +
+      ") — Memory tab is paused until sleep finishes.";
+  }
+  el.classList.remove("hidden");
+}
+function _hideSleepBanner() {
+  const el = document.getElementById("runtime-banner");
+  if (el) el.classList.add("hidden");
+}
 
 // ============== STATUS BAR ==============
 
@@ -92,6 +117,16 @@ function setStatus() {
   statusBar.innerHTML = parts.join("  |  ");
   renderStatusPanel();
 }
+
+// One periodic refresh so the status indicator can flip from the
+// initial "— connecting —" placeholder to a real state even when
+// no WS events are flowing (e.g. the user wired a broken LLM and
+// the runtime can't heartbeat). Cheap — just rewrites the bar's
+// innerHTML based on cached lastStats + current WS readyState.
+// 1s cadence is invisible to a human but quick enough that a
+// failing connect is obvious within the time it takes to read the
+// header.
+setInterval(setStatus, 1000);
 
 // Format helpers for the big Status panel in the Inner Thoughts view.
 // Renders the same data as the top-bar but as a persistent readable
@@ -162,9 +197,16 @@ function renderStatusPanel() {
 let eventsWS = null;
 const thinkingEl = $("#thinking-stream");
 const decisionEl = $("#decision-stream");
-const hypoEl = $("#hypo-stream");
-const stimList = $("#stim-list");
+// Tool Usage panel — logs dispatch + tool_result + idle + sleep events.
+const toolEl = $("#tool-stream");
+// Stimulus panel — groups every received stimulus under the
+// heartbeat that drained it. The runtime emits `stimuli_queued`
+// once per beat with the list of stimuli drained for that beat,
+// and `heartbeat_start` carries the id of the same beat — track
+// the latest id and bucket each stimuli_queued payload under it.
+const stimEl = $("#stim-stream");
 const statusPanel = $("#status-panel");
+let _currentHbId = null;
 // Section titles that change every heartbeat — open by default.
 // Anything else (DNA, SELF-MODEL, HEARTBEAT question, BOOTSTRAP) is
 // collapsed since it's noise during normal inspection.
@@ -199,31 +241,99 @@ function appendEntry(panel, hbId, text) {
   panel.scrollTop = panel.scrollHeight;
 }
 
-function renderStimuli(stims) {
-  stimList.innerHTML = "";
-  if (!stims.length) {
-    const li = document.createElement("li");
-    li.textContent = "(empty)";
-    li.style.color = "var(--muted)";
-    stimList.appendChild(li);
-    return;
+// Sibling of appendEntry that prepends a Bootstrap-Icons SVG. Used
+// for stream lines that have a categorical "kind" — dispatch (→ in
+// markup), tool result (chevron-left), idle (stopwatch), sleep (moon /
+// sunrise) etc. No emoji ever; bi.js icons only (per repo memo).
+function appendIconEntry(panel, hbId, iconName, text, extraCls) {
+  const div = document.createElement("div");
+  div.className = "entry" + (extraCls ? " " + extraCls : "");
+  const tag = document.createElement("span");
+  tag.className = "hb-tag";
+  tag.textContent = `#${hbId}`;
+  div.appendChild(tag);
+  if (iconName && window.biIcon) {
+    const ico = document.createElement("span");
+    ico.className = "entry-icon";
+    ico.innerHTML = window.biIcon(iconName, 11);
+    div.appendChild(ico);
   }
+  div.appendChild(document.createTextNode(" " + text));
+  panel.appendChild(div);
+  while (panel.children.length > 200) panel.removeChild(panel.firstChild);
+  panel.scrollTop = panel.scrollHeight;
+}
+
+// Render one DispatchEvent into the tool-usage panel. Includes
+// the intent label + a compact JSON preview of params so calls
+// like cli_exec that vary entirely by their args are
+// distinguishable in the live stream. Truncated to keep the
+// stream scannable; full args stay accessible via the Log tab.
+const _DISPATCH_PARAMS_CHARS = 160;
+function formatDispatchLine(e) {
+  const head = `${e.tool} : ${e.intent || "(no intent)"}`;
+  const adr = e.adrenalin ? " (adrenalin)" : "";
+  let params = "";
+  if (e.params && typeof e.params === "object") {
+    try {
+      const text = JSON.stringify(e.params);
+      if (text && text !== "{}") {
+        params = " " + (
+          text.length > _DISPATCH_PARAMS_CHARS
+            ? text.slice(0, _DISPATCH_PARAMS_CHARS - 3) + "..."
+            : text
+        );
+      }
+    } catch (_) {
+      // Unserializable param payload — fall back to the head.
+    }
+  }
+  return head + adr + params;
+}
+
+function appendStimulusHeartbeat(hbId, stims) {
+  // Render one group per heartbeat: a header tagged with the
+  // beat id + count, followed by the individual stimuli. Empty
+  // beats are skipped so the panel stays scannable.
+  if (!stims || !stims.length) return;
+  const group = document.createElement("div");
+  group.className = "stim-group";
+  const head = document.createElement("div");
+  head.className = "stim-head";
+  const tag = document.createElement("span");
+  tag.className = "hb-tag";
+  tag.textContent = hbId == null ? "#?" : `#${hbId}`;
+  head.appendChild(tag);
+  head.appendChild(document.createTextNode(
+    `  ${stims.length} stimulus${stims.length === 1 ? "" : "es"}`
+  ));
+  group.appendChild(head);
   for (const s of stims) {
-    const li = document.createElement("li");
-    if (s.adrenalin) li.classList.add("adrenalin");
+    const row = document.createElement("div");
+    row.className = "stim-row";
+    if (s.adrenalin) row.classList.add("adrenalin");
     const src = document.createElement("span");
     src.className = "src";
     src.textContent = `[${s.type}] ${s.source}`;
-    li.appendChild(src);
-    li.appendChild(document.createTextNode(s.content.slice(0, 200)));
-    stimList.appendChild(li);
+    row.appendChild(src);
+    row.appendChild(document.createTextNode(
+      " " + (s.content || "").slice(0, 200)
+    ));
+    group.appendChild(row);
   }
+  stimEl.appendChild(group);
+  // Cap the visible groups to bound DOM growth on long sessions.
+  while (stimEl.children.length > 200) stimEl.removeChild(stimEl.firstChild);
+  stimEl.scrollTop = stimEl.scrollHeight;
 }
 
 function handleEvent(e) {
   switch (e.kind) {
     case "heartbeat_start":
       lastStats.heartbeat_id = e.heartbeat_id;
+      // Snapshot the active beat id so the very next stimuli_queued
+      // (which doesn't carry an id of its own) buckets correctly.
+      _currentHbId = e.heartbeat_id;
       setStatus();
       break;
     case "gm_stats":
@@ -233,7 +343,7 @@ function handleEvent(e) {
       setStatus();
       break;
     case "stimuli_queued":
-      renderStimuli(e.stimuli);
+      appendStimulusHeartbeat(_currentHbId, e.stimuli);
       break;
     case "thinking":
       appendEntry(thinkingEl, e.heartbeat_id, e.text);
@@ -244,14 +354,36 @@ function handleEvent(e) {
     case "note":
       appendEntry(decisionEl, e.heartbeat_id, "[NOTE] " + e.text);
       break;
-    case "hypothalamus":
-      appendEntry(hypoEl, e.heartbeat_id,
-        `tool_calls=${e.tool_calls_count} writes=${e.memory_writes_count}` +
-        ` updates=${e.memory_updates_count} sleep=${e.sleep_requested}`);
-      break;
     case "dispatch":
-      appendEntry(hypoEl, e.heartbeat_id,
-        `→ ${e.tool} : ${e.intent}${e.adrenalin ? " (adrenalin)" : ""}`);
+      // Tool dispatch — Self decided to call this tool. Outbound
+      // chevron icon so the paired result (chevron-left, below)
+      // reads chronologically once it lands.
+      //
+      // Render the intent label first, then the actual params
+      // (truncated) so back-to-back calls to the same tool
+      // (e.g. cli_exec running multiple commands in a row) are
+      // distinguishable. Pre-redesign the line was just
+      // ``${tool} : ${intent}`` which for cli_exec collapsed to
+      // a generic synth label and the user couldn't see what
+      // was actually being run.
+      appendIconEntry(toolEl, e.heartbeat_id, "chevron-right",
+        formatDispatchLine(e),
+        "dispatch");
+      break;
+    case "tool_result":
+      // Result returned by the tool. Truncate to keep the panel
+      // scannable; full content shows up in the Log tab if needed.
+      appendIconEntry(toolEl, "—", "chevron-left",
+        `${e.tool} : ${(e.content || "").slice(0, 200)}`,
+        "tool-result");
+      break;
+    case "idle":
+      // Self decided how long to idle before the next heartbeat.
+      // Useful to see the rhythm of the loop alongside the tool
+      // calls that fire each beat.
+      appendIconEntry(toolEl, e.heartbeat_id, "stopwatch",
+        `idle ${Number(e.interval_seconds).toFixed(1)}s`,
+        "idle");
       break;
     case "prompt_built":
       // Live-append to the Prompts tab cache so users see new beats
@@ -261,21 +393,42 @@ function handleEvent(e) {
         heartbeat_id: e.heartbeat_id,
         ts: new Date().toISOString(),
         full_prompt: e.layers.full_prompt || "",
+        raw_output: null,
       });
       break;
+    case "self_output":
+      // Raw LLM response landed — patch the matching cached entry's
+      // raw_output and re-render the Prompts tab if it's visible
+      // (and live updates aren't paused).
+      livePatchPromptRawOutput(e.heartbeat_id, e.raw);
+      break;
     case "sleep_start":
-      appendEntry(hypoEl, "—", "💤 sleep started: " + e.reason);
+      appendIconEntry(toolEl, "—", "moon",
+        "sleep started: " + e.reason, "sleep-start");
       lastStats.mode = "sleeping";
+      _showSleepBanner(e.reason);
+      // Memory tab is GM-bound and would queue behind sleep on
+      // the shared aiosqlite worker thread; if it's currently
+      // showing data, swap to the placeholder.
+      _lastRenderedMemView = null;
+      if ($("#tab-memory").classList.contains("active")) {
+        loadMemory(currentMemView);
+      }
       setStatus();
       break;
     case "sleep_done":
-      appendEntry(hypoEl, "—", "🌅 sleep done: " + JSON.stringify(e.stats));
+      appendIconEntry(toolEl, "—", "sunrise",
+        "sleep done: " + JSON.stringify(e.stats), "sleep-done");
       lastStats.mode = "normal";
       lastStats.last_sleep = new Date().toISOString();
+      _hideSleepBanner();
+      // Auto-reload Memory if the user is sitting on it — gives
+      // them an immediate refresh once GM is free again.
+      _lastRenderedMemView = null;
+      if ($("#tab-memory").classList.contains("active")) {
+        loadMemory(currentMemView);
+      }
       setStatus();
-      break;
-    case "idle":
-      // could render but it's noisy; skip in UI
       break;
   }
 }
@@ -337,7 +490,10 @@ function renderChatMessage(msg) {
       }
       const link = document.createElement("a");
       link.href = a.url; link.target = "_blank";
-      link.textContent = `📎 ${a.name} (${formatBytes(a.size)})`;
+      // Bootstrap-Icons paperclip + filename + size; no emoji.
+      link.innerHTML =
+        `${window.biIcon("paperclip", 11)} ` +
+        `${escapeHtml(a.name)} (${escapeHtml(formatBytes(a.size))})`;
       wrap.appendChild(link);
     }
     div.appendChild(wrap);
@@ -357,6 +513,133 @@ function formatBytes(n) {
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
 }
 
+// ----- chat unread / notifications -----
+//
+// Goal: when a Krakey-side message lands while the user isn't on
+// the Chat tab (different tab, or the window is in the background),
+// surface it without forcing the user back to the tab.
+//   * tab badge — pulse + count on the Chat tab.
+//   * audio ping — short Web Audio sine beep, no external asset.
+//   * desktop notification — Notification API; permission asked
+//     once on first user click so we don't surprise-popup on load.
+//   * document title — "(N) Krakey Dashboard" so an out-of-focus
+//     window's tab in the OS task bar shows the count too.
+//
+// Cleared the moment the user clicks the Chat tab, switches focus
+// back to the window while Chat is already active, or sends a
+// reply themselves.
+
+const chatTabBtn = document.querySelector('.tab-btn[data-tab="chat"]');
+let _chatUnread = 0;
+const _DEFAULT_TITLE = document.title;
+
+function _chatTabIsActive() {
+  return chatTabBtn && chatTabBtn.classList.contains("active");
+}
+
+function _bumpChatUnread(msg) {
+  _chatUnread += 1;
+  if (!chatTabBtn) return;
+  chatTabBtn.classList.add("has-unread");
+  let dot = chatTabBtn.querySelector(".unread-dot");
+  if (!dot) {
+    dot = document.createElement("span");
+    dot.className = "unread-dot";
+    chatTabBtn.appendChild(dot);
+  }
+  dot.textContent = _chatUnread > 9 ? "9+" : String(_chatUnread);
+  document.title = `(${_chatUnread > 9 ? "9+" : _chatUnread}) ${_DEFAULT_TITLE}`;
+  _playChatPing();
+  _showSystemNotification(msg);
+}
+
+function _clearChatUnread() {
+  if (_chatUnread === 0 && !chatTabBtn?.classList.contains("has-unread")) return;
+  _chatUnread = 0;
+  if (chatTabBtn) {
+    chatTabBtn.classList.remove("has-unread");
+    const dot = chatTabBtn.querySelector(".unread-dot");
+    if (dot) dot.remove();
+  }
+  document.title = _DEFAULT_TITLE;
+}
+
+// Web Audio sine ping (~A5, 250ms with quick attack/decay so it's a
+// short "blip" not a sustained tone). Ctx is created lazily; browsers
+// require a user gesture before audio plays, so we also resume it
+// on the first document click.
+let _audioCtx = null;
+function _ensureAudio() {
+  try {
+    if (!_audioCtx) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return null;
+      _audioCtx = new Ctx();
+    }
+    if (_audioCtx.state === "suspended") _audioCtx.resume().catch(() => {});
+    return _audioCtx;
+  } catch (e) {
+    return null;
+  }
+}
+document.addEventListener("click", _ensureAudio, { once: true });
+
+function _playChatPing() {
+  const ctx = _ensureAudio();
+  if (!ctx) return;
+  try {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = 880;  // A5
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.25);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.3);
+  } catch (e) { /* autoplay-blocked etc. — silent */ }
+}
+
+// Desktop notification — only when the dashboard tab is hidden or
+// not on Chat. Permission requested once on the user's first click
+// so we don't surprise-popup on page load.
+document.addEventListener("click", () => {
+  if (!("Notification" in window)) return;
+  if (Notification.permission === "default") {
+    Notification.requestPermission().catch(() => {});
+  }
+}, { once: true });
+
+function _showSystemNotification(msg) {
+  if (!("Notification" in window)) return;
+  if (Notification.permission !== "granted") return;
+  // Don't double-notify when the user is actively reading.
+  if (document.visibilityState === "visible" && _chatTabIsActive()) return;
+  try {
+    const body = (msg && msg.content || "").slice(0, 140);
+    const n = new Notification("Krakey: new message", {
+      body,
+      icon: "/static/logo.png",
+      tag: "krakey-chat",        // collapse repeats into one toast
+      renotify: true,
+    });
+    n.onclick = () => {
+      window.focus();
+      if (chatTabBtn) chatTabBtn.click();
+      n.close();
+    };
+  } catch (e) { /* notif quota / focus-lost — silent */ }
+}
+
+// Visibility change: if the user comes back to the window WITH the
+// chat tab already active, treat that as "they saw it" and clear.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && _chatTabIsActive()) {
+    _clearChatUnread();
+  }
+});
+
 function connectChat() {
   chatWS = new WebSocket(_wsUrl("/ws/chat"));
   chatWS.onopen = () => { chatMeta.textContent = "connected"; setStatus(); };
@@ -375,6 +658,14 @@ function connectChat() {
       for (const m of data.messages) renderChatMessage(m);
     } else if (data.kind === "message") {
       renderChatMessage(data.message);
+      // Krakey-side messages while the user is away → notify.
+      // User-side messages are echoes of what they just typed so
+      // they're never "new" from the user's perspective.
+      const isFromKrakey = data.message && data.message.sender !== "user";
+      const away = !_chatTabIsActive() || document.visibilityState !== "visible";
+      if (isFromKrakey && away) {
+        _bumpChatUnread(data.message);
+      }
     }
   };
 }
@@ -488,7 +779,12 @@ function renderAttachStrip() {
   pendingAttachments.forEach((a, i) => {
     const chip = document.createElement("span");
     chip.className = "attach-chip";
-    chip.appendChild(document.createTextNode(`📎 ${a.name} (${formatBytes(a.size)})`));
+    // Bootstrap-Icons paperclip + filename; no emoji.
+    chip.insertAdjacentHTML(
+      "beforeend",
+      `${window.biIcon("paperclip", 11)} ` +
+      `${escapeHtml(a.name)} (${escapeHtml(formatBytes(a.size))})`,
+    );
     const x = document.createElement("span");
     x.className = "x"; x.textContent = "×"; x.title = "remove";
     x.addEventListener("click", () => {
@@ -544,6 +840,21 @@ async function loadMemory(view, opts) {
   const target = $("#mem-content");
   if (!force && view === _lastRenderedMemView) return;
   _disposeMemView();
+  // Hard gate while the runtime is sleeping — sleep keeps the
+  // shared aiosqlite worker thread continuously busy with GM
+  // writes, and any /api/gm/* read would queue behind it for the
+  // entire sleep duration, leaving the dashboard appearing to
+  // hang. Render a placeholder instead; the sleep_done handler
+  // re-runs loadMemory automatically.
+  if (lastStats.mode === "sleeping") {
+    target.classList.remove("graph-mode");
+    target.innerHTML =
+      `<p style="padding:20px;color:var(--muted);text-align:center">` +
+      `Krakey is sleeping — Memory will load automatically when ` +
+      `sleep finishes.</p>`;
+    _lastRenderedMemView = null;  // force a real render once awake
+    return;
+  }
   target.classList.toggle("graph-mode", view === "graph");
   target.textContent = "loading...";
   try {
@@ -782,7 +1093,10 @@ function _showNodeInspect(host, n) {
       ["category", n.category],
       ["source", n.source_type],
       ["importance", n.importance != null ? Number(n.importance).toFixed(2) : "—"],
-      ["description", (n.description || "").slice(0, 400)],
+      // Render the full description. The inspector column has its
+      // own overflow / word-break so a long LLM-generated summary
+      // scrolls inside its column instead of being silently elided.
+      ["description", n.description || ""],
     ],
   });
 }
@@ -832,19 +1146,173 @@ async function loadKBEntries(kbid) {
   }
 }
 
-loadMemory("graph");
+// Memory tab is lazy: don't fetch nodes/edges/stats on page load —
+// only when the user actually opens the tab (tab-switch handler at
+// the top of this file does that). Pre-fetching here was paying the
+// /api/gm/* round-trip + cytoscape build on every page load even
+// for users who never opened Memory, and it could pile on top of a
+// busy runtime (auto-recall + LLM thinking) and stall the dashboard.
+
+// ============== LOG — /ws/logs ==============
+//
+// Live stdout/stderr from the runtime, captured server-side by a tee
+// in log_capture.py. ANSI escape sequences (the runtime's heartbeat
+// logger emits cyan/green/yellow/magenta) are parsed here into
+// CSS-classed spans so the on-screen log feels like a tinted
+// terminal rather than a plain text dump.
+
+const logStream = $("#log-stream");
+const logCount = $("#log-count");
+const logAutoscroll = $("#log-autoscroll");
+const LOG_UI_CAP = 2000;  // cap rendered lines so a long-running tab can't OOM the browser
+let logWS = null;
+let _logLineCount = 0;
+
+// Map ANSI SGR colour codes to the same theme tokens used elsewhere.
+// Only handles foreground colours and reset — that's all the runtime
+// console.colors module emits.
+const _ANSI_CLASS = {
+  "31": "ansi-red",
+  "32": "ansi-green",
+  "33": "ansi-yellow",
+  "34": "ansi-cyan",   // map to cyan; we don't have a real blue token
+  "35": "ansi-magenta",
+  "36": "ansi-cyan",
+  "37": null,           // white = default
+  "0":  null,           // reset → close current span
+};
+
+function _renderAnsiLine(line) {
+  // Escape HTML first so any < > & in log content can't inject markup.
+  let safe = line
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  // Then walk the ANSI codes left-to-right, opening/closing spans as
+  // we see codes. A single \x1b[<n>m sequence either opens a new
+  // colour span (closing any previous) or, for code 0, closes.
+  const re = /\[([0-9;]*)m/g;
+  let out = "";
+  let cursor = 0;
+  let openSpan = false;
+  let m;
+  while ((m = re.exec(safe)) !== null) {
+    out += safe.slice(cursor, m.index);
+    cursor = m.index + m[0].length;
+    // Multi-code sequences (e.g. "\x1b[1;36m") — take the last
+    // colour-meaningful one. The runtime only emits single-code
+    // sequences in practice, but be defensive.
+    const codes = m[1].split(";").filter(Boolean);
+    let cls = null;
+    let isReset = false;
+    for (const c of codes) {
+      if (c === "0" || c === "") { isReset = true; cls = null; continue; }
+      if (_ANSI_CLASS[c] !== undefined) { cls = _ANSI_CLASS[c]; isReset = false; }
+    }
+    if (openSpan) { out += "</span>"; openSpan = false; }
+    if (!isReset && cls) { out += `<span class="${cls}">`; openSpan = true; }
+  }
+  out += safe.slice(cursor);
+  if (openSpan) out += "</span>";
+  return out;
+}
+
+function _appendLogLine(line) {
+  const div = document.createElement("div");
+  div.className = "log-line";
+  // Tag warning-ish lines from stderr-style prefixes so they pop
+  // even when the runtime didn't bother with ANSI codes.
+  if (/\[runtime\]|error|traceback/i.test(line)) {
+    div.classList.add("error");
+  } else if (/\[warn\]|warning/i.test(line)) {
+    div.classList.add("warn");
+  }
+  div.innerHTML = _renderAnsiLine(line);
+  logStream.appendChild(div);
+  while (logStream.children.length > LOG_UI_CAP) {
+    logStream.removeChild(logStream.firstChild);
+  }
+  _logLineCount += 1;
+  if (logCount) logCount.textContent = `${_logLineCount} lines`;
+  if (logAutoscroll && logAutoscroll.checked) {
+    logStream.scrollTop = logStream.scrollHeight;
+  }
+}
+
+function connectLogs() {
+  logWS = new WebSocket(_wsUrl("/ws/logs"));
+  logWS.onopen = () => {
+    if (logStream.textContent === "— connecting —") {
+      logStream.textContent = "";
+    }
+  };
+  logWS.onclose = (ev) => {
+    if (ev && ev.code === 1008) { location.reload(); return; }
+    setTimeout(connectLogs, 2000);
+  };
+  logWS.onmessage = (msg) => {
+    const data = JSON.parse(msg.data);
+    if (data.kind === "history") {
+      logStream.textContent = "";
+      for (const line of data.lines) _appendLogLine(line);
+    } else if (data.kind === "line") {
+      _appendLogLine(data.line);
+    }
+  };
+}
+connectLogs();
+
+if (logStream) {
+  $("#log-clear").addEventListener("click", () => {
+    logStream.innerHTML = "";
+    _logLineCount = 0;
+    if (logCount) logCount.textContent = "0 lines";
+  });
+}
 
 // ============== PROMPTS ==============
 
 const promptsList = $("#prompts-list");
+const promptsLiveToggle = $("#prompts-live");
+const promptsPending = $("#prompts-pending");
 let promptsCache = [];   // newest first; trimmed to PROMPT_UI_CAP
 const PROMPT_UI_CAP = 200;
+
+// Track which heartbeat_ids the user has expanded so re-renders
+// don't snap them shut every time a new beat arrives. Updated from
+// each <details>'s `toggle` event in renderPromptsList; consulted
+// at render time to restore open state.
+const _openPromptIds = new Set();
+
+// Same pattern for the inner per-section <details> blocks (DNA,
+// SELF MODEL, CAPABILITIES, ...). Map keyed by
+// ``${hbId}|${sectionTitle}`` → boolean (true = open, false =
+// closed). When a key is present, its recorded state ALWAYS
+// wins on the next render — that's how we preserve a user-
+// expanded DNA across heartbeat updates AND remember a user-
+// collapsed STIMULUS that would otherwise re-auto-open. When a
+// key is absent (no interaction yet), the DYNAMIC_SECTIONS
+// auto-open rule below applies.
+const _promptSectionStates = new Map();
+function _sectionKey(hbId, title) {
+  return `${hbId}|${title}`;
+}
+
+// Live-update gate. ON (default) ⇒ renderPromptsList runs on every
+// new heartbeat. OFF ⇒ promptsCache still updates in the background
+// (subscriber stays attached) but the foreground is paused so the
+// user can browse old prompts without losing their place. Flipping
+// back ON renders once with the full backlog.
+let _promptsLive = true;
+let _promptsPendingCount = 0;
 
 async function loadPrompts() {
   promptsList.textContent = "loading...";
   try {
     const r = await fetch("/api/prompts?limit=200").then((r) => r.json());
     promptsCache = r.prompts || [];
+    _promptsPendingCount = 0;
+    _updatePendingHint();
     renderPromptsList();
   } catch (e) {
     promptsList.textContent = "error: " + e;
@@ -852,13 +1320,81 @@ async function loadPrompts() {
 }
 
 function liveAppendPrompt(p) {
-  // Merge / dedupe by heartbeat_id (server may replay on reconnect)
+  // Merge / dedupe by heartbeat_id (server may replay on reconnect).
+  // Cache ALWAYS updates — even when live updates are paused — so
+  // resuming flushes the full backlog into the view in one render.
   const idx = promptsCache.findIndex((x) => x.heartbeat_id === p.heartbeat_id);
-  if (idx !== -1) promptsCache.splice(idx, 1);
+  // If we already had a cached copy with a raw_output filled in,
+  // preserve it across the prompt-built replay so the entry doesn't
+  // briefly lose its right column on reconnect.
+  if (idx !== -1) {
+    const old = promptsCache[idx];
+    if (old.raw_output && !p.raw_output) p.raw_output = old.raw_output;
+    promptsCache.splice(idx, 1);
+  }
   promptsCache.unshift(p);
   if (promptsCache.length > PROMPT_UI_CAP) promptsCache.length = PROMPT_UI_CAP;
-  // Only re-render if the Prompts tab is currently visible (cheap skip)
-  if ($("#tab-prompts").classList.contains("active")) renderPromptsList();
+  // Only repaint the foreground when live updates are on AND the
+  // tab is visible. While paused we count pending arrivals so the
+  // user has feedback on how stale the view is.
+  const visible = $("#tab-prompts").classList.contains("active");
+  if (_promptsLive && visible) {
+    renderPromptsList();
+  } else if (!_promptsLive) {
+    _promptsPendingCount += 1;
+    _updatePendingHint();
+  }
+}
+
+function livePatchPromptRawOutput(hbId, raw) {
+  // Self LLM finished and the runtime emitted SelfOutputEvent; drop
+  // the raw text into the matching cached entry. Order is normally
+  // prompt_built → self_output (~LLM latency apart), so the entry
+  // already exists. If somehow it doesn't (history-snapshot timing),
+  // create a thin one so the right column has something to show.
+  const idx = promptsCache.findIndex((x) => x.heartbeat_id === hbId);
+  if (idx !== -1) {
+    promptsCache[idx].raw_output = raw;
+  } else {
+    promptsCache.unshift({
+      heartbeat_id: hbId,
+      ts: new Date().toISOString(),
+      full_prompt: "",
+      raw_output: raw,
+    });
+    if (promptsCache.length > PROMPT_UI_CAP) {
+      promptsCache.length = PROMPT_UI_CAP;
+    }
+  }
+  const visible = $("#tab-prompts").classList.contains("active");
+  if (_promptsLive && visible) renderPromptsList();
+}
+
+function _updatePendingHint() {
+  if (!promptsPending) return;
+  if (!_promptsLive && _promptsPendingCount > 0) {
+    promptsPending.textContent =
+      `${_promptsPendingCount} new prompt${_promptsPendingCount === 1 ? "" : "s"} since paused`;
+    promptsPending.classList.add("has-pending");
+  } else if (!_promptsLive) {
+    promptsPending.textContent = "paused — toggle live to resume";
+    promptsPending.classList.remove("has-pending");
+  } else {
+    promptsPending.textContent = "";
+    promptsPending.classList.remove("has-pending");
+  }
+}
+
+if (promptsLiveToggle) {
+  promptsLiveToggle.addEventListener("change", () => {
+    _promptsLive = !!promptsLiveToggle.checked;
+    if (_promptsLive) {
+      // Resuming: flush the backlog into the view in one render.
+      _promptsPendingCount = 0;
+      renderPromptsList();
+    }
+    _updatePendingHint();
+  });
 }
 
 function fmtTs(iso) {
@@ -880,6 +1416,15 @@ function renderPromptsList() {
   for (const p of promptsCache) {
     const card = document.createElement("details");
     card.className = "prompt-card";
+    // Restore expanded state across re-renders by heartbeat_id —
+    // arriving live prompts no longer snap the user's currently-
+    // open card shut. The toggle listener below keeps the set in
+    // sync as the user opens / closes things.
+    if (_openPromptIds.has(p.heartbeat_id)) card.open = true;
+    card.addEventListener("toggle", () => {
+      if (card.open) _openPromptIds.add(p.heartbeat_id);
+      else _openPromptIds.delete(p.heartbeat_id);
+    });
     const sum = document.createElement("summary");
     const tag = document.createElement("span");
     tag.className = "hb-tag";
@@ -893,23 +1438,63 @@ function renderPromptsList() {
       "  — " + (p.full_prompt ? `${p.full_prompt.length} chars` : "(empty)")
     ));
     card.appendChild(sum);
-    // Inner sections (DNA / STATUS / STIMULUS etc) — collapsible
+    // Two-column body: prompt sections on the left, raw LLM output
+    // on the right. Each column scrolls independently so a long
+    // prompt doesn't push the response off-screen.
     const inner = document.createElement("div");
-    inner.className = "prompt-card-body";
+    inner.className = "prompt-card-body two-col";
+
+    const left = document.createElement("div");
+    left.className = "prompt-col prompt-col-prompt";
+    const leftHead = document.createElement("div");
+    leftHead.className = "prompt-col-head";
+    leftHead.textContent = "prompt";
+    left.appendChild(leftHead);
     for (const s of splitPromptSections(p.full_prompt)) {
       const sec = document.createElement("details");
       sec.className = "prompt-section";
-      if (DYNAMIC_SECTIONS.some((k) => s.title.toUpperCase().includes(k))) {
+      const secKey = _sectionKey(p.heartbeat_id, s.title);
+      // Recorded user state wins; otherwise fall back to the
+      // auto-open rule for dynamic sections.
+      if (_promptSectionStates.has(secKey)) {
+        sec.open = _promptSectionStates.get(secKey);
+      } else if (
+        DYNAMIC_SECTIONS.some((k) => s.title.toUpperCase().includes(k))
+      ) {
         sec.open = true;
       }
+      sec.addEventListener("toggle", () => {
+        _promptSectionStates.set(secKey, sec.open);
+      });
       const ss = document.createElement("summary");
       ss.textContent = s.title;
       const pre = document.createElement("pre");
       pre.textContent = s.body;
       sec.appendChild(ss);
       sec.appendChild(pre);
-      inner.appendChild(sec);
+      left.appendChild(sec);
     }
+
+    const right = document.createElement("div");
+    right.className = "prompt-col prompt-col-output";
+    const rightHead = document.createElement("div");
+    rightHead.className = "prompt-col-head";
+    rightHead.textContent =
+      "raw output" + (p.raw_output != null ? "" : " — pending");
+    right.appendChild(rightHead);
+    const outPre = document.createElement("pre");
+    outPre.className = "prompt-raw-output";
+    if (p.raw_output != null && p.raw_output !== "") {
+      outPre.textContent = p.raw_output;
+    } else {
+      outPre.classList.add("muted");
+      outPre.textContent =
+        "(LLM hasn't returned yet — fills in after the call lands)";
+    }
+    right.appendChild(outPre);
+
+    inner.appendChild(left);
+    inner.appendChild(right);
     card.appendChild(inner);
     promptsList.appendChild(card);
   }
@@ -928,9 +1513,13 @@ let cfgState = null;
 const SECTION_DEFAULTS = {
   idle: { min_interval: 2, max_interval: 300, default_interval: 10 },
   fatigue: { gm_node_soft_limit: 1000, force_sleep_threshold: 1200, thresholds: {} },
-  // `sliding_window` section removed — history budget is now derived
-  // from Self role's max_input_tokens × history_token_fraction (see
-  // role params UI under LLM).
+  // `sliding_window` is back as a section (2026-05-07) carrying
+  // persistence config — `state_path` only; the SIZE budget is
+  // still derived from Self role's max_input_tokens ×
+  // history_token_fraction (visible in the LLM tag params UI).
+  sliding_window: {
+    state_path: "workspace/data/sliding_window.json",
+  },
   graph_memory: {
     db_path: "workspace/data/graph_memory.sqlite",
     auto_ingest_similarity_threshold: 0.92,
@@ -940,12 +1529,44 @@ const SECTION_DEFAULTS = {
     // recall_token_budget (absolute token cap, not a node count).
   },
   knowledge_base: { dir: "workspace/data/knowledge_bases" },
-  sleep: { max_duration_seconds: 7200 },
-  safety: { gm_node_hard_limit: 1200, max_consecutive_no_action: 100 },
-  sandbox: {
-    guest_os: "", provider: "qemu", vm_name: "",
-    display: "headed",
-    network_mode: "nat_allowlist",
+  // Defaults mirror SleepSection in krakey/models/config/memory.py —
+  // editing here without keeping the dataclass in sync makes the UI
+  // pre-populate the wrong values on a fresh config.
+  sleep: {
+    max_duration_seconds: 7200,
+    min_community_size: 2,
+    kb_consolidation_threshold: 0.85,
+    kb_index_max: 30,
+    kb_archive_pct: 10,
+    kb_revive_threshold: 0.80,
+  },
+  // Same dataclass-mirror rule — SafetySection defaults are 500/50.
+  safety: { gm_node_hard_limit: 500, max_consecutive_no_action: 50 },
+  // Top-level `environments:` block — replaces the old `sandbox:`
+  // section as of the runtime's environments-refactor. ``local`` is
+  // always present (just an allow-list); ``sandbox`` is optional and
+  // holds the VM connectivity fields the runtime previously read
+  // off the top-level sandbox section.
+  environments: {
+    local: { allowed_plugins: [] },
+    sandbox: null,
+  },
+  // Engine slot overrides — dotted module:Class paths. Empty string =
+  // use the built-in default. The Engine refactor (2026-05) made these
+  // 11 slots the swappable spine of the runtime; configuring them via
+  // YAML is supported but most users will never touch this section.
+  core_implementations: {
+    memory: "",
+    context: "",
+    embedder: "",
+    reranker: "",
+    explicit_history: "",
+    decision: "",
+    recall: "",
+    heartbeat: "",
+    dispatch: "",
+    llm_factory: "",
+    llm_client_factory: "",
   },
 };
 
@@ -956,6 +1577,7 @@ const HELP = {
   "idle.default_interval": "Default idle interval (seconds) when Self does not specify one.",
   "fatigue.gm_node_soft_limit": "Soft upper bound on GM nodes. fatigue% = nodes / soft_limit * 100. Self uses fatigue% to decide whether to sleep proactively.",
   "fatigue.force_sleep_threshold": "Force-sleep threshold (fatigue%). Above this, runtime enters sleep without waiting for Self's consent.",
+  "sliding_window.state_path": "JSON file mirroring the in-memory rounds buffer so working memory survives a restart. Default: workspace/data/sliding_window.json. Set to empty string to opt out (in-memory only — every restart loses the most recent uncompacted beats).",
   "graph_memory.db_path": "Path to the GM SQLite file.",
   "graph_memory.auto_ingest_similarity_threshold": "Similarity threshold (0-1) for stimulus auto_ingest. Below this, the stimulus is treated as a new GM node.",
   "graph_memory.recall_per_stimulus_k": "Hard cap on per-stimulus vec_search top_k. The actual top_k is computed dynamically from recall_screening_token_multiplier and never exceeds this.",
@@ -963,6 +1585,11 @@ const HELP = {
   "graph_memory.neighbor_expand_depth": "Neighbor-expansion depth at recall time (how many edges to traverse).",
   "knowledge_base.dir": "Directory for KB SQLite files; sleep migration writes here.",
   "sleep.max_duration_seconds": "Maximum allowed duration for a single sleep (seconds), to prevent sleep from hanging.",
+  "sleep.min_community_size": "Communities below this many GM nodes stay in graph memory; only larger communities migrate to a KB. Default 2 = skip pure singletons.",
+  "sleep.kb_consolidation_threshold": "KB consolidation: pairwise-merge active KBs whose index vectors (mean of member entry embeddings) are at least this cosine-close. 0–1; higher = stricter merging. Default 0.85.",
+  "sleep.kb_index_max": "When the active KB count exceeds this, sleep archives the least-important `kb_archive_pct` percent. Archived KBs keep their files but stop showing up in recall.",
+  "sleep.kb_archive_pct": "Percentage of active KBs to archive each pass once kb_index_max is exceeded. Importance = entry_count × mean entry importance.",
+  "sleep.kb_revive_threshold": "When sleep would build a fresh KB for a new community, first compare the summary embedding against archived KBs' index vectors; revive an archived KB if cosine ≥ this. Models the 'forgot, then re-encountered' relearning shortcut. Default 0.80.",
   "safety.gm_node_hard_limit": "Hard upper bound on GM nodes. Above this, sleep refuses to add more nodes (prevents runaway growth).",
   "safety.max_consecutive_no_action": "After this many consecutive 'No action' beats, runtime considers Self stuck and triggers a self-rescue sleep.",
   "provider.type": "Provider implementation type. Currently only openai_compatible is supported.",
@@ -974,7 +1601,7 @@ const HELP = {
   "role.model": "Pick a model under the chosen provider.",
   "channel.enabled": "Whether this channel is enabled.",
   "channel.default_adrenalin": "Whether stimuli pushed by this channel default to adrenalin=true (interrupting idle).",
-  "tool.enabled": "Whether to register this tool for Hypothalamus to use.",
+  "tool.enabled": "Whether to register this tool. Self learns about it through the [CAPABILITIES] prompt layer.",
   "tool.max_results": "Maximum number of search results.",
   "tool.sandbox_dir": "Working directory for code / file operations.",
   "tool.timeout_seconds": "Subprocess timeout (seconds).",
@@ -982,16 +1609,30 @@ const HELP = {
   "tool.screenshot_dir": "Directory for GUI screenshots.",
   "tool.history_path": "JSONL persistence path for web chat.",
   "tool.sandbox": "Whether this tool's non-idempotent operations are confined to the sandbox VM. Default true — turning off is dangerous (code / GUI runs on your host).",
-  "sandbox.guest_os": "Sandbox guest OS: linux / macos / windows. Required before any sandboxed tool can be enabled.",
-  "sandbox.provider": "VM manager: qemu (recommended) / virtualbox / utm.",
-  "sandbox.vm_name": "VM instance name (must be pre-provisioned).",
-  "sandbox.display": "headed = VM desktop shown in a window so you can watch / intervene; headless = VM hidden, only the agent interacts. Choose by your usage preference.",
-  "sandbox.resources.cpu": "vCPU count assigned to the VM.",
-  "sandbox.resources.memory_mb": "RAM (MB) assigned to the VM.",
-  "sandbox.resources.disk_gb": "VM disk size (GB).",
-  "sandbox.agent.url": "HTTP URL of the in-VM guest agent, e.g. http://10.0.2.10:8765. Must be on the host-only subnet.",
-  "sandbox.agent.token": "Shared token between host and agent. Use ${ENV_VAR} to read from the environment.",
-  "sandbox.network_mode": "VM network policy: nat_allowlist (egress allow-list) / host_only (no internet) / isolated (no network).",
+  "environments.local.allowed_plugins": "Plugins permitted to use the always-on Local execution env (host-process access). Empty = no plugin can run on the host.",
+  "environments.sandbox.allowed_plugins": "Plugins permitted to use the Sandbox VM env. Empty = sandbox VM is registered but no plugin can drive it.",
+  "environments.sandbox.guest_os": "Sandbox guest OS: linux / macos / windows. Required when the sandbox env is enabled.",
+  "environments.sandbox.provider": "VM manager: qemu (recommended) / virtualbox / utm.",
+  "environments.sandbox.vm_name": "VM instance name (must be pre-provisioned).",
+  "environments.sandbox.display": "headed = VM desktop shown in a window so you can watch / intervene; headless = VM hidden, only the agent interacts. Choose by your usage preference.",
+  "environments.sandbox.resources.cpu": "vCPU count assigned to the VM.",
+  "environments.sandbox.resources.memory_mb": "RAM (MB) assigned to the VM.",
+  "environments.sandbox.resources.disk_gb": "VM disk size (GB).",
+  "environments.sandbox.agent.url": "HTTP URL of the in-VM guest agent, e.g. http://10.0.2.10:8765. Must be on the host-only subnet.",
+  "environments.sandbox.agent.token": "Shared token between host and agent. Use ${ENV_VAR} to read from the environment.",
+  "environments.sandbox.network_mode": "VM network policy: nat_allowlist (egress allow-list) / host_only (no internet) / isolated (no network).",
+  "environments.sandbox.allowlist_domains": "When network_mode=nat_allowlist, the sandbox VM can reach exactly these hostnames. Egress to anything else is dropped.",
+  "core_implementations.memory": "MemoryEngine override — graph CRUD + KB fleet + sleep cycle. Default: krakey.engines.memory.default:GraphMemoryEngine. Custom impls must satisfy MemoryEngine.",
+  "core_implementations.context": "ContextEngine override — assembles per-beat prompt elements. Default: krakey.engines.context.default:DefaultContextEngine.",
+  "core_implementations.embedder": "EmbedderEngine override — wraps the embedding-tag client. Default: krakey.engines.embedder.default:TagBoundEmbedderEngine.",
+  "core_implementations.reranker": "RerankerEngine override — reranks recall candidates. Default: krakey.engines.reranker.default:DefaultRerankerEngine (preserve-order fallback when no reranker tag bound).",
+  "core_implementations.explicit_history": "ExplicitHistoryEngine override — working-memory window (rounds bounded by token budget). Default: krakey.engines.explicit_history.default:SlidingWindowExplicitHistoryEngine.",
+  "core_implementations.decision": "DecisionEngine override — translates Self's [DECISION] into structured ToolCalls. Default: krakey.engines.decision.tool_call_parser:ToolCallParserDecisionEngine (scripted <tool_call> parser). Swap to krakey.engines.decision.hypothalamus:HypothalamusDecisionEngine for an LLM-based natural-language translator.",
+  "core_implementations.recall": "RecallEngine override — per-beat memory recall session factory. Default: krakey.engines.recall.default:IncrementalRecallEngine.",
+  "core_implementations.heartbeat": "HeartbeatEngine override — owns per-beat orchestration + the run loop. Replacing this controls the entire cognitive cadence. Default: krakey.engines.heartbeat.default:DefaultHeartbeatEngine.",
+  "core_implementations.dispatch": "DispatchEngine override — runs the four side-effects of a DecisionResult (log, dispatch, memory writes, memory updates). Default: krakey.engines.dispatch.default:LocalDispatchEngine.",
+  "core_implementations.llm_factory": "LLMClientFactoryEngine override — owns the per-tag client cache + cfg.llm lookups. Default: krakey.engines.llm_factory.default:DefaultLLMClientFactoryEngine.",
+  "core_implementations.llm_client_factory": "Per-tag LLMClient class substitution slot. One layer below llm_factory. Empty = use the standard LLMClient class. Rarely set.",
 };
 
 // Fixed numeric/string dataclass schemas — drives generic renderer.
@@ -1005,6 +1646,9 @@ const SCHEMAS = {
     ["gm_node_soft_limit", "number"],
     ["force_sleep_threshold", "number"],
   ],
+  sliding_window: [
+    ["state_path", "text"],
+  ],
   graph_memory: [
     ["db_path", "text"],
     ["auto_ingest_similarity_threshold", "number_float"],
@@ -1017,30 +1661,58 @@ const SCHEMAS = {
   ],
   sleep: [
     ["max_duration_seconds", "number"],
+    // KB lifecycle tuning — fields drive sleep's compaction engine
+    // (see krakey/memory/sleep/sleep_manager.py + sibling modules).
+    // Power users tune these to control how aggressively Krakey
+    // consolidates / archives knowledge bases between sleeps.
+    ["min_community_size", "number"],
+    ["kb_consolidation_threshold", "number_float"],
+    ["kb_index_max", "number"],
+    ["kb_archive_pct", "number"],
+    ["kb_revive_threshold", "number_float"],
   ],
   safety: [
     ["gm_node_hard_limit", "number"],
     ["max_consecutive_no_action", "number"],
   ],
-  sandbox_scalars: [
+  // 11-slot Engine override surface. Empty string = use the
+  // built-in default (the runtime treats unset + empty identically).
+  // Order mirrors the resolution order in Runtime.__init__.
+  core_implementations: [
+    ["memory", "text"],
+    ["context", "text"],
+    ["embedder", "text"],
+    ["reranker", "text"],
+    ["explicit_history", "text"],
+    ["decision", "text"],
+    ["recall", "text"],
+    ["heartbeat", "text"],
+    ["dispatch", "text"],
+    ["llm_factory", "text"],
+    ["llm_client_factory", "text"],
+  ],
+  // Schemas under `environments.sandbox.*`. The top-level sandbox
+  // section is gone in the runtime (rewrites to environments.sandbox),
+  // so the dashboard's sandbox UI is now a sub-block of Environments.
+  env_sandbox_scalars: [
     ["guest_os", "text"],
     ["provider", "text"],
     ["vm_name", "text"],
     ["display", "text"],
     ["network_mode", "text"],
   ],
-  sandbox_resources: [
+  env_sandbox_resources: [
     ["cpu", "number"],
     ["memory_mb", "number"],
     ["disk_gb", "number"],
   ],
-  sandbox_agent: [
+  env_sandbox_agent: [
     ["url", "text"],
     ["token", "password"],
   ],
 };
 
-// Live load report (loaded ✓ / failed ✗) sourced from /api/plugins.
+// Live load report (loaded / failed) sourced from /api/plugins.
 // The unified Plugins panel surfaces this as a per-row status badge —
 // edits are NOT made through this object; per-plugin config edits live
 // in modifierConfigEdits, enable/disable lives in cfgState.{modifiers,
@@ -1071,6 +1743,24 @@ async function loadSettings() {
     }
     const data = await cfgRes.json();
     cfgState = data.parsed || {};
+    // Migration: the runtime stopped reading top-level `sandbox:` —
+    // see krakey/models/config/__init__.py — and moved every field
+    // under `environments.sandbox`. If the user's on-disk yaml still
+    // has the legacy block, lift its contents into the new shape so
+    // the dashboard renders something instead of an empty toggle.
+    // Drop the legacy key from the edit state so the next save
+    // produces a clean yaml.
+    if (cfgState.sandbox && typeof cfgState.sandbox === "object") {
+      cfgState.environments = cfgState.environments || {};
+      if (cfgState.environments.sandbox == null) {
+        cfgState.environments.sandbox = {
+          allowed_plugins: [],
+          allowlist_domains: [],
+          ...cfgState.sandbox,
+        };
+      }
+      delete cfgState.sandbox;
+    }
     if (pluginRes && pluginRes.ok) {
       pluginReport = await pluginRes.json();
     } else {
@@ -1081,12 +1771,140 @@ async function loadSettings() {
     } else {
       configSchema = { llm_params: [] };
     }
-    await loadAvailableModifiers();
+    await Promise.all([
+      loadAvailableModifiers(),
+      loadEngineCatalog(),
+    ]);
     renderSettingsForm();
+    // Refresh the deps-install banner alongside the form. Failure
+    // to fetch is non-fatal — the rest of settings still works.
+    refreshInstallBanner().catch(() => {});
   } catch (e) {
     settingsForm.innerHTML = "error loading: " + escapeHtml(String(e));
   }
 }
+
+
+// =====================================================================
+// Plugin install banner — shown on the Settings tab when one or
+// more enabled plugins have unsatisfied pip deps / post_install hooks.
+// Drives the one-click "Install" button that runs `krakey install`
+// inside the runtime venv via /api/plugins/install.
+// =====================================================================
+
+
+async function refreshInstallBanner() {
+  const banner = $("#install-banner");
+  const text = $("#install-banner-text");
+  if (!banner || !text) return;
+  // Banner is ALWAYS visible (the static HTML has no `hidden`
+  // attribute) so the Install button is always self-explanatory.
+  // We only adjust the left-side text to reflect current state.
+  banner.classList.remove("installing", "success", "failed");
+  try {
+    const r = await fetch("/api/plugins/deps_status");
+    if (!r.ok) {
+      // Endpoint unreachable — keep the static fallback text
+      // already in the HTML.
+      return;
+    }
+    const data = await r.json();
+    if (!data || !data.pending) {
+      banner.classList.add("success");
+      text.innerHTML =
+        "<strong>All plugin dependencies are installed.</strong> " +
+        "Click <em>Install</em> to refresh the venv (e.g. after a " +
+        "manual <code>pip uninstall</code> or to pull " +
+        "<code>--upgrade</code>'d wheels).";
+      return;
+    }
+    const unsatisfied = Object.entries(data.plugins || {})
+      .filter(([_, info]) => !info.satisfied)
+      .map(([name, _]) => name);
+    const list = unsatisfied.length
+      ? unsatisfied.join(", ")
+      : "(state changed; click Install to refresh)";
+    text.innerHTML =
+      `<strong>Plugin dependencies pending install:</strong> ` +
+      `${escapeHtml(list)}. ` +
+      `Click <em>Install</em> to run <code>pip install</code> + each ` +
+      `plugin's <code>post_install</code> hook (e.g. ` +
+      `<code>playwright install chromium</code>) inside the ` +
+      `runtime's venv.`;
+  } catch (_) {
+    // Keep the static fallback HTML.
+  }
+}
+
+
+async function runInstallNow() {
+  const banner = $("#install-banner");
+  const text = $("#install-banner-text");
+  const btn = $("#install-run");
+  const log = $("#install-log");
+  const upgrade = $("#install-upgrade");
+  if (!banner || !btn) return;
+  btn.disabled = true;
+  banner.classList.remove("success", "failed");
+  banner.classList.add("installing");
+  if (text) {
+    text.innerHTML =
+      "<strong>Installing…</strong> pip + post_install hooks " +
+      "running. This may take a minute (browser binaries are ~200MB).";
+  }
+  if (log) {
+    log.hidden = false;
+    log.textContent = "running install — please wait…";
+  }
+  try {
+    const r = await fetch("/api/plugins/install", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ upgrade: !!(upgrade && upgrade.checked) }),
+    });
+    const data = r.ok ? await r.json() : null;
+    if (!data) {
+      throw new Error(`HTTP ${r.status}`);
+    }
+    const ok = data.rc === 0;
+    banner.classList.remove("installing");
+    banner.classList.add(ok ? "success" : "failed");
+    if (text) {
+      text.innerHTML = ok
+        ? "<strong>Install ok.</strong> Plugin dependencies are " +
+          "satisfied. Restart Krakey to load the newly installed plugins."
+        : `<strong>Install failed (rc=${data.rc}).</strong> ` +
+          "See the log below; fix the underlying issue and click " +
+          "Install again.";
+    }
+    if (log) {
+      const stdout = data.stdout || "";
+      const stderr = data.stderr || "";
+      log.textContent = (
+        "--- stdout ---\n" + stdout +
+        "\n--- stderr ---\n" + stderr
+      );
+    }
+    if (ok) {
+      // Re-fetch the status so the banner clears once the user
+      // dismisses it / navigates away. The form itself doesn't
+      // need rebuilding; install state is independent of config.
+      setTimeout(refreshInstallBanner, 500);
+    }
+  } catch (e) {
+    banner.classList.remove("installing");
+    banner.classList.add("failed");
+    if (text) {
+      text.innerHTML =
+        `<strong>Install request failed:</strong> ${escapeHtml(String(e))}`;
+    }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+
+$("#install-run")?.addEventListener("click", runInstallNow);
 
 function renderSettingsForm() {
   settingsForm.innerHTML = "";
@@ -1117,6 +1935,16 @@ function renderSettingsForm() {
   fatSec.querySelector(".body").appendChild(renderFatigueThresholds(cfgState.fatigue));
   settingsForm.appendChild(fatSec);
 
+  // Sliding-window persistence (2026-05-07). Just one field —
+  // state_path. Sits between Fatigue and Graph Memory because
+  // the working-memory window is conceptually adjacent to GM
+  // (rounds compact INTO GM when the budget overflows).
+  ensureSection("sliding_window");
+  settingsForm.appendChild(renderGenericSection(
+    "sliding_window", "Sliding Window (Working Memory)",
+    cfgState.sliding_window, SCHEMAS.sliding_window,
+  ));
+
   ensureSection("graph_memory");
   settingsForm.appendChild(renderGenericSection("graph_memory", "Graph Memory",
     cfgState.graph_memory, SCHEMAS.graph_memory));
@@ -1128,38 +1956,191 @@ function renderSettingsForm() {
   settingsForm.appendChild(renderGenericSection("sleep", "Sleep",
     cfgState.sleep, SCHEMAS.sleep));
   ensureSection("safety");
-  settingsForm.appendChild(renderGenericSection("safety", "Safety",
-    cfgState.safety, SCHEMAS.safety));
+  const safetySec = renderGenericSection("safety", "Safety",
+    cfgState.safety, SCHEMAS.safety);
+  // Hint at the top of the section body: the SafetySection dataclass
+  // is parsed and persisted but the runtime currently has zero
+  // consumers of config.safety.*. Document the status so users
+  // don't expect their hard-limit to fire.
+  const advisoryHint = document.createElement("p");
+  advisoryHint.className = "section-hint";
+  advisoryHint.textContent =
+    "advisory only — runtime does not yet enforce these limits";
+  const safetyBody = safetySec.querySelector(".body");
+  safetyBody.insertBefore(advisoryHint, safetyBody.firstChild);
+  settingsForm.appendChild(safetySec);
 
-  // Sandbox — composite (scalars + resources sub-block + agent sub-block).
-  ensureSection("sandbox");
-  const sb = cfgState.sandbox;
-  if (sb.resources == null) sb.resources = { cpu: 2, memory_mb: 4096, disk_gb: 40 };
-  if (sb.agent == null) sb.agent = { url: "", token: "" };
-  const sbSec = renderGenericSection("sandbox", "Sandbox VM",
-    sb, SCHEMAS.sandbox_scalars);
-  const body = sbSec.querySelector(".body");
-  const resBlock = document.createElement("div");
-  resBlock.className = "subblock";
-  const resH = document.createElement("h4");
-  resH.textContent = "resources";
-  resBlock.appendChild(resH);
-  for (const [f, t] of SCHEMAS.sandbox_resources) {
-    resBlock.appendChild(renderRow(f, sb.resources, f, t,
-      `sandbox.resources.${f}`));
+  // Environments — top-level execution-env block. Replaces the old
+  // top-level `sandbox:` section the runtime no longer reads.
+  // Two sub-blocks:
+  //   * Local — always present, just an allow-list of plugins
+  //     permitted to run on the host process.
+  //   * Sandbox VM — optional. Toggle to register/deregister; when
+  //     registered, holds VM connectivity + per-plugin allow-list.
+  ensureSection("environments");
+  settingsForm.appendChild(renderEnvironmentsSection(cfgState.environments));
+
+  // Engine slot overrides — each slot picks from a dropdown sourced
+  // from /api/engines/available (built-in catalog + plugin-supplied
+  // engines). "(default: <name>)" stands for the empty-string value
+  // → registry falls back to the slot's DEFAULT_ENGINE. "Custom..."
+  // exposes a free-form text input for dotted paths the catalog
+  // doesn't know about.
+  ensureSection("core_implementations");
+  settingsForm.appendChild(renderEngineOverridesSection(
+    cfgState.core_implementations,
+  ));
+}
+
+function renderEngineOverridesSection(cfg) {
+  const sec = makeSection("Engine Overrides");
+  const body = sec.querySelector(".body");
+  const hint = document.createElement("p");
+  hint.className = "section-hint";
+  hint.textContent =
+    "Each slot picks from built-in impls + any plugin-supplied "
+    + "engines (workspace/plugins/<name>/meta.yaml with `kind: engine`). "
+    + '"(default)" leaves the field empty in config.yaml so the '
+    + "runtime falls through to the slot's built-in default. "
+    + "Engines that declare config options surface a form below the "
+    + "dropdown. \"Custom path...\" lets you supply a "
+    + "`module.path:ClassName` directly.";
+  body.appendChild(hint);
+
+  // Render one block per slot. Slot order matches CoreImplementations'
+  // dataclass field order (covered by SCHEMAS.core_implementations).
+  for (const [slot, _type] of SCHEMAS.core_implementations) {
+    body.appendChild(_engineSlotBlock(slot, cfg));
   }
-  body.appendChild(resBlock);
-  const agentBlock = document.createElement("div");
-  agentBlock.className = "subblock";
-  const agH = document.createElement("h4");
-  agH.textContent = "agent";
-  agentBlock.appendChild(agH);
-  for (const [f, t] of SCHEMAS.sandbox_agent) {
-    agentBlock.appendChild(renderRow(f, sb.agent, f, t,
-      `sandbox.agent.${f}`));
+  return sec;
+}
+
+function _engineSlotBlock(slot, cfg) {
+  // Wrapper around the dropdown row + the schema-driven config form
+  // for the currently-selected impl. Re-rendered in place when the
+  // user picks a different impl from the dropdown.
+  const block = document.createElement("div");
+  block.className = "engine-slot-block";
+
+  const row = document.createElement("div");
+  row.className = "cfg-row";
+  const lab = document.createElement("label");
+  lab.textContent = slot;
+  const help = HELP[`core_implementations.${slot}`];
+  if (help) lab.title = help;
+  row.appendChild(lab);
+
+  const slotMeta = engineCatalog[slot] || {
+    default: "", options: [],
+  };
+  const currentValue = cfg[slot] || "";
+  const isCustom = currentValue && currentValue.includes(":");
+
+  const sel = document.createElement("select");
+  // Empty option = "(default)" — runtime sees no override, falls
+  // through to the slot's DEFAULT_ENGINE.
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = `(default: ${slotMeta.default || "?"})`;
+  sel.appendChild(blank);
+  for (const opt of slotMeta.options) {
+    const o = document.createElement("option");
+    o.value = opt.name;
+    const tag = opt.source === "plugin" ? " [plugin]" : "";
+    o.textContent = `${opt.name}${tag}`;
+    o.title = opt.description || "";
+    sel.appendChild(o);
   }
-  body.appendChild(agentBlock);
-  settingsForm.appendChild(sbSec);
+  // "Custom..." for dotted paths the catalog doesn't know about.
+  const customOpt = document.createElement("option");
+  customOpt.value = "__custom__";
+  customOpt.textContent = "Custom path…";
+  sel.appendChild(customOpt);
+
+  if (isCustom) sel.value = "__custom__";
+  else sel.value = currentValue;
+
+  const txt = document.createElement("input");
+  txt.type = "text";
+  txt.placeholder = "module.path:ClassName";
+  txt.value = isCustom ? currentValue : "";
+  txt.style.marginLeft = "0.5em";
+  txt.style.display = isCustom ? "" : "none";
+
+  // Schema form holder — rebuilt whenever the dropdown selection
+  // changes. Lives below the dropdown row inside the same block.
+  const schemaHolder = document.createElement("div");
+  schemaHolder.className = "engine-schema-holder";
+
+  function selectedShortName() {
+    if (sel.value === "__custom__") return "";  // dotted path, no schema
+    return sel.value || slotMeta.default || "";
+  }
+
+  function rebuildSchema() {
+    schemaHolder.innerHTML = "";
+    const shortName = selectedShortName();
+    if (!shortName) return;
+    const opt = (slotMeta.options || []).find(
+      (o) => o.name === shortName,
+    );
+    if (!opt || !opt.config_schema || !opt.config_schema.length) return;
+    schemaHolder.appendChild(
+      _renderEngineSchemaForm(slot, shortName, opt.config_schema),
+    );
+  }
+
+  sel.addEventListener("change", () => {
+    if (sel.value === "__custom__") {
+      txt.style.display = "";
+      cfg[slot] = txt.value || "";
+    } else {
+      txt.style.display = "none";
+      cfg[slot] = sel.value;
+    }
+    rebuildSchema();
+  });
+  txt.addEventListener("input", () => {
+    cfg[slot] = txt.value;
+  });
+
+  row.appendChild(sel);
+  row.appendChild(txt);
+  block.appendChild(row);
+  block.appendChild(schemaHolder);
+  rebuildSchema();
+  return block;
+}
+
+function _renderEngineSchemaForm(slot, shortName, schema) {
+  // Reads & writes ``cfgState.engine_configs[slot][shortName]`` so
+  // saving the settings page persists the engine's tunables to
+  // config.yaml's ``engine_configs:`` section.
+  cfgState.engine_configs = cfgState.engine_configs || {};
+  cfgState.engine_configs[slot] =
+    cfgState.engine_configs[slot] || {};
+  const target = cfgState.engine_configs[slot][shortName] || {};
+  cfgState.engine_configs[slot][shortName] = target;
+
+  const cfgBlock = document.createElement("div");
+  cfgBlock.className = "engine-schema-block";
+  cfgBlock.style.cssText = "margin: 4px 0 12px 1.5em;";
+  const head = document.createElement("div");
+  head.style.cssText =
+    "font-size:11px;color:var(--muted);margin-bottom:4px";
+  head.textContent = `Config — ${shortName}`;
+  cfgBlock.appendChild(head);
+  for (const fdef of schema) {
+    const fname = fdef.field;
+    const type = fdef.type || "text";
+    const helpPath = `engine.${slot}.${shortName}.${fname}`;
+    if (fdef.help) HELP[helpPath] = fdef.help;
+    if (target[fname] == null && fdef.default != null) {
+      target[fname] = fdef.default;
+    }
+    cfgBlock.appendChild(renderRow(fname, target, fname, type, helpPath));
+  }
+  return cfgBlock;
 }
 
 function ensure(obj, key, factory) {
@@ -1182,11 +2163,31 @@ const SECTION_ICONS = {
   "Plugins": "gear",
   "Idle": "moon",
   "Fatigue": "bar-chart",
+  "Sliding Window (Working Memory)": "stack",
   "Graph Memory": "geo-alt",
   "Knowledge Base": "book",
   "Sleep": "moon",
   "Safety": "shield-check",
-  "Sandbox VM": "hdd",
+  "Environments": "hdd",
+  "Engine Overrides": "puzzle",
+};
+
+// Synthwave-ish accent per section. Renders on the heading icon +
+// title only — the body keeps the neutral text colour so dense
+// configuration stays readable. Token names match the CSS variables
+// defined in shared/theme.css.
+const SECTION_TINT = {
+  "LLM": "cyan",
+  "Plugins": "magenta",
+  "Idle": "muted",
+  "Fatigue": "yellow",
+  "Sliding Window (Working Memory)": "muted",
+  "Graph Memory": "magenta",
+  "Knowledge Base": "green",
+  "Sleep": "muted",
+  "Safety": "red",
+  "Environments": "cyan",
+  "Engine Overrides": "muted",
 };
 
 // Titles whose body is currently collapsed. Module-scoped so the
@@ -1202,6 +2203,8 @@ function _svgFromBiHtml(html) {
 function makeSection(title) {
   const sec = document.createElement("div");
   sec.className = "cfg-section";
+  const tint = SECTION_TINT[title];
+  if (tint) sec.classList.add("tint-" + tint);
   const isCollapsed = collapsedSections.has(title);
   if (isCollapsed) sec.classList.add("collapsed");
 
@@ -1273,6 +2276,305 @@ function renderGenericSection(key, title, target, schema) {
   for (const [field, type] of schema) {
     body.appendChild(renderRow(field, target, field, type, `${key}.${field}`));
   }
+  return sec;
+}
+
+// Generic chip-list editor for ``string[]`` config values. Each
+// existing entry is a removable chip; the trailing input adds new
+// entries on Enter / blur. Used for ``allowed_plugins`` and
+// ``allowlist_domains`` under Environments.
+//
+// opts.suggestions (optional string[]): attaches an in-page
+// custom dropdown styled to match the rest of the panel (same
+// .dd-menu / .dd-item palette as the existing capabilities
+// picker). The dropdown opens on focus, filters as the user
+// types, and supports ArrowUp / ArrowDown / Enter / Escape.
+// Used by allowed_plugins to surface every detected plugin
+// without forcing the user to remember exact names.
+function _renderStringList(arr, opts) {
+  if (!Array.isArray(arr)) {
+    // Caller passed a non-array; coerce to empty so the UI still
+    // renders rather than throwing on .filter() / .push().
+    arr = [];
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "cap-multi";  // re-use existing chip-strip styling
+  function repaint() {
+    wrap.innerHTML = "";
+    for (const v of arr) {
+      const chip = document.createElement("span");
+      chip.className = "cap-chip";
+      chip.appendChild(document.createTextNode(v));
+      const x = document.createElement("span");
+      x.className = "x";
+      x.textContent = "×";
+      x.addEventListener("click", () => {
+        const idx = arr.indexOf(v);
+        if (idx !== -1) arr.splice(idx, 1);
+        repaint();
+      });
+      chip.appendChild(x);
+      wrap.appendChild(chip);
+    }
+
+    // Input + (optional) typeahead host. The host wraps both so
+    // the absolute-positioned dropdown anchors to the input
+    // column rather than the whole chip strip.
+    const inputHost = document.createElement("span");
+    inputHost.className = "string-list-input-host";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = (opts && opts.placeholder) || "+ add…";
+    input.autocomplete = "off";
+    input.style.cssText =
+      "border:none;background:transparent;color:var(--text);" +
+      "font-family:inherit;font-size:11px;flex:1;min-width:80px;outline:none;width:100%";
+    inputHost.appendChild(input);
+
+    function commit(value) {
+      const v = (value != null ? value : input.value).trim();
+      if (!v) return;
+      if (!arr.includes(v)) arr.push(v);
+      input.value = "";
+      repaint();
+      // Re-focus the new input so the user can keep typing names.
+      const newInput = wrap.querySelector("input");
+      if (newInput) newInput.focus();
+    }
+
+    const sugg = (opts && opts.suggestions) || [];
+    if (sugg.length) {
+      _attachTypeaheadMenu(inputHost, input, sugg, () => arr, commit);
+    }
+
+    input.addEventListener("keydown", (e) => {
+      // Enter falls through to the typeahead handler when a
+      // suggestion is highlighted; otherwise commits the typed
+      // text. Letting both run is fine — typeahead's commit
+      // also clears the input so a second commit() finds nothing.
+      if (e.key === "Enter") { e.preventDefault(); commit(); }
+    });
+    input.addEventListener("blur", () => commit());
+    wrap.appendChild(inputHost);
+  }
+  repaint();
+  return wrap;
+}
+
+// Custom typeahead dropdown for the chip-list inputs. Renders a
+// styled menu under the input that filters suggestions by
+// substring match against the current input value. Hides items
+// already on the row (passed in via getCurrent()). Supports
+// keyboard navigation (Up / Down / Enter / Escape).
+function _attachTypeaheadMenu(host, input, suggestions, getCurrent, commit) {
+  host.classList.add("has-typeahead");
+  const menu = document.createElement("div");
+  menu.className = "dd-menu typeahead-menu hidden";
+  host.appendChild(menu);
+  let cursor = -1;
+
+  function open() {
+    rebuild();
+  }
+  function close() {
+    menu.classList.add("hidden");
+    cursor = -1;
+  }
+  function rebuild() {
+    const q = input.value.trim().toLowerCase();
+    const used = new Set(getCurrent());
+    const matches = suggestions
+      .filter((s) => !used.has(s))
+      .filter((s) => !q || s.toLowerCase().includes(q));
+    menu.innerHTML = "";
+    if (!matches.length) {
+      close();
+      return;
+    }
+    if (cursor >= matches.length) cursor = matches.length - 1;
+    matches.forEach((s, i) => {
+      const item = document.createElement("div");
+      item.className = "dd-item" + (i === cursor ? " active" : "");
+      item.textContent = s;
+      // mousedown (not click) so the input's blur doesn't fire
+      // first and swallow the pick.
+      item.addEventListener("mousedown", (ev) => {
+        ev.preventDefault();
+        commit(s);
+      });
+      menu.appendChild(item);
+    });
+    menu.classList.remove("hidden");
+  }
+
+  input.addEventListener("focus", open);
+  input.addEventListener("input", () => { cursor = -1; rebuild(); });
+  input.addEventListener("keydown", (e) => {
+    if (menu.classList.contains("hidden")) return;
+    if (e.key === "Escape") { e.preventDefault(); close(); return; }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      cursor = Math.min(cursor + 1, menu.children.length - 1);
+      rebuild();
+      const active = menu.querySelector(".dd-item.active");
+      if (active) active.scrollIntoView({ block: "nearest" });
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      cursor = Math.max(cursor - 1, -1);
+      rebuild();
+      const active = menu.querySelector(".dd-item.active");
+      if (active) active.scrollIntoView({ block: "nearest" });
+    } else if (e.key === "Enter" && cursor >= 0) {
+      e.preventDefault();
+      const pick = menu.children[cursor].textContent;
+      commit(pick);
+    }
+  });
+  // Hide on outside click / blur — small delay so a mousedown
+  // pick has time to fire.
+  input.addEventListener("blur", () => {
+    setTimeout(close, 120);
+  });
+}
+
+function _renderListRow(label, arr, helpPath, opts) {
+  const row = document.createElement("div");
+  row.className = "cfg-row";
+  const lab = document.createElement("label");
+  lab.textContent = label;
+  if (helpPath && HELP[helpPath]) lab.title = HELP[helpPath];
+  row.appendChild(lab);
+  row.appendChild(_renderStringList(arr, opts));
+  return row;
+}
+
+function renderEnvironmentsSection(envs) {
+  // Top-level `environments:` block. Maps to runtime's
+  // krakey.models.config.environments.EnvironmentsSection — `local`
+  // is always-on with just an allow-list; `sandbox` is optional and
+  // gated by an enable toggle.
+  const sec = makeSection("Environments");
+  const body = sec.querySelector(".body");
+
+  // Plugin-name suggestions for the allow-list editors come from
+  // the same /api/modifiers/available payload the Plugins panel
+  // uses, so anything detected on disk is one keystroke away. The
+  // input still accepts free-form text — useful for plugins not
+  // yet on disk that the user is configuring ahead of an install.
+  const pluginSuggestions = (availableModifiers || [])
+    .map((p) => p && p.name)
+    .filter(Boolean)
+    .sort();
+
+  // Local sub-block.
+  if (!envs.local) envs.local = { allowed_plugins: [] };
+  if (!Array.isArray(envs.local.allowed_plugins)) {
+    envs.local.allowed_plugins = [];
+  }
+  const localBlock = document.createElement("div");
+  localBlock.className = "subblock";
+  const localH = document.createElement("h4");
+  localH.appendChild(document.createTextNode("Local"));
+  localBlock.appendChild(localH);
+  localBlock.appendChild(_renderListRow(
+    "allowed_plugins", envs.local.allowed_plugins,
+    "environments.local.allowed_plugins",
+    {
+      placeholder: "plugin name (type or pick)",
+      suggestions: pluginSuggestions,
+    },
+  ));
+  body.appendChild(localBlock);
+
+  // Sandbox sub-block — togglable. When the toggle is off, the
+  // saved config has ``environments.sandbox: null`` (runtime does
+  // not register the sandbox env at all). Flipping it on hydrates
+  // a sandbox object with sensible defaults so all sub-rows
+  // render and the user can edit in place.
+  const sbBlock = document.createElement("div");
+  sbBlock.className = "subblock";
+  const sbHead = document.createElement("h4");
+  sbHead.style.display = "flex";
+  sbHead.style.alignItems = "center";
+  sbHead.style.gap = "8px";
+  sbHead.appendChild(document.createTextNode("Sandbox VM"));
+  const enabled = envs.sandbox != null;
+  const toggle = document.createElement("span");
+  toggle.className = "toggle" + (enabled ? " on" : "");
+  toggle.title = "register a sandbox execution environment";
+  toggle.addEventListener("click", () => {
+    if (envs.sandbox == null) {
+      envs.sandbox = {
+        allowed_plugins: [],
+        guest_os: "",
+        provider: "qemu",
+        vm_name: "",
+        display: "headed",
+        resources: { cpu: 2, memory_mb: 4096, disk_gb: 40 },
+        agent: { url: "", token: "" },
+        network_mode: "nat_allowlist",
+        allowlist_domains: [],
+      };
+    } else {
+      envs.sandbox = null;
+    }
+    renderSettingsForm();
+  });
+  sbHead.appendChild(toggle);
+  sbBlock.appendChild(sbHead);
+
+  if (envs.sandbox != null) {
+    const sb = envs.sandbox;
+    if (!sb.resources) sb.resources = { cpu: 2, memory_mb: 4096, disk_gb: 40 };
+    if (!sb.agent) sb.agent = { url: "", token: "" };
+    if (!Array.isArray(sb.allowed_plugins)) sb.allowed_plugins = [];
+    if (!Array.isArray(sb.allowlist_domains)) sb.allowlist_domains = [];
+
+    sbBlock.appendChild(_renderListRow(
+      "allowed_plugins", sb.allowed_plugins,
+      "environments.sandbox.allowed_plugins",
+      {
+        placeholder: "plugin name (type or pick)",
+        suggestions: pluginSuggestions,
+      },
+    ));
+    for (const [f, t] of SCHEMAS.env_sandbox_scalars) {
+      sbBlock.appendChild(renderRow(
+        f, sb, f, t, `environments.sandbox.${f}`,
+      ));
+    }
+    sbBlock.appendChild(_renderListRow(
+      "allowlist_domains", sb.allowlist_domains,
+      "environments.sandbox.allowlist_domains",
+      { placeholder: "domain + Enter" },
+    ));
+
+    const resBlock = document.createElement("div");
+    resBlock.className = "subblock";
+    const resH = document.createElement("h4");
+    resH.textContent = "resources";
+    resBlock.appendChild(resH);
+    for (const [f, t] of SCHEMAS.env_sandbox_resources) {
+      resBlock.appendChild(renderRow(
+        f, sb.resources, f, t, `environments.sandbox.resources.${f}`,
+      ));
+    }
+    sbBlock.appendChild(resBlock);
+
+    const agentBlock = document.createElement("div");
+    agentBlock.className = "subblock";
+    const agH = document.createElement("h4");
+    agH.textContent = "agent";
+    agentBlock.appendChild(agH);
+    for (const [f, t] of SCHEMAS.env_sandbox_agent) {
+      agentBlock.appendChild(renderRow(
+        f, sb.agent, f, t, `environments.sandbox.agent.${f}`,
+      ));
+    }
+    sbBlock.appendChild(agentBlock);
+  }
+  body.appendChild(sbBlock);
+
   return sec;
 }
 
@@ -1411,7 +2713,7 @@ function renderFatigueThresholds(fatigue) {
       keyIn.type = "number"; keyIn.value = k; keyIn.style.maxWidth = "80px";
       const valIn = document.createElement("input");
       valIn.type = "text"; valIn.value = fatigue.thresholds[k];
-      const del = mkBtn("×", () => { delete fatigue.thresholds[k]; redraw(); }, "danger");
+      const del = mkBtn("×", () => { delete fatigue.thresholds[k]; redraw(); }, "btn-x");
       keyIn.addEventListener("change", () => {
         const newK = parseInt(keyIn.value, 10);
         if (Number.isNaN(newK) || String(newK) === k) return;
@@ -1445,6 +2747,74 @@ function mkBtn(text, onClick, cls = "") {
 
 // ---------------- LLM section ----------------
 
+// Pending inline-rename target. Set by "+ add provider/tag/purpose"
+// to {scope, name}; the matching editable-key span auto-switches to
+// input mode at render time so the user types the real name in
+// place instead of seeing a prompt() dialog. Cleared after the
+// auto-edit fires so it only triggers once.
+let _pendingNewKey = null;
+
+// Build a span that displays a key (provider name, tag name, etc.)
+// and turns into an inline <input> when clicked. On commit (Enter or
+// blur) it calls onRename(newName); validate(newName) returning a
+// truthy string blocks commit and surfaces the message.
+function _renderEditableKey(currentName, opts) {
+  const span = document.createElement("span");
+  span.className = "editable-key";
+  span.textContent = currentName;
+  span.title = "click to rename";
+
+  function _enterEdit() {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "editable-key-input";
+    input.value = currentName;
+    if (opts.placeholder) input.placeholder = opts.placeholder;
+    let committing = false;
+    function _commit() {
+      if (committing) return;
+      committing = true;
+      const nv = (input.value || "").trim();
+      if (!nv || nv === currentName) { _revert(); return; }
+      const err = opts.validate ? opts.validate(nv) : null;
+      if (err) { alert(err); committing = false; input.focus(); return; }
+      opts.onRename(nv);
+    }
+    function _revert() {
+      span.textContent = currentName;
+      if (input.parentNode) input.replaceWith(span);
+    }
+    input.addEventListener("blur", _commit);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); _commit(); }
+      else if (e.key === "Escape") { e.preventDefault(); _revert(); }
+    });
+    span.replaceWith(input);
+    input.focus();
+    input.select();
+  }
+  span.addEventListener("click", _enterEdit);
+
+  // If this span is the freshly-added "+ add ___" target, auto-enter
+  // edit mode after the DOM is in place (focus needs the element to
+  // be attached). The flag is consumed so a subsequent re-render
+  // doesn't re-trigger.
+  if (_pendingNewKey && _pendingNewKey.scope === opts.scope &&
+      _pendingNewKey.name === currentName) {
+    _pendingNewKey = null;
+    setTimeout(_enterEdit, 0);
+  }
+  return span;
+}
+
+// Find a unique placeholder name for a "+ add" action — keeps the
+// suffix incrementing until the dict has no entry with that key.
+function _uniqueDraftName(dict, base) {
+  let n = 1;
+  while (dict[`${base}_${n}`]) n++;
+  return `${base}_${n}`;
+}
+
 // Shape (post tag-based refactor 2026-04-26):
 //   llm.providers     : dict of provider connections (with API keys)
 //   llm.tags          : dict of named (provider/model + params)
@@ -1469,13 +2839,13 @@ function renderLLMSection(llm) {
   provHead.style.cssText = "color:var(--text);font-weight:bold;font-size:11px;margin:0 0 6px";
   provHead.appendChild(document.createTextNode("Providers"));
   const addProv = mkBtn("+ add provider", () => {
-    let name = prompt("Provider name (unique key):");
-    if (!name) return;
-    name = name.trim();
-    if (!name || llm.providers[name]) { alert("invalid or exists"); return; }
+    // Add directly with a placeholder name; the heading enters
+    // edit-mode on render so the user types the real name inline.
+    const name = _uniqueDraftName(llm.providers, "provider");
     llm.providers[name] = {
       type: "openai_compatible", base_url: "", api_key: "", models: [],
     };
+    _pendingNewKey = { scope: "provider", name };
     renderSettingsForm();
   });
   const headWrap = document.createElement("div");
@@ -1492,20 +2862,26 @@ function renderLLMSection(llm) {
   const tagsHead = document.createElement("h4");
   tagsHead.style.cssText = "color:var(--text);font-weight:bold;font-size:11px;margin:12px 0 6px";
   tagsHead.appendChild(document.createTextNode("Tags"));
+  // Section-wide tooltip explaining what a tag is and how
+  // Core / Plugin Purposes consume them. Shown on hover.
+  tagsHead.title =
+    "A tag is a named (provider/model + params) preset. " +
+    "Core Purposes (Self / compact / classifier) and Plugin " +
+    "Purposes both bind a tag name; multiple purposes can share " +
+    "the same tag, and a tag can be re-tuned in one place to " +
+    "change every consumer at once.";
   const addTag = mkBtn("+ add tag", () => {
-    const name = prompt("Tag name (e.g. fast_generation):");
-    if (!name) return;
-    if (llm.tags[name]) { alert("exists"); return; }
     const provNames = Object.keys(llm.providers || {});
     if (!provNames.length) { alert("add a provider first"); return; }
-    // First model of first provider as a starting point
     const firstProv = llm.providers[provNames[0]];
     const firstModel = (firstProv.models && firstProv.models[0]
                           && firstProv.models[0].name) || "";
+    const name = _uniqueDraftName(llm.tags, "tag");
     llm.tags[name] = {
       provider: `${provNames[0]}/${firstModel}`,
       params: {},
     };
+    _pendingNewKey = { scope: "tag", name };
     renderSettingsForm();
   });
   const tagsHeadWrap = document.createElement("div");
@@ -1517,8 +2893,14 @@ function renderLLMSection(llm) {
     body.appendChild(renderTagRow(tname, llm.tags, llm.providers));
   }
 
-  // Core purposes (chat use cases — Self / compact / classifier)
+  // Core purposes (chat use cases — Self / compact / classifier ...)
   body.appendChild(renderCorePurposesBlock(llm));
+  // Plugin LLM purposes — aggregate of every enabled plugin's
+  // ``llm_purposes`` declarations (per meta.yaml). Renders here so
+  // the user has a single "all the components that can take an
+  // LLM" pane in the LLM section instead of having to hunt through
+  // expanded plugin rows in the Plugins panel.
+  body.appendChild(renderPluginPurposesBlock(llm));
   // Embedding + reranker (model-type slots, not purposes)
   body.appendChild(renderModelSlotBlock(
     llm, "embedding",
@@ -1536,27 +2918,35 @@ function renderProviderBlock(pname, prov, llm) {
   const block = document.createElement("div");
   block.className = "subblock";
   const h = document.createElement("h4");
-  h.appendChild(document.createTextNode(pname));
+  // Inline-editable name. Click the heading → it turns into an
+  // input. Replaces the old "rename" prompt() flow.
+  h.appendChild(_renderEditableKey(pname, {
+    scope: "provider",
+    placeholder: "provider name",
+    validate: (nv) => llm.providers[nv] ? "name exists" : null,
+    onRename: (nv) => {
+      llm.providers[nv] = llm.providers[pname];
+      delete llm.providers[pname];
+      // Cascade: tags whose provider field starts with "<pname>/"
+      // need their prefix substituted so they keep pointing at the
+      // same provider object.
+      const prefix = pname + "/";
+      for (const t of Object.values(llm.tags || {})) {
+        if (typeof t.provider === "string" && t.provider.startsWith(prefix)) {
+          t.provider = nv + "/" + t.provider.slice(prefix.length);
+        }
+      }
+      renderSettingsForm();
+    },
+  }));
   const actions = document.createElement("span");
   actions.className = "actions";
-  const renameBtn = mkBtn("rename", () => {
-    const nn = prompt("New name:", pname);
-    if (!nn || nn === pname) return;
-    if (llm.providers[nn]) { alert("exists"); return; }
-    llm.providers[nn] = llm.providers[pname];
-    delete llm.providers[pname];
-    // Update roles referencing old name
-    for (const r of Object.values(llm.roles || {})) {
-      if (r.provider === pname) r.provider = nn;
-    }
-    renderSettingsForm();
-  });
   const delBtn = mkBtn("delete", () => {
     if (!confirm(`delete provider "${pname}"?`)) return;
     delete llm.providers[pname];
     renderSettingsForm();
   }, "danger");
-  actions.appendChild(renameBtn); actions.appendChild(delBtn);
+  actions.appendChild(delBtn);
   h.appendChild(actions);
   block.appendChild(h);
 
@@ -1596,7 +2986,7 @@ function renderModelRow(prov, idx) {
   nameIn.addEventListener("input", () => { m.name = nameIn.value; });
   row.appendChild(nameIn);
   row.appendChild(renderCapabilitiesMulti(m));
-  const del = mkBtn("×", () => { prov.models.splice(idx, 1); renderSettingsForm(); }, "danger");
+  const del = mkBtn("×", () => { prov.models.splice(idx, 1); renderSettingsForm(); }, "btn-x");
   row.appendChild(del);
   return row;
 }
@@ -1679,6 +3069,35 @@ function mkDropdown(triggerLabel, items, onPick) {
   return dd;
 }
 
+// Build the hover-tooltip body for a tag-row label. Lists the
+// provider/model the tag points at + every place it's currently
+// consumed (core_purposes, embedding, reranker, plugin
+// llm_purposes). Plain text — gets attached as `label.title`.
+function _tagTooltip(tname, tag) {
+  const llm = cfgState.llm || {};
+  const lines = [];
+  lines.push(`Tag: ${tname}`);
+  lines.push(`Binding: ${(tag && tag.provider) || "(unset)"}`);
+  const purposes = [];
+  for (const [purp, t] of Object.entries(llm.core_purposes || {})) {
+    if (t === tname) purposes.push(`core.${purp}`);
+  }
+  if (llm.embedding === tname) purposes.push("embedding slot");
+  if (llm.reranker === tname) purposes.push("reranker slot");
+  for (const p of (availableModifiers || [])) {
+    const cfg = (modifierConfigEdits || {})[p && p.name];
+    const lp = cfg && cfg.llm_purposes;
+    if (!lp) continue;
+    for (const [k, v] of Object.entries(lp)) {
+      if (v === tname) purposes.push(`${p.name}.${k}`);
+    }
+  }
+  lines.push(
+    "Used by: " + (purposes.length ? purposes.join(", ") : "(nothing yet)"),
+  );
+  return lines.join("\n");
+}
+
 function renderTagRow(tname, tags, providers) {
   // Wrapper so the params <details> sits directly below the tag row
   // (sharing a container keeps delete/rename behavior correct).
@@ -1687,7 +3106,30 @@ function renderTagRow(tname, tags, providers) {
   const row = document.createElement("div");
   row.className = "cfg-row";
   const lab = document.createElement("label");
-  lab.textContent = tname;
+  // Inline-editable tag name. Click → input → commit on blur/Enter.
+  lab.appendChild(_renderEditableKey(tname, {
+    scope: "tag",
+    placeholder: "tag name",
+    validate: (nv) => tags[nv] ? "name exists" : null,
+    onRename: (nv) => {
+      tags[nv] = tags[tname];
+      delete tags[tname];
+      // Cascade: any core_purpose / embedding / reranker that
+      // referenced the old name needs to follow.
+      const llm = cfgState.llm || {};
+      for (const [purp, t] of Object.entries(llm.core_purposes || {})) {
+        if (t === tname) llm.core_purposes[purp] = nv;
+      }
+      if (llm.embedding === tname) llm.embedding = nv;
+      if (llm.reranker === tname) llm.reranker = nv;
+      renderSettingsForm();
+    },
+  }));
+  // Hover help: surface the tag's binding + every consumer
+  // (Core / Plugin Purposes, embedding, reranker) so the user
+  // can see at a glance what renaming or unbinding would
+  // affect, without having to expand the params block.
+  lab.title = _tagTooltip(tname, tags[tname]);
   row.appendChild(lab);
 
   const wrap = document.createElement("div");
@@ -1757,7 +3199,7 @@ function renderTagRow(tname, tags, providers) {
     if (llm.embedding === tname) llm.embedding = "";
     if (llm.reranker === tname) llm.reranker = "";
     renderSettingsForm();
-  }, "danger");
+  }, "btn-x");
 
   wrap.appendChild(provSel); wrap.appendChild(modSel); wrap.appendChild(del);
   row.appendChild(wrap);
@@ -1809,13 +3251,13 @@ function renderTagParamsBlock(tname, tags) {
 
 
 // Render the core_purposes mapping as `purpose: tag` rows. Users
-// can add custom purposes (e.g. for future Modifiers), but the
-// well-known core purposes (self_thinking required; compact /
-// classifier optional) are always shown so people know they exist.
+// can add custom purposes via "+ add purpose"; the well-known core
+// purposes are always shown so people know they exist.
 const KNOWN_CORE_PURPOSES = [
   ["self_thinking", "required — Self's per-beat heartbeat LLM"],
-  ["compact", "sliding-window history → GM compaction LLM"],
-  ["classifier", "node category classifier (often same as compact)"],
+  ["compact", "sliding-window history -> GM compaction LLM (also drives sleep clustering + KB index rebuild)"],
+  ["classifier", "node category classifier (extractor + classifier; falls back to compact then self_thinking)"],
+  ["hypothalamus", "optional — bound when DecisionEngine is HypothalamusDecisionEngine (LLM translator instead of the default scripted <tool_call> parser)"],
 ];
 
 function renderCorePurposesBlock(llm) {
@@ -1841,12 +3283,99 @@ function renderCorePurposesBlock(llm) {
   }
 
   const addBtn = mkBtn("+ add purpose", () => {
-    const name = prompt("Custom core purpose name:");
-    if (!name || llm.core_purposes[name]) return;
+    const name = _uniqueDraftName(llm.core_purposes, "purpose");
     llm.core_purposes[name] = "";
+    _pendingNewKey = { scope: "purpose", name };
     renderSettingsForm();
   });
   sub.appendChild(addBtn);
+  return sub;
+}
+
+// Aggregated view of every enabled plugin's ``llm_purposes`` (from
+// each plugin's meta.yaml). One row per "<plugin>.<purpose>" with a
+// tag-binding dropdown. Edits feed straight into the per-plugin
+// config (``modifierConfigEdits[plugin].llm_purposes[purpose]``) —
+// the same backing store the per-plugin row in the Plugins panel
+// uses, so both views stay in sync without a separate save path.
+//
+// Rendered in the LLM section so users have a single "what
+// component uses what LLM?" pane; a long-standing complaint was
+// that these knobs were buried inside expanded plugin rows.
+function renderPluginPurposesBlock(llm) {
+  const sub = document.createElement("div");
+  sub.className = "subblock";
+  const head = document.createElement("h4");
+  head.appendChild(document.createTextNode("Plugin Purposes"));
+  sub.appendChild(head);
+
+  // Filter to enabled plugins that actually declare an LLM purpose;
+  // empty list ⇒ render a placeholder explaining what would show up.
+  const enabledNames = new Set([
+    ...((cfgState.modifiers || [])),
+    ...((cfgState.plugins || [])),
+  ]);
+  const candidates = (availableModifiers || []).filter((p) =>
+    enabledNames.has(p.name)
+    && Array.isArray(p.llm_purposes) && p.llm_purposes.length,
+  );
+
+  if (!candidates.length) {
+    const hint = document.createElement("p");
+    hint.className = "section-hint";
+    hint.style.borderLeftColor = "var(--muted)";
+    hint.textContent =
+      "no enabled plugin declares an llm_purposes block. Plugins "
+      + "that need an LLM surface their bindings here once enabled.";
+    sub.appendChild(hint);
+    return sub;
+  }
+
+  const tagNames = Object.keys(llm.tags || {});
+  for (const plugin of candidates) {
+    // Lazy-load the plugin's per-folder config the first time we
+    // need it. The per-plugin row uses the same cache, so editing
+    // here updates the row's view too on the next render.
+    if (!modifierConfigEdits[plugin.name]) {
+      modifierConfigEdits[plugin.name] = {};
+      fetch(`/api/modifiers/${encodeURIComponent(plugin.name)}/config`)
+        .then((r) => (r.ok ? r.json() : { config: {} }))
+        .then((body) => {
+          modifierConfigEdits[plugin.name] = body.config || {};
+          renderSettingsForm();
+        })
+        .catch(() => {});
+    }
+    const cfg = modifierConfigEdits[plugin.name];
+    cfg.llm_purposes = cfg.llm_purposes || {};
+
+    for (const purpose of plugin.llm_purposes) {
+      const row = document.createElement("div");
+      row.className = "cfg-row";
+      const lab = document.createElement("label");
+      lab.textContent = `${plugin.name}.${purpose.name}`;
+      if (purpose.description) lab.title = purpose.description;
+      row.appendChild(lab);
+
+      const sel = document.createElement("select");
+      const blank = document.createElement("option");
+      blank.value = ""; blank.textContent = "(unbound)";
+      sel.appendChild(blank);
+      for (const t of tagNames) {
+        const opt = document.createElement("option");
+        opt.value = t; opt.textContent = t;
+        sel.appendChild(opt);
+      }
+      sel.value = cfg.llm_purposes[purpose.name] || "";
+      sel.addEventListener("change", () => {
+        cfg.llm_purposes = cfg.llm_purposes || {};
+        if (sel.value) cfg.llm_purposes[purpose.name] = sel.value;
+        else delete cfg.llm_purposes[purpose.name];
+      });
+      row.appendChild(sel);
+      sub.appendChild(row);
+    }
+  }
   return sub;
 }
 
@@ -1854,7 +3383,25 @@ function _purposeRow(llm, purp, tagNames, helpText) {
   const row = document.createElement("div");
   row.className = "cfg-row";
   const lab = document.createElement("label");
-  lab.textContent = purp;
+  // Well-known purposes (self_thinking / compact / classifier) drive
+  // runtime behaviour by name — renaming would silently break
+  // dispatch — so they stay as plain text. User-added purposes are
+  // free-form labels and get inline-rename like providers + tags.
+  const isKnown = KNOWN_CORE_PURPOSES.some(([p]) => p === purp);
+  if (isKnown) {
+    lab.textContent = purp;
+  } else {
+    lab.appendChild(_renderEditableKey(purp, {
+      scope: "purpose",
+      placeholder: "purpose name",
+      validate: (nv) => llm.core_purposes[nv] != null ? "name exists" : null,
+      onRename: (nv) => {
+        llm.core_purposes[nv] = llm.core_purposes[purp];
+        delete llm.core_purposes[purp];
+        renderSettingsForm();
+      },
+    }));
+  }
   if (helpText) lab.title = helpText;
   row.appendChild(lab);
 
@@ -1878,12 +3425,12 @@ function _purposeRow(llm, purp, tagNames, helpText) {
   wrap.appendChild(sel);
 
   // Custom (non-known) purposes get a delete button; well-known ones
-  // are persistent.
-  const isKnown = KNOWN_CORE_PURPOSES.some(([p]) => p === purp);
+  // are persistent. (`isKnown` was already computed above to gate
+  // the editable-name path — reuse instead of redeclaring.)
   if (!isKnown) {
     const del = mkBtn("×", () => {
       delete llm.core_purposes[purp]; renderSettingsForm();
-    }, "danger");
+    }, "btn-x");
     wrap.appendChild(del);
   } else {
     wrap.appendChild(document.createElement("span"));
@@ -1941,7 +3488,7 @@ function renderModelSlotBlock(llm, fieldName, helpText) {
 // (description + config_schema + components[] with kind, plus any
 // llm_purposes), already grouped by plugin folder.
 //
-// Live load status (loaded ✓ / error ✗) comes from /api/plugins,
+// Live load status (loaded / error) comes from /api/plugins,
 // which is the runtime-observation snapshot and is keyed by component
 // project — we aggregate per plugin name for the badge.
 //
@@ -1989,6 +3536,26 @@ async function loadAvailableModifiers() {
   }
 }
 
+// Engine slot catalog from /api/engines/available — populated on
+// settings load + consumed by renderEngineOverridesSection. Keyed
+// by slot name; each value is ``{default, options:[{name, source,
+// description}]}``. Empty until the first fetch lands.
+let engineCatalog = {};
+
+async function loadEngineCatalog() {
+  try {
+    const r = await fetch("/api/engines/available");
+    if (r.ok) {
+      const body = await r.json();
+      engineCatalog = body.engines || {};
+    } else {
+      engineCatalog = {};
+    }
+  } catch (e) {
+    engineCatalog = {};
+  }
+}
+
 function _pluginKinds(plugin) {
   const out = new Set();
   for (const c of (plugin.components || [])) {
@@ -2007,12 +3574,15 @@ function _hasServiceKind(plugin) {
 }
 
 // Live load status aggregated per plugin name from /api/plugins
-// (which lists tools + channels separately). Returns
+// (which lists tools + channels + modifiers separately). Returns
 // {loaded:boolean, error:string|null} or undefined when the plugin
-// isn't loaded yet.
+// isn't loaded yet. Modifier-only plugins (e.g. bootstrap,
+// in_mind_note) only appear under "modifiers" — without iterating
+// that bucket the aggregate would say "not loaded" for every such
+// plugin even when the modifier IS registered.
 function _liveStatusByName() {
   const out = {};
-  for (const kind of ["tools", "channels"]) {
+  for (const kind of ["tools", "channels", "modifiers"]) {
     const items = (pluginReport && pluginReport[kind]) || [];
     for (const entry of items) {
       const proj = entry.project || entry.name;
@@ -2216,7 +3786,11 @@ function _renderPluginCard(plugin, enabled, liveByName, modIdx, modCount) {
 
   const title = document.createElement("strong");
   title.textContent = plugin.name;
-  if (plugin.description) title.title = plugin.description;
+  // Description used to land on `title.title` (browser tooltip on
+  // hover) — moved to a permanent block inside the expanded body
+  // below. The hover-only path was easy to miss and the
+  // description text is often paragraph-length, which a tooltip
+  // truncates / wraps awkwardly.
   head.appendChild(title);
 
   for (const kind of _pluginKinds(plugin)) {
@@ -2244,6 +3818,18 @@ function _renderPluginCard(plugin, enabled, liveByName, modIdx, modCount) {
   card.appendChild(head);
 
   if (!isExpanded) return card;
+
+  // Description block — replaces the old hover-tooltip surface.
+  // Visible whenever the plugin row is expanded, so the operator
+  // sees the description in their natural flow ("I clicked open
+  // → I read what it does") rather than having to guess that the
+  // title is hover-able.
+  if (plugin.description) {
+    const descBlock = document.createElement("div");
+    descBlock.className = "plugin-description";
+    descBlock.textContent = plugin.description;
+    card.appendChild(descBlock);
+  }
 
   // Live error pre-block, when /api/plugins surfaced one for this
   // plugin. The header status badge already says "error"; this shows
@@ -2355,14 +3941,34 @@ function _renderLLMPurposesEditor(plugin, cfg) {
   return block;
 }
 
-function showToast(text, ok = true) {
-  settingsToast.textContent = text;
-  settingsToast.className = ok ? "ok" : "err";
-  setTimeout(() => { settingsToast.textContent = ""; settingsToast.className = ""; }, 5000);
+// Map toast level → Bootstrap icon. Re-using the existing icons
+// keeps the visual vocabulary consistent with the rest of the SPA
+// (status bar, tabs, etc.).
+const _TOAST_ICON = {
+  ok: "check-circle-fill",
+  err: "x-circle-fill",
+  warn: "exclamation-circle-fill",
+  info: "info-circle-fill",
+  pending: "arrow-clockwise",
+};
+
+function showToast(text, level = "ok") {
+  const icon = window.biIcon(_TOAST_ICON[level] || _TOAST_ICON.info, 13);
+  const t = document.createElement("span");
+  t.className = "toast-text";
+  t.textContent = text;
+  settingsToast.innerHTML = "";
+  settingsToast.insertAdjacentHTML("beforeend", icon);
+  settingsToast.appendChild(t);
+  settingsToast.className = "toast " + level;
+  setTimeout(() => {
+    settingsToast.textContent = "";
+    settingsToast.className = "";
+  }, 5000);
 }
 
 $("#settings-save").addEventListener("click", async () => {
-  if (cfgState == null) { showToast("✗ nothing to save", false); return; }
+  if (cfgState == null) { showToast("nothing to save", "err"); return; }
   try {
     // Central config.yaml carries the two enable lists
     // (cfgState.modifiers, cfgState.plugins); the unified panel's
@@ -2376,7 +3982,7 @@ $("#settings-save").addEventListener("click", async () => {
     });
     const body = await r.json();
     if (!r.ok) {
-      showToast(`✗ save failed: ${body.detail || r.statusText}`, false);
+      showToast(`save failed: ${body.detail || r.statusText}`, "err");
       return;
     }
 
@@ -2404,12 +4010,12 @@ $("#settings-save").addEventListener("click", async () => {
     }
 
     if (pluginErrs.length) {
-      showToast(`✗ plugin saves failed: ${pluginErrs.join(", ")}`, false);
+      showToast(`plugin saves failed: ${pluginErrs.join(", ")}`, "err");
     } else {
-      showToast(`✓ saved (backup: ${body.backup || "n/a"}). Restart for changes to take effect.`);
+      showToast(`saved (backup: ${body.backup || "n/a"}). Restart for changes to take effect.`, "ok");
     }
   } catch (e) {
-    showToast("✗ network: " + e, false);
+    showToast("network: " + e, "err");
   }
 });
 
@@ -2418,13 +4024,70 @@ $("#settings-restart").addEventListener("click", async () => {
   try {
     const r = await fetch("/api/restart", { method: "POST" });
     if (r.ok) {
-      showToast("⏳ restarting...");
+      showToast("restarting...", "pending");
     } else {
       const body = await r.json();
-      showToast(`✗ restart failed: ${body.detail || r.statusText}`, false);
+      showToast(`restart failed: ${body.detail || r.statusText}`, "err");
     }
   } catch (e) {
     // Network error is expected during restart
-    showToast("⏳ restarting (lost connection)...");
+    showToast("restarting (lost connection)...", "pending");
+  }
+});
+
+// "Apply changes" — full plugin reconcile WITHOUT process
+// restart:
+//   - newly-enabled plugins are registered + their channels
+//     started;
+//   - already-loaded plugins are unregistered + re-registered
+//     so config edits / LLM-binding changes take effect;
+//   - plugins removed from the config are unregistered
+//     (channels stopped, tools/modifiers torn down).
+// The toast summarises what changed so the operator knows the
+// cheap path was enough vs. when they need to read the errors
+// list (still rare — heartbeat orchestrator code edits and
+// memory-backend swaps are the only true "must restart" cases
+// left).
+$("#settings-apply")?.addEventListener("click", async () => {
+  showToast("applying...", "pending");
+  try {
+    const r = await fetch("/api/plugins/hot_reload", { method: "POST" });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      showToast(
+        `apply failed: ${body.detail || r.statusText}`, "err",
+      );
+      return;
+    }
+    const data = await r.json();
+    const reloaded = (data.reloaded || []).map((a) => a.plugin);
+    const added = (data.added || []).map((a) => a.plugin);
+    const removed = (data.removed || []).map((a) => a.plugin);
+    const errors = data.errors || [];
+    const parts = [];
+    if (reloaded.length) {
+      parts.push(`reloaded: ${reloaded.join(", ")}`);
+    }
+    if (added.length) {
+      parts.push(`added: ${added.join(", ")}`);
+    }
+    if (removed.length) {
+      parts.push(`removed: ${removed.join(", ")}`);
+    }
+    if (errors.length) {
+      parts.push(
+        `errors: ${errors.map((e) => `${e.plugin}: ${e.error}`).join("; ")}`,
+      );
+    }
+    if (!parts.length) {
+      parts.push("no plugins enabled / changed");
+    }
+    const level = errors.length ? "err" : "ok";
+    showToast(parts.join(" | "), level);
+    // Refresh the install banner since added plugins may surface
+    // new pending deps.
+    refreshInstallBanner().catch(() => {});
+  } catch (e) {
+    showToast(`apply error: ${e}`, "err");
   }
 });

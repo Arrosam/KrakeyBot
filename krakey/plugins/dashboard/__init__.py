@@ -29,6 +29,96 @@ if TYPE_CHECKING:
 _HISTORY_CACHE_KEY = "web_chat_history"
 
 
+def _restart_self(runtime) -> None:
+    """Spawn a fresh copy of the current process and exit this one.
+
+    Why not ``os.execv``: on Windows, Python implements ``execv`` as
+    spawn-then-exit; the parent dies before the child has fully
+    attached to the console / event loop, and in practice the
+    dashboard-driven restart leaves the user with "Krakey shut down"
+    but no replacement running. ``subprocess.Popen`` followed by
+    ``os._exit`` is reliable on both Windows and POSIX, and
+    ``CREATE_NEW_PROCESS_GROUP`` makes the child independent of the
+    parent's group so a Ctrl+C aimed at the dying parent doesn't
+    propagate to the new instance.
+
+    Three launch modes need to be distinguished:
+
+      A. ``python -m krakey`` — ``__main__.__spec__.name`` is
+         ``"krakey.__main__"``. Re-spawn via ``python -m krakey`` so
+         the package-import machinery is restored.
+      B. ``krakey`` (the setuptools console-script entry point,
+         backed by a generated ``.exe`` or POSIX shebang script) —
+         ``__main__.__spec__`` is either ``None`` or has ``name ==
+         "__main__"``. Re-spawn ``sys.argv[0]`` directly; the wrapper
+         knows how to bootstrap Python.
+      C. ``python <path>/krakey/__main__.py`` — same spec shape as B
+         but argv[0] ends in ``.py``. Re-spawn with the interpreter
+         prepended.
+
+    The pre-fix code lumped B + C together and unconditionally tried
+    ``-m <spec.name>``, which broke mode B because ``-m __main__`` is
+    a runpy error (``__main__.__spec__ is None``).
+    """
+    import subprocess
+
+    main = sys.modules.get("__main__")
+    spec = getattr(main, "__spec__", None) if main is not None else None
+    spec_name = getattr(spec, "name", None) if spec is not None else None
+
+    if spec_name and spec_name != "__main__":
+        # Mode A: ``python -m <pkg>`` — re-spawn with the same -m
+        # invocation. Strip a trailing ".__main__" so ``-m`` gets the
+        # package name, not the inner module.
+        mod_name = spec_name
+        if mod_name.endswith(".__main__"):
+            mod_name = mod_name[: -len(".__main__")]
+        args = [sys.executable, "-m", mod_name, *sys.argv[1:]]
+    else:
+        # Modes B + C — split by file extension on argv[0]. An
+        # entry-point .exe / .bat / shebang script knows how to
+        # invoke Python itself; a .py file needs the interpreter
+        # prepended.
+        argv0 = sys.argv[0] if sys.argv else ""
+        if argv0.lower().endswith(".py"):
+            args = [sys.executable, *sys.argv]
+        elif argv0:
+            args = list(sys.argv)
+        else:
+            # Pathological: no argv[0]. Best effort — re-launch the
+            # interpreter (which will print the REPL banner; not
+            # ideal, but better than spawning nothing).
+            args = [sys.executable]
+
+    # Tell the child it's a restart-takeover from us, not a fresh
+    # invocation racing against a still-running instance. Without
+    # this, the child reads the pidfile + sees this dying parent
+    # still alive (the 100ms sleep below covers stdio inheritance,
+    # but the child runs faster than that) and bails with
+    # "krakey already running (pid …); use `krakey stop` first".
+    # The CLI's pidfile guard pops this env on read and falls
+    # through, taking over the pidfile cleanly.
+    env = os.environ.copy()
+    env["KRAKEY_RESTART_PARENT_PID"] = str(os.getpid())
+
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+    try:
+        subprocess.Popen(
+            args, creationflags=creationflags, close_fds=False, env=env,
+        )
+    except Exception as e:  # noqa: BLE001
+        runtime.log.runtime_error(f"dashboard: restart spawn failed: {e}")
+        return  # don't kill the parent if the child couldn't start
+    # Tiny pause so the child has time to inherit stdio handles before
+    # the parent tears them down. Empirically 100ms is enough on
+    # Windows; cheap insurance.
+    import time
+    time.sleep(0.1)
+    os._exit(0)
+
+
 def build_channel(ctx: "PluginContext"):
     """Create the chat channel; start the dashboard server in a
     background thread (skipped when port=0)."""
@@ -86,6 +176,7 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
     )
     from krakey.plugins.dashboard.auth import load_or_create_token
     from krakey.plugins.dashboard.events import EventBroadcaster
+    from krakey.plugins.dashboard.log_capture import LogCapture
     from krakey.plugins.dashboard.threaded_server import ThreadedDashboardServer
 
     runtime = ctx.services.get("runtime")
@@ -109,7 +200,7 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
 
     def on_restart() -> None:
         runtime.log.hb("restart requested via dashboard — re-execing")
-        os.execv(sys.executable, [sys.executable, *sys.argv])
+        _restart_self(runtime)
 
     # Token sits next to the chat history on disk so the dashboard's
     # data files share a directory and `history_path` overrides naturally
@@ -118,6 +209,22 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
     history_path = cfg.get("history_path", "workspace/data/web_chat.jsonl")
     token_path = Path(history_path).parent / "dashboard.token"
     auth_token = load_or_create_token(token_path)
+
+    # Capture stdout/stderr so the Log tab can show live runtime output.
+    # Force-enable runtime ANSI colours so the Log tab can render
+    # category-tinted lines even when the daemon's stdout is captured
+    # to a file (the colors helper auto-disables on non-TTY by default).
+    # Side effect: the on-disk daemon log gets ANSI escapes — fine in
+    # any modern terminal (Windows Terminal, cmd with VT enabled,
+    # macOS / Linux). Set NO_COLOR=1 to opt out.
+    if not os.environ.get("NO_COLOR"):
+        try:
+            from krakey.runtime.console import colors as _colors
+            _colors._ENABLED = True
+        except Exception:  # noqa: BLE001
+            pass
+    log_capture = LogCapture()
+    log_capture.install()
 
     try:
         broadcaster = EventBroadcaster(runtime.events)
@@ -130,6 +237,7 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
             on_restart=on_restart,
             plugin_configs_root=Path(plugin_configs_root),
             auth_token=auth_token,
+            log_capture=log_capture,
         )
         server = ThreadedDashboardServer(app, host=host, port=port)
         server.start()
@@ -141,24 +249,25 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
         runtime.log.hb(
             f"dashboard listening on http://{host}:{server.port}"
         )
-        # Print the one-click URL with the token only when stderr is a
-        # real TTY — that way we don't paint the bearer token into log
-        # files when stdout/stderr is captured (systemd, supervisord,
-        # `python -m krakey > log`, log aggregators). When captured,
-        # we tell the user where the token file lives instead.
-        url_redacted = f"http://{host}:{server.port}/?token=<see {token_path}>"
+        # Always log the one-click URL by default — this is a personal
+        # local daemon and the log file lives on the user's own disk
+        # next to the token file anyway. ``krakey start`` redirects
+        # stdout to that log, so without the URL in the log the user
+        # has no way to see what to open. Set
+        # ``KRAKEY_REDACT_TOKEN_LOG=1`` to opt into redaction (for
+        # shipping logs to a remote aggregator etc.).
         url_full = f"http://{host}:{server.port}/?token={auth_token}"
-        if sys.stderr.isatty():
-            print(
-                f"[dashboard] URL (one-click): {url_full}",
-                file=sys.stderr, flush=True,
+        if os.environ.get("KRAKEY_REDACT_TOKEN_LOG"):
+            url_redacted = (
+                f"http://{host}:{server.port}/?token=<see {token_path}>"
             )
-        else:
             runtime.log.hb(f"dashboard URL: {url_redacted}")
             runtime.log.hb(
-                "dashboard token redacted from logs; read the file or "
-                "set ?token=<contents> manually"
+                "dashboard token redacted from logs (KRAKEY_REDACT_-"
+                "TOKEN_LOG=1); read the token file directly"
             )
+        else:
+            runtime.log.hb(f"dashboard URL (one-click): {url_full}")
     except OSError as e:
         runtime.log.runtime_error(
             f"dashboard failed to start (port {port} in use? {e}); "
