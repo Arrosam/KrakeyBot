@@ -116,16 +116,18 @@ User mentioned a deadline Friday. Watch for follow-up.
 
 **4. Enter sleep mode**
 
-Sleep is NOT a tool call in this mode. Output the literal phrase
-"enter sleep mode" inside `[DECISION]`; the runtime detects it and
-triggers the 7-phase Sleep transition:
+`sleep` is a built-in tool — call it like any other. The runtime
+intercepts the dispatch and runs the full 7-phase Sleep cycle at
+the end of this beat:
 
 ```
 [THINKING]
 fatigue 95. gm full. time to sleep.
 
 [DECISION]
-enter sleep mode
+<tool_call>
+{"name": "sleep"}
+</tool_call>
 ```"""
 
 

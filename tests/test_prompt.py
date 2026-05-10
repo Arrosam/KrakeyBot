@@ -18,13 +18,17 @@ def test_dna_has_all_sections():
 
 
 def test_dna_disambiguates_sleep_and_idle():
-    """Regression: DNA must teach that Sleep and Idle are different
-    mechanisms + warn against ambiguous 'rest' wording that would
-    otherwise slip past the Hypothalamus as a sleep trigger."""
+    """DNA must teach that Sleep and Idle are different mechanisms +
+    warn against ambiguous wording ("rest", "pause") that should NOT
+    enter Sleep. The exact Sleep trigger shape (sleep tool call vs.
+    NL phrase) lives in the per-engine [ACTION FORMAT] layer, not
+    DNA — so this test no longer asserts a specific phrasing."""
     assert "Idle" in DNA and "Sleep" in DNA
     assert "rest" in DNA.lower()
-    # The explicit trigger phrase the Hypothalamus recognises must be stated
-    assert "enter sleep mode" in DNA.lower()
+    # DNA must point Self at [ACTION FORMAT] for the actual trigger
+    # (since it varies by decision engine), instead of pinning a
+    # specific phrase or call shape itself.
+    assert "[ACTION FORMAT]" in DNA
 
 
 def test_dna_mentions_active_memory_recall():
