@@ -96,21 +96,34 @@ class BootstrapModifier:
         # Subscribe immediately — EventBus is alive by the time the
         # plugin loader builds this modifier.
         self._events.subscribe(self._on_event)
-        if own_done:
-            # The plugin is in cfg.plugins (otherwise we wouldn't
-            # have been constructed) AND own config says we're done.
-            # Either the user re-enabled the plugin without resetting
-            # bootstrap_done, or they're keeping it enabled by
-            # mistake. Either way: warn loudly so they notice. The
-            # plugin then stays inactive for the session.
+        if own_done or sm_done:
+            # Plugin is in cfg.plugins (otherwise we wouldn't have
+            # been constructed) AND at least one of the two done
+            # markers is set. The plugin stays inactive — Self won't
+            # see the BOOTSTRAP_PROMPT, NoteEvent self-model patching
+            # is a no-op. Tell the user exactly which markers are
+            # set + how to reset them, since BOTH must be cleared
+            # to re-bootstrap (either marker alone keeps the
+            # modifier inactive).
+            set_markers: list[str] = []
+            if own_done:
+                set_markers.append(
+                    "workspace/plugins/bootstrap/config.yaml: "
+                    "bootstrap_done"
+                )
+            if sm_done:
+                set_markers.append(
+                    "workspace/self_model.yaml: "
+                    "state.bootstrap_complete"
+                )
             print(
                 "warning: bootstrap plugin is enabled but already "
-                "marked complete (workspace/plugins/bootstrap/"
-                "config.yaml has bootstrap_done: true). To "
-                "re-bootstrap: set bootstrap_done: false in that "
-                "file. Otherwise remove 'bootstrap' from cfg.plugins "
-                "to silence this notice. The plugin will stay "
-                "inactive until then.",
+                "marked complete via " + " AND ".join(set_markers)
+                + ". To re-bootstrap, clear ALL the markers above "
+                "(either one left set keeps the modifier inactive). "
+                "Otherwise remove 'bootstrap' from cfg.plugins to "
+                "silence this notice. The plugin stays inactive "
+                "until then.",
                 file=sys.stderr,
             )
 
