@@ -162,6 +162,34 @@ async def test_hot_reload_starts_newly_registered_channels(monkeypatch):
     )
 
 
+async def test_unregister_passes_runtime_to_modifier_detach():
+    """Regression: ``loader.unregister_one`` used to call
+    ``detach(None)`` which made it useless for modifiers needing the
+    runtime to clean up event-bus subscriptions, async tasks, file
+    watchers, etc. Verify the actual runtime instance reaches
+    ``detach(...)``.
+    """
+    runtime = build_runtime_with_fakes(
+        self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
+        modifiers=["in_mind_note"],
+    )
+    # Decorate the registered modifier instance with a detach hook
+    # that records what was passed in. We pull the in_mind modifier
+    # by role since it's known to be loaded by the helper.
+    mod = runtime.modifiers.by_role("in_mind")
+    assert mod is not None, "in_mind_note modifier should be loaded"
+    received: list = []
+    mod.detach = lambda rt: received.append(rt)
+
+    # Trigger the unregister path (hot_reload with the plugin removed
+    # from target list = unregister).
+    await runtime.hot_reload_plugins(["dashboard"])
+
+    assert received == [runtime], (
+        f"detach should receive the runtime instance; got {received!r}"
+    )
+
+
 async def test_hot_reload_back_to_back_idempotent():
     """Running hot_reload twice with the same target produces
     a report whose second pass doesn't add or remove anything
