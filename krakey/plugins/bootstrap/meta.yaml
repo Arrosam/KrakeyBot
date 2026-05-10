@@ -1,13 +1,16 @@
 name: bootstrap
 description: |
-  First-boot self-awareness: injects GENESIS.md into Self's prompt high
-  (above DNA) on early beats, parses [NOTE] for self-model patches and
-  the "bootstrap complete" marker, and auto-deactivates once
-  self_model.state.bootstrap_complete is True.
+  First-boot self-awareness: injects GENESIS.md into Self's prompt
+  high (above DNA), parses [NOTE] for self-model patches, and
+  auto-completes once Self has set both identity.name and
+  identity.persona — at which point the plugin removes itself from
+  the central config.yaml so it won't run on the next start.
 
-  No LLM purposes — the modifier is structural. Self_model + GENESIS
-  paths are configurable via the per-plugin config.yaml; defaults
-  point at workspace/self_model.yaml + workspace/GENESIS.md.
+  Re-enable from the dashboard's Plugins panel to re-bootstrap.
+
+  No LLM purposes — the modifier is structural. GENESIS path is
+  configurable via the per-plugin config.yaml; default points at
+  workspace/GENESIS.md.
 
 components:
   - kind: modifier

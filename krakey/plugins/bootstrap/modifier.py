@@ -4,27 +4,27 @@ The modifier owns three behaviors:
 
   1. **Prompt injection** — ``modify_prompt`` writes the
      ``BOOTSTRAP_PROMPT`` (with embedded GENESIS text) into the
-     ``bootstrap_intro`` element when bootstrap is active.
+     ``bootstrap_intro`` element while the modifier is active.
   2. **NOTE signal parsing** — the modifier subscribes to
      ``NoteEvent`` on the EventBus. When Self's [NOTE] contains a
      ``<self-model>`` JSON block the modifier deep-merges it into
      the persisted self_model. The modifier then checks completion
      criteria and auto-finalizes when met (see below).
-  3. **Auto-completion + auto-disable** — the plugin decides when
+  3. **Auto-completion + self-disable** — the plugin decides when
      bootstrap is done; Self does NOT write any completion marker.
      Criterion: ``self_model.identity.name`` AND
      ``self_model.identity.persona`` both non-empty. On completion
      the plugin:
-        * sets ``self_model.state.bootstrap_complete = True``,
-        * writes ``bootstrap_done: true`` into its own
-          ``workspace/plugins/bootstrap/config.yaml``,
+        * sets ``self_model.state.bootstrap_complete = True``
+          (informational — surfaces in ``/status`` and dashboard),
+        * **removes "bootstrap" from the central config.yaml**'s
+          ``modifiers:`` and ``plugins:`` lists so the plugin won't
+          load on the next start,
         * deactivates itself for the rest of the session.
 
-If a future runtime starts with the bootstrap plugin enabled in
-``cfg.plugins`` AND the plugin's own config has ``bootstrap_done:
-true``, the factory emits a stderr warning: bootstrap is already
-done; either remove the plugin from ``cfg.plugins`` or set
-``bootstrap_done: false`` to re-bootstrap.
+This means the dashboard's plugin checkbox is the **single source of
+truth** for whether bootstrap runs: re-enable it = re-bootstrap. No
+separate "bootstrap_done" flag, no double-marker reset dance.
 
 Idle cadence is no longer runtime-pinned — Bootstrap teaches Self
 via prompt to output ``[IDLE] 10`` while in bootstrap mode. The
@@ -38,10 +38,11 @@ plugin invariant).
 from __future__ import annotations
 
 import logging
-import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from krakey.plugin_system.config import FilePluginConfigStore
+import yaml as _yaml
+
 from krakey.plugins.bootstrap.prompt import BOOTSTRAP_PROMPT
 from krakey.plugins.bootstrap.state import (
     load_genesis,
@@ -70,62 +71,24 @@ class BootstrapModifier:
         *,
         self_model_store: "SelfModelStore",
         events: Any,
-        plugin_config_store: FilePluginConfigStore,
-        plugin_config: dict[str, Any],
+        central_config_path: Path | None = None,
         genesis_path: str = "workspace/GENESIS.md",
     ):
         self._store = self_model_store
         self._events = events
-        self._plugin_config_store = plugin_config_store
-        # Snapshot of the per-plugin config at construction time —
-        # other entries (genesis_path, future fields) are preserved
-        # when the plugin writes back its bootstrap_done flag.
-        self._plugin_config_initial = dict(plugin_config or {})
-        self._genesis_path = genesis_path
-        # Two independent "already done" markers must both be False
-        # for the plugin to be active:
-        #   * plugin own config: ``bootstrap_done: true``
-        #   * self_model.state.bootstrap_complete: True
-        sm = self._safe_load_self_model()
-        own_done = bool(self._plugin_config_initial.get("bootstrap_done"))
-        sm_done = bool(
-            (sm or {}).get("state", {}).get("bootstrap_complete", False),
+        self._central_config_path = (
+            Path(central_config_path) if central_config_path else None
         )
-        self._active = not (own_done or sm_done)
+        self._genesis_path = genesis_path
+        # Plugin is always active when loaded. The dashboard's plugin
+        # checkbox (= presence in central config.yaml's modifiers/
+        # plugins list) is the single signal — re-enabling the plugin
+        # = re-running bootstrap.
+        self._active = True
         self._genesis_text: str | None = None
         # Subscribe immediately — EventBus is alive by the time the
         # plugin loader builds this modifier.
         self._events.subscribe(self._on_event)
-        if own_done or sm_done:
-            # Plugin is in cfg.plugins (otherwise we wouldn't have
-            # been constructed) AND at least one of the two done
-            # markers is set. The plugin stays inactive — Self won't
-            # see the BOOTSTRAP_PROMPT, NoteEvent self-model patching
-            # is a no-op. Tell the user exactly which markers are
-            # set + how to reset them, since BOTH must be cleared
-            # to re-bootstrap (either marker alone keeps the
-            # modifier inactive).
-            set_markers: list[str] = []
-            if own_done:
-                set_markers.append(
-                    "workspace/plugins/bootstrap/config.yaml: "
-                    "bootstrap_done"
-                )
-            if sm_done:
-                set_markers.append(
-                    "workspace/self_model.yaml: "
-                    "state.bootstrap_complete"
-                )
-            print(
-                "warning: bootstrap plugin is enabled but already "
-                "marked complete via " + " AND ".join(set_markers)
-                + ". To re-bootstrap, clear ALL the markers above "
-                "(either one left set keeps the modifier inactive). "
-                "Otherwise remove 'bootstrap' from cfg.plugins to "
-                "silence this notice. The plugin stays inactive "
-                "until then.",
-                file=sys.stderr,
-            )
 
     # ---- Modifier protocol surface ---------------------------------
 
@@ -150,12 +113,6 @@ class BootstrapModifier:
         kind = getattr(event, "kind", None)
         if kind == "note":
             self._handle_note(event)
-        # RuntimeReadyEvent used to refine ``_active`` from GM/KB
-        # emptiness, but that signal is no longer authoritative —
-        # the plugin's own config (bootstrap_done) AND the
-        # self_model marker fully determine activity at construction
-        # time. A user who wants to re-bootstrap an existing agent
-        # resets both flags explicitly.
 
     def _handle_note(self, event) -> None:
         """Parse Self's [NOTE] for self-model patches. After applying,
@@ -179,12 +136,16 @@ class BootstrapModifier:
 
     def _maybe_complete(self) -> None:
         """Auto-finalize bootstrap when self_model.identity has both
-        name + persona populated. Atomic-ish: writes self_model first
-        (so the bootstrap_complete marker is visible to anything
-        watching), then writes the plugin's own bootstrap_done flag,
-        then flips the active bit. If the plugin-config write fails
-        (disk error), self_model still says complete — next startup
-        sees that and stays inactive even without the plugin marker."""
+        name + persona populated. Order:
+          1. write ``state.bootstrap_complete: True`` to self_model
+             (informational — surfaces in /status and dashboard),
+          2. remove "bootstrap" from the central config.yaml's
+             modifier/plugin lists so the plugin won't load next start,
+          3. flip the active bit.
+        Step 2 failure (no config_path, disk error, parse error) is
+        warned but not fatal — the worst case is one more bootstrap
+        run on the next start, which the user can disable from the
+        dashboard."""
         if not self._active:
             return
         sm = self._safe_load_self_model() or {}
@@ -193,7 +154,6 @@ class BootstrapModifier:
         persona = (identity.get("persona") or "").strip()
         if not (name and persona):
             return
-        # Criteria met — finalize.
         try:
             self._store.update({"state": {"bootstrap_complete": True}})
         except Exception as e:  # noqa: BLE001
@@ -202,22 +162,74 @@ class BootstrapModifier:
                 "modifier will retry next NoteEvent", e,
             )
             return
-        try:
-            updated_config = {
-                **self._plugin_config_initial, "bootstrap_done": True,
-            }
-            self._plugin_config_store.write("bootstrap", updated_config)
-            self._plugin_config_initial = updated_config
-        except Exception as e:  # noqa: BLE001
-            _log.warning(
-                "bootstrap: own-config write raised %s; self_model "
-                "still says complete so next startup will skip "
-                "bootstrap regardless", e,
-            )
+        self._remove_self_from_central_config()
         self._active = False
         _log.info(
-            "bootstrap complete — identity set, plugin auto-disabled",
+            "bootstrap complete — identity set, plugin auto-disabled "
+            "for future starts",
         )
+
+    def _remove_self_from_central_config(self) -> None:
+        """Remove "bootstrap" from the central config.yaml's
+        ``modifiers:`` and ``plugins:`` lists. Round-trips through
+        ``yaml.safe_load`` / ``safe_dump`` (loses comments, but the
+        dashboard's settings-write path does the same — consistency
+        beats comment preservation here)."""
+        path = self._central_config_path
+        if path is None:
+            _log.warning(
+                "bootstrap: no central config_path bound; cannot "
+                "auto-remove from cfg.modifiers/plugins. Disable "
+                "the plugin from the dashboard to prevent re-running",
+            )
+            return
+        if not path.exists():
+            _log.warning(
+                "bootstrap: central config %s missing; cannot "
+                "auto-remove", path,
+            )
+            return
+        try:
+            raw = path.read_text(encoding="utf-8")
+            data = _yaml.safe_load(raw) or {}
+        except (OSError, _yaml.YAMLError) as e:
+            _log.warning(
+                "bootstrap: cannot parse central config %s: %s; "
+                "leaving entry in place", path, e,
+            )
+            return
+        if not isinstance(data, dict):
+            _log.warning(
+                "bootstrap: central config %s top-level is not a "
+                "mapping; leaving entry in place", path,
+            )
+            return
+        changed = False
+        for key in ("modifiers", "plugins"):
+            current = data.get(key)
+            if not isinstance(current, list):
+                continue
+            filtered = [n for n in current if n != "bootstrap"]
+            if len(filtered) != len(current):
+                data[key] = filtered
+                changed = True
+        if not changed:
+            return
+        try:
+            new_raw = _yaml.safe_dump(
+                data, allow_unicode=True, sort_keys=False,
+            )
+            path.write_text(new_raw, encoding="utf-8")
+            _log.info(
+                "bootstrap: removed 'bootstrap' from %s "
+                "(re-enable from the dashboard to re-bootstrap)",
+                path,
+            )
+        except (OSError, _yaml.YAMLError) as e:
+            _log.warning(
+                "bootstrap: failed to write %s: %s; entry remains "
+                "and the plugin will run again next start", path, e,
+            )
 
     def _get_genesis_text(self) -> str:
         """Lazy-load GENESIS.md on first call. Cached — repeat
@@ -246,29 +258,19 @@ class BootstrapModifier:
 def build_modifier(ctx: "PluginContext") -> BootstrapModifier:
     """Factory invoked by ``load_component``. Pulls SelfModelStore +
     EventBus from ``ctx.services`` and the GENESIS path from the
-    plugin's own config.yaml.
-
-    Also constructs a ``FilePluginConfigStore`` rooted at the same
-    plugin_configs directory the runtime uses, so the modifier can
-    persist its ``bootstrap_done`` flag back to its own config file
-    when bootstrap auto-completes.
-    """
-    from pathlib import Path
+    plugin's own config.yaml. Threads the central config.yaml path
+    through so the modifier can self-remove on auto-complete."""
     services = ctx.services
-    plugin_config = (
-        ctx.config if isinstance(ctx.config, dict) else {}
-    )
+    plugin_config = ctx.config if isinstance(ctx.config, dict) else {}
     genesis_path = (
         plugin_config.get("genesis_path") or "workspace/GENESIS.md"
     )
-    plugin_root = Path(
-        ctx.deps.plugin_configs_root or "workspace/plugins",
-    )
-    plugin_config_store = FilePluginConfigStore(plugin_root)
+    central_config_path = ctx.deps.config_path
     return BootstrapModifier(
         self_model_store=services["self_model_store"],
         events=services["events"],
-        plugin_config_store=plugin_config_store,
-        plugin_config=plugin_config,
+        central_config_path=(
+            Path(central_config_path) if central_config_path else None
+        ),
         genesis_path=genesis_path,
     )

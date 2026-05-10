@@ -22,10 +22,11 @@ and start exploring:
     The bootstrap modifier deep-merges into self_model.yaml.
   * Once both ``identity.name`` and ``identity.persona`` are set, the
     bootstrap modifier auto-completes — it sets
-    ``state.bootstrap_complete = True`` and disables itself in its
-    own ``workspace/plugins/bootstrap/config.yaml``. You don't need
-    to write any completion marker; the plugin watches for the
-    identity fields and closes out when they're filled.
+    ``state.bootstrap_complete = True`` in self_model and removes
+    itself from the central ``config.yaml`` so it won't run on the
+    next start. You don't need to write any completion marker; the
+    plugin watches for the identity fields and closes out when
+    they're filled.
   * While bootstrap is active, output ``[IDLE] 10`` in your responses
     so beats stay short while you settle in. After completion you
     control [IDLE] yourself like any other state.
