@@ -19,7 +19,7 @@ import textwrap
 import pytest
 
 from krakey.main import build_runtime_from_config
-from krakey.memory.recall import Reranker
+from krakey.interfaces.engines.reranker import RerankerEngine
 
 
 # Module-level so importlib can resolve via dotted path.
@@ -93,7 +93,7 @@ def test_no_override_no_tag_yields_default_engine(tmp_path):
     p = _write_config(tmp_path, override="", reranker_tag="")
     runtime = build_runtime_from_config(str(p))
     assert isinstance(runtime.reranker, DefaultRerankerEngine)
-    assert isinstance(runtime.reranker, Reranker)
+    assert isinstance(runtime.reranker, RerankerEngine)
 
 
 def test_no_override_with_tag_yields_default_engine(tmp_path):
@@ -106,7 +106,7 @@ def test_no_override_with_tag_yields_default_engine(tmp_path):
     p = _write_config(tmp_path, override="", reranker_tag="t")
     runtime = build_runtime_from_config(str(p))
     assert isinstance(runtime.reranker, DefaultRerankerEngine)
-    assert isinstance(runtime.reranker, Reranker)
+    assert isinstance(runtime.reranker, RerankerEngine)
 
 
 def test_override_yields_user_reranker(tmp_path):

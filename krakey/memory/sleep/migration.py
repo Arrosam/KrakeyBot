@@ -18,19 +18,58 @@ sleep, so we don't materialize a tiny KB for them.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from typing import Protocol
 
 from krakey.memory._db import decode_embedding
 from krakey.memory.graph_memory import GraphMemory
 from krakey.memory.knowledge_base import KBRegistry, KnowledgeBase
-from krakey.memory.recall import Reranker, rerank
 from krakey.memory.sleep.kb_lifecycle import find_revive_target, revive_kb
+
+if TYPE_CHECKING:
+    from krakey.interfaces.engines.reranker import RerankerEngine
 
 
 class AsyncChatLLM(Protocol):
     async def chat(self, messages, **kwargs) -> str: ...
+
+
+def _doc_for_rerank(node: dict[str, Any]) -> str:
+    """Render a KB candidate row into a string the reranker scores
+    against the new GM node. Same 3-line formula the recall engine
+    keeps in its private ``_scoring`` module — duplicated here
+    rather than crossed-imported so memory's sleep pass doesn't
+    depend on the recall engine's internals."""
+    name = node.get("name") or ""
+    desc = node.get("description") or node.get("content") or ""
+    return f"{name}: {desc}" if desc else (name or desc or "")
+
+
+async def _rerank_or_passthrough(
+    candidates: list[tuple[dict[str, Any], float]], *,
+    query: str,
+    reranker: "RerankerEngine | None",
+) -> list[dict[str, Any]]:
+    """Reorder ``candidates`` via the bound reranker; on any
+    fail-soft condition (no reranker, raise, length mismatch) fall
+    back to the input order with the score component dropped. Empty
+    list → empty list."""
+    if not candidates:
+        return []
+    if reranker is not None:
+        try:
+            docs = [_doc_for_rerank(n) for (n, _sim) in candidates]
+            scores = await reranker.rerank(query, docs)
+            if len(scores) == len(candidates):
+                paired = sorted(
+                    zip((c[0] for c in candidates), scores),
+                    key=lambda x: x[1], reverse=True,
+                )
+                return [n for (n, _s) in paired]
+        except Exception:  # noqa: BLE001
+            pass
+    return [n for (n, _sim) in candidates]
 
 
 _MIGRATABLE = ("FACT", "RELATION", "KNOWLEDGE")
@@ -38,7 +77,7 @@ _MIGRATABLE = ("FACT", "RELATION", "KNOWLEDGE")
 
 async def migrate_gm_to_kb(gm: GraphMemory, reg: KBRegistry, *,
                               llm: AsyncChatLLM,
-                              reranker: Reranker | None = None,
+                              reranker: "RerankerEngine | None" = None,
                               dedup_top_k: int = 5,
                               min_community_size: int = 1,
                               revive_threshold: float = 0.80,
@@ -229,7 +268,7 @@ async def _migrate_edges(db, gm_to_kb_entry: dict[int, tuple[int, int]],
 async def _dedup_or_write(
     kb: KnowledgeBase, node: dict[str, Any], *,
     judge_llm: AsyncChatLLM,
-    reranker: Reranker | None,
+    reranker: "RerankerEngine | None",
     top_k: int = 5,
 ) -> tuple[int, bool]:
     """Returns ``(entry_id, merged)``. ``merged=True`` iff the GM node
@@ -243,13 +282,10 @@ async def _dedup_or_write(
     if embedding is not None:
         candidates = await kb.vec_search(embedding, top_k=top_k)
 
-    # Reranker first; cosine fallback when rerank() reports None.
-    ranked = await rerank(candidates, query=new_content, reranker=reranker)
-    ordered: list[dict[str, Any]]
-    if ranked is None:
-        ordered = [n for (n, _sim) in candidates]
-    else:
-        ordered = [n for (n, _score) in ranked]
+    # Reranker first; cosine fallback when reranker fails / unbound.
+    ordered = await _rerank_or_passthrough(
+        candidates, query=new_content, reranker=reranker,
+    )
 
     if ordered:
         match_idx = await _llm_pick_same(judge_llm, new_content, ordered)

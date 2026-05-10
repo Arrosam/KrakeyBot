@@ -15,10 +15,9 @@ Per-beat algorithm:
      fetch edges among the selected set, classify each input
      stimulus as covered/uncovered.
 
-Pure scoring helpers (``rank_candidates`` / ``scripted_score`` /
-``ScoringWeights``) live in ``krakey.memory.recall.scoring`` —
-they're math, not implementation policy, and a future Engine impl
-may want to reuse them.
+Pure scoring helpers (``scripted_score`` / ``ScoringWeights`` /
+``doc_for_rerank``) are recall-engine-private and live in the
+sibling ``_scoring`` module.
 """
 from __future__ import annotations
 
@@ -26,15 +25,16 @@ import math
 from datetime import datetime
 from typing import Any, Callable, TYPE_CHECKING
 
+from krakey.engines.recall._scoring import (
+    ScoringWeights, doc_for_rerank, scripted_score,
+)
 from krakey.engines.recall.gm_query import query_gm_with_fts_fallback
 from krakey.interfaces.engines.recall import RecallResult
-from krakey.memory.recall.scoring import (
-    Reranker, ScoringWeights, rerank, scripted_score,
-)
 from krakey.utils.tokens import estimate_tokens
 
 if TYPE_CHECKING:
     from krakey.interfaces.engines.memory import MemoryEngine
+    from krakey.interfaces.engines.reranker import RerankerEngine
     from krakey.llm.resolve import AsyncEmbedder
     from krakey.models.stimulus import Stimulus
 
@@ -82,7 +82,7 @@ class IncrementalRecall:
                   recall_token_budget: int,
                   screening_token_multiplier: float = 1.0,
                   weights: ScoringWeights | None = None,
-                  reranker: Reranker | None = None,
+                  reranker: "RerankerEngine | None" = None,
                   neighbor_depth: int = 1,
                   vec_min_similarity: float = 0.3,
                   now: Callable[[], datetime] | None = None):
@@ -111,6 +111,40 @@ class IncrementalRecall:
         self.processed_stimuli: list["Stimulus"] = []
         self._per_stimulus_ids: list[set[int]] = []
 
+    async def _rerank_or_fallback(
+        self,
+        query: str,
+        candidates: list[tuple[dict[str, Any], float]],
+    ) -> list[tuple[dict[str, Any], float]]:
+        """Run the bound RerankerEngine over ``candidates``; on any
+        fail-soft condition (no reranker, raise, length mismatch, empty
+        candidate list short-circuits to []) fall back to scripted
+        multi-axis scoring against ``vec_sim``. Returns ``(node, score)``
+        sorted descending."""
+        if not candidates:
+            return []
+        if self._reranker is not None:
+            try:
+                docs = [doc_for_rerank(n) for (n, _sim) in candidates]
+                scores = await self._reranker.rerank(query, docs)
+                if len(scores) == len(candidates):
+                    paired = list(zip(
+                        (c[0] for c in candidates), scores,
+                    ))
+                    paired.sort(key=lambda x: x[1], reverse=True)
+                    return paired
+            except Exception:  # noqa: BLE001
+                pass
+        # Fallback: scripted multi-axis scoring keyed off vec similarity.
+        now = self._now()
+        ranked = [
+            (n, scripted_score(n, vec_sim=sim, now=now,
+                                  weights=self._weights))
+            for (n, sim) in candidates
+        ]
+        ranked.sort(key=lambda x: x[1], reverse=True)
+        return ranked
+
     def _screening_top_k(self) -> int:
         """Per-stimulus vec_search top_k. Sized to roughly cover the
         screening token target; capped by ``per_stimulus_k``; floored
@@ -126,19 +160,7 @@ class IncrementalRecall:
                 top_k=self._screening_top_k(),
                 min_similarity=self._vec_min_sim,
             )
-            ranked = await rerank(
-                candidates, query=s.content, reranker=self._reranker,
-            )
-            if ranked is None:
-                # Reranker unavailable / failed → scripted multi-axis
-                # fallback. Same outcome shape: (node, score) sorted desc.
-                now = self._now()
-                ranked = [
-                    (n, scripted_score(n, vec_sim=sim, now=now,
-                                          weights=self._weights))
-                    for (n, sim) in candidates
-                ]
-                ranked.sort(key=lambda x: x[1], reverse=True)
+            ranked = await self._rerank_or_fallback(s.content, candidates)
             weight = 10.0 if getattr(s, "adrenalin", False) else 1.0
             hit_ids: set[int] = set()
             for (node, _score) in ranked:
