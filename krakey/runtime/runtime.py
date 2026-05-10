@@ -6,7 +6,7 @@ stimulus buffer, plugin loader/observer, environment router) and
 drives the per-beat loop via ``run()``. Process entry point +
 ``build_runtime_from_config`` live in ``krakey/main.py``; per-beat
 algorithm lives in
-``krakey/runtime/heartbeat/heartbeat_orchestrator.py``.
+``krakey/engines/heartbeat/orchestrator.py``.
 """
 from __future__ import annotations
 
@@ -364,7 +364,7 @@ class Runtime:
         # holds no state. Reads + mutates Runtime fields through the
         # `runtime` ref. Built last (after all collaborators exist) so
         # nothing in its phase methods sees a half-constructed Runtime.
-        from krakey.runtime.heartbeat.heartbeat_orchestrator import HeartbeatOrchestrator
+        from krakey.engines.heartbeat.orchestrator import HeartbeatOrchestrator
         self._orchestrator = HeartbeatOrchestrator(self)
 
         # Heartbeat Engine — owns the per-beat run loop. The default

@@ -13,7 +13,7 @@ import pytest
 
 from krakey.interfaces.engines.recall import RecallResult
 from krakey.models.stimulus import Stimulus
-from krakey.runtime.heartbeat.sliding_window import ExplicitHistoryRound
+from krakey.engines.explicit_history.sliding_window import ExplicitHistoryRound
 from tests._runtime_helpers import (
     NullEmbedder, ScriptedLLM, build_runtime_with_fakes,
 )

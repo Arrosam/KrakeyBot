@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from krakey.interfaces.engines.decision import DecisionResult
-    from krakey.runtime.heartbeat.dispatcher import DecisionDispatcher
+    from krakey.engines.dispatch.dispatcher import DecisionDispatcher
     from krakey.runtime.runtime import Runtime
 
 
@@ -35,7 +35,7 @@ class LocalDispatchEngine:
         """Lazy build — runtime collaborators are stable across the
         runtime's lifetime, so once built the dispatcher is reused."""
         if self._dispatcher is None:
-            from krakey.runtime.heartbeat.dispatcher import (
+            from krakey.engines.dispatch.dispatcher import (
                 DecisionDispatcher,
             )
             self._dispatcher = DecisionDispatcher(

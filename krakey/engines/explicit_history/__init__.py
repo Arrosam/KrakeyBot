@@ -1,7 +1,7 @@
 """``explicit_history`` Engine — working-memory window.
 
 Default impl ``SlidingWindowExplicitHistoryEngine`` (in ``default.py``)
-is the existing ``krakey.runtime.heartbeat.sliding_window.SlidingWindow``
+is the existing ``krakey.engines.explicit_history.sliding_window.SlidingWindow``
 exported under the new Engine name. The behavioral surface (append /
 get_rounds / pop_oldest / total_tokens / needs_compact + the
 ``history_token_budget`` attr) is unchanged.

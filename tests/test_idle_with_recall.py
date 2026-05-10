@@ -6,7 +6,7 @@ from datetime import datetime
 import pytest
 
 from krakey.models.stimulus import Stimulus
-from krakey.runtime.heartbeat.idle import idle_with_recall
+from krakey.engines.heartbeat.idle import idle_with_recall
 from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 

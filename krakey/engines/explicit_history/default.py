@@ -12,7 +12,7 @@ EngineRegistry-supplied kwargs (``history_token_budget``,
 """
 from __future__ import annotations
 
-from krakey.runtime.heartbeat.sliding_window import SlidingWindow
+from krakey.engines.explicit_history.sliding_window import SlidingWindow
 
 
 class SlidingWindowExplicitHistoryEngine(SlidingWindow):

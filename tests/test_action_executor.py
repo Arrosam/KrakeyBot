@@ -5,7 +5,7 @@ This is the default tool dispatch path when no decision-translator
 Modifier (e.g. the hypothalamus plugin) is registered. Format chosen
 for breadth of training coverage in modern open-source LLMs.
 """
-from krakey.runtime.heartbeat.action_executor import (
+from krakey.engines.decision.action_executor import (
     parse_tool_calls_with_failures,
 )
 
@@ -190,7 +190,7 @@ will check in next beat
 
 
 def test_with_failures_empty_input_returns_two_empty_lists():
-    from krakey.runtime.heartbeat.action_executor import (
+    from krakey.engines.decision.action_executor import (
         parse_tool_calls_with_failures,
     )
     calls, failures = parse_tool_calls_with_failures("")
@@ -204,7 +204,7 @@ def test_with_failures_arg_value_tail_salvaged_with_diagnostic():
     salvage path truncates and recovers, and a ParseFailure
     surfaces alongside the dispatched ToolCall so Self gets
     corrective feedback without losing forward progress."""
-    from krakey.runtime.heartbeat.action_executor import (
+    from krakey.engines.decision.action_executor import (
         parse_tool_calls_with_failures,
     )
     raw = (
@@ -227,7 +227,7 @@ def test_with_failures_partial_success_still_dispatches_clean_blocks():
     """One </arg_value>-tail block + one clean block in the same
     response → 2 ToolCalls returned (one salvaged, one clean),
     1 ParseFailure recorded for the salvaged block."""
-    from krakey.runtime.heartbeat.action_executor import (
+    from krakey.engines.decision.action_executor import (
         parse_tool_calls_with_failures,
     )
     raw = (
@@ -246,7 +246,7 @@ def test_with_failures_records_block_index_for_each():
     corrective stimulus show Self exactly which positions had
     drift. With salvage, all three calls dispatch AND all three
     failures surface."""
-    from krakey.runtime.heartbeat.action_executor import (
+    from krakey.engines.decision.action_executor import (
         parse_tool_calls_with_failures,
     )
     raw = (
@@ -266,7 +266,7 @@ def test_with_failures_invisible_chars_in_repr_payload():
     salvage ParseFailure uses repr() so Self can SEE the
     invisible char as an escape sequence — fixing the
     "I can't tell what's wrong" 120+-beat loop."""
-    from krakey.runtime.heartbeat.action_executor import (
+    from krakey.engines.decision.action_executor import (
         parse_tool_calls_with_failures,
     )
     raw = '<tool_call>{"name": "X", "arguments": {}}​</tool_call>'
@@ -283,7 +283,7 @@ def test_with_failures_non_json_object_payload_recorded():
     """A JSON array (or other valid JSON that isn't an object) is
     a different failure shape from JSON-decode error — surface the
     diagnosis rather than masking it as 'unparseable'."""
-    from krakey.runtime.heartbeat.action_executor import (
+    from krakey.engines.decision.action_executor import (
         parse_tool_calls_with_failures,
     )
     raw = '<tool_call>[1, 2, 3]</tool_call>'
@@ -294,7 +294,7 @@ def test_with_failures_non_json_object_payload_recorded():
 
 
 def test_with_failures_missing_name_recorded():
-    from krakey.runtime.heartbeat.action_executor import (
+    from krakey.engines.decision.action_executor import (
         parse_tool_calls_with_failures,
     )
     raw = '<tool_call>{"arguments": {"x": 1}}</tool_call>'
@@ -307,7 +307,7 @@ def test_with_failures_missing_name_recorded():
 def test_with_failures_empty_block_does_not_count_as_failure():
     """An empty <tool_call></tool_call> tag is noise, not a parse
     failure — don't burn a corrective stimulus on it."""
-    from krakey.runtime.heartbeat.action_executor import (
+    from krakey.engines.decision.action_executor import (
         parse_tool_calls_with_failures,
     )
     calls, failures = parse_tool_calls_with_failures(

@@ -10,7 +10,7 @@ import json
 import re
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol
 
-from krakey.runtime.heartbeat.sliding_window import SlidingWindow, ExplicitHistoryRound
+from krakey.engines.explicit_history.sliding_window import SlidingWindow, ExplicitHistoryRound
 
 if TYPE_CHECKING:
     # Type-only: compact never instantiates the memory backend, it just

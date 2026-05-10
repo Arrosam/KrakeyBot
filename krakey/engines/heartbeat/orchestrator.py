@@ -31,14 +31,14 @@ from typing import TYPE_CHECKING, Any
 from krakey.models.config import LLMParams
 from krakey.models.stimulus import Stimulus
 from krakey.prompt.views import ExplicitHistoryRound
-from krakey.runtime.heartbeat.compact import compact_if_needed
+from krakey.engines.heartbeat.compact import compact_if_needed
 from krakey.runtime.events.event_types import (
     DecisionEvent, GMStatsEvent, HeartbeatStartEvent, IdleEvent,
     SelfOutputEvent, NoteEvent, PromptBuiltEvent, SleepDoneEvent, 
     SleepFailedEvent, SleepStartEvent, StimuliQueuedEvent, ThinkingEvent
 )
-from krakey.runtime.heartbeat.fatigue import calculate_fatigue
-from krakey.runtime.heartbeat.idle import idle_with_recall
+from krakey.engines.heartbeat.fatigue import calculate_fatigue
+from krakey.engines.heartbeat.idle import idle_with_recall
 from krakey.runtime.commands.commands import (
     CommandAction, handle_command, parse_command,
 )
@@ -601,7 +601,7 @@ class HeartbeatOrchestrator:
         Returns the final (prompt, recall_result) pair. Hard cap on
         iterations so a pathological configuration can't spin forever.
         """
-        from krakey.runtime.heartbeat.compact import compact_round
+        from krakey.engines.heartbeat.compact import compact_round
         from krakey.utils.tokens import estimate_tokens
 
         rt = self._rt

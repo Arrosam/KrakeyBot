@@ -1,7 +1,7 @@
 """Phase 1.4: SlidingWindow (dynamic token-based window)."""
 import pytest
 
-from krakey.runtime.heartbeat.sliding_window import SlidingWindow, ExplicitHistoryRound
+from krakey.engines.explicit_history.sliding_window import SlidingWindow, ExplicitHistoryRound
 
 
 def _round(i, stim="stim", decision="dec", note=""):
@@ -226,7 +226,7 @@ async def test_runtime_restart_preserves_sliding_window(tmp_path):
     )
     # Repoint to the shared path. (The helper assigned its own
     # per-test tmpfile; we want both runtimes on the same file.)
-    from krakey.runtime.heartbeat.sliding_window import SlidingWindow as SW
+    from krakey.engines.explicit_history.sliding_window import SlidingWindow as SW
     rt_a.explicit_history = SW(
         history_token_budget=rt_a.explicit_history.history_token_budget,
         state_path=sw_path,

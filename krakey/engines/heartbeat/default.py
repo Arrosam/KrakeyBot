@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from krakey.runtime.heartbeat.heartbeat_orchestrator import (
+    from krakey.engines.heartbeat.orchestrator import (
         HeartbeatOrchestrator,
     )
     from krakey.runtime.runtime import Runtime
@@ -37,7 +37,7 @@ class DefaultHeartbeatEngine:
         """Subclass hook — override to swap in an alternative
         orchestrator (e.g. one with different phase ordering). The
         default implementation builds the canonical class."""
-        from krakey.runtime.heartbeat.heartbeat_orchestrator import (
+        from krakey.engines.heartbeat.orchestrator import (
             HeartbeatOrchestrator,
         )
         return HeartbeatOrchestrator(runtime)

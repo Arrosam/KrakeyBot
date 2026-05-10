@@ -11,7 +11,7 @@ from krakey.engines.explicit_history.default import (
     SlidingWindowExplicitHistoryEngine,
 )
 from krakey.interfaces.engines import ExplicitHistoryEngine
-from krakey.runtime.heartbeat.sliding_window import (
+from krakey.engines.explicit_history.sliding_window import (
     SlidingWindow,
     ExplicitHistoryRound,
 )

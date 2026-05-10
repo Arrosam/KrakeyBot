@@ -30,7 +30,7 @@ from krakey.llm.resolve import (  # noqa: F401
     AsyncEmbedder, ChatLike, resolve_llm_for_tag,
 )
 from krakey.runtime.runtime import Runtime, RuntimeDeps  # noqa: F401
-from krakey.runtime.heartbeat.heartbeat_orchestrator import (  # noqa: F401
+from krakey.engines.heartbeat.orchestrator import (  # noqa: F401
     _summarize_stimuli,
 )
 

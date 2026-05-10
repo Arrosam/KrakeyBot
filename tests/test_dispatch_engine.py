@@ -74,7 +74,7 @@ async def test_dispatch_runs_all_four_side_effects(monkeypatch):
         return d
 
     monkeypatch.setattr(
-        "krakey.runtime.heartbeat.dispatcher.DecisionDispatcher", _make,
+        "krakey.engines.dispatch.dispatcher.DecisionDispatcher", _make,
     )
     eng = LocalDispatchEngine()
     rt = _FakeRuntime()
@@ -107,7 +107,7 @@ async def test_dispatcher_constructed_lazily_and_reused(monkeypatch):
         return _RecordingDispatcher(**kwargs)
 
     monkeypatch.setattr(
-        "krakey.runtime.heartbeat.dispatcher.DecisionDispatcher", _make,
+        "krakey.engines.dispatch.dispatcher.DecisionDispatcher", _make,
     )
     eng = LocalDispatchEngine()
     assert construct_count["n"] == 0  # not built yet
@@ -132,7 +132,7 @@ async def test_dispatch_handles_none_recall_context(monkeypatch):
         return d
 
     monkeypatch.setattr(
-        "krakey.runtime.heartbeat.dispatcher.DecisionDispatcher", _make,
+        "krakey.engines.dispatch.dispatcher.DecisionDispatcher", _make,
     )
     eng = LocalDispatchEngine()
     rt = _FakeRuntime()

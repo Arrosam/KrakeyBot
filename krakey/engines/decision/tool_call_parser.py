@@ -2,7 +2,7 @@
 
 Default DecisionEngine impl. Wraps the existing
 ``parse_tool_calls_with_failures`` util (in
-``krakey.runtime.heartbeat.action_executor``) so the same per-block
+``krakey.engines.decision.action_executor``) so the same per-block
 salvage + ParseFailure surfacing the heartbeat already relies on
 keeps working — only the call-site pattern changes (Engine slot
 instead of an inline module-fn import).
@@ -29,7 +29,7 @@ from __future__ import annotations
 from typing import Any
 
 from krakey.interfaces.engines.decision import DecisionResult
-from krakey.runtime.heartbeat.action_executor import (
+from krakey.engines.decision.action_executor import (
     parse_tool_calls_with_failures,
 )
 
