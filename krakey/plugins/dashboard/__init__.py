@@ -42,27 +42,53 @@ def _restart_self(runtime) -> None:
     parent's group so a Ctrl+C aimed at the dying parent doesn't
     propagate to the new instance.
 
-    Launch mode matters: when the user starts with ``python -m
-    krakey`` (the documented entry point), ``sys.argv[0]`` is the
-    resolved path to ``krakey/__main__.py``, but re-running that path
-    directly with the interpreter doesn't restore the package-import
-    machinery. Re-spawn via ``-m`` when we detect that, so things
-    like ``from krakey.runtime import ...`` keep working.
+    Three launch modes need to be distinguished:
+
+      A. ``python -m krakey`` — ``__main__.__spec__.name`` is
+         ``"krakey.__main__"``. Re-spawn via ``python -m krakey`` so
+         the package-import machinery is restored.
+      B. ``krakey`` (the setuptools console-script entry point,
+         backed by a generated ``.exe`` or POSIX shebang script) —
+         ``__main__.__spec__`` is either ``None`` or has ``name ==
+         "__main__"``. Re-spawn ``sys.argv[0]`` directly; the wrapper
+         knows how to bootstrap Python.
+      C. ``python <path>/krakey/__main__.py`` — same spec shape as B
+         but argv[0] ends in ``.py``. Re-spawn with the interpreter
+         prepended.
+
+    The pre-fix code lumped B + C together and unconditionally tried
+    ``-m <spec.name>``, which broke mode B because ``-m __main__`` is
+    a runpy error (``__main__.__spec__ is None``).
     """
     import subprocess
 
     main = sys.modules.get("__main__")
     spec = getattr(main, "__spec__", None) if main is not None else None
-    if spec is not None and spec.name:
-        # spec.name looks like "krakey.__main__" when launched via
-        # ``python -m krakey`` — strip the trailing ``.__main__``
-        # so the re-spawn ``-m <pkg>`` matches the original invocation.
-        mod_name = spec.name
+    spec_name = getattr(spec, "name", None) if spec is not None else None
+
+    if spec_name and spec_name != "__main__":
+        # Mode A: ``python -m <pkg>`` — re-spawn with the same -m
+        # invocation. Strip a trailing ".__main__" so ``-m`` gets the
+        # package name, not the inner module.
+        mod_name = spec_name
         if mod_name.endswith(".__main__"):
             mod_name = mod_name[: -len(".__main__")]
         args = [sys.executable, "-m", mod_name, *sys.argv[1:]]
     else:
-        args = [sys.executable, *sys.argv]
+        # Modes B + C — split by file extension on argv[0]. An
+        # entry-point .exe / .bat / shebang script knows how to
+        # invoke Python itself; a .py file needs the interpreter
+        # prepended.
+        argv0 = sys.argv[0] if sys.argv else ""
+        if argv0.lower().endswith(".py"):
+            args = [sys.executable, *sys.argv]
+        elif argv0:
+            args = list(sys.argv)
+        else:
+            # Pathological: no argv[0]. Best effort — re-launch the
+            # interpreter (which will print the REPL banner; not
+            # ideal, but better than spawning nothing).
+            args = [sys.executable]
 
     creationflags = 0
     if os.name == "nt":
