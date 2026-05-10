@@ -155,3 +155,61 @@ def test_mode_c_script_path_prepends_interpreter(
         "F:/path/krakey/__main__.py",
         "extra",
     ]
+
+
+# --------------------------------------------------------------------
+# Restart-takeover env-var handshake — dashboard parent ↔ CLI child
+# --------------------------------------------------------------------
+
+
+def test_restart_self_propagates_parent_pid_via_env(
+    monkeypatch, _spawn_capture,
+):
+    """Parent must set ``KRAKEY_RESTART_PARENT_PID`` to its own pid
+    in the spawned child's env. Without this the child races the
+    parent's exit and bails with ``krakey already running``."""
+    captured, dashboard_mod = _spawn_capture
+    _set_main_spec(monkeypatch, spec_name=None)
+    monkeypatch.setattr(sys, "argv", ["F:/path/.venv/Scripts/krakey.exe"])
+
+    # Capture the env passed to Popen. The default _spawn_capture
+    # only looks at args; widen by re-monkeypatching Popen to also
+    # record env.
+    spawned: dict = {}
+
+    class _FakePopen:
+        def __init__(self, args, **kw):
+            spawned["args"] = list(args)
+            spawned["env"] = kw.get("env")
+
+    monkeypatch.setattr("subprocess.Popen", _FakePopen)
+
+    import os as _os
+    expected_pid = str(_os.getpid())
+    with pytest.raises(SystemExit):
+        dashboard_mod._restart_self(_stub_runtime())
+    assert spawned["env"] is not None
+    assert spawned["env"]["KRAKEY_RESTART_PARENT_PID"] == expected_pid
+
+
+def test_consume_restart_takeover_pid_pops_env(monkeypatch):
+    """The CLI guard pops the env var on read (not just gets) so a
+    NEXT restart can't see a stale parent pid from a previous cycle."""
+    from krakey.cli.lifecycle import _consume_restart_takeover_pid
+
+    monkeypatch.setenv("KRAKEY_RESTART_PARENT_PID", "12345")
+    assert _consume_restart_takeover_pid() == 12345
+    # Second call returns None — env var was popped.
+    assert _consume_restart_takeover_pid() is None
+
+
+def test_consume_restart_takeover_pid_handles_missing_or_garbage(
+    monkeypatch,
+):
+    """Missing env var → None. Garbage value → None (not a crash)."""
+    from krakey.cli.lifecycle import _consume_restart_takeover_pid
+
+    monkeypatch.delenv("KRAKEY_RESTART_PARENT_PID", raising=False)
+    assert _consume_restart_takeover_pid() is None
+    monkeypatch.setenv("KRAKEY_RESTART_PARENT_PID", "not-a-pid")
+    assert _consume_restart_takeover_pid() is None

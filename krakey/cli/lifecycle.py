@@ -248,14 +248,36 @@ def _warn_if_install_pending(repo: Path) -> None:
         )
 
 
+def _consume_restart_takeover_pid() -> int | None:
+    """Pop ``KRAKEY_RESTART_PARENT_PID`` from the env if present.
+
+    The dashboard's restart path sets this to its own pid right
+    before Popen-ing the new process and then ``os._exit``s. The
+    new process races the parent's exit and almost always reads the
+    pidfile while the parent is still alive — without this signal
+    it would refuse to start with "krakey already running". When
+    set, the new process is allowed to take over the pidfile from
+    that specific dying parent.
+
+    Popped (not just read) so it doesn't propagate to a NEXT
+    restart's child as a stale pid.
+    """
+    raw = os.environ.pop("KRAKEY_RESTART_PARENT_PID", "")
+    try:
+        return int(raw) if raw else None
+    except ValueError:
+        return None
+
+
 def run_foreground() -> int:
     repo, pidfile, _log = _paths()
     rc, wizard_ran = _ensure_config(repo)
     if rc is not None:
         return rc
 
+    takeover_pid = _consume_restart_takeover_pid()
     existing = _read_pid(pidfile)
-    if existing and _is_alive(existing):
+    if existing and _is_alive(existing) and existing != takeover_pid:
         print(f"krakey already running (pid {existing}); use `krakey stop` first",
               file=sys.stderr)
         return 1
@@ -275,8 +297,9 @@ def start_daemon() -> int:
     if rc is not None:
         return rc
 
+    takeover_pid = _consume_restart_takeover_pid()
     existing = _read_pid(pidfile)
-    if existing and _is_alive(existing):
+    if existing and _is_alive(existing) and existing != takeover_pid:
         print(f"krakey already running (pid {existing})")
         return 1
     if existing:

@@ -90,11 +90,24 @@ def _restart_self(runtime) -> None:
             # ideal, but better than spawning nothing).
             args = [sys.executable]
 
+    # Tell the child it's a restart-takeover from us, not a fresh
+    # invocation racing against a still-running instance. Without
+    # this, the child reads the pidfile + sees this dying parent
+    # still alive (the 100ms sleep below covers stdio inheritance,
+    # but the child runs faster than that) and bails with
+    # "krakey already running (pid …); use `krakey stop` first".
+    # The CLI's pidfile guard pops this env on read and falls
+    # through, taking over the pidfile cleanly.
+    env = os.environ.copy()
+    env["KRAKEY_RESTART_PARENT_PID"] = str(os.getpid())
+
     creationflags = 0
     if os.name == "nt":
         creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
     try:
-        subprocess.Popen(args, creationflags=creationflags, close_fds=False)
+        subprocess.Popen(
+            args, creationflags=creationflags, close_fds=False, env=env,
+        )
     except Exception as e:  # noqa: BLE001
         runtime.log.runtime_error(f"dashboard: restart spawn failed: {e}")
         return  # don't kill the parent if the child couldn't start
