@@ -12,7 +12,7 @@ import textwrap
 
 import pytest
 
-from krakey.llm.resolve import AsyncEmbedder
+from krakey.interfaces.duck import AsyncEmbedder
 from krakey.main import build_runtime_from_config
 
 

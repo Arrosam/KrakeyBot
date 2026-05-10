@@ -27,20 +27,16 @@ from typing import Any, Protocol
 from krakey.engines.memory._internal._db import cosine_similarity  # noqa: F401  re-export for tests
 from krakey.engines.memory._internal.gm.query import GMQueryMixin
 from krakey.engines.memory._internal.gm.storage import (  # noqa: F401  re-exports for callers
-    AsyncEmbedder,
     GMStorage,
     _row_to_node,
 )
+from krakey.interfaces.duck import AsyncEmbedder, ChatLike
 
 
 __all__ = [
-    "GraphMemory", "AsyncChatLLM", "AsyncEmbedder", "cosine_similarity",
+    "GraphMemory", "AsyncEmbedder", "cosine_similarity",
     "_row_to_node",
 ]
-
-
-class AsyncChatLLM(Protocol):
-    async def chat(self, messages, **kwargs) -> str: ...
 
 
 class GraphMemory(GMStorage, GMQueryMixin):
@@ -54,8 +50,8 @@ class GraphMemory(GMStorage, GMQueryMixin):
 
     def __init__(self, db_path: str | Path, embedder: AsyncEmbedder,
                   *, auto_ingest_threshold: float = 0.92,
-                  extractor_llm: AsyncChatLLM | None = None,
-                  classifier_llm: AsyncChatLLM | None = None,
+                  extractor_llm: ChatLike | None = None,
+                  classifier_llm: ChatLike | None = None,
                   classify_batch_size: int = 10,
                   classify_existing_context: int = 30):
         super().__init__(db_path, embedder)

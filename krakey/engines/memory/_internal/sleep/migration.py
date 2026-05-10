@@ -26,13 +26,10 @@ from krakey.engines.memory._internal._db import decode_embedding
 from krakey.engines.memory._internal.graph_memory import GraphMemory
 from krakey.engines.memory._internal.knowledge_base import KBRegistry, KnowledgeBase
 from krakey.engines.memory._internal.sleep.kb_lifecycle import find_revive_target, revive_kb
+from krakey.interfaces.duck import ChatLike
 
 if TYPE_CHECKING:
     from krakey.interfaces.engines.reranker import RerankerEngine
-
-
-class AsyncChatLLM(Protocol):
-    async def chat(self, messages, **kwargs) -> str: ...
 
 
 def _doc_for_rerank(node: dict[str, Any]) -> str:
@@ -76,7 +73,7 @@ _MIGRATABLE = ("FACT", "RELATION", "KNOWLEDGE")
 
 
 async def migrate_gm_to_kb(gm: GraphMemory, reg: KBRegistry, *,
-                              llm: AsyncChatLLM,
+                              llm: ChatLike,
                               reranker: "RerankerEngine | None" = None,
                               dedup_top_k: int = 5,
                               min_community_size: int = 1,
@@ -267,7 +264,7 @@ async def _migrate_edges(db, gm_to_kb_entry: dict[int, tuple[int, int]],
 
 async def _dedup_or_write(
     kb: KnowledgeBase, node: dict[str, Any], *,
-    judge_llm: AsyncChatLLM,
+    judge_llm: ChatLike,
     reranker: "RerankerEngine | None",
     top_k: int = 5,
 ) -> tuple[int, bool]:
@@ -310,7 +307,7 @@ async def _dedup_or_write(
     return entry_id, False
 
 
-async def _llm_pick_same(llm: AsyncChatLLM, new_content: str,
+async def _llm_pick_same(llm: ChatLike, new_content: str,
                             candidates: list[dict[str, Any]]) -> int | None:
     """One LLM call. Returns 0-based index of the matching candidate
     or ``None`` on no-match / parse failure / exception."""

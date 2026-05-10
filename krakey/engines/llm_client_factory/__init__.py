@@ -7,14 +7,14 @@ OpenAI-compatible + Anthropic providers; users who need a totally
 different transport (mock, replay, gRPC, …) point this slot at their
 own class with the same ``chat`` / ``embed`` / ``rerank`` surface.
 
-Resolved per-tag by ``krakey.llm.resolve.resolve_llm_for_tag`` rather
+Resolved per-tag by ``krakey.engines.llm_factory._resolve.resolve_llm_for_tag`` rather
 than once at startup — that's why this slot doesn't show up on
 Runtime as ``self.<slot>``. Cataloged here so the EngineRegistry's
 short-name resolution + the dashboard's slot dropdown stay uniform
 across all 11 ``core_implementations`` entries.
 """
 from krakey.engines.catalog import EngineImpl
-from krakey.llm.client import LLMClient
+from krakey.engines.llm_client_factory._client import LLMClient
 
 BUILTIN_ENGINES = {
     "standard": EngineImpl(

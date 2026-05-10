@@ -26,9 +26,10 @@ from krakey.models.config import load_config
 # Public re-exports — callers used to do ``from krakey.main import Runtime``
 # and we don't want to chase down every test importer just because the
 # class lives in a tidier file now.
-from krakey.llm.resolve import (  # noqa: F401
-    AsyncEmbedder, ChatLike, resolve_llm_for_tag,
+from krakey.engines.llm_factory._resolve import (  # noqa: F401
+    resolve_llm_for_tag,
 )
+from krakey.interfaces.duck import AsyncEmbedder, ChatLike  # noqa: F401
 from krakey.runtime.runtime import Runtime, RuntimeDeps  # noqa: F401
 from krakey.engines.heartbeat.orchestrator import (  # noqa: F401
     _summarize_stimuli,

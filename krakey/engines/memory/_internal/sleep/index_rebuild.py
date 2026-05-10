@@ -16,6 +16,7 @@ from typing import Any, Protocol
 
 from krakey.engines.memory._internal.graph_memory import GraphMemory
 from krakey.engines.memory._internal.knowledge_base import KBRegistry
+from krakey.interfaces.duck import ChatLike
 
 
 KB_RELATION_PROMPT = """Below is the metadata for all current Knowledge Bases (the post-Sleep index layer):
@@ -41,16 +42,12 @@ Rules:
 _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 
 
-class AsyncChatLLM(Protocol):
-    async def chat(self, messages, **kwargs) -> str: ...
-
-
 class AsyncEmbedder(Protocol):
     async def __call__(self, text: str) -> list[float]: ...
 
 
 async def rebuild_index_graph(gm: GraphMemory, reg: KBRegistry, *,
-                                 llm: AsyncChatLLM,
+                                 llm: ChatLike,
                                  embedder: AsyncEmbedder
                                  ) -> dict[str, int]:
     """Rebuild KB index nodes + cross-KB edges. Returns counters."""
@@ -114,7 +111,7 @@ async def rebuild_index_graph(gm: GraphMemory, reg: KBRegistry, *,
     return {"index_nodes": len(enriched), "edges_added": edges_added}
 
 
-async def _llm_link_kbs(gm: GraphMemory, llm: AsyncChatLLM,
+async def _llm_link_kbs(gm: GraphMemory, llm: ChatLike,
                           metas: list[dict[str, Any]],
                           name_to_node_id: dict[str, int]) -> int:
     body = "\n".join(

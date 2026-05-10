@@ -22,9 +22,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from krakey.engines.memory._internal.graph_memory import (
-    AsyncChatLLM, GraphMemory,
-)
+from krakey.engines.memory._internal.graph_memory import GraphMemory
+from krakey.interfaces.duck import ChatLike
 from krakey.engines.memory._internal.knowledge_base import KBRegistry
 
 if TYPE_CHECKING:
@@ -46,8 +45,8 @@ class GraphMemoryEngine(GraphMemory):
         embedder,
         kb_dir: str,
         auto_ingest_threshold: float = 0.92,
-        extractor_llm: AsyncChatLLM | None = None,
-        classifier_llm: AsyncChatLLM | None = None,
+        extractor_llm: ChatLike | None = None,
+        classifier_llm: ChatLike | None = None,
         classify_batch_size: int = 10,
         classify_existing_context: int = 30,
     ):

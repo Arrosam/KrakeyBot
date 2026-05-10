@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from krakey.interfaces.engines.memory import MemoryEngine
-    from krakey.llm.resolve import AsyncEmbedder
+    from krakey.interfaces.duck import AsyncEmbedder
 
 
 async def query_gm_with_fts_fallback(

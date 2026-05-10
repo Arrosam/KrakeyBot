@@ -35,7 +35,7 @@ from krakey.utils.tokens import estimate_tokens
 if TYPE_CHECKING:
     from krakey.interfaces.engines.memory import MemoryEngine
     from krakey.interfaces.engines.reranker import RerankerEngine
-    from krakey.llm.resolve import AsyncEmbedder
+    from krakey.interfaces.duck import AsyncEmbedder
     from krakey.models.stimulus import Stimulus
 
 

@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import pytest
 
-from krakey.llm.client import LLMClient
-from krakey.llm.resolve import ChatLike, resolve_llm_for_tag
+from krakey.engines.llm_client_factory._client import LLMClient
+from krakey.engines.llm_factory._resolve import resolve_llm_for_tag
+from krakey.interfaces.duck import ChatLike
 from krakey.models.config import (
     Config,
     LLMParams,

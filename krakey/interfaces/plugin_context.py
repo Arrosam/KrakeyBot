@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 if TYPE_CHECKING:
-    from krakey.llm.client import LLMClient
+    from krakey.engines.llm_client_factory._client import LLMClient
     from krakey.main import RuntimeDeps
 
 _log = logging.getLogger(__name__)

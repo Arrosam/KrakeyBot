@@ -1,6 +1,6 @@
 """``DefaultLLMClientFactoryEngine`` — built-in LLM factory Engine.
 
-Wraps ``krakey.llm.resolve.resolve_llm_for_tag`` (which handles the
+Wraps ``krakey.engines.llm_factory._resolve.resolve_llm_for_tag`` (which handles the
 actual tag → provider → ``LLMClient`` instantiation, plus the
 ``llm_client_factory`` slot for per-tag class substitution). This
 Engine is the higher layer that hides ``cfg.llm`` from upstream
@@ -24,10 +24,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from krakey.llm.resolve import resolve_llm_for_tag
+from krakey.engines.llm_factory._resolve import resolve_llm_for_tag
 
 if TYPE_CHECKING:
-    from krakey.llm.resolve import ChatLike
+    from krakey.interfaces.duck import ChatLike
     from krakey.models.config import Config
 
 

@@ -49,10 +49,10 @@ You can override one slot, all slots, or none — they're independent.
 
 | Slot | Protocol | Default | Construction kwargs |
 |------|----------|---------|---------------------|
-| `embedder` | [`AsyncEmbedder`](../krakey/llm/resolve.py) | tag-resolved LLMClient wrapper | _(none)_ |
+| `embedder` | [`AsyncEmbedder`](../krakey/interfaces/duck.py) | tag-resolved LLMClient wrapper | _(none)_ |
 | `reranker` | [`RerankerEngine`](../krakey/interfaces/engines/reranker.py) | tag-resolved LLMClient wrapper | _(none)_ |
 | `prompt_builder` | [`PromptBuilderLike`](../krakey/interfaces/services/prompt_builder.py) | `PromptBuilder` | _(none)_ |
-| `llm_client_factory` | [`ChatLike`](../krakey/llm/resolve.py) | `LLMClient` | `provider`, `model`, `params` |
+| `llm_client_factory` | [`ChatLike`](../krakey/interfaces/duck.py) | `LLMClient` | `provider`, `model`, `params` |
 | `memory` | [`MemoryService`](../krakey/interfaces/services/memory.py) | `GraphMemory` | `db_path`, `embedder`, `auto_ingest_threshold`, `extractor_llm`, `classifier_llm` |
 | `kb_registry` | [`KBRegistryService`](../krakey/interfaces/services/memory.py) | `KBRegistry` | `gm`, `kb_dir`, `embedder` |
 

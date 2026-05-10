@@ -21,7 +21,7 @@ from krakey.models.self_model import (
 )
 from krakey.interfaces.engines.recall import RecallSession
 from krakey.interfaces.tool import ToolRegistry
-from krakey.llm.resolve import AsyncEmbedder, ChatLike
+from krakey.interfaces.duck import AsyncEmbedder, ChatLike
 from krakey.models.config import Config, LLMParams
 from krakey.models.config_backup import backup_config
 from krakey.runtime.stimuli.batch_tracker import BatchTrackerChannel

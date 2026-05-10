@@ -1,49 +1,27 @@
-"""Tag → LLMClient resolution + the structural Protocols runtime uses
-to talk about LLMs and embedders generically.
+"""Tag → LLMClient resolution helper for the LLM factory engine.
 
-Two concerns in one small module — both about how the rest of the
-system addresses an LLM without knowing the concrete implementation:
+Implementation detail of ``DefaultLLMClientFactoryEngine``: given a
+tag name + the central config, return a cached or freshly-built
+``LLMClient``. The factory's ``client_for_tag`` Protocol method
+delegates here. Per-tag caching means two consumers pointing at the
+same tag share one client instance — keeps connection state and
+future rate-limit accounting consistent.
 
-  * ``ChatLike`` / ``AsyncEmbedder`` — Protocols declaring the minimal
-    shape the runtime depends on. Built-in clients (LLMClient,
-    embedding clients) and test doubles (ScriptedLLM, NullEmbedder)
-    both satisfy them structurally without inheritance.
-
-  * ``resolve_llm_for_tag(cfg, tag_name, cache)`` — given a tag name
-    and the central config, return a cached or freshly-built
-    ``LLMClient``. Shared between the core-purpose loader (in
-    ``krakey/main.py``) and per-plugin LLM resolution (via
-    ``PluginContext.get_llm_for_tag``) so two purposes pointing at
-    the same tag share one client instance — keeps connection state
-    + future rate-limit accounting consistent.
+The duck Protocols (``ChatLike``, ``AsyncEmbedder``) used to live
+alongside this code; they're now at ``krakey.interfaces.duck`` since
+they're cross-cutting typing primitives rather than this Engine's
+private concern.
 """
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING
+
+from krakey.interfaces.duck import ChatLike
 
 if TYPE_CHECKING:
-    from krakey.llm.client import LLMClient
+    from krakey.engines.llm_client_factory._client import LLMClient
     from krakey.models.config import Config
-
-
-@runtime_checkable
-class ChatLike(Protocol):
-    async def chat(self, messages, **kwargs) -> str: ...
-
-
-@runtime_checkable
-class AsyncEmbedder(Protocol):
-    """Async-callable returning an embedding vector for one text.
-
-    ``@runtime_checkable`` so ``ServiceResolver`` can isinstance-check
-    user-supplied embedder slots at startup. Caveat: Python's
-    runtime-checkable Protocol with ``__call__`` only verifies the
-    method exists — it can't check the signature, so any callable
-    technically passes. Documentation discipline beats type-system
-    enforcement here.
-    """
-    async def __call__(self, text: str) -> list[float]: ...
 
 
 def resolve_llm_for_tag(
@@ -70,7 +48,6 @@ def resolve_llm_for_tag(
     in mind, or implement those methods on the same class.
     """
     from krakey.engines.registry import EngineRegistry
-    from krakey.llm.client import LLMClient
 
     if not tag_name:
         return None

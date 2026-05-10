@@ -31,7 +31,7 @@ from krakey.models.stimulus import Stimulus
 
 if TYPE_CHECKING:
     from krakey.interfaces.engines.memory import MemoryEngine
-    from krakey.llm.resolve import AsyncEmbedder
+    from krakey.interfaces.duck import AsyncEmbedder
 
 
 class MemoryRecallTool(Tool):

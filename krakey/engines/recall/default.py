@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from krakey.interfaces.engines.memory import MemoryEngine
     from krakey.interfaces.engines.recall import RecallSession
     from krakey.interfaces.engines.reranker import RerankerEngine
-    from krakey.llm.resolve import AsyncEmbedder
+    from krakey.interfaces.duck import AsyncEmbedder
     from krakey.models.config import Config
 
 

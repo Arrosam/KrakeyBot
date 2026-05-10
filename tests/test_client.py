@@ -1,6 +1,6 @@
 import pytest
 
-from krakey.llm.client import LLMClient, TransportError
+from krakey.engines.llm_client_factory._client import LLMClient, TransportError
 from krakey.models.config import LLMParams, Provider
 
 
@@ -253,7 +253,7 @@ async def test_default_params_when_none_supplied():
 def _fast_retries(monkeypatch):
     """asyncio.sleep in the retry loop would make these tests slow.
     Patch it to a no-op for the client module only."""
-    import krakey.llm.client as client_mod
+    import krakey.engines.llm_client_factory._client as client_mod
 
     async def _noop(_):
         return None
