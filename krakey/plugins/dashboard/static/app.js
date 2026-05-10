@@ -1771,7 +1771,10 @@ async function loadSettings() {
     } else {
       configSchema = { llm_params: [] };
     }
-    await loadAvailableModifiers();
+    await Promise.all([
+      loadAvailableModifiers(),
+      loadEngineCatalog(),
+    ]);
     renderSettingsForm();
     // Refresh the deps-install banner alongside the form. Failure
     // to fetch is non-fatal — the rest of settings still works.
@@ -1977,25 +1980,106 @@ function renderSettingsForm() {
   ensureSection("environments");
   settingsForm.appendChild(renderEnvironmentsSection(cfgState.environments));
 
-  // Engine slot overrides — power-user surface. Each Engine
-  // resolves to its built-in default unless the user supplies a
-  // dotted path here. Rendered last because most users will never
-  // touch it.
+  // Engine slot overrides — each slot picks from a dropdown sourced
+  // from /api/engines/available (built-in catalog + plugin-supplied
+  // engines). "(default: <name>)" stands for the empty-string value
+  // → registry falls back to the slot's DEFAULT_ENGINE. "Custom..."
+  // exposes a free-form text input for dotted paths the catalog
+  // doesn't know about.
   ensureSection("core_implementations");
-  const engSec = renderGenericSection(
-    "core_implementations", "Engine Overrides",
-    cfgState.core_implementations, SCHEMAS.core_implementations,
-  );
-  const engHint = document.createElement("p");
-  engHint.className = "section-hint";
-  engHint.textContent =
-    "advanced — empty fields use the built-in default impl. Custom "
-    + "paths must be ``module.path:ClassName`` and the class must "
-    + "satisfy the slot's Engine Protocol from "
-    + "krakey/interfaces/engines/.";
-  const engBody = engSec.querySelector(".body");
-  engBody.insertBefore(engHint, engBody.firstChild);
-  settingsForm.appendChild(engSec);
+  settingsForm.appendChild(renderEngineOverridesSection(
+    cfgState.core_implementations,
+  ));
+}
+
+function renderEngineOverridesSection(cfg) {
+  const sec = makeSection("Engine Overrides");
+  const body = sec.querySelector(".body");
+  const hint = document.createElement("p");
+  hint.className = "section-hint";
+  hint.textContent =
+    "Each slot picks from built-in impls + any plugin-supplied "
+    + "engines (workspace/plugins/<name>/meta.yaml with `kind: engine`). "
+    + '"(default)" leaves the field empty in config.yaml so the '
+    + "runtime falls through to the slot's built-in default. "
+    + "\"Custom path...\" lets you supply a `module.path:ClassName` "
+    + "directly.";
+  body.appendChild(hint);
+
+  // Render one row per slot. Slot order matches CoreImplementations'
+  // dataclass field order (covered by SCHEMAS.core_implementations).
+  for (const [slot, _type] of SCHEMAS.core_implementations) {
+    body.appendChild(_engineSlotRow(slot, cfg));
+  }
+  return sec;
+}
+
+function _engineSlotRow(slot, cfg) {
+  const row = document.createElement("div");
+  row.className = "cfg-row";
+  const lab = document.createElement("label");
+  lab.textContent = slot;
+  const help = HELP[`core_implementations.${slot}`];
+  if (help) lab.title = help;
+  row.appendChild(lab);
+
+  const slotMeta = engineCatalog[slot] || { default: "", options: [] };
+  const currentValue = cfg[slot] || "";
+  const isCustom = currentValue && currentValue.includes(":");
+
+  const sel = document.createElement("select");
+  // Empty option = "(default)" — this is what the runtime sees as
+  // "no override", falling through to the slot's DEFAULT_ENGINE.
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = `(default: ${slotMeta.default || "?"})`;
+  sel.appendChild(blank);
+  for (const opt of slotMeta.options) {
+    const o = document.createElement("option");
+    o.value = opt.name;
+    const tag = opt.source === "plugin" ? " [plugin]" : "";
+    o.textContent = `${opt.name}${tag}`;
+    o.title = opt.description || "";
+    sel.appendChild(o);
+  }
+  // "Custom..." option for dotted paths. Selecting it reveals a text
+  // input below; deselecting clears the override.
+  const customOpt = document.createElement("option");
+  customOpt.value = "__custom__";
+  customOpt.textContent = "Custom path…";
+  sel.appendChild(customOpt);
+
+  // Set initial selection from cfg state.
+  if (isCustom) {
+    sel.value = "__custom__";
+  } else {
+    sel.value = currentValue;
+  }
+
+  // Free-form text input — visible only when "Custom..." selected.
+  const txt = document.createElement("input");
+  txt.type = "text";
+  txt.placeholder = "module.path:ClassName";
+  txt.value = isCustom ? currentValue : "";
+  txt.style.marginLeft = "0.5em";
+  txt.style.display = isCustom ? "" : "none";
+
+  sel.addEventListener("change", () => {
+    if (sel.value === "__custom__") {
+      txt.style.display = "";
+      cfg[slot] = txt.value || "";
+    } else {
+      txt.style.display = "none";
+      cfg[slot] = sel.value;
+    }
+  });
+  txt.addEventListener("input", () => {
+    cfg[slot] = txt.value;
+  });
+
+  row.appendChild(sel);
+  row.appendChild(txt);
+  return row;
 }
 
 function ensure(obj, key, factory) {
@@ -3388,6 +3472,26 @@ async function loadAvailableModifiers() {
     }
   } catch (e) {
     availableModifiers = [];
+  }
+}
+
+// Engine slot catalog from /api/engines/available — populated on
+// settings load + consumed by renderEngineOverridesSection. Keyed
+// by slot name; each value is ``{default, options:[{name, source,
+// description}]}``. Empty until the first fetch lands.
+let engineCatalog = {};
+
+async function loadEngineCatalog() {
+  try {
+    const r = await fetch("/api/engines/available");
+    if (r.ok) {
+      const body = await r.json();
+      engineCatalog = body.engines || {};
+    } else {
+      engineCatalog = {};
+    }
+  } catch (e) {
+    engineCatalog = {};
   }
 }
 

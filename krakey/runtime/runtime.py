@@ -145,70 +145,33 @@ class Runtime:
         )
         self._engine_registry = EngineRegistry(self.config)
         self.llm_factory = deps.llm_factory
-        # Reranker Engine — composition root resolves it BEFORE the
-        # recall + dispatch slots that take it as a constructor kwarg.
-        # The default impl wraps the configured reranker tag with a
-        # preserve-order fallback, so the slot is always populated
-        # even when no tag is bound.
+        # Reranker resolves first because recall + dispatch take it as
+        # a constructor kwarg. The default impl ships a preserve-order
+        # fallback so the slot is always populated.
         self.reranker = self._engine_registry.resolve(
             "reranker",
-            default_path=(
-                "krakey.engines.reranker.default:DefaultRerankerEngine"
-            ),
             expected_protocol=RerankerEngine,
             factory=self.llm_factory,
         )
         self.explicit_history = self._engine_registry.resolve(
             "explicit_history",
-            default_path=(
-                "krakey.engines.explicit_history.default:"
-                "SlidingWindowExplicitHistoryEngine"
-            ),
             expected_protocol=ExplicitHistoryEngine,
             history_token_budget=_history_budget,
             state_path=sw_state_path,
         )
-
-        # Context Engine — prompt assembly.
         self.context = self._engine_registry.resolve(
             "context",
-            default_path=(
-                "krakey.engines.context.default:DefaultContextEngine"
-            ),
             expected_protocol=ContextEngine,
         )
-
-        # Decision Engine — translates Self's [DECISION] text into a
-        # structured DecisionResult (tool calls + memory writes +
-        # sleep flag + parse failures). Default impl is the scripted
-        # ``<tool_call>`` parser; users swap in
-        # HypothalamusDecisionEngine (or their own LLM-based
-        # translator) by setting ``cfg.core_implementations.decision``.
-        # Receives the shared factory so an alternative impl can
-        # reach LLM clients via the same per-tag cache the rest of
-        # the runtime uses. Default ToolCallParserDecisionEngine
-        # accepts and ignores the kwarg.
         self.decision = self._engine_registry.resolve(
             "decision",
-            default_path=(
-                "krakey.engines.decision.tool_call_parser:"
-                "ToolCallParserDecisionEngine"
-            ),
             expected_protocol=DecisionEngine,
             cfg=self.config,
             factory=self.llm_factory,
         )
-
-        # Memory Engine — unified GM CRUD + KB fleet management +
-        # sleep cycle behind one MemoryEngine Protocol. Custom impls
-        # override ``cfg.core_implementations.memory`` with a class
-        # satisfying ``MemoryEngine``.
         gm_path = self.config.graph_memory.db_path or ":memory:"
         self.memory = self._engine_registry.resolve(
             "memory",
-            default_path=(
-                "krakey.engines.memory.default:GraphMemoryEngine"
-            ),
             expected_protocol=MemoryEngine,
             db_path=gm_path,
             embedder=deps.embedder,
@@ -222,34 +185,19 @@ class Runtime:
             extractor_llm=deps.classify_llm,
             classifier_llm=deps.classify_llm,
         )
-
-        # Recall Engine resolve — placed AFTER memory because the
-        # default IncrementalRecallEngine takes the resolved memory
-        # instance as a constructor input.
+        # Recall resolve is placed AFTER memory because the default
+        # IncrementalRecallEngine takes the resolved memory instance
+        # as a constructor input.
         self.recall = self._engine_registry.resolve(
             "recall",
-            default_path=(
-                "krakey.engines.recall.default:IncrementalRecallEngine"
-            ),
             expected_protocol=RecallEngine,
             cfg=self.config,
             memory=self.memory,
             embedder=deps.embedder,
             reranker=self.reranker,
         )
-
-        # Dispatch Engine — runs the 4 side-effects of a
-        # DecisionResult (log + publish, dispatch tool calls,
-        # apply memory writes, apply memory updates). Default
-        # impl wraps the long-standing DecisionDispatcher class
-        # so behavior is unchanged. Users override via
-        # cfg.core_implementations.dispatch (e.g. RemoteDispatchEngine
-        # ships tool execution to a worker over HTTP).
         self.dispatch = self._engine_registry.resolve(
             "dispatch",
-            default_path=(
-                "krakey.engines.dispatch.default:LocalDispatchEngine"
-            ),
             expected_protocol=DispatchEngine,
             cfg=self.config,
         )
@@ -375,9 +323,6 @@ class Runtime:
         # the loop stay on Runtime.run().
         self.heartbeat = self._engine_registry.resolve(
             "heartbeat",
-            default_path=(
-                "krakey.engines.heartbeat.default:DefaultHeartbeatEngine"
-            ),
             expected_protocol=HeartbeatEngine,
             cfg=self.config,
         )

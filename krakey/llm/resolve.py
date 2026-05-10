@@ -105,7 +105,6 @@ def resolve_llm_for_tag(
     registry = EngineRegistry(cfg)
     client = registry.resolve(
         "llm_client_factory",
-        default_path="krakey.llm.client:LLMClient",
         expected_protocol=ChatLike,
         provider=provider,
         model=model_name,

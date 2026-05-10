@@ -1,22 +1,34 @@
 """``explicit_history`` Engine — working-memory window.
 
-Default impl ``SlidingWindowExplicitHistoryEngine`` (in ``default.py``)
-is the existing ``krakey.engines.explicit_history.sliding_window.SlidingWindow``
-exported under the new Engine name. The behavioral surface (append /
-get_rounds / pop_oldest / total_tokens / needs_compact + the
-``history_token_budget`` attr) is unchanged.
-
-The slot is renamed from ``sliding_window`` to ``explicit_history``
-because sliding-window-of-rounds is just one of several possible
-working-memory strategies — future Engines could maintain a summary
-tree, a relevance-scored LRU cache, a hierarchical recall buffer,
-etc. The Protocol stays minimal so all those variants fit.
+Default impl ``SlidingWindowExplicitHistoryEngine`` is a token-bounded
+ring of recent heartbeat rounds (the canonical [HISTORY] layer
+source). Sliding-window-of-rounds is one possible strategy; future
+Engines could maintain a summary tree, a relevance-scored LRU cache,
+a hierarchical recall buffer, etc. The Protocol stays minimal so all
+those variants fit.
 
 The ``ExplicitHistoryEngine`` Protocol the runtime depends on lives
 at ``krakey.interfaces.engines.explicit_history``.
 """
+from krakey.engines.catalog import EngineImpl
 from krakey.engines.explicit_history.default import (
     SlidingWindowExplicitHistoryEngine,
 )
 
-__all__ = ["SlidingWindowExplicitHistoryEngine"]
+BUILTIN_ENGINES = {
+    "sliding_window": EngineImpl(
+        cls=SlidingWindowExplicitHistoryEngine,
+        description=(
+            "Token-bounded ring of recent heartbeat rounds; oldest "
+            "rounds compact into GM when the budget overflows."
+        ),
+    ),
+}
+
+DEFAULT_ENGINE = "sliding_window"
+
+__all__ = [
+    "BUILTIN_ENGINES",
+    "DEFAULT_ENGINE",
+    "SlidingWindowExplicitHistoryEngine",
+]

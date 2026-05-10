@@ -85,11 +85,13 @@ WORKSPACE_ROOT = Path("workspace") / "plugins"
 @dataclass
 class ComponentMetadata:
     """One entry in a plugin's ``components:`` list."""
-    kind: str  # "modifier" | "tool" | "channel"
+    kind: str  # "modifier" | "tool" | "channel" | "engine"
     factory_module: str
     factory_attr: str
     role: str | None = None  # for kind="modifier": role string the
                               # Modifier claims; runtime errors on dup
+    slot: str | None = None  # for kind="engine": which Engine slot
+                              # this impl plugs into (e.g. "decision")
     llm_purposes: list[dict[str, Any]] = field(default_factory=list)
     # Anything else from the component dict is preserved as `extra` so
     # plugin-specific options can ride along without schema changes.
@@ -263,7 +265,7 @@ def _parse_post_install(entry: Any, index: int) -> dict[str, Any]:
     }
 
 
-_KNOWN_COMPONENT_KINDS = {"modifier", "tool", "channel"}
+_KNOWN_COMPONENT_KINDS = {"modifier", "tool", "channel", "engine"}
 
 
 def _parse_component(c: Any) -> ComponentMetadata:
@@ -277,16 +279,22 @@ def _parse_component(c: Any) -> ComponentMetadata:
         )
     if not c.get("factory_module") or not c.get("factory_attr"):
         raise ValueError("component missing factory_module / factory_attr")
+    if kind == "engine" and not c.get("slot"):
+        raise ValueError(
+            "component kind=engine requires `slot:` (which Engine "
+            "slot this impl plugs into, e.g. 'decision')"
+        )
     purposes = c.get("llm_purposes") or []
     if not isinstance(purposes, list):
         raise ValueError("component `llm_purposes:` must be a list")
-    # Stash the rest (role already pulled, factory_* already pulled)
-    known = {"kind", "role", "factory_module", "factory_attr",
+    # Stash the rest (role/slot already pulled, factory_* already pulled)
+    known = {"kind", "role", "slot", "factory_module", "factory_attr",
              "llm_purposes"}
     extra = {k: v for k, v in c.items() if k not in known}
     return ComponentMetadata(
         kind=kind,
         role=str(c["role"]) if c.get("role") else None,
+        slot=str(c["slot"]) if c.get("slot") else None,
         factory_module=str(c["factory_module"]),
         factory_attr=str(c["factory_attr"]),
         llm_purposes=list(purposes),

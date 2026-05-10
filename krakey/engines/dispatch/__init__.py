@@ -1,15 +1,14 @@
 """``dispatch`` Engine — run a DecisionResult's side-effects.
 
-Default impl ``LocalDispatchEngine`` (in ``default.py``) wraps the
-existing ``DecisionDispatcher`` class — same per-call task scheduling,
-same BatchTracker registration, same memory-write/update plumbing. The
-wrapper exposes a single ``dispatch()`` entry point that orchestrates
-the four side-effects in order, replacing the orchestrator's previous
-4-call sequence (``log_summary`` → ``dispatch_tool_calls`` →
-``apply_memory_writes`` → ``apply_memory_updates``) with one method.
+Default impl ``LocalDispatchEngine`` wraps the long-standing
+``DecisionDispatcher`` class — same per-call task scheduling, same
+BatchTracker registration, same memory-write/update plumbing. The
+wrapper exposes a single ``dispatch()`` entry point that runs the
+four side-effects (log + dispatch tool calls + apply memory writes +
+apply memory updates) in order.
 
-A user replacing this Engine via ``cfg.core_implementations.dispatch``
-controls the entire tool-execution path. Common reasons to swap:
+A user replacing this Engine controls the entire tool-execution path.
+Common reasons to swap:
 
   * Push tool execution to a remote worker (HTTP / RPC) — dispatch
     sends the call, the worker runs ``tool.execute()``, the engine
@@ -25,6 +24,19 @@ the tool decides to run.
 The ``DispatchEngine`` Protocol the runtime depends on lives at
 ``krakey.interfaces.engines.dispatch``.
 """
+from krakey.engines.catalog import EngineImpl
 from krakey.engines.dispatch.default import LocalDispatchEngine
 
-__all__ = ["LocalDispatchEngine"]
+BUILTIN_ENGINES = {
+    "default": EngineImpl(
+        cls=LocalDispatchEngine,
+        description=(
+            "In-process dispatch — runs each ToolCall as an asyncio "
+            "task, applies memory writes/updates inline."
+        ),
+    ),
+}
+
+DEFAULT_ENGINE = "default"
+
+__all__ = ["BUILTIN_ENGINES", "DEFAULT_ENGINE", "LocalDispatchEngine"]

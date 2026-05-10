@@ -1,27 +1,35 @@
-"""``EngineRegistry`` — turn ``cfg.core_implementations.<slot>`` dotted
-paths (or built-in defaults) into concrete Engine instances.
+"""``EngineRegistry`` — turn ``cfg.core_implementations.<slot>`` short
+names (or built-in defaults, or dotted paths) into concrete Engine
+instances.
+
+Resolution order for ``core_implementations.<slot>``:
+
+  1. Empty string / missing → use the slot's ``DEFAULT_ENGINE`` (each
+     ``engines/<slot>/__init__.py`` declares one).
+  2. Value contains ``:`` → treat as ``module.path:ClassName`` dotted
+     path (power-user fallback for impls that aren't catalogued).
+  3. Otherwise → look up the short name in
+     ``engines/<slot>/BUILTIN_ENGINES``, then in the plugin-engine
+     catalog (plugins under ``workspace/plugins/`` declaring
+     ``kind: engine`` + ``slot: <slot>`` in their ``meta.yaml``).
 
 Failure modes (all loud — DIP says fail-fast at startup beats failing
 30 minutes into a session with a confusing AttributeError):
 
-  * malformed path: not ``module:Class`` → ``ValueError``
-  * import fails: ``ImportError`` annotated with the override path
-  * attribute missing on the imported module: ``ImportError``
-  * instantiation TypeError on kwargs mismatch: ``TypeError`` annotated
+  * unknown short name → ``ValueError`` listing the slot's catalog
+  * malformed dotted path → ``ValueError``
+  * import fails → ``ImportError`` annotated with the path/short name
+  * instantiation TypeError on kwargs mismatch → ``TypeError`` annotated
     with the slot name + the kwargs the caller supplied
-  * resulting object doesn't satisfy the Protocol: ``TypeError``
+  * resulting object doesn't satisfy the Protocol → ``TypeError``
     listing the missing attributes
-
-All paths the user supplies are imported via ``importlib`` — there's
-no allow-list. The user opting in to running their own code by
-declaring a dotted path is the same trust boundary as ``pip install``
-of a package.
 """
 from __future__ import annotations
 
 import importlib
 from typing import Any, Callable, TypeVar
 
+from krakey.engines.catalog import EngineImpl
 from krakey.models.config import Config
 
 T = TypeVar("T")
@@ -81,21 +89,9 @@ def _filter_kwargs(cls: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
     have to declare every field the runtime threads through. Inspect
     the constructor and drop kwargs it can't accept — unless it has
     ``**kwargs``, in which case we pass everything through.
-
-    The runtime side is the only producer of these kwargs, and the
-    set is closed (every kwarg a slot accepts is documented in
-    ``runtime.py`` or ``main.py``). A typo here would be a runtime
-    bug, not a user-config bug, so silent drop is acceptable: the
-    impl's missing-attribute error at use-time pinpoints the typo
-    immediately.
     """
     import inspect
     try:
-        # ``inspect.signature(cls)`` returns the constructor signature
-        # — when the class doesn't override ``__init__`` Python yields
-        # an empty ``()`` rather than object's ``(self, *args, **kwargs)``.
-        # That's what we want: a class like ``class X: pass`` should
-        # accept zero kwargs, not ALL kwargs.
         sig = inspect.signature(cls)
     except (TypeError, ValueError):
         return kwargs
@@ -115,16 +111,53 @@ def _filter_kwargs(cls: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in kwargs.items() if k in accepted}
 
 
+def _load_slot_catalog(slot: str) -> tuple[dict[str, EngineImpl], str]:
+    """Import ``engines/<slot>/__init__.py`` and return its
+    ``(BUILTIN_ENGINES, DEFAULT_ENGINE)`` pair."""
+    pkg = importlib.import_module(f"krakey.engines.{slot}")
+    builtins = getattr(pkg, "BUILTIN_ENGINES", None)
+    default = getattr(pkg, "DEFAULT_ENGINE", None)
+    if builtins is None or default is None:
+        raise ImportError(
+            f"engines.{slot}.__init__ is missing BUILTIN_ENGINES or "
+            "DEFAULT_ENGINE — every Engine slot package must declare "
+            "both so the registry can resolve short names."
+        )
+    return builtins, default
+
+
+def _load_plugin_engine_catalog() -> dict[str, dict[str, str]]:
+    """Walk every plugin's ``meta.yaml`` for ``kind: engine`` components.
+
+    Returns ``{slot: {plugin_name: 'module.path:ClassAttr'}}``. Plugins
+    that don't declare any engine just don't show up here. Scanning is
+    pure-text (``parse_meta`` doesn't import plugin code) so this is
+    cheap to call even when many plugins are installed.
+    """
+    from krakey.plugin_system.catalogue import (
+        list_available_plugins,
+    )
+    catalog: dict[str, dict[str, str]] = {}
+    for plugin_name, meta in list_available_plugins().items():
+        for comp in meta.components:
+            if comp.kind != "engine":
+                continue
+            slot = getattr(comp, "slot", None)
+            if not slot:
+                continue
+            path = f"{comp.factory_module}:{comp.factory_attr}"
+            catalog.setdefault(slot, {})[plugin_name] = path
+    return catalog
+
+
 class EngineRegistry:
     """Resolves Engine slots to concrete instances.
 
     Constructed once per Runtime from a parsed ``Config``. Callers
-    use ``resolve(slot, default_path=..., ...)`` one slot at a time;
-    the user override is read from ``cfg.core_implementations.<slot>``
-    via ``CoreImplementations.get(slot)``, which returns ``""`` for
-    unset / unknown slots. Empty override falls back to the supplied
-    ``default_path``. Both empty → ``ValueError`` (a slot with neither
-    impl nor default is a runtime-killer; surface it loudly).
+    use ``resolve(slot, expected_protocol=..., **kwargs)`` one slot
+    at a time. The user override is read from
+    ``cfg.core_implementations.<slot>`` (short name OR dotted path);
+    empty string falls back to the slot's catalog ``DEFAULT_ENGINE``.
     """
 
     def __init__(
@@ -135,42 +168,63 @@ class EngineRegistry:
     ):
         self._cfg = cfg
         self._import = importer or _default_importer
+        self._plugin_engine_catalog: dict[str, dict[str, str]] | None = None
+
+    def _plugin_catalog(self) -> dict[str, dict[str, str]]:
+        if self._plugin_engine_catalog is None:
+            self._plugin_engine_catalog = _load_plugin_engine_catalog()
+        return self._plugin_engine_catalog
+
+    def _resolve_class(self, slot: str, name_or_path: str) -> type:
+        """Map an override value to a concrete class.
+
+        ``:`` in value → dotted path. Otherwise short name → walk the
+        built-in catalog, then the plugin catalog. Misses raise with a
+        list of available short names so the user can fix the typo.
+        """
+        if ":" in name_or_path:
+            return self._import(name_or_path)
+        builtins, _ = _load_slot_catalog(slot)
+        if name_or_path in builtins:
+            return builtins[name_or_path].cls
+        plugin_paths = self._plugin_catalog().get(slot, {})
+        if name_or_path in plugin_paths:
+            return self._import(plugin_paths[name_or_path])
+        available = sorted(builtins) + sorted(plugin_paths)
+        raise ValueError(
+            f"engine slot {slot!r}: unknown impl name "
+            f"{name_or_path!r}. Available: {available!r}. Use "
+            "'module.path:ClassName' for an impl that isn't "
+            "catalogued."
+        )
 
     def resolve(
         self,
         slot: str,
         *,
-        default_path: str,
         expected_protocol: type,
         **kwargs: Any,
     ) -> Any:
-        """Return the user override or the default, instantiated.
+        """Return the configured impl, instantiated.
 
-        ``kwargs`` are forwarded to the constructor of either path —
-        both must accept the same kwargs (this is part of each slot's
-        contract; document on the Protocol).
+        ``kwargs`` are forwarded to the constructor — ``_filter_kwargs``
+        drops ones the impl's ``__init__`` doesn't accept so user
+        overrides with narrower signatures still work.
         """
         override = self._cfg.core_implementations.get(slot)
-        path = override or default_path
-        if not path:
-            raise ValueError(
-                f"engine slot {slot!r}: no impl path "
-                "(neither user override nor built-in default supplied). "
-                "This is a runtime-killer — every Engine slot needs an "
-                "impl before the runtime can start."
-            )
+        if override:
+            name_or_path = override
+        else:
+            _, default = _load_slot_catalog(slot)
+            name_or_path = default
 
-        cls = self._import(path)
-        # Filter kwargs to those the class's __init__ accepts — keeps
-        # user overrides working when they declare a narrower
-        # signature than the runtime supplies (e.g. a custom embedder
-        # that doesn't take ``factory``).
+        cls = self._resolve_class(slot, name_or_path)
         accepted_kwargs = _filter_kwargs(cls, kwargs)
         try:
             instance = cls(**accepted_kwargs)
         except TypeError as e:
             raise TypeError(
-                f"engine slot {slot!r} = {path!r} could not be "
+                f"engine slot {slot!r} = {name_or_path!r} could not be "
                 f"instantiated with kwargs {sorted(accepted_kwargs)}: {e}. "
                 f"Custom engines for slot {slot!r} must accept the "
                 "same kwargs as the built-in default."
@@ -186,7 +240,7 @@ class EngineRegistry:
                     "isinstance cannot verify)"
                 )
             raise TypeError(
-                f"engine slot {slot!r} = {path!r} does not satisfy "
+                f"engine slot {slot!r} = {name_or_path!r} does not satisfy "
                 f"{expected_protocol.__name__}; {detail}"
             )
         return instance

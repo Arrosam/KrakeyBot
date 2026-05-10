@@ -150,6 +150,37 @@ async def test_post_settings_requires_parsed_or_raw(tmp_path):
     assert r.status_code == 400
 
 
+async def test_engines_available_lists_builtin_catalog(tmp_path):
+    """The dashboard's slot dropdown is sourced from this endpoint.
+    Every slot declared on CoreImplementations must show up with at
+    least one option (the built-in default) so the user always has a
+    valid pick."""
+    p = tmp_path / "config.yaml"
+    p.write_text("a: 1\n", encoding="utf-8")
+    async with _client(config_path=p) as c:
+        r = await c.get("/api/engines/available")
+    assert r.status_code == 200
+    body = r.json()
+    engines = body["engines"]
+    # Every slot present, with default + at least one option.
+    expected_slots = {
+        "memory", "context", "embedder", "reranker",
+        "explicit_history", "decision", "recall", "heartbeat",
+        "dispatch", "llm_factory", "llm_client_factory",
+    }
+    assert expected_slots <= set(engines)
+    for slot in expected_slots:
+        slot_meta = engines[slot]
+        assert slot_meta["default"]
+        names = [o["name"] for o in slot_meta["options"]]
+        assert slot_meta["default"] in names
+        assert all(o["source"] in {"builtin", "plugin"}
+                   for o in slot_meta["options"])
+    # Decision slot lists both built-in impls.
+    decision_names = [o["name"] for o in engines["decision"]["options"]]
+    assert {"tool_call_parser", "hypothalamus"} <= set(decision_names)
+
+
 async def test_post_settings_round_trips_core_implementations(tmp_path):
     """Engine slot overrides (the dashboard's "Engine Overrides"
     section) are written under ``core_implementations``. The settings

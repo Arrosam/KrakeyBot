@@ -83,6 +83,80 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
                                   detail=f"restart failed: {e}")
         return {"status": "restarting"}
 
+    @app.get("/api/engines/available")
+    async def get_available_engines():  # noqa: ANN201
+        """List every Engine slot's catalog — both built-in impls and
+        plugin-supplied impls — so the dashboard can render a slot
+        dropdown instead of a free-form dotted-path text input.
+
+        Response shape::
+
+            {
+              "<slot>": {
+                "default": "<short_name>",
+                "options": [
+                  {"name": "...", "source": "builtin" | "plugin",
+                   "description": "..."},
+                  ...
+                ],
+              },
+              ...
+            }
+
+        ``source`` is ``"builtin"`` for impls catalogued in
+        ``engines/<slot>/__init__.py`` and ``"plugin"`` for impls
+        declared via ``kind: engine`` + ``slot:`` in any plugin's
+        ``meta.yaml``. The endpoint scans (importing each engine
+        package's ``__init__`` is required to read BUILTIN_ENGINES)
+        but never imports the engine impl classes themselves —
+        descriptions live on the catalog metadata, not on the class.
+        """
+        import importlib
+
+        from krakey.models.config.core_impls import CoreImplementations
+        from krakey.plugin_system.catalogue import (
+            list_available_plugins,
+        )
+
+        # Plugin engines: scan every meta.yaml's engine components and
+        # bucket by slot.
+        plugin_engines: dict[str, list[dict[str, str]]] = {}
+        for plugin_name, meta in list_available_plugins().items():
+            for comp in meta.components:
+                if comp.kind != "engine" or not comp.slot:
+                    continue
+                plugin_engines.setdefault(comp.slot, []).append({
+                    "name": plugin_name,
+                    "source": "plugin",
+                    "description": meta.description.strip()
+                                   or "(plugin-supplied engine)",
+                })
+
+        # Built-in catalog: every slot field declared on
+        # CoreImplementations corresponds to a krakey.engines.<slot>
+        # subpackage with BUILTIN_ENGINES + DEFAULT_ENGINE.
+        out: dict[str, dict] = {}
+        for slot in CoreImplementations.__dataclass_fields__:
+            try:
+                pkg = importlib.import_module(f"krakey.engines.{slot}")
+            except ImportError:
+                continue
+            builtins = getattr(pkg, "BUILTIN_ENGINES", None)
+            default = getattr(pkg, "DEFAULT_ENGINE", None)
+            if builtins is None or default is None:
+                continue
+            options = [
+                {
+                    "name": name,
+                    "source": "builtin",
+                    "description": impl.description,
+                }
+                for name, impl in builtins.items()
+            ]
+            options.extend(plugin_engines.get(slot, []))
+            out[slot] = {"default": default, "options": options}
+        return {"engines": out}
+
     @app.get("/api/modifiers/available")
     async def get_available_modifiers():  # noqa: ANN201
         """List unified-format plugins discoverable on disk.

@@ -65,10 +65,6 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
     registry = EngineRegistry(cfg)
     llm_factory: LLMClientFactoryEngine = registry.resolve(
         "llm_factory",
-        default_path=(
-            "krakey.engines.llm_factory.default:"
-            "DefaultLLMClientFactoryEngine"
-        ),
         expected_protocol=LLMClientFactoryEngine,
         cfg=cfg,
     )
@@ -102,9 +98,6 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
 
     embedder = registry.resolve(
         "embedder",
-        default_path=(
-            "krakey.engines.embedder.default:TagBoundEmbedderEngine"
-        ),
         expected_protocol=EmbedderEngine,
         factory=llm_factory,
     )

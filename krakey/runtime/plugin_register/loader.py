@@ -153,6 +153,16 @@ class PluginLoader:
         any_registered = False
         any_error: str | None = None
         for component in meta.components:
+            # Engine components are metadata for the EngineRegistry's
+            # plugin-engine catalog (resolved at startup via
+            # ``core_implementations.<slot>: <plugin_name>``), NOT
+            # something the plugin loader registers into the runtime's
+            # tool/channel/modifier registries. The factory class is
+            # imported lazily by the registry when the user actually
+            # selects this engine — keeping it out of this loop avoids
+            # importing engine code on plugin enable.
+            if component.kind == "engine":
+                continue
             ctx = PluginContext(
                 deps=deps, plugin_name=plugin_name,
                 config=plugin_cfg,

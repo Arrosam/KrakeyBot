@@ -1,20 +1,17 @@
-"""EngineRegistry resolution mechanism — single-slot resolve path.
-
-Tests the mechanism in isolation using fake Protocol + fake impl
-classes. The full ``resolve_all`` orchestration that wires every
-Engine in dependency order is built incrementally as steps 3-11 land
-each impl; that integration test arrives in step 12.
+"""EngineRegistry resolution mechanism — short-name catalog +
+dotted-path fallback paths.
 
 Failure modes covered (all loud — DIP says fail-fast at startup beats
 failing 30 minutes into a session with a confusing AttributeError):
 
+  * empty override → falls back to slot's catalog DEFAULT_ENGINE
+  * short name not in catalog → ValueError listing the available names
   * malformed dotted path (no ``:``) → ValueError
   * import fails → ImportError annotated with the offending path
   * attribute missing on the imported module → ImportError
   * instantiation TypeError on kwargs mismatch → TypeError
   * resulting object doesn't satisfy the Protocol → TypeError listing
     missing attributes
-  * neither override nor default supplied → ValueError
 """
 from __future__ import annotations
 
@@ -53,7 +50,8 @@ class _BadImpl:
 
 
 class _NoKwargsImpl:
-    """Doesn't accept any kwargs; passing one raises TypeError."""
+    """Doesn't accept any kwargs; passing one would raise TypeError
+    pre-filter."""
 
     def __init__(self):
         pass
@@ -68,41 +66,20 @@ def _registry_with(*, override_for: str = "memory",
     """Build an EngineRegistry whose cfg.core_implementations.<slot>
     holds the given override path. Tests stub the importer to skip
     real module loading."""
-    if override_for == "memory" and override_path:
-        cfg = Config(core_implementations=CoreImplementations(memory=override_path))
-    elif override_for == "decision" and override_path:
-        cfg = Config(core_implementations=CoreImplementations(decision=override_path))
-    elif not override_path:
-        cfg = Config(core_implementations=CoreImplementations())
-    else:
-        # generic fallback for ad-hoc slots — set the field by name
-        cfg = Config(core_implementations=CoreImplementations(**{override_for: override_path}))
+    cfg = Config(core_implementations=CoreImplementations(
+        **{override_for: override_path},
+    ))
     return EngineRegistry(cfg, importer=importer)
 
 
 # --------------------------------------------------------------------
-# resolve() — happy paths
+# resolve() — dotted-path fallback (`:` in override)
 # --------------------------------------------------------------------
 
 
-def test_resolve_uses_default_when_no_override():
-    """No override set → registry uses default_path."""
-    def fake_importer(path: str):
-        assert path == "default.module:GoodImpl"
-        return _GoodImpl
-
-    reg = _registry_with(importer=fake_importer)
-    instance = reg.resolve(
-        "memory",
-        default_path="default.module:GoodImpl",
-        expected_protocol=_DummyProto,
-        greeting="from-default",
-    )
-    assert instance.hello() == "from-default"
-
-
-def test_resolve_uses_override_over_default():
-    """User override beats the registry's built-in default."""
+def test_resolve_dotted_path_override_uses_importer():
+    """Override containing ``:`` is treated as a dotted path and
+    fed to the registry's importer."""
     seen: list[str] = []
 
     def fake_importer(path: str):
@@ -115,48 +92,29 @@ def test_resolve_uses_override_over_default():
         importer=fake_importer,
     )
     instance = reg.resolve(
-        "memory",
-        default_path="default.module:Default",
-        expected_protocol=_DummyProto,
+        "memory", expected_protocol=_DummyProto,
         greeting="from-user",
     )
     assert seen == ["user.module:Custom"]
     assert instance.hello() == "from-user"
 
 
-def test_resolve_supports_new_engine_slots():
-    """The 6 slot fields added for the engine refactor (decision,
-    recall, heartbeat, dispatch, context, explicit_history) are
-    addressable by name."""
+def test_resolve_silently_drops_unknown_kwargs():
+    """Resolver inspects the class signature and drops kwargs the
+    constructor doesn't accept."""
     def fake_importer(path: str):
-        return _GoodImpl
+        return _NoKwargsImpl
 
-    cfg = Config(core_implementations=CoreImplementations(
-        decision="x:y", recall="x:y", heartbeat="x:y",
-        dispatch="x:y", context="x:y", explicit_history="x:y",
-    ))
-    reg = EngineRegistry(cfg, importer=fake_importer)
-    for slot in ("decision", "recall", "heartbeat", "dispatch",
-                 "context", "explicit_history"):
-        instance = reg.resolve(
-            slot, default_path="", expected_protocol=_DummyProto,
-        )
-        assert instance.hello() == "hi"
-
-
-# --------------------------------------------------------------------
-# resolve() — failure modes
-# --------------------------------------------------------------------
-
-
-def test_resolve_raises_when_neither_override_nor_default():
-    """Empty override + empty default_path → ValueError."""
-    reg = _registry_with()
-    with pytest.raises(ValueError, match="no impl path"):
-        reg.resolve(
-            "memory", default_path="",
-            expected_protocol=_DummyProto,
-        )
+    reg = _registry_with(
+        override_for="memory",
+        override_path="x:NoKwargs",
+        importer=fake_importer,
+    )
+    instance = reg.resolve(
+        "memory", expected_protocol=_DummyProto,
+        greeting="x",
+    )
+    assert instance.hello() == "hi"
 
 
 def test_resolve_raises_when_protocol_violated():
@@ -170,56 +128,185 @@ def test_resolve_raises_when_protocol_violated():
         override_path="bad:Impl",
         importer=fake_importer,
     )
-    with pytest.raises(TypeError, match="does not satisfy"):
-        reg.resolve(
-            "memory", default_path="",
-            expected_protocol=_DummyProto,
-        )
-
-
-def test_resolve_lists_missing_protocol_attrs_in_error():
-    """Error message names the specific attributes the impl lacks so
-    users can fix their custom class."""
-    def fake_importer(path: str):
-        return _BadImpl
-
-    reg = _registry_with(
-        override_for="memory",
-        override_path="bad:Impl",
-        importer=fake_importer,
-    )
     with pytest.raises(TypeError) as exc_info:
-        reg.resolve(
-            "memory", default_path="",
-            expected_protocol=_DummyProto,
-        )
+        reg.resolve("memory", expected_protocol=_DummyProto)
+    assert "does not satisfy" in str(exc_info.value)
     assert "hello" in str(exc_info.value)
 
 
-def test_resolve_silently_drops_unknown_kwargs():
-    """Resolver inspects the class signature and drops kwargs the
-    constructor doesn't accept (back-compat with older custom impls
-    whose signatures predate a kwarg's addition).
+# --------------------------------------------------------------------
+# resolve() — short-name catalog
+# --------------------------------------------------------------------
 
-    Trade-off: a typo in a user-supplied kwarg name is silently
-    dropped instead of raising. Accepted + documented on
-    _filter_kwargs."""
-    def fake_importer(path: str):
-        return _NoKwargsImpl
 
-    reg = _registry_with(
-        override_for="memory",
-        override_path="x:NoKwargs",
-        importer=fake_importer,
-    )
-    # _NoKwargsImpl.__init__(self) accepts NO kwargs; greeting is
-    # silently dropped + the impl is constructed with no args.
+def test_resolve_uses_slot_default_when_no_override():
+    """Empty override → registry resolves the slot's
+    ``DEFAULT_ENGINE`` from ``engines/<slot>/BUILTIN_ENGINES``."""
+    from krakey.engines.decision import ToolCallParserDecisionEngine
+    from krakey.interfaces.engines.decision import DecisionEngine
+
+    reg = _registry_with(override_for="decision", override_path="")
     instance = reg.resolve(
-        "memory", default_path="",
-        expected_protocol=_DummyProto,
-        greeting="x",
+        "decision", expected_protocol=DecisionEngine,
+        cfg=None, factory=None,
     )
-    assert instance.hello() == "hi"
+    # Default for `decision` is the scripted parser.
+    assert isinstance(instance, ToolCallParserDecisionEngine)
+
+
+def test_resolve_short_name_picks_from_catalog():
+    """Override = a short name in BUILTIN_ENGINES → registry returns
+    that catalog entry's class, not a dotted path."""
+    from krakey.engines.decision import HypothalamusDecisionEngine
+    from krakey.engines.llm_factory.default import (
+        DefaultLLMClientFactoryEngine,
+    )
+    from krakey.interfaces.engines.decision import DecisionEngine
+
+    cfg_yaml_like = Config(core_implementations=CoreImplementations(
+        decision="hypothalamus",
+    ))
+    reg = EngineRegistry(cfg_yaml_like)
+    factory = DefaultLLMClientFactoryEngine(cfg_yaml_like)
+    instance = reg.resolve(
+        "decision", expected_protocol=DecisionEngine,
+        cfg=cfg_yaml_like, factory=factory,
+    )
+    assert isinstance(instance, HypothalamusDecisionEngine)
+
+
+def test_resolve_unknown_short_name_raises_with_available_list():
+    """Short name not in the catalog → ValueError listing the slot's
+    available short names so the user can fix the typo."""
+    from krakey.interfaces.engines.decision import DecisionEngine
+
+    cfg = Config(core_implementations=CoreImplementations(
+        decision="not_a_real_engine",
+    ))
+    reg = EngineRegistry(cfg)
+    with pytest.raises(ValueError) as exc_info:
+        reg.resolve(
+            "decision", expected_protocol=DecisionEngine,
+            cfg=cfg, factory=None,
+        )
+    msg = str(exc_info.value)
+    assert "not_a_real_engine" in msg
+    assert "tool_call_parser" in msg
+    assert "hypothalamus" in msg
+
+
+# --------------------------------------------------------------------
+# Plugin-engine catalog
+# --------------------------------------------------------------------
+
+
+def test_resolve_plugin_engine_short_name(monkeypatch):
+    """Override = a plugin name → registry consults the plugin-engine
+    catalog (parsed from each plugin's meta.yaml) for the dotted path
+    and instantiates the same way as a built-in."""
+    # Stub list_available_plugins to inject one plugin claiming the
+    # `decision` slot — avoids planting a real plugin folder under
+    # workspace/plugins/ for the test.
+    from krakey.plugin_system import catalogue as cat_mod
+    from krakey.plugin_system.loader import (
+        ComponentMetadata, PluginMetadata,
+    )
+
+    fake_plugin = PluginMetadata(
+        name="my_translator",
+        description="",
+        components=[
+            ComponentMetadata(
+                kind="engine",
+                slot="decision",
+                factory_module="my_translator.engine",
+                factory_attr="MyEngine",
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        cat_mod, "list_available_plugins",
+        lambda: {"my_translator": fake_plugin},
+    )
+
+    seen: list[str] = []
+
+    def fake_importer(path: str):
+        seen.append(path)
+        return _GoodImpl  # satisfies _DummyProto
+
+    cfg = Config(core_implementations=CoreImplementations(
+        decision="my_translator",
+    ))
+    reg = EngineRegistry(cfg, importer=fake_importer)
+    instance = reg.resolve(
+        "decision", expected_protocol=_DummyProto,
+        greeting="from-plugin",
+    )
+    # The plugin's dotted path was looked up via the plugin catalog
+    # rather than treated as a literal short name.
+    assert seen == ["my_translator.engine:MyEngine"]
+    assert instance.hello() == "from-plugin"
+
+
+def test_engine_components_are_skipped_by_runtime_plugin_loader(tmp_path):
+    """``kind: engine`` components live in meta.yaml so the dashboard
+    + EngineRegistry can discover them, but the runtime plugin loader
+    must NOT try to instantiate them as runtime plugins (they're
+    instantiated by the Engine slot resolution path instead). Pinned
+    here so a regression in the loader doesn't accidentally re-import
+    engine code on plugin enable."""
+    from krakey.runtime.plugin_register.loader import PluginLoader
+
+    # Build a meta.yaml with a single ``kind: engine`` component
+    # under workspace/plugins/<name>/, then verify register_one
+    # doesn't try to load it.
+    workspace_root = tmp_path / "workspace" / "plugins"
+    plugin_dir = workspace_root / "fake_engine_plugin"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "meta.yaml").write_text(
+        "name: fake_engine_plugin\n"
+        "description: \"Engine-only plugin (no runtime components)\"\n"
+        "components:\n"
+        "  - kind: engine\n"
+        "    slot: decision\n"
+        "    factory_module: nonexistent.module.that.would.error\n"
+        "    factory_attr: WouldRaise\n",
+        encoding="utf-8",
+    )
+    # Patch WORKSPACE_ROOT so the loader picks up our temp folder.
+    import krakey.plugin_system.loader as ldr
+    import importlib
+    monkey_orig = ldr.WORKSPACE_ROOT
+    ldr.WORKSPACE_ROOT = workspace_root
+    try:
+        # Sanity: meta parses + the engine component is present.
+        meta = ldr.load_plugin_meta("fake_engine_plugin")
+        assert meta is not None
+        assert meta.components[0].kind == "engine"
+        assert meta.components[0].slot == "decision"
+        # The runtime plugin loader's register_one must NOT raise on
+        # the bogus dotted path because it never imports engine
+        # components — proves the skip branch fires.
+        from types import SimpleNamespace
+        loader = PluginLoader(
+            config=SimpleNamespace(plugins=["fake_engine_plugin"]),
+            modifiers=SimpleNamespace(register=lambda _i: None),
+            tools=SimpleNamespace(register=lambda _i: None),
+            channels=SimpleNamespace(register=lambda _i: None),
+            services={},
+        )
+        deps = SimpleNamespace(
+            plugin_configs_root=str(tmp_path / "configs"),
+            llm_clients_by_tag={}, config=SimpleNamespace(),
+        )
+        report = loader.register_one("fake_engine_plugin", deps)
+        # No engine ever invoked; loader treats this as "all components
+        # skipped, nothing to register".
+        assert "WouldRaise" not in str(report.get("error") or "")
+    finally:
+        ldr.WORKSPACE_ROOT = monkey_orig
+        importlib.invalidate_caches()
 
 
 # --------------------------------------------------------------------
@@ -228,8 +315,6 @@ def test_resolve_silently_drops_unknown_kwargs():
 
 
 def test_default_importer_resolves_real_module():
-    """Sanity: importer pulls a real class out of stdlib via
-    'module:Class' syntax."""
     import collections
 
     cls = _default_importer("collections:OrderedDict")
@@ -237,21 +322,15 @@ def test_default_importer_resolves_real_module():
 
 
 def test_default_importer_raises_on_missing_separator():
-    """Path without ``:`` is malformed (we use entry-point-style
-    dotted paths to disambiguate package modules from class attrs)."""
     with pytest.raises(ValueError, match="entry-point style"):
         _default_importer("collections.OrderedDict")
 
 
 def test_default_importer_raises_on_unknown_module():
-    """Module the user named doesn't exist → ImportError annotated
-    with the original path so the operator sees what to fix."""
     with pytest.raises(ImportError, match="cannot import"):
         _default_importer("krakey_nonexistent_xyz_pkg:Foo")
 
 
 def test_default_importer_raises_on_missing_attr():
-    """Module exists but doesn't expose the named class → ImportError
-    naming the missing attribute."""
     with pytest.raises(ImportError, match="has no attribute"):
         _default_importer("collections:DefinitelyNotAClass")
