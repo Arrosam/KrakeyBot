@@ -150,6 +150,29 @@ async def test_post_settings_requires_parsed_or_raw(tmp_path):
     assert r.status_code == 400
 
 
+async def test_post_settings_round_trips_core_implementations(tmp_path):
+    """Engine slot overrides (the dashboard's "Engine Overrides"
+    section) are written under ``core_implementations``. The settings
+    POST must round-trip the field through to disk so the runtime
+    sees the overrides on its next config load."""
+    p = tmp_path / "config.yaml"
+    p.write_text("a: 1\n", encoding="utf-8")
+    overrides = {
+        "decision":
+            "krakey.engines.decision.hypothalamus:HypothalamusDecisionEngine",
+        "memory": "",  # empty = use default; must persist as-is
+    }
+    async with _client(config_path=p) as c:
+        r = await c.post(
+            "/api/settings",
+            json={"parsed": {"core_implementations": overrides},
+                  "backup_dir": str(tmp_path / "bk")},
+        )
+    assert r.status_code == 200
+    written = yaml.safe_load(p.read_text(encoding="utf-8"))
+    assert written == {"core_implementations": overrides}
+
+
 # ---------------- /api/config/schema ----------------
 
 

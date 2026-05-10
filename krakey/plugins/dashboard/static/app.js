@@ -197,8 +197,7 @@ function renderStatusPanel() {
 let eventsWS = null;
 const thinkingEl = $("#thinking-stream");
 const decisionEl = $("#decision-stream");
-// Tool Usage panel — replaces the old "Hypothalamus (dispatch)"
-// stream. Logs dispatch + tool_result + idle + sleep events.
+// Tool Usage panel — logs dispatch + tool_result + idle + sleep events.
 const toolEl = $("#tool-stream");
 // Stimulus panel — groups every received stimulus under the
 // heartbeat that drained it. The runtime emits `stimuli_queued`
@@ -1552,6 +1551,23 @@ const SECTION_DEFAULTS = {
     local: { allowed_plugins: [] },
     sandbox: null,
   },
+  // Engine slot overrides — dotted module:Class paths. Empty string =
+  // use the built-in default. The Engine refactor (2026-05) made these
+  // 11 slots the swappable spine of the runtime; configuring them via
+  // YAML is supported but most users will never touch this section.
+  core_implementations: {
+    memory: "",
+    context: "",
+    embedder: "",
+    reranker: "",
+    explicit_history: "",
+    decision: "",
+    recall: "",
+    heartbeat: "",
+    dispatch: "",
+    llm_factory: "",
+    llm_client_factory: "",
+  },
 };
 
 // Hover tooltip text per "section.field" key.
@@ -1585,7 +1601,7 @@ const HELP = {
   "role.model": "Pick a model under the chosen provider.",
   "channel.enabled": "Whether this channel is enabled.",
   "channel.default_adrenalin": "Whether stimuli pushed by this channel default to adrenalin=true (interrupting idle).",
-  "tool.enabled": "Whether to register this tool for Hypothalamus to use.",
+  "tool.enabled": "Whether to register this tool. Self learns about it through the [CAPABILITIES] prompt layer.",
   "tool.max_results": "Maximum number of search results.",
   "tool.sandbox_dir": "Working directory for code / file operations.",
   "tool.timeout_seconds": "Subprocess timeout (seconds).",
@@ -1606,6 +1622,17 @@ const HELP = {
   "environments.sandbox.agent.token": "Shared token between host and agent. Use ${ENV_VAR} to read from the environment.",
   "environments.sandbox.network_mode": "VM network policy: nat_allowlist (egress allow-list) / host_only (no internet) / isolated (no network).",
   "environments.sandbox.allowlist_domains": "When network_mode=nat_allowlist, the sandbox VM can reach exactly these hostnames. Egress to anything else is dropped.",
+  "core_implementations.memory": "MemoryEngine override — graph CRUD + KB fleet + sleep cycle. Default: krakey.engines.memory.default:GraphMemoryEngine. Custom impls must satisfy MemoryEngine.",
+  "core_implementations.context": "ContextEngine override — assembles per-beat prompt elements. Default: krakey.engines.context.default:DefaultContextEngine.",
+  "core_implementations.embedder": "EmbedderEngine override — wraps the embedding-tag client. Default: krakey.engines.embedder.default:TagBoundEmbedderEngine.",
+  "core_implementations.reranker": "RerankerEngine override — reranks recall candidates. Default: krakey.engines.reranker.default:DefaultRerankerEngine (preserve-order fallback when no reranker tag bound).",
+  "core_implementations.explicit_history": "ExplicitHistoryEngine override — working-memory window (rounds bounded by token budget). Default: krakey.engines.explicit_history.default:SlidingWindowExplicitHistoryEngine.",
+  "core_implementations.decision": "DecisionEngine override — translates Self's [DECISION] into structured ToolCalls. Default: krakey.engines.decision.tool_call_parser:ToolCallParserDecisionEngine (scripted <tool_call> parser). Swap to krakey.engines.decision.hypothalamus:HypothalamusDecisionEngine for an LLM-based natural-language translator.",
+  "core_implementations.recall": "RecallEngine override — per-beat memory recall session factory. Default: krakey.engines.recall.default:IncrementalRecallEngine.",
+  "core_implementations.heartbeat": "HeartbeatEngine override — owns per-beat orchestration + the run loop. Replacing this controls the entire cognitive cadence. Default: krakey.engines.heartbeat.default:DefaultHeartbeatEngine.",
+  "core_implementations.dispatch": "DispatchEngine override — runs the four side-effects of a DecisionResult (log, dispatch, memory writes, memory updates). Default: krakey.engines.dispatch.default:LocalDispatchEngine.",
+  "core_implementations.llm_factory": "LLMClientFactoryEngine override — owns the per-tag client cache + cfg.llm lookups. Default: krakey.engines.llm_factory.default:DefaultLLMClientFactoryEngine.",
+  "core_implementations.llm_client_factory": "Per-tag LLMClient class substitution slot. One layer below llm_factory. Empty = use the standard LLMClient class. Rarely set.",
 };
 
 // Fixed numeric/string dataclass schemas — drives generic renderer.
@@ -1647,6 +1674,22 @@ const SCHEMAS = {
   safety: [
     ["gm_node_hard_limit", "number"],
     ["max_consecutive_no_action", "number"],
+  ],
+  // 11-slot Engine override surface. Empty string = use the
+  // built-in default (the runtime treats unset + empty identically).
+  // Order mirrors the resolution order in Runtime.__init__.
+  core_implementations: [
+    ["memory", "text"],
+    ["context", "text"],
+    ["embedder", "text"],
+    ["reranker", "text"],
+    ["explicit_history", "text"],
+    ["decision", "text"],
+    ["recall", "text"],
+    ["heartbeat", "text"],
+    ["dispatch", "text"],
+    ["llm_factory", "text"],
+    ["llm_client_factory", "text"],
   ],
   // Schemas under `environments.sandbox.*`. The top-level sandbox
   // section is gone in the runtime (rewrites to environments.sandbox),
@@ -1933,6 +1976,26 @@ function renderSettingsForm() {
   //     registered, holds VM connectivity + per-plugin allow-list.
   ensureSection("environments");
   settingsForm.appendChild(renderEnvironmentsSection(cfgState.environments));
+
+  // Engine slot overrides — power-user surface. Each Engine
+  // resolves to its built-in default unless the user supplies a
+  // dotted path here. Rendered last because most users will never
+  // touch it.
+  ensureSection("core_implementations");
+  const engSec = renderGenericSection(
+    "core_implementations", "Engine Overrides",
+    cfgState.core_implementations, SCHEMAS.core_implementations,
+  );
+  const engHint = document.createElement("p");
+  engHint.className = "section-hint";
+  engHint.textContent =
+    "advanced — empty fields use the built-in default impl. Custom "
+    + "paths must be ``module.path:ClassName`` and the class must "
+    + "satisfy the slot's Engine Protocol from "
+    + "krakey/interfaces/engines/.";
+  const engBody = engSec.querySelector(".body");
+  engBody.insertBefore(engHint, engBody.firstChild);
+  settingsForm.appendChild(engSec);
 }
 
 function ensure(obj, key, factory) {
@@ -1955,11 +2018,13 @@ const SECTION_ICONS = {
   "Plugins": "gear",
   "Idle": "moon",
   "Fatigue": "bar-chart",
+  "Sliding Window (Working Memory)": "stack",
   "Graph Memory": "geo-alt",
   "Knowledge Base": "book",
   "Sleep": "moon",
   "Safety": "shield-check",
   "Environments": "hdd",
+  "Engine Overrides": "puzzle",
 };
 
 // Synthwave-ish accent per section. Renders on the heading icon +
@@ -1971,11 +2036,13 @@ const SECTION_TINT = {
   "Plugins": "magenta",
   "Idle": "muted",
   "Fatigue": "yellow",
+  "Sliding Window (Working Memory)": "muted",
   "Graph Memory": "magenta",
   "Knowledge Base": "green",
   "Sleep": "muted",
   "Safety": "red",
   "Environments": "cyan",
+  "Engine Overrides": "muted",
 };
 
 // Titles whose body is currently collapsed. Module-scoped so the
@@ -3039,21 +3106,13 @@ function renderTagParamsBlock(tname, tags) {
 
 
 // Render the core_purposes mapping as `purpose: tag` rows. Users
-// can add custom purposes (e.g. for future Modifiers), but the
-// well-known core purposes (self_thinking required; compact /
-// classifier optional) are always shown so people know they exist.
+// can add custom purposes via "+ add purpose"; the well-known core
+// purposes are always shown so people know they exist.
 const KNOWN_CORE_PURPOSES = [
   ["self_thinking", "required — Self's per-beat heartbeat LLM"],
   ["compact", "sliding-window history -> GM compaction LLM (also drives sleep clustering + KB index rebuild)"],
   ["classifier", "node category classifier (extractor + classifier; falls back to compact then self_thinking)"],
-  // Note: ``hypothalamus`` is intentionally NOT here. The runtime
-  // still honours ``llm.core_purposes.hypothalamus`` for legacy
-  // configs (main.py:103), but the modern path is per-plugin
-  // — the Hypothalamus plugin declares ``translator`` in its
-  // meta.yaml and that surfaces in the "Plugin Purposes"
-  // sub-block below. Listing it here too caused duplicate rows
-  // once the plugin was enabled. A user on the legacy path can
-  // still add ``hypothalamus`` via "+ add purpose".
+  ["hypothalamus", "optional — bound when DecisionEngine is HypothalamusDecisionEngine (LLM translator instead of the default scripted <tool_call> parser)"],
 ];
 
 function renderCorePurposesBlock(llm) {
@@ -3122,8 +3181,7 @@ function renderPluginPurposesBlock(llm) {
     hint.style.borderLeftColor = "var(--muted)";
     hint.textContent =
       "no enabled plugin declares an llm_purposes block. Plugins "
-      + "that need an LLM (e.g. hypothalamus.translator) surface "
-      + "their bindings here once enabled.";
+      + "that need an LLM surface their bindings here once enabled.";
     sub.appendChild(hint);
     return sub;
   }
@@ -3353,10 +3411,10 @@ function _hasServiceKind(plugin) {
 // Live load status aggregated per plugin name from /api/plugins
 // (which lists tools + channels + modifiers separately). Returns
 // {loaded:boolean, error:string|null} or undefined when the plugin
-// isn't loaded yet. Modifier-only plugins (e.g. hypothalamus) only
-// appear under "modifiers" — without iterating that bucket the
-// aggregate would say "not loaded" for every such plugin even when
-// the modifier IS registered.
+// isn't loaded yet. Modifier-only plugins (e.g. bootstrap,
+// in_mind_note) only appear under "modifiers" — without iterating
+// that bucket the aggregate would say "not loaded" for every such
+// plugin even when the modifier IS registered.
 function _liveStatusByName() {
   const out = {};
   for (const kind of ["tools", "channels", "modifiers"]) {
