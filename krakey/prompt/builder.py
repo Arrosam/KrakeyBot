@@ -36,10 +36,7 @@ import yaml
 from krakey.models.stimulus import Stimulus
 from krakey.prompt.dna import get_dna
 from krakey.prompt.elements import PromptElements
-from krakey.prompt.layers import (
-    ACTION_FORMAT_LAYER_TOOL_CALL,
-    HEARTBEAT_QUESTION,
-)
+from krakey.prompt.layers import HEARTBEAT_QUESTION
 from krakey.prompt.views import (
     CapabilityView,
     ExplicitHistoryRound,
@@ -135,12 +132,12 @@ class PromptBuilder:
             ("dna", get_dna()),
             ("self_model", self.render_self_model(self_model)),
             ("capabilities", self.render_capabilities(capabilities)),
-            # Default = tool_call_parser flavor (the default decision
-            # engine). HypothalamusDecisionEngine.modify_prompt swaps
-            # this slot for ACTION_FORMAT_LAYER_HYPOTHALAMUS when wired
-            # in, so each engine ships paired with its own teaching
-            # prose + worked examples.
-            ("action_format", ACTION_FORMAT_LAYER_TOOL_CALL),
+            # The decision engine owns this slot; its modify_prompt
+            # hook fills it (see e.g. ToolCallParserDecisionEngine
+            # and HypothalamusDecisionEngine). Builder stays
+            # engine-agnostic — pre-allocated empty string here just
+            # pins the position in the rendered prompt order.
+            ("action_format", ""),
             ("in_mind_instructions", ""),
             ("stimulus", self.render_stimulus(stimuli, current_time)),
             ("recall", self.render_recall(recall)),

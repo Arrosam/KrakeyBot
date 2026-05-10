@@ -31,6 +31,75 @@ if TYPE_CHECKING:
     from krakey.models.config import Config
 
 
+ACTION_FORMAT_LAYER = """# [ACTION FORMAT]
+This runtime has a **hypothalamus translator LLM** between you and the
+tool dispatcher. Write `[DECISION]` in **natural language** — name the
+tool from `[CAPABILITIES]` plus what you want it to do. The
+hypothalamus extracts the call, fills params, and sets the adrenalin
+flag.
+
+Triggers the hypothalamus reads:
+- "remember …" / "record …" / "important: …" → memory write.
+- "goal achieved" / "task done" / "completed" → memory update.
+- "quick" / "urgent" / "someone is waiting" → adrenalin = true.
+- "no action" / silence inside `[DECISION]` → empty dispatch.
+- "enter sleep mode" (exact phrasing) → triggers full Sleep. Softer
+  words like "rest" / "pause" / "wait" do NOT enter Sleep — use
+  `[IDLE] N` for those.
+
+## Worked beat examples
+
+**1. Reply to user, then idle 60s**
+
+```
+[THINKING]
+user asked time. answer.
+
+[DECISION]
+Use web_chat_reply to tell the user it's 14:32.
+
+[IDLE] 60
+```
+
+**2. Parallel actions, one urgent**
+
+```
+[THINKING]
+need news + weather. fire both. weather urgent.
+
+[DECISION]
+Search the web for "krakey ai news today" AND quickly check the
+weather in Beijing — surface the weather next beat.
+
+[IDLE] 5
+```
+
+**3. Quiet beat — observe, leave a note, sleep long**
+
+```
+[THINKING]
+nothing in stimulus. low fatigue. wait.
+
+[DECISION]
+No action.
+
+[NOTE]
+User mentioned a deadline Friday. Watch for follow-up.
+
+[IDLE] 600
+```
+
+**4. Enter sleep mode**
+
+```
+[THINKING]
+fatigue 95. gm full. time to sleep.
+
+[DECISION]
+enter sleep mode
+```"""
+
+
 SYSTEM_PROMPT = """# Hypothalamus — Action Translator
 
 You are KrakeyBot's hypothalamus. Translate Self's natural-language
@@ -108,14 +177,12 @@ class HypothalamusDecisionEngine:
         self._factory = factory
 
     def modify_prompt(self, elements) -> None:
-        """Swap the default tool_call-syntax teaching for the
-        natural-language teaching that pairs with this engine. Two
-        competing dispatch paths in one prompt would just confuse Self,
-        so each decision engine owns its own [ACTION FORMAT] block —
-        builder pre-fills the slot with the parser flavor; this engine
-        overwrites it with the NL flavor + NL-shaped worked examples."""
-        from krakey.prompt.layers import ACTION_FORMAT_LAYER_HYPOTHALAMUS
-        elements["action_format"] = ACTION_FORMAT_LAYER_HYPOTHALAMUS
+        """Inject the natural-language [ACTION FORMAT] teaching + NL-
+        flavored worked beat examples into the pre-allocated
+        ``action_format`` element. Each decision engine owns its own
+        [ACTION FORMAT] block — the prompt builder leaves the slot
+        empty so engines never race over it."""
+        elements["action_format"] = ACTION_FORMAT_LAYER
 
     async def translate(
         self,
