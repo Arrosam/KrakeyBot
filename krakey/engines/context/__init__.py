@@ -8,7 +8,7 @@ from krakey.engines.catalog import EngineImpl
 from krakey.engines.context.default import DefaultContextEngine
 
 BUILTIN_ENGINES = {
-    "default": EngineImpl(
+    "prompt_builder": EngineImpl(
         cls=DefaultContextEngine,
         description=(
             "Standard PromptBuilder — assembles the canonical "
@@ -17,6 +17,6 @@ BUILTIN_ENGINES = {
     ),
 }
 
-DEFAULT_ENGINE = "default"
+DEFAULT_ENGINE = "prompt_builder"
 
 __all__ = ["BUILTIN_ENGINES", "DEFAULT_ENGINE", "DefaultContextEngine"]

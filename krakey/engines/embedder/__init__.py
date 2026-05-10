@@ -10,7 +10,7 @@ from krakey.engines.catalog import EngineImpl
 from krakey.engines.embedder.default import TagBoundEmbedderEngine
 
 BUILTIN_ENGINES = {
-    "default": EngineImpl(
+    "tag_bound": EngineImpl(
         cls=TagBoundEmbedderEngine,
         description=(
             "Forwards to the LLMClientFactory's embed_client (tag "
@@ -19,6 +19,6 @@ BUILTIN_ENGINES = {
     ),
 }
 
-DEFAULT_ENGINE = "default"
+DEFAULT_ENGINE = "tag_bound"
 
 __all__ = ["BUILTIN_ENGINES", "DEFAULT_ENGINE", "TagBoundEmbedderEngine"]

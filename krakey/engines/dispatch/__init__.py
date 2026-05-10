@@ -28,7 +28,7 @@ from krakey.engines.catalog import EngineImpl
 from krakey.engines.dispatch.default import LocalDispatchEngine
 
 BUILTIN_ENGINES = {
-    "default": EngineImpl(
+    "local": EngineImpl(
         cls=LocalDispatchEngine,
         description=(
             "In-process dispatch — runs each ToolCall as an asyncio "
@@ -37,6 +37,6 @@ BUILTIN_ENGINES = {
     ),
 }
 
-DEFAULT_ENGINE = "default"
+DEFAULT_ENGINE = "local"
 
 __all__ = ["BUILTIN_ENGINES", "DEFAULT_ENGINE", "LocalDispatchEngine"]

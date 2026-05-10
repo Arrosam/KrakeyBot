@@ -13,7 +13,7 @@ from krakey.engines.catalog import EngineImpl
 from krakey.engines.llm_factory.default import DefaultLLMClientFactoryEngine
 
 BUILTIN_ENGINES = {
-    "default": EngineImpl(
+    "tag_cache": EngineImpl(
         cls=DefaultLLMClientFactoryEngine,
         description=(
             "Per-tag client cache backed by resolve_llm_for_tag; "
@@ -22,7 +22,7 @@ BUILTIN_ENGINES = {
     ),
 }
 
-DEFAULT_ENGINE = "default"
+DEFAULT_ENGINE = "tag_cache"
 
 __all__ = [
     "BUILTIN_ENGINES",

@@ -20,7 +20,7 @@ from krakey.engines.catalog import EngineImpl
 from krakey.engines.heartbeat.default import DefaultHeartbeatEngine
 
 BUILTIN_ENGINES = {
-    "default": EngineImpl(
+    "phased": EngineImpl(
         cls=DefaultHeartbeatEngine,
         description=(
             "Canonical 13-phase pipeline: drain → fatigue → compact "
@@ -30,6 +30,6 @@ BUILTIN_ENGINES = {
     ),
 }
 
-DEFAULT_ENGINE = "default"
+DEFAULT_ENGINE = "phased"
 
 __all__ = ["BUILTIN_ENGINES", "DEFAULT_ENGINE", "DefaultHeartbeatEngine"]

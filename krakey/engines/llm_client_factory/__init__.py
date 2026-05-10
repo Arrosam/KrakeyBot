@@ -17,7 +17,7 @@ from krakey.engines.catalog import EngineImpl
 from krakey.llm.client import LLMClient
 
 BUILTIN_ENGINES = {
-    "default": EngineImpl(
+    "standard": EngineImpl(
         cls=LLMClient,
         description=(
             "Standard LLMClient — speaks OpenAI-compatible and "
@@ -26,6 +26,6 @@ BUILTIN_ENGINES = {
     ),
 }
 
-DEFAULT_ENGINE = "default"
+DEFAULT_ENGINE = "standard"
 
 __all__ = ["BUILTIN_ENGINES", "DEFAULT_ENGINE"]

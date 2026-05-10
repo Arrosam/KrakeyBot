@@ -11,7 +11,7 @@ from krakey.engines.catalog import EngineImpl
 from krakey.engines.reranker.default import DefaultRerankerEngine
 
 BUILTIN_ENGINES = {
-    "default": EngineImpl(
+    "passthrough": EngineImpl(
         cls=DefaultRerankerEngine,
         description=(
             "Forwards to the rerank-tag client when bound; preserve-"
@@ -20,6 +20,6 @@ BUILTIN_ENGINES = {
     ),
 }
 
-DEFAULT_ENGINE = "default"
+DEFAULT_ENGINE = "passthrough"
 
 __all__ = ["BUILTIN_ENGINES", "DEFAULT_ENGINE", "DefaultRerankerEngine"]

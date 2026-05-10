@@ -249,6 +249,24 @@ def test_resolve_plugin_engine_short_name(monkeypatch):
     assert instance.hello() == "from-plugin"
 
 
+def test_engine_overlap_hint_recognises_engine_short_names():
+    """When a stale ``plugins:`` entry happens to match a built-in
+    Engine short-name (the common ``hypothalamus`` carry-over after
+    that plugin was retired into an Engine slot), the warning hint
+    should call it out so the user knows where to put it instead."""
+    from krakey.runtime.plugin_register.loader import (
+        _engine_overlap_hint,
+    )
+
+    msg = _engine_overlap_hint("hypothalamus")
+    assert msg
+    assert "core_implementations.decision" in msg
+    assert "remove" in msg.lower()
+    # Plain unknown name (not in any catalog) → empty string, no
+    # spurious hint.
+    assert _engine_overlap_hint("totally_made_up_xyz") == ""
+
+
 def test_engine_components_are_skipped_by_runtime_plugin_loader(tmp_path):
     """``kind: engine`` components live in meta.yaml so the dashboard
     + EngineRegistry can discover them, but the runtime plugin loader

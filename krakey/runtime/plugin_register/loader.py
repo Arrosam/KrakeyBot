@@ -35,6 +35,40 @@ if TYPE_CHECKING:
     from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 
+def _engine_overlap_hint(plugin_name: str) -> str:
+    """When an unknown plugin name happens to match a built-in Engine
+    short-name, return an actionable note explaining that the user
+    probably has stale ``plugins:`` carry-over from before that name
+    became an Engine slot impl. Empty string when no overlap.
+
+    Common scenario: ``plugins: [hypothalamus, ...]`` from before the
+    hypothalamus modifier-role plugin was retired into an Engine slot.
+    """
+    import importlib
+
+    from krakey.models.config.core_impls import CoreImplementations
+
+    matches: list[str] = []
+    for slot in CoreImplementations.__dataclass_fields__:
+        try:
+            pkg = importlib.import_module(f"krakey.engines.{slot}")
+        except ImportError:
+            continue
+        builtins = getattr(pkg, "BUILTIN_ENGINES", None) or {}
+        if plugin_name in builtins:
+            matches.append(slot)
+    if not matches:
+        return ""
+    slot_list = ", ".join(matches)
+    return (
+        f"Note: {plugin_name!r} is a built-in Engine impl for slot(s) "
+        f"[{slot_list}]; if you meant to use it, set "
+        f"core_implementations.{matches[0]}: {plugin_name} (and remove "
+        f"{plugin_name!r} from `plugins:`). Engine slots and the "
+        "additive `plugins:` list are different config surfaces."
+    )
+
+
 class PluginLoader:
     """Loads plugins listed in ``config.plugins`` into the three runtime
     registries.
@@ -139,11 +173,15 @@ class PluginLoader:
 
         meta = load_plugin_meta(plugin_name)
         if meta is None:
+            hint = _engine_overlap_hint(plugin_name)
             msg = (
                 f"unknown plugin {plugin_name!r} (no meta.yaml found "
                 f"in krakey/plugins/ or workspace/plugins/)"
             )
-            print(f"config: {msg}; skipping.", file=sys.stderr)
+            print(
+                f"config: {msg}; skipping." + (f" {hint}" if hint else ""),
+                file=sys.stderr,
+            )
             report["error"] = msg
             return report
 
