@@ -173,28 +173,28 @@ def test_loaded_flag_still_true_for_registered_components():
 # =====================================================================
 # Modifier reporting — modifier-only plugins must surface, otherwise
 # the dashboard's "loaded" badge falls through to "not loaded" for
-# every such plugin (e.g. hypothalamus).
+# every such plugin (e.g. in_mind_note).
 # =====================================================================
 
 
 def test_loaded_report_includes_modifiers_bucket():
     """Pre-fix: ``loaded_report`` emitted only ``tools`` + ``channels``,
-    so a modifier-only plugin like ``hypothalamus`` couldn't be
+    so a modifier-only plugin like ``in_mind_note`` couldn't be
     badged correctly. Now emit a ``modifiers`` bucket too."""
     obs = _make_observer(
-        modifiers=["hypothalamus"],
+        modifiers=["in_mind_note"],
         plugin_components={
-            "hypothalamus": [("modifier", "hypothalamus")],
+            "in_mind_note": [("modifier", "in_mind_note")],
         },
-        registered={("modifier", "hypothalamus")},
+        registered={("modifier", "in_mind_note")},
     )
     report = obs.loaded_report()
     assert "modifiers" in report
     assert len(report["modifiers"]) == 1
     entry = report["modifiers"][0]
-    assert entry["name"] == "hypothalamus"
+    assert entry["name"] == "in_mind_note"
     assert entry["kind"] == "modifier"
-    assert entry["project"] == "hypothalamus"
+    assert entry["project"] == "in_mind_note"
     assert entry["loaded"] is True
 
 
@@ -203,15 +203,15 @@ def test_loaded_report_modifier_project_uses_plugin_folder():
     whose modifier ``.name`` differs from the folder name still
     reports the folder as ``project``."""
     obs = _make_observer(
-        modifiers=["recall_anchor"],
+        modifiers=["memory_recall"],
         plugin_components={
-            "recall": [("modifier", "recall_anchor")],
+            "recall": [("modifier", "memory_recall")],
         },
-        registered={("modifier", "recall_anchor")},
+        registered={("modifier", "memory_recall")},
     )
     report = obs.loaded_report()
     by_name = {e["name"]: e for e in report["modifiers"]}
-    assert by_name["recall_anchor"]["project"] == "recall"
+    assert by_name["memory_recall"]["project"] == "recall"
 
 
 def test_loaded_report_modifier_loaded_flag_reflects_registry_state():
@@ -219,10 +219,10 @@ def test_loaded_report_modifier_loaded_flag_reflects_registry_state():
     registry → loaded=False. (Defensive: the two should always
     match in practice, but the flag must come from the registry.)"""
     # Build observer with registry containing nothing but a
-    # plugin_components entry claiming hypothalamus was loaded.
+    # plugin_components entry claiming in_mind_note was loaded.
     obs = _make_observer(
         modifiers=[],  # registry empty
-        plugin_components={"hypothalamus": [("modifier", "hypothalamus")]},
+        plugin_components={"in_mind_note": [("modifier", "in_mind_note")]},
     )
     # collect_infos walks ``modifiers.all()`` — empty registry → no
     # info object — so the report's modifiers bucket is empty too.

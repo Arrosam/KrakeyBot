@@ -129,7 +129,7 @@ async def test_hypothalamus_modify_prompt_fires_post_sleep(tmp_path):
     ])
     sleep_llm = _ScriptedLLM(["summary"] * 5)
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
         compact_llm=sleep_llm,
         # Default modifiers list (hypothalamus + recall + dashboard).
     )

@@ -40,7 +40,7 @@ async def test_single_iteration_user_message_triggers_tool_dispatch():
         "memory_writes": [], "memory_updates": [], "sleep": False,
     })])
 
-    runtime = build_runtime_with_fakes(self_llm=self_llm, hypo_llm=hypo_llm)
+    runtime = build_runtime_with_fakes(self_llm=self_llm, decision_translator_llm=hypo_llm)
 
     await runtime.buffer.push(Stimulus(
         type="user_message", source="channel:cli_input",
@@ -111,7 +111,7 @@ async def test_no_action_decision_runs_no_tool():
         "sleep": False,
     })])
 
-    runtime = build_runtime_with_fakes(self_llm=self_llm, hypo_llm=hypo_llm)
+    runtime = build_runtime_with_fakes(self_llm=self_llm, decision_translator_llm=hypo_llm)
     await runtime.run(iterations=1)
     await asyncio.sleep(0.05)
     stims = runtime.buffer.drain()
@@ -322,7 +322,7 @@ async def test_hypothalamus_error_pushes_system_event_stimulus():
     # Invalid JSON → Hypothalamus._parse_json raises → caught → pushed
     hypo_llm = ScriptedLLM(["not json at all"])
 
-    runtime = build_runtime_with_fakes(self_llm=self_llm, hypo_llm=hypo_llm)
+    runtime = build_runtime_with_fakes(self_llm=self_llm, decision_translator_llm=hypo_llm)
     await runtime.run(iterations=1)
 
     stims = runtime.buffer.drain()
@@ -350,7 +350,7 @@ async def test_tool_feedback_does_not_inherit_adrenalin_from_hypothalamus():
         "memory_writes": [], "memory_updates": [], "sleep": False,
     })])
 
-    runtime = build_runtime_with_fakes(self_llm=self_llm, hypo_llm=hypo_llm)
+    runtime = build_runtime_with_fakes(self_llm=self_llm, decision_translator_llm=hypo_llm)
     await runtime.run(iterations=1)
 
     await asyncio.sleep(0.05)
@@ -379,7 +379,7 @@ async def test_heartbeat_with_connected_recall_nodes_does_not_crash():
             return [0.0, 1.0]
 
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
         embedder=MapEmbedder(),
     )
     # Initialize GM first so we can seed it before running.
@@ -419,7 +419,7 @@ async def test_voluntary_sleep_via_hypothalamus_runs_full_sleep(tmp_path):
         json.dumps({"edges": []}),  # KB relations (when 1 KB, not called)
     ])
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
         compact_llm=sleep_llm,
     )
     runtime.sleep_log_dir = str(tmp_path / "logs")
@@ -458,7 +458,7 @@ async def test_force_sleep_when_fatigue_exceeds_threshold(tmp_path):
     hypo_llm = ScriptedLLM([])
     sleep_llm = ScriptedLLM(["summary"] * 10)
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
         compact_llm=sleep_llm,
     )
     runtime.sleep_log_dir = str(tmp_path / "logs")
@@ -491,8 +491,7 @@ async def test_bootstrap_self_model_update_and_completion(tmp_path):
     """End-to-end: Self in Bootstrap mode writes a <self-model> update
     and signals 'bootstrap complete' in [NOTE]; the bootstrap plugin
     persists the update to self_model.yaml and flips
-    bootstrap_complete=True. Plugin replaces the legacy
-    BootstrapCoordinator wiring."""
+    bootstrap_complete=True."""
     sm_path = tmp_path / "self_model.yaml"
 
     # HB #1: partial self-model update
@@ -517,7 +516,7 @@ async def test_bootstrap_self_model_update_and_completion(tmp_path):
     # self_model_path so plugin's services["self_model_store"]
     # points at sm_path.
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
         self_model_path=str(sm_path),
         skip_bootstrap=False,
         modifiers=["bootstrap", "hypothalamus", "recall", "dashboard"],
@@ -645,7 +644,7 @@ async def test_self_can_dispatch_memory_recall_and_see_feedback():
             return [1.0, 0.0] if "apple" in text else [0.0, 1.0]
 
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
         embedder=MapEmbed(),
     )
     # Pre-seed GM with an apple node so recall returns something concrete.
@@ -676,7 +675,7 @@ async def test_uncovered_stimulus_push_back_capped_at_one_retry():
     ])
     hypo_llm = ScriptedLLM([])
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
     )
 
     # Seed one user stimulus that will never match (GM empty).
@@ -715,7 +714,7 @@ async def test_tool_feedback_auto_ingested_to_gm():
     ])
 
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
     )
 
     await runtime.buffer.push(Stimulus(
@@ -747,7 +746,7 @@ async def test_batch_complete_stimulus_wakes_next_heartbeat():
                      "memory_updates": [], "sleep": False}),
     ])
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
         idle_min=0.01, idle_max=5.0,
     )
 
@@ -784,7 +783,7 @@ async def test_explicit_write_from_hypothalamus_memory_writes():
     })])
 
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
         classify_llm=extract_llm,
     )
 
@@ -811,7 +810,7 @@ async def test_idle_interrupts_on_adrenalin_stimulus():
                     "memory_updates": [], "sleep": False}),
     ])
     runtime = build_runtime_with_fakes(
-        self_llm=self_llm, hypo_llm=hypo_llm,
+        self_llm=self_llm, decision_translator_llm=hypo_llm,
         idle_min=0.01, idle_max=5.0)
 
     # Push adrenalin stimulus just after first iteration enters idle

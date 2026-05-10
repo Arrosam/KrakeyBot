@@ -1,32 +1,22 @@
 """``GraphMemoryEngine`` — default impl of ``MemoryEngine``.
 
-Extends the long-standing ``GraphMemory`` class with:
+Subclass of ``GraphMemory`` (so the 20+ GM CRUD methods stay
+directly reachable) plus three responsibilities layered on top:
 
   * **KB management** — ``create_kb`` / ``open_kb`` / ``list_kbs`` /
     ``set_archived`` / ``set_index_embedding`` / ``delete_kb`` /
-    ``close_all_kbs`` — all delegating to an internal ``KBRegistry``
-    instance built lazily during ``initialize()``.
+    ``close_all_kbs`` — delegating to an internal ``KBRegistry`` built
+    lazily during ``initialize()``.
   * **Sleep cycle** — ``sleep_cycle`` runs the full
     ``enter_sleep_mode`` pipeline (clustering → migration → KB
-    consolidation/archival → index rebuild) without callers having
-    to know that subsystem exists.
-
-Inheritance over composition because:
-
-  * ``KBRegistry``'s constructor takes a ``GraphMemory`` instance —
-    so ``self`` (a GraphMemoryEngine that IS a GraphMemory by
-    inheritance) is valid as the registry's GM partner.
-  * The 20+ GM methods stay reachable without a forwarding shim;
-    only the 8 KB methods + ``sleep_cycle`` need new code.
-  * Existing tests that build a ``GraphMemory`` and treat it as a
-    ``MemoryService`` keep working — the Engine is a strict superset.
+    consolidation/archival → index rebuild) without callers having to
+    know that subsystem exists.
 
 Initialize ordering: ``initialize()`` calls ``GraphMemory.initialize()``
-first (opens the SQLite connection + applies schema), then
-constructs the ``KBRegistry`` (which needs the now-open connection
-to read its ``kb_registry`` table). Calling KB methods before
-``initialize()`` raises a clear error rather than NoneType-attribute
-errors.
+first (opens the SQLite connection + applies schema), then constructs
+the ``KBRegistry`` (which needs the now-open connection to read its
+``kb_registry`` table). Calling KB methods before ``initialize()``
+raises a clear error rather than NoneType-attribute errors.
 """
 from __future__ import annotations
 

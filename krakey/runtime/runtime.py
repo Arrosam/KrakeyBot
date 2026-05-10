@@ -93,7 +93,6 @@ class Runtime:
     def __init__(self, deps: RuntimeDeps, *, idle_min: float | None = None,
                  idle_max: float | None = None,
                  logger: HeartbeatLogger | None = None,
-                 is_bootstrap_override: bool | None = None,
                  event_bus: EventBus | None = None):
         self.config = deps.config
         self.self_llm = deps.self_llm
@@ -320,17 +319,6 @@ class Runtime:
         self.self_model, _detected_bootstrap = load_self_model_or_default(
             sm_path,
         )
-        # ``is_bootstrap_override`` (test-only kwarg) used to pin the
-        # legacy BootstrapCoordinator's flag. The bootstrap behavior
-        # now lives in a plugin; tests that need a non-bootstrap
-        # runtime should write
-        # ``state.bootstrap_complete: true`` into the test's
-        # self_model.yaml OR force the modifier inactive via
-        # ``runtime.modifiers.by_role("bootstrap").force_active(False)``.
-        # The override kwarg is preserved on the constructor for
-        # back-compat but only honored when the bootstrap plugin is
-        # registered (Runtime.run() applies it post-load).
-        self._is_bootstrap_override = is_bootstrap_override
 
         from krakey.runtime.plugin_register.loader import PluginLoader
         self._plugin_loader = PluginLoader(
@@ -424,12 +412,6 @@ class Runtime:
             channels=self.buffer,
             loader=self._plugin_loader,
         )
-
-    # Test-only facade — two modifier-config tests rebuild registries by
-    # clearing them and re-running registration. New code should reach
-    # for ``self._plugin_loader.register_from_config(deps)`` directly.
-    def _register_plugins_from_config(self, deps: "RuntimeDeps") -> None:
-        self._plugin_loader.register_from_config(deps)
 
     async def hot_reload_plugins(
         self,
@@ -610,14 +592,6 @@ class Runtime:
         await self.memory.initialize()
         await self._preflight_environments()
 
-        # Apply test-only bootstrap override (legacy
-        # is_bootstrap_override constructor kwarg) now that plugins
-        # are loaded. No-op when bootstrap plugin isn't registered.
-        if self._is_bootstrap_override is not None:
-            anchor = self.modifiers.by_role("bootstrap")
-            if anchor is not None and hasattr(anchor, "force_active"):
-                anchor.force_active(self._is_bootstrap_override)
-
         # Signal: runtime resources (memory, environments) are live;
         # plugins that subscribed to RuntimeReadyEvent (e.g. the
         # bootstrap modifier probing GM emptiness) can now do their
@@ -783,11 +757,17 @@ class Runtime:
                 )
 
     def request_stop(self) -> None:
-        """Cooperative shutdown signal — the heartbeat loop checks
-        ``self._stop`` between beats and exits when set. CLI signal
-        handlers + dashboard kill commands call this; nothing else
-        should poke the private flag directly."""
+        """Cooperative shutdown signal — sets a flag the heartbeat
+        loop checks between beats. CLI signal handlers + dashboard
+        kill commands + the orchestrator's /kill path call this;
+        the private storage stays an implementation detail."""
         self._stop = True
+
+    @property
+    def stop_requested(self) -> bool:
+        """Public read-side of ``request_stop`` — what the heartbeat
+        Engine polls between beats."""
+        return self._stop
 
     # ---------- heartbeat algorithm ----------
 

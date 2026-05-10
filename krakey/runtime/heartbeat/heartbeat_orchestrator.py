@@ -256,7 +256,7 @@ class HeartbeatOrchestrator:
             rt.log.hb(f"command /{cmd}: {result.output}")
             if result.action is CommandAction.KILL:
                 triggered = CommandAction.KILL
-                rt._stop = True
+                rt.request_stop()
                 break
             if (result.action is CommandAction.SLEEP
                     and triggered is not CommandAction.KILL):

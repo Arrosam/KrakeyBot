@@ -437,10 +437,7 @@ class InMemoryMemoryEngine(InMemoryMemoryService):
     satisfies ``MemoryEngine`` end-to-end.
 
     Used by ``test_memory_swap_e2e.py`` to drive the engine slot
-    override path. The legacy ``InMemoryMemoryService`` /
-    ``InMemoryKBRegistryService`` classes remain for protocol-shape
-    tests (``test_memory_protocols.py``) and any user code still
-    depending on the older Protocol shape.
+    override path.
 
     The ``sleep_cycle`` stub records its invocation in
     ``self.sleep_cycle_calls`` so tests can assert it ran without

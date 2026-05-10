@@ -1,16 +1,14 @@
 """``MemoryEngine`` — the unified memory Engine surface.
 
-Replaces three previous Protocols (``MemoryService``, ``KBRegistryService``,
-plus the ``enter_sleep_mode`` free function) with a single flat Protocol
-that any compliant impl must satisfy. Rationale: from the heartbeat's
-point of view "memory" is one thing — the runtime asks the Engine to
-ingest, recall, and consolidate, and doesn't care that the default
-impl partitions storage into a graph + KB fleet under the hood.
+A flat Protocol covering the three responsibilities the runtime asks
+of memory: working-memory graph CRUD + search, long-term KB fleet
+management, and the sleep cycle that consolidates one into the
+other. From the heartbeat's point of view "memory" is one thing.
 
 A user replacing ``memory`` with their own backend (Postgres, Redis,
 remote service, etc.) provides one class implementing every method
-below. The default impl ``GraphMemoryEngine`` keeps its internal
-modules (gm/, kb/, sleep/) but exposes the flat surface.
+below. The default impl ``GraphMemoryEngine`` partitions storage
+across internal modules (gm/, kb/, sleep/) but exposes the flat surface.
 
 ``KnowledgeBaseLike`` is the per-KB instance shape returned by
 ``open_kb``. Kept as a separate Protocol because it's a value type

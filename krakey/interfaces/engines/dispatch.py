@@ -40,7 +40,7 @@ class DispatchEngine(Protocol):
 
     The ``runtime`` reference is the Engine's gateway to the resources
     it needs: ``runtime.tools`` (ToolRegistry), ``runtime.batch_tracker``,
-    ``runtime.buffer`` (StimulusBuffer), ``runtime.engines.memory``,
+    ``runtime.buffer`` (StimulusBuffer), ``runtime.memory``,
     ``runtime.log`` + ``runtime.events``. Custom impls follow the same
     access pattern; they don't need new wiring.
 

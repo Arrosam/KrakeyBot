@@ -75,18 +75,19 @@ def _missing_protocol_attrs(instance: Any, protocol: type) -> list[str]:
 def _filter_kwargs(cls: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
     """Drop kwargs the class's ``__init__`` doesn't accept.
 
-    The runtime often passes cross-cutting deps (cfg, factory,
-    memory) through ``resolve`` kwargs so default impls can pick
-    them up. User-supplied custom classes (e.g. a minimal test
-    embedder fake) may have narrower signatures and would
-    TypeError on unknown kwargs. Inspect the constructor and drop
-    kwargs it can't accept — unless it has ``**kwargs``, in which
-    case we pass everything through.
+    The runtime passes cross-cutting deps (cfg, factory, memory) through
+    ``resolve`` kwargs so default impls can pick what they need. A user
+    override that takes only a subset (or no kwargs at all) shouldn't
+    have to declare every field the runtime threads through. Inspect
+    the constructor and drop kwargs it can't accept — unless it has
+    ``**kwargs``, in which case we pass everything through.
 
-    This preserves back-compat with overrides that predate a
-    kwarg's addition. Trade-off: a typo in a user kwarg name is
-    silently dropped instead of raising. Acceptable for the
-    migration scope; documented in the registry's docstring.
+    The runtime side is the only producer of these kwargs, and the
+    set is closed (every kwarg a slot accepts is documented in
+    ``runtime.py`` or ``main.py``). A typo here would be a runtime
+    bug, not a user-config bug, so silent drop is acceptable: the
+    impl's missing-attribute error at use-time pinpoints the typo
+    immediately.
     """
     import inspect
     try:

@@ -24,15 +24,22 @@ class _FakeOrchestrator:
 
 
 class _FakeRuntime:
-    """Bare runtime that exposes ``_stop`` (loop exit signal). The
-    Engine reads ``runtime._stop`` per iteration; tests flip it to
-    end the loop."""
+    """Bare runtime that exposes ``stop_requested`` (loop exit
+    predicate the Engine reads per iteration) + ``request_stop()``
+    (cooperative shutdown signal tests flip to end the loop)."""
 
     def __init__(self, stop_after: int | None = None):
         self._stop = False
         self._stop_after = stop_after
         self._beat_observed = 0
         self._orchestrator = _FakeOrchestrator(self)
+
+    @property
+    def stop_requested(self) -> bool:
+        return self._stop
+
+    def request_stop(self) -> None:
+        self._stop = True
 
 
 def test_satisfies_heartbeat_engine_protocol():
@@ -70,7 +77,7 @@ async def test_run_iterates_until_iterations_reached():
 
 @pytest.mark.asyncio
 async def test_run_stops_when_runtime_stop_set():
-    """If a beat sets runtime._stop, the loop should exit even with
+    """If a beat calls runtime.request_stop(), the loop should exit even with
     iterations remaining."""
     eng = DefaultHeartbeatEngine()
     rt = _FakeRuntime()
@@ -81,7 +88,7 @@ async def test_run_stops_when_runtime_stop_set():
     async def maybe_stop():
         await original_beat()
         if rt._orchestrator.beat_count == 2:
-            rt._stop = True
+            rt.request_stop()
 
     rt._orchestrator.beat = maybe_stop
     await eng.run(rt, iterations=10)
@@ -91,7 +98,7 @@ async def test_run_stops_when_runtime_stop_set():
 @pytest.mark.asyncio
 async def test_run_with_no_iteration_cap_runs_until_stop():
     """iterations=None means "run forever" — exit only via
-    runtime._stop."""
+    runtime.stop_requested."""
     eng = DefaultHeartbeatEngine()
     rt = _FakeRuntime()
 
@@ -100,7 +107,7 @@ async def test_run_with_no_iteration_cap_runs_until_stop():
     async def stop_at_5():
         await original_beat()
         if rt._orchestrator.beat_count == 5:
-            rt._stop = True
+            rt.request_stop()
 
     rt._orchestrator.beat = stop_at_5
     await eng.run(rt, iterations=None)

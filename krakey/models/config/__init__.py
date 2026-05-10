@@ -248,11 +248,8 @@ def _build_plugins(raw: dict[str, Any]) -> list[str] | None:
         a tool or channel component.
 
     A plugin with both kinds shows up in both lists; a modifier-only
-    plugin (e.g. ``hypothalamus``) shows up ONLY in ``modifiers:``.
-    The loader needs both lists merged or modifier-only plugins
-    silently fail to load — symptom: the user sees the dashboard tick
-    them but no warning anywhere, the runtime just doesn't register
-    them. (That's the bug this function fixes.)
+    plugin shows up ONLY in ``modifiers:``. The loader merges both
+    lists so modifier-only plugins still register.
 
     Three states:
       * neither field present → return None (one-line stderr nudge at

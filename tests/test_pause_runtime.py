@@ -42,7 +42,7 @@ async def test_runtime_pause_mode_skips_heartbeat(monkeypatch):
     real_sleep = asyncio.sleep
 
     async def _fast_sleep(_delay):
-        rt._stop = True
+        rt.request_stop()
         await real_sleep(0)
 
     monkeypatch.setattr(asyncio, "sleep", _fast_sleep)

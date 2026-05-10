@@ -209,7 +209,7 @@ async def test_runtime_warns_when_modifiers_field_is_none(tmp_path, capsys):
     runtime.config.plugins = None
     capsys.readouterr()  # discard prior output
 
-    runtime._register_plugins_from_config(_minimal_deps_for_runtime(runtime))
+    runtime._plugin_loader.register_from_config(_minimal_deps_for_runtime(runtime))
     err = capsys.readouterr().err
     assert "no `plugins:`" in err
     # No legacy default registered — explicit principle.
@@ -228,7 +228,7 @@ async def test_runtime_skips_unknown_modifier_names_loudly(tmp_path, capsys):
     ]
     capsys.readouterr()
 
-    runtime._register_plugins_from_config(_minimal_deps_for_runtime(runtime))
+    runtime._plugin_loader.register_from_config(_minimal_deps_for_runtime(runtime))
     err = capsys.readouterr().err
     assert "typo_modifier" in err
     assert set(runtime.modifiers.names()) == {"in_mind_note"}

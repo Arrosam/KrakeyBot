@@ -1,11 +1,10 @@
 """``RecallEngine`` — per-beat memory recall.
 
-Replaces the previous Modifier-role plugin gimmick. Recall is core
-flow: every heartbeat needs to know which memory nodes are relevant to
-the current stimuli. The default impl ``IncrementalRecallEngine``
-(uplifted from the retired ``recall_anchor`` plugin) feeds stimuli
-into a session as they arrive, expands neighbors, scores, applies a
-token budget, and finalizes into a ``RecallResult``.
+Recall is core flow: every heartbeat needs to know which memory
+nodes are relevant to the current stimuli. The default impl
+``IncrementalRecallEngine`` feeds stimuli into a session as they
+arrive, expands neighbors, scores, applies a token budget, and
+finalizes into a ``RecallResult``.
 
 The session model: each heartbeat gets a fresh ``RecallSession`` from
 the Engine via ``new_session()``. Sessions are short-lived (one beat),

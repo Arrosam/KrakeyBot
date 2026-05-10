@@ -9,8 +9,7 @@ names listed in ``config.yaml`` ``plugins:``. Catalogue scanning
 A "plugin" is the unit of distribution + enable. A plugin can declare
 any combination of components, each one of:
 
-  * ``modifier``  — heartbeat hook (hypothalamus / recall_anchor /
-                   in_mind / future kinds)
+  * ``modifier``  — heartbeat prompt-element hook
   * ``tool`` — outbound action
   * ``channel``  — inbound stimulus producer
 

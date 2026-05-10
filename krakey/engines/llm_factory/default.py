@@ -1,32 +1,23 @@
 """``DefaultLLMClientFactoryEngine`` — built-in LLM factory Engine.
 
-Wraps the existing ``resolve_llm_for_tag`` util from
-``krakey.llm.resolve``. Responsibility split during the migration:
-
-  * ``resolve_llm_for_tag`` continues to do the actual tag → provider
-    → ``LLMClient`` instantiation, including the
-    ``llm_client_factory`` slot that lets a user substitute the
-    ``LLMClient`` *class* per tag (old behavior, still active).
-  * This Engine is the higher layer that hides ``cfg.llm`` from
-    upstream callers and owns the per-tag client cache. The user can
-    replace this whole Engine via ``cfg.core_implementations.llm_factory``
-    to swap the resolution mechanism wholesale (e.g. an offline-only
-    factory for tests, an HTTP-routing factory for multi-tenant
-    deployment, a mock for replays).
+Wraps ``krakey.llm.resolve.resolve_llm_for_tag`` (which handles the
+actual tag → provider → ``LLMClient`` instantiation, plus the
+``llm_client_factory`` slot for per-tag class substitution). This
+Engine is the higher layer that hides ``cfg.llm`` from upstream
+callers and owns the per-tag client cache. Users replace the whole
+Engine via ``cfg.core_implementations.llm_factory`` to swap the
+resolution mechanism wholesale (offline-only factory for tests, an
+HTTP-routing factory for multi-tenant deployment, a mock for replays).
 
 Caching contract: each unique tag triggers at most one underlying
 client construction; subsequent ``client_for_tag`` calls return the
 cached instance. ``client_for_core_purpose`` / ``embed_client`` /
-``rerank_client`` are convenience wrappers — they look up the
-configured tag name and then call ``client_for_tag``.
+``rerank_client`` are convenience wrappers that look up the configured
+tag name and call ``client_for_tag``.
 
-The cache is exposed as a property (``client_cache``) during the
-migration window so the composition root can mirror it onto
-``RuntimeDeps.llm_clients_by_tag``. Plugin code currently reads from
-``deps.llm_clients_by_tag`` via ``PluginContext.get_llm_for_tag``;
-once plugins migrate to use the Engine directly through
-``ctx.services``, that mirror goes away and the cache becomes a
-true private internal.
+``client_cache`` is exposed as a property so the composition root can
+mirror it onto ``RuntimeDeps.llm_clients_by_tag`` for plugins that
+read clients via ``PluginContext.get_llm_for_tag``.
 """
 from __future__ import annotations
 
@@ -50,12 +41,10 @@ class DefaultLLMClientFactoryEngine:
 
     @property
     def client_cache(self) -> dict[str, "ChatLike"]:
-        """Internal cache dict, exposed for the migration window so
-        the composition root can pass it through to
-        ``RuntimeDeps.llm_clients_by_tag`` and keep plugin code that
-        still reads from there pointed at the same instances. Not a
-        long-term API — slated for removal once plugins move to
-        ``ctx.services["llm_factory"]`` access."""
+        """Per-tag client cache. The composition root passes this
+        through to ``RuntimeDeps.llm_clients_by_tag`` so plugins
+        reading via ``PluginContext.get_llm_for_tag`` see the same
+        instances."""
         return self._cache
 
     # ---- Protocol surface -----------------------------------------------

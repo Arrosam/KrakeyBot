@@ -234,11 +234,11 @@ def test_builder_splits_stimulus_by_source_type():
 
 
 def test_builder_marks_recall_retry_stimuli():
-    """When the recall_anchor plugin couldn't find any GraphMemory
-    context for a stimulus on the prior beat, the orchestrator
-    re-pushes it with `recall_retries` incremented. The prompt must
-    surface that flag so Self knows the [GRAPH MEMORY] layer has no
-    related context for that signal."""
+    """When recall couldn't find any GraphMemory context for a
+    stimulus on the prior beat, the orchestrator re-pushes it with
+    ``recall_retries`` incremented. The prompt must surface that flag
+    so Self knows the [GRAPH MEMORY] layer has no related context for
+    that signal."""
     fresh = Stimulus(
         type="user_message", source="channel:cli",
         content="brand new question",

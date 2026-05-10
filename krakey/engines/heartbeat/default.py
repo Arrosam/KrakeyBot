@@ -67,8 +67,8 @@ class DefaultHeartbeatEngine:
     async def run(
         self, runtime: "Runtime", iterations: int | None = None,
     ) -> None:
-        """Drive the heartbeat loop until ``runtime._stop`` becomes
-        True OR ``iterations`` beats have completed.
+        """Drive the heartbeat loop until ``runtime.stop_requested``
+        becomes True OR ``iterations`` beats have completed.
 
         Setup (gm.initialize, channels.start_all, etc.) + teardown
         (buffer.stop_all, classify-task cancellation) stay on
@@ -76,7 +76,7 @@ class DefaultHeartbeatEngine:
         returns before teardown.
         """
         count = 0
-        while not runtime._stop:
+        while not runtime.stop_requested:
             await self.beat(runtime)
             count += 1
             if iterations is not None and count >= iterations:

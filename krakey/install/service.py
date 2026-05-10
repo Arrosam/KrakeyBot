@@ -228,15 +228,13 @@ def run_post_install_for_plugin(
 
 
 def install(args: argparse.Namespace) -> int:
-    """The "do it all" function: discovery print → pip → post_install
-    → state write. Returns the pip subprocess's exit code (0 on
-    success). On pip failure or non-optional post_install failure,
-    install_state.json is NOT updated.
+    """Discovery print → pip → post_install → state write.
 
-    Function-level callable for back-compat with the original
-    ``krakey.cli.install.install(args)`` API. Production code
-    that wants the structured result should construct
-    ``DefaultInstallService()`` and call ``service.install(...)``.
+    Returns the pip subprocess's exit code (0 on success). On pip
+    failure or non-optional post_install failure, install_state.json
+    is NOT updated. The CLI handler calls this directly; the
+    dashboard goes through ``DefaultInstallService.install(...)``
+    which wraps the result in a structured ``InstallResult``.
     """
     plugin_deps = collect_plugin_dependencies()
     plugin_post = collect_plugin_post_install()

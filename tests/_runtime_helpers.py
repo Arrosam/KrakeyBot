@@ -36,6 +36,7 @@ class ScriptedLLM:
 
 
 def build_runtime_with_fakes(*, self_llm: ChatLike,
+                              decision_translator_llm: ChatLike | None = None,
                               hypo_llm: ChatLike | None = None,
                               compact_llm: ChatLike | None = None,
                               classify_llm: ChatLike | None = None,
@@ -200,39 +201,29 @@ def build_runtime_with_fakes(*, self_llm: ChatLike,
     )
     runtime = Runtime(
         deps, idle_min=idle_min, idle_max=idle_max,
-        is_bootstrap_override=False if skip_bootstrap else None,
     )
-    # Test convenience: if the caller supplied a ``hypo_llm`` with
-    # at least one scripted response, they expect the LLM-translator
-    # path (the script feeds the structured DecisionResult JSON).
-    # Swap in ``HypothalamusDecisionEngine`` and bind its translator
-    # client to the supplied fake. Tests that pass ``hypo_llm=None``
-    # OR an empty ``ScriptedLLM`` keep the default
-    # ``ToolCallParserDecisionEngine`` which parses ``<tool_call>``
-    # blocks out of the raw response.
-    if hypo_llm is not None and getattr(hypo_llm, "_responses", None):
+    if skip_bootstrap:
+        anchor = runtime.modifiers.by_role("bootstrap")
+        if anchor is not None and hasattr(anchor, "force_active"):
+            anchor.force_active(False)
+    # When the caller wants the LLM-translator decision path, pass
+    # ``decision_translator_llm=ScriptedLLM([...json...])``: we swap
+    # the resolved DecisionEngine to ``HypothalamusDecisionEngine``
+    # and bind its ``hypothalamus`` core-purpose tag to the supplied
+    # fake. Otherwise the default ``ToolCallParserDecisionEngine``
+    # (scripted ``<tool_call>`` parser) stays in place.
+    if decision_translator_llm is not None:
         from krakey.engines.decision.hypothalamus import (
             HypothalamusDecisionEngine,
         )
-
-        class _FixedClientFactory:
-            """Tiny LLMClientFactoryEngine stand-in: always returns
-            the bound ``hypo_llm`` regardless of which tag is
-            requested. Saves tests from configuring the
-            ``hypothalamus`` core_purpose tag."""
-
-            def __init__(self, llm):
-                self._llm = llm
-                self.client_cache: dict = {}
-
-            def client_for_core_purpose(self, name):
-                return self._llm
-
-            def client_for_tag(self, tag):
-                return self._llm
-
+        # Bind the fake under the ``hypothalamus`` core-purpose tag
+        # so the engine's ``factory.client_for_core_purpose("hypothalamus")``
+        # call returns it without needing a real cfg entry.
+        cfg.llm.core_purposes["hypothalamus"] = "_test_translator"
+        llm_clients_by_tag["_test_translator"] = decision_translator_llm
+        llm_factory._cache["_test_translator"] = decision_translator_llm
         runtime.decision = HypothalamusDecisionEngine(
-            cfg=cfg, factory=_FixedClientFactory(hypo_llm),
+            cfg=cfg, factory=llm_factory,
         )
     # Stash a copy of the resolved test paths + LLM cache so test
     # helpers (e.g. _minimal_deps_for_runtime) can reconstruct an

@@ -1,10 +1,8 @@
-"""Recall subsystem: embedder Protocol + scoring helpers.
+"""Embedder Protocol + scoring helpers shared across the memory subsystem.
 
-The per-beat recall driver itself lives in
-``krakey.engines.recall.incremental`` (uplifted from the retired
-``recall_anchor`` plugin into the RecallEngine slot). Public surface
-re-exported at the package root keeps ``from krakey.memory.recall
-import AsyncEmbedder, Reranker, ScoringWeights`` working unchanged.
+The per-beat recall driver lives in
+``krakey.engines.recall.incremental``; this package only exposes the
+math + the embedder callable shape.
 """
 from krakey.memory.recall.incremental import AsyncEmbedder  # noqa: F401
 from krakey.memory.recall.scoring import (  # noqa: F401

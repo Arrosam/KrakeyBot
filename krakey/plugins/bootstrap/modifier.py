@@ -1,7 +1,6 @@
 """``BootstrapModifier`` — first-boot self-awareness, fully self-contained.
 
-The modifier owns three behaviors that previously lived inside the
-runtime as ``BootstrapCoordinator``:
+The modifier owns three behaviors:
 
   1. **Prompt injection** — ``modify_prompt`` writes the
      ``BOOTSTRAP_PROMPT`` (with embedded GENESIS text) into the

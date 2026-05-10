@@ -14,7 +14,7 @@ The Protocol intentionally exposes only two methods:
   * ``beat(runtime)`` — execute exactly one heartbeat. Useful for
     tests + future schedulers that want fine-grained control.
   * ``run(runtime, iterations)`` — drive the full loop until
-    ``runtime._stop`` is set. The default impl loops over ``beat``;
+    ``runtime.stop_requested`` is set. The default impl loops over ``beat``;
     a custom impl can implement entirely different scheduling.
 
 Custom Engines can subclass ``DefaultHeartbeatEngine`` and override
@@ -45,7 +45,7 @@ class HeartbeatEngine(Protocol):
     async def run(
         self, runtime: "Runtime", iterations: int | None = None,
     ) -> None:
-        """Drive the heartbeat loop until ``runtime._stop`` becomes
+        """Drive the heartbeat loop until ``runtime.stop_requested`` becomes
         True OR ``iterations`` beats have completed (whichever comes
         first). When ``iterations`` is ``None`` runs forever (or
         until stop). The runtime calls this once at startup; the
