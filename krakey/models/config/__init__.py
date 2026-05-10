@@ -127,6 +127,18 @@ class Config:
     core_implementations: CoreImplementations = field(
         default_factory=CoreImplementations
     )
+    # Per-engine user config keyed by ``(slot, short_name)``. Each
+    # selected engine's dict is passed to its constructor as a
+    # ``config`` kwarg (engines that don't take one ignore it via
+    # ``EngineRegistry._filter_kwargs``). Schema for each engine
+    # comes from ``EngineImpl.config_schema`` in the slot's
+    # BUILTIN_ENGINES catalog (or, for plugin engines, from the
+    # plugin's top-level ``config_schema:``). Dashboard renders the
+    # form under the slot's dropdown when a schema-bearing impl is
+    # selected.
+    engine_configs: dict[str, dict[str, dict[str, Any]]] = field(
+        default_factory=dict,
+    )
 
 
 # ---------------- env substitution ----------------
@@ -232,7 +244,33 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         core_implementations=_build_core_implementations(
             raw.get("core_implementations") or {}
         ),
+        engine_configs=_build_engine_configs(
+            raw.get("engine_configs") or {}
+        ),
     )
+
+
+def _build_engine_configs(
+    raw: Any,
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Parse the ``engine_configs:`` block — ``{slot: {short_name:
+    {field: value}}}``. Tolerates a missing block or wrong-shape
+    nesting; the registry only ever consults the leaf dict so a
+    ragged structure just degrades to "no config" silently. Strict
+    schema validation against each engine's ``config_schema`` is
+    handled at engine-construction time, not here."""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, dict[str, Any]]] = {}
+    for slot, slot_cfg in raw.items():
+        if not isinstance(slot_cfg, dict):
+            continue
+        slot_out: dict[str, dict[str, Any]] = {}
+        for short_name, impl_cfg in slot_cfg.items():
+            if isinstance(impl_cfg, dict):
+                slot_out[str(short_name)] = dict(impl_cfg)
+        out[str(slot)] = slot_out
+    return out
 
 
 def _build_plugins(raw: dict[str, Any]) -> list[str] | None:

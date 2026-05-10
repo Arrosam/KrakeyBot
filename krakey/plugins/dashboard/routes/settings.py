@@ -87,7 +87,9 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
     async def get_available_engines():  # noqa: ANN201
         """List every Engine slot's catalog — both built-in impls and
         plugin-supplied impls — so the dashboard can render a slot
-        dropdown instead of a free-form dotted-path text input.
+        dropdown instead of a free-form dotted-path text input, plus
+        per-engine config schemas so it can render a schema-driven
+        form below the selected impl.
 
         Response shape::
 
@@ -96,7 +98,8 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
                 "default": "<short_name>",
                 "options": [
                   {"name": "...", "source": "builtin" | "plugin",
-                   "description": "..."},
+                   "description": "...",
+                   "config_schema": [{field, type, default?, help?}, ...]},
                   ...
                 ],
               },
@@ -106,10 +109,12 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
         ``source`` is ``"builtin"`` for impls catalogued in
         ``engines/<slot>/__init__.py`` and ``"plugin"`` for impls
         declared via ``kind: engine`` + ``slot:`` in any plugin's
-        ``meta.yaml``. The endpoint scans (importing each engine
-        package's ``__init__`` is required to read BUILTIN_ENGINES)
-        but never imports the engine impl classes themselves —
-        descriptions live on the catalog metadata, not on the class.
+        ``meta.yaml``. ``config_schema`` is the engine's user-tunable
+        options (plugin engines reuse the plugin's top-level
+        ``config_schema``). The endpoint imports each engine
+        package's ``__init__`` to read BUILTIN_ENGINES but never
+        imports the impl classes themselves — schemas live on the
+        catalog metadata, not on the class.
         """
         import importlib
 
@@ -119,8 +124,9 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
         )
 
         # Plugin engines: scan every meta.yaml's engine components and
-        # bucket by slot.
-        plugin_engines: dict[str, list[dict[str, str]]] = {}
+        # bucket by slot. The plugin's top-level config_schema becomes
+        # the engine's config_schema.
+        plugin_engines: dict[str, list[dict]] = {}
         for plugin_name, meta in list_available_plugins().items():
             for comp in meta.components:
                 if comp.kind != "engine" or not comp.slot:
@@ -130,6 +136,7 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
                     "source": "plugin",
                     "description": meta.description.strip()
                                    or "(plugin-supplied engine)",
+                    "config_schema": list(meta.config_schema or []),
                 })
 
         # Built-in catalog: every slot field declared on
@@ -150,6 +157,7 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
                     "name": name,
                     "source": "builtin",
                     "description": impl.description,
+                    "config_schema": list(impl.config_schema or []),
                 }
                 for name, impl in builtins.items()
             ]

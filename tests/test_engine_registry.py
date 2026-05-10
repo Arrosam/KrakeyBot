@@ -249,6 +249,74 @@ def test_resolve_plugin_engine_short_name(monkeypatch):
     assert instance.hello() == "from-plugin"
 
 
+def test_resolve_passes_per_engine_config_kwarg(monkeypatch):
+    """``cfg.engine_configs.<slot>.<short_name>`` is threaded into the
+    resolved engine's constructor as ``config=``. Impls that don't
+    declare a ``config`` parameter ignore it via ``_filter_kwargs``
+    — pinned here separately."""
+    from krakey.engines.catalog import EngineImpl
+    import krakey.engines.registry as reg_mod
+
+    captured: dict = {}
+
+    class _ConfigAwareImpl:
+        def __init__(self, *, config=None):
+            captured["config"] = config
+
+        def hello(self):
+            return "ok"
+
+    cfg = Config(
+        core_implementations=CoreImplementations(memory="custom"),
+        engine_configs={
+            "memory": {
+                "custom": {"cache_size_mb": 200},
+            },
+        },
+    )
+    monkeypatch.setattr(
+        reg_mod, "_load_slot_catalog",
+        lambda slot: (
+            {"custom": EngineImpl(cls=_ConfigAwareImpl, description="x")},
+            "custom",
+        ),
+    )
+    reg = EngineRegistry(cfg)
+    instance = reg.resolve("memory", expected_protocol=_DummyProto)
+    assert instance.hello() == "ok"
+    assert captured["config"] == {"cache_size_mb": 200}
+
+
+def test_resolve_passes_empty_config_when_user_set_none(monkeypatch):
+    """Engine declares config_schema but user hasn't set anything →
+    constructor receives an empty dict, not None. Lets impls assume
+    ``config`` is always a dict and read fields with .get(...,
+    default)."""
+    from krakey.engines.catalog import EngineImpl
+    import krakey.engines.registry as reg_mod
+
+    captured: dict = {}
+
+    class _ConfigAwareImpl:
+        def __init__(self, *, config=None):
+            captured["config"] = config
+
+        def hello(self):
+            return "ok"
+
+    cfg = Config(core_implementations=CoreImplementations(memory="custom"))
+    monkeypatch.setattr(
+        reg_mod, "_load_slot_catalog",
+        lambda slot: (
+            {"custom": EngineImpl(cls=_ConfigAwareImpl, description="x")},
+            "custom",
+        ),
+    )
+    reg = EngineRegistry(cfg)
+    reg.resolve("memory", expected_protocol=_DummyProto)
+    assert captured["config"] == {}
+
+
 def test_engine_overlap_hint_recognises_engine_short_names():
     """When a stale ``plugins:`` entry happens to match a built-in
     Engine short-name (the common ``hypothalamus`` carry-over after

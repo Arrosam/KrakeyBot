@@ -150,6 +150,26 @@ async def test_post_settings_requires_parsed_or_raw(tmp_path):
     assert r.status_code == 400
 
 
+async def test_engines_available_includes_config_schema(tmp_path):
+    """Each catalog entry's ``config_schema`` ships through the
+    endpoint so the dashboard can render a per-engine form below the
+    slot dropdown without a second round-trip. Plugin engines reuse
+    the plugin's top-level ``config_schema``.
+    """
+    p = tmp_path / "config.yaml"
+    p.write_text("a: 1\n", encoding="utf-8")
+    async with _client(config_path=p) as c:
+        r = await c.get("/api/engines/available")
+    assert r.status_code == 200
+    body = r.json()
+    # Every option must carry a config_schema (possibly empty list)
+    # so the JS can iterate without null-checks.
+    for slot_meta in body["engines"].values():
+        for opt in slot_meta["options"]:
+            assert "config_schema" in opt
+            assert isinstance(opt["config_schema"], list)
+
+
 async def test_engines_available_lists_builtin_catalog(tmp_path):
     """The dashboard's slot dropdown is sourced from this endpoint.
     Every slot declared on CoreImplementations must show up with at
@@ -179,6 +199,31 @@ async def test_engines_available_lists_builtin_catalog(tmp_path):
     # Decision slot lists both built-in impls.
     decision_names = [o["name"] for o in engines["decision"]["options"]]
     assert {"tool_call_parser", "hypothalamus"} <= set(decision_names)
+
+
+async def test_post_settings_round_trips_engine_configs(tmp_path):
+    """The dashboard's per-engine config form writes to
+    ``engine_configs.<slot>.<short_name>``. The settings POST must
+    round-trip the nested mapping so the runtime sees the user's
+    tunables on its next config load."""
+    p = tmp_path / "config.yaml"
+    p.write_text("a: 1\n", encoding="utf-8")
+    parsed = {
+        "engine_configs": {
+            "decision": {
+                "hypothalamus": {"temperature": 0.42, "retries": 3},
+            },
+        },
+    }
+    async with _client(config_path=p) as c:
+        r = await c.post(
+            "/api/settings",
+            json={"parsed": parsed,
+                  "backup_dir": str(tmp_path / "bk")},
+        )
+    assert r.status_code == 200
+    written = yaml.safe_load(p.read_text(encoding="utf-8"))
+    assert written == parsed
 
 
 async def test_post_settings_round_trips_core_implementations(tmp_path):

@@ -2002,19 +2002,26 @@ function renderEngineOverridesSection(cfg) {
     + "engines (workspace/plugins/<name>/meta.yaml with `kind: engine`). "
     + '"(default)" leaves the field empty in config.yaml so the '
     + "runtime falls through to the slot's built-in default. "
-    + "\"Custom path...\" lets you supply a `module.path:ClassName` "
-    + "directly.";
+    + "Engines that declare config options surface a form below the "
+    + "dropdown. \"Custom path...\" lets you supply a "
+    + "`module.path:ClassName` directly.";
   body.appendChild(hint);
 
-  // Render one row per slot. Slot order matches CoreImplementations'
+  // Render one block per slot. Slot order matches CoreImplementations'
   // dataclass field order (covered by SCHEMAS.core_implementations).
   for (const [slot, _type] of SCHEMAS.core_implementations) {
-    body.appendChild(_engineSlotRow(slot, cfg));
+    body.appendChild(_engineSlotBlock(slot, cfg));
   }
   return sec;
 }
 
-function _engineSlotRow(slot, cfg) {
+function _engineSlotBlock(slot, cfg) {
+  // Wrapper around the dropdown row + the schema-driven config form
+  // for the currently-selected impl. Re-rendered in place when the
+  // user picks a different impl from the dropdown.
+  const block = document.createElement("div");
+  block.className = "engine-slot-block";
+
   const row = document.createElement("div");
   row.className = "cfg-row";
   const lab = document.createElement("label");
@@ -2023,13 +2030,15 @@ function _engineSlotRow(slot, cfg) {
   if (help) lab.title = help;
   row.appendChild(lab);
 
-  const slotMeta = engineCatalog[slot] || { default: "", options: [] };
+  const slotMeta = engineCatalog[slot] || {
+    default: "", options: [],
+  };
   const currentValue = cfg[slot] || "";
   const isCustom = currentValue && currentValue.includes(":");
 
   const sel = document.createElement("select");
-  // Empty option = "(default)" — this is what the runtime sees as
-  // "no override", falling through to the slot's DEFAULT_ENGINE.
+  // Empty option = "(default)" — runtime sees no override, falls
+  // through to the slot's DEFAULT_ENGINE.
   const blank = document.createElement("option");
   blank.value = "";
   blank.textContent = `(default: ${slotMeta.default || "?"})`;
@@ -2042,27 +2051,44 @@ function _engineSlotRow(slot, cfg) {
     o.title = opt.description || "";
     sel.appendChild(o);
   }
-  // "Custom..." option for dotted paths. Selecting it reveals a text
-  // input below; deselecting clears the override.
+  // "Custom..." for dotted paths the catalog doesn't know about.
   const customOpt = document.createElement("option");
   customOpt.value = "__custom__";
   customOpt.textContent = "Custom path…";
   sel.appendChild(customOpt);
 
-  // Set initial selection from cfg state.
-  if (isCustom) {
-    sel.value = "__custom__";
-  } else {
-    sel.value = currentValue;
-  }
+  if (isCustom) sel.value = "__custom__";
+  else sel.value = currentValue;
 
-  // Free-form text input — visible only when "Custom..." selected.
   const txt = document.createElement("input");
   txt.type = "text";
   txt.placeholder = "module.path:ClassName";
   txt.value = isCustom ? currentValue : "";
   txt.style.marginLeft = "0.5em";
   txt.style.display = isCustom ? "" : "none";
+
+  // Schema form holder — rebuilt whenever the dropdown selection
+  // changes. Lives below the dropdown row inside the same block.
+  const schemaHolder = document.createElement("div");
+  schemaHolder.className = "engine-schema-holder";
+
+  function selectedShortName() {
+    if (sel.value === "__custom__") return "";  // dotted path, no schema
+    return sel.value || slotMeta.default || "";
+  }
+
+  function rebuildSchema() {
+    schemaHolder.innerHTML = "";
+    const shortName = selectedShortName();
+    if (!shortName) return;
+    const opt = (slotMeta.options || []).find(
+      (o) => o.name === shortName,
+    );
+    if (!opt || !opt.config_schema || !opt.config_schema.length) return;
+    schemaHolder.appendChild(
+      _renderEngineSchemaForm(slot, shortName, opt.config_schema),
+    );
+  }
 
   sel.addEventListener("change", () => {
     if (sel.value === "__custom__") {
@@ -2072,6 +2098,7 @@ function _engineSlotRow(slot, cfg) {
       txt.style.display = "none";
       cfg[slot] = sel.value;
     }
+    rebuildSchema();
   });
   txt.addEventListener("input", () => {
     cfg[slot] = txt.value;
@@ -2079,7 +2106,41 @@ function _engineSlotRow(slot, cfg) {
 
   row.appendChild(sel);
   row.appendChild(txt);
-  return row;
+  block.appendChild(row);
+  block.appendChild(schemaHolder);
+  rebuildSchema();
+  return block;
+}
+
+function _renderEngineSchemaForm(slot, shortName, schema) {
+  // Reads & writes ``cfgState.engine_configs[slot][shortName]`` so
+  // saving the settings page persists the engine's tunables to
+  // config.yaml's ``engine_configs:`` section.
+  cfgState.engine_configs = cfgState.engine_configs || {};
+  cfgState.engine_configs[slot] =
+    cfgState.engine_configs[slot] || {};
+  const target = cfgState.engine_configs[slot][shortName] || {};
+  cfgState.engine_configs[slot][shortName] = target;
+
+  const cfgBlock = document.createElement("div");
+  cfgBlock.className = "engine-schema-block";
+  cfgBlock.style.cssText = "margin: 4px 0 12px 1.5em;";
+  const head = document.createElement("div");
+  head.style.cssText =
+    "font-size:11px;color:var(--muted);margin-bottom:4px";
+  head.textContent = `Config — ${shortName}`;
+  cfgBlock.appendChild(head);
+  for (const fdef of schema) {
+    const fname = fdef.field;
+    const type = fdef.type || "text";
+    const helpPath = `engine.${slot}.${shortName}.${fname}`;
+    if (fdef.help) HELP[helpPath] = fdef.help;
+    if (target[fname] == null && fdef.default != null) {
+      target[fname] = fdef.default;
+    }
+    cfgBlock.appendChild(renderRow(fname, target, fname, type, helpPath));
+  }
+  return cfgBlock;
 }
 
 function ensure(obj, key, factory) {
