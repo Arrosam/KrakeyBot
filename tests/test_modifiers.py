@@ -105,8 +105,9 @@ def test_base_protocol_requires_name_and_role():
 
 async def test_prompt_includes_action_format_with_default_decision_engine(tmp_path):
     """Default DecisionEngine (scripted ``<tool_call>`` parser) → Self
-    prompt MUST include the [ACTION FORMAT] block teaching the JSONL
-    syntax."""
+    prompt MUST include the [ACTION FORMAT] block teaching the
+    structured JSON syntax + the parser-flavored worked beat
+    examples."""
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
@@ -122,13 +123,18 @@ async def test_prompt_includes_action_format_with_default_decision_engine(tmp_pa
         counts=counts,
     )
     assert "[ACTION FORMAT]" in prompt
-    assert '{"name":' in prompt or '"name"' in prompt
+    # Tool-call JSON syntax must be taught
+    assert "<tool_call>" in prompt
+    assert '"name"' in prompt
+    # Worked examples must surface
+    assert "Worked beat examples" in prompt
 
 
-async def test_prompt_omits_action_format_when_hypothalamus_decision_engine(tmp_path):
-    """``HypothalamusDecisionEngine`` owns the LLM-translator path and
-    drops the [ACTION FORMAT] element via its modify_prompt hook so
-    Self isn't taught two competing dispatch syntaxes."""
+async def test_prompt_swaps_action_format_when_hypothalamus_decision_engine(tmp_path):
+    """``HypothalamusDecisionEngine`` owns the LLM-translator path —
+    it overwrites the [ACTION FORMAT] slot with the natural-language
+    teaching layer (with NL-flavored worked examples) so Self isn't
+    taught two competing dispatch syntaxes."""
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM([]),
         gm_path=str(tmp_path / "gm.sqlite"),
@@ -153,4 +159,10 @@ async def test_prompt_omits_action_format_when_hypothalamus_decision_engine(tmp_
         recall_result=RecallResult(),
         counts=counts,
     )
-    assert "[ACTION FORMAT]" not in prompt
+    # Slot is still present, but with NL-flavored teaching.
+    assert "[ACTION FORMAT]" in prompt
+    assert "natural language" in prompt
+    assert "Worked beat examples" in prompt
+    # Parser-flavored content must be ABSENT — no <tool_call> JSON
+    # being taught when the hypothalamus owns dispatch.
+    assert "<tool_call>" not in prompt

@@ -118,9 +118,9 @@ def _format_parse_failure_stimulus(
     beat loop.
 
     Inlined the format reminder rather than importing
-    ``ACTION_FORMAT_LAYER`` from prompt/layers — the layer is for
-    prompt assembly, not for stimulus content; coupling them would
-    drag layer concerns into the runtime path. The phrasing is
+    ``ACTION_FORMAT_LAYER_TOOL_CALL`` from prompt/layers — the layer
+    is for prompt assembly, not for stimulus content; coupling them
+    would drag layer concerns into the runtime path. The phrasing is
     copy-aligned with the layer; if either drifts, dual-update.
     """
     n_salv = sum(1 for f in failures if getattr(f, "salvaged", False))

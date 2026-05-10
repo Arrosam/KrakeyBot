@@ -110,8 +110,9 @@ async def test_hypothalamus_modify_prompt_fires_post_sleep(tmp_path):
     """Verify the user-reported scenario: hypothalamus IS enabled,
     a sleep cycle runs (via translator's sleep:true JSON), and on
     the next beat hypothalamus's modify_prompt MUST still fire
-    (the [ACTION FORMAT] layer should be removed from the prompt
-    because that's what its modify_prompt does).
+    (the [ACTION FORMAT] slot should be swapped to the NL flavor —
+    if modify_prompt stopped firing, the parser-flavored default
+    with ``<tool_call>`` JSON would still be in the prompt).
     """
     import json
     self_llm = _ScriptedLLM([
@@ -149,14 +150,18 @@ async def test_hypothalamus_modify_prompt_fires_post_sleep(tmp_path):
     assert recent, "no prompts recorded"
     post_sleep_prompt = recent[0]["full_prompt"]
 
-    # Hypothalamus's modify_prompt deletes the action_format layer.
-    # If it stopped firing post-sleep, [ACTION FORMAT] would still
-    # be present.
-    assert "[ACTION FORMAT]" not in post_sleep_prompt, (
+    # Hypothalamus's modify_prompt swaps the parser-flavored default
+    # (which teaches ``<tool_call>`` JSON) for the NL-flavored layer.
+    # If modify_prompt stopped firing post-sleep, the parser default
+    # with ``<tool_call>`` syntax would still be present.
+    assert "<tool_call>" not in post_sleep_prompt, (
         "hypothalamus.modify_prompt did NOT fire post-sleep — "
-        "the [ACTION FORMAT] layer is still in the prompt. "
-        "Last 500 chars:\n" + post_sleep_prompt[-500:]
+        "the parser-flavored [ACTION FORMAT] layer is still in the "
+        "prompt. Last 500 chars:\n" + post_sleep_prompt[-500:]
     )
+    # And the NL flavor IS present, confirming the swap fired.
+    assert "[ACTION FORMAT]" in post_sleep_prompt
+    assert "natural language" in post_sleep_prompt
 
     await runtime.close()
 

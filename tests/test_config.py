@@ -340,8 +340,8 @@ def test_both_lists_merged_modifier_only_plugin_loads(tmp_path):
     (e.g. ``hypothalamus``) ONLY to ``modifiers:`` and tool/channel
     plugins to ``plugins:``. The loader must merge both or
     modifier-only plugins silently never load — symptom: hypothalamus
-    in dashboard ticked, but action_format never gets deleted from
-    the prompt because no modifier was ever registered."""
+    in dashboard ticked, but the [ACTION FORMAT] layer never gets
+    swapped to its NL flavor because no modifier was ever registered."""
     p = _write(tmp_path, _minimal_config_body(
         "        plugins:\n"
         "          - dashboard\n"

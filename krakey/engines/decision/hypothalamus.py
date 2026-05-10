@@ -108,12 +108,14 @@ class HypothalamusDecisionEngine:
         self._factory = factory
 
     def modify_prompt(self, elements) -> None:
-        """LLM translator owns the [DECISION] → tool-call mapping, so
-        teaching Self the structured ``<tool_call>`` syntax in
-        [ACTION FORMAT] would create competing dispatch paths. Drop the
-        layer when this Engine is wired in."""
-        if "action_format" in elements:
-            del elements["action_format"]
+        """Swap the default tool_call-syntax teaching for the
+        natural-language teaching that pairs with this engine. Two
+        competing dispatch paths in one prompt would just confuse Self,
+        so each decision engine owns its own [ACTION FORMAT] block —
+        builder pre-fills the slot with the parser flavor; this engine
+        overwrites it with the NL flavor + NL-shaped worked examples."""
+        from krakey.prompt.layers import ACTION_FORMAT_LAYER_HYPOTHALAMUS
+        elements["action_format"] = ACTION_FORMAT_LAYER_HYPOTHALAMUS
 
     async def translate(
         self,
