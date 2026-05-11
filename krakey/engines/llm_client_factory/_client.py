@@ -26,12 +26,17 @@ exponential backoff (1s * 2^attempt) plus jitter, capped at
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
+import time
 from typing import Any, Protocol
 
 import aiohttp
 
 from krakey.models.config import LLMParams, Provider
+
+
+_log = logging.getLogger(__name__)
 
 
 class Transport(Protocol):
@@ -95,22 +100,33 @@ class LLMClient:
         )
 
     async def chat(self, messages, **kwargs) -> str:
-        if isinstance(messages, str):
-            messages = [{"role": "user", "content": messages}]
-        if self.provider.type == "anthropic":
-            body = self._build_anthropic_body(messages, kwargs)
-            url = self._url("/v1/messages")
-            headers = self._anthropic_headers()
+        # Wall-clock instrumentation: lets users diagnose perceived
+        # slowness from the dashboard log without instrumenting every
+        # caller. Emitted unconditionally (success + failure) so the
+        # log always shows where real time was spent.
+        t0 = time.monotonic()
+        try:
+            if isinstance(messages, str):
+                messages = [{"role": "user", "content": messages}]
+            if self.provider.type == "anthropic":
+                body = self._build_anthropic_body(messages, kwargs)
+                url = self._url("/v1/messages")
+                headers = self._anthropic_headers()
+                data = await self._post_with_retry(url, headers, body)
+                parts = [p["text"] for p in data.get("content", [])
+                         if p.get("type") == "text"]
+                return "".join(parts)
+            # openai_compatible
+            body = self._build_openai_body(messages, kwargs)
+            url = self._url("/v1/chat/completions")
+            headers = self._openai_headers()
             data = await self._post_with_retry(url, headers, body)
-            parts = [p["text"] for p in data.get("content", [])
-                     if p.get("type") == "text"]
-            return "".join(parts)
-        # openai_compatible
-        body = self._build_openai_body(messages, kwargs)
-        url = self._url("/v1/chat/completions")
-        headers = self._openai_headers()
-        data = await self._post_with_retry(url, headers, body)
-        return data["choices"][0]["message"]["content"]
+            return data["choices"][0]["message"]["content"]
+        finally:
+            _log.info(
+                "LLM chat done: model=%s elapsed=%.1fs",
+                self.model, time.monotonic() - t0,
+            )
 
     async def embed(self, text: str) -> list[float]:
         url = self._url("/v1/embeddings")
@@ -226,6 +242,10 @@ class LLMClient:
             # Exponential backoff with jitter. Base 1s, doubled per
             # attempt, capped at 30s to stay under the request timeout.
             delay = min(30.0, 1.0 * (2 ** i)) * (0.5 + random.random())
+            _log.warning(
+                "LLM retry %d/%d after %s: %s; sleeping %.1fs",
+                i + 1, attempts, type(last_err).__name__, last_err, delay,
+            )
             await asyncio.sleep(delay)
         if last_err is not None:  # pragma: no cover — loop always raises
             raise last_err

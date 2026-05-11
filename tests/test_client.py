@@ -321,3 +321,49 @@ async def test_custom_retry_on_status_overrides_default():
     c = LLMClient(_openai_provider(), model="m", transport=t, params=params)
     await c.chat("hi")
     assert len(t.calls) == 2
+
+
+# ---- diagnostics: chat wall-time + retry log -------------------------
+
+
+async def test_chat_logs_wall_time(caplog):
+    """chat() must always emit one INFO log line with elapsed time so
+    users can diagnose perceived LLM slowness from the dashboard log
+    without instrumenting every caller."""
+    import logging
+    t = FakeTransport({"choices": [{"message": {"content": "hi"}}]})
+    c = LLMClient(_openai_provider(), model="qwen", transport=t)
+    with caplog.at_level(logging.INFO,
+                          logger="krakey.engines.llm_client_factory._client"):
+        await c.chat("ping")
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("LLM chat done: model=qwen elapsed=" in m for m in msgs), msgs
+
+
+async def test_chat_logs_wall_time_on_failure(caplog):
+    """Even when chat() raises, the elapsed-time log fires (finally
+    block)."""
+    import logging
+    t = SequenceTransport([TransportError(500), TransportError(500)])
+    params = LLMParams(max_retries=1)  # exhaust quickly
+    c = LLMClient(_openai_provider(), model="qwen", transport=t, params=params)
+    with caplog.at_level(logging.INFO,
+                          logger="krakey.engines.llm_client_factory._client"):
+        with pytest.raises(TransportError):
+            await c.chat("ping")
+    assert any("LLM chat done" in r.getMessage() for r in caplog.records)
+
+
+async def test_retry_logs_warning(caplog):
+    """Each retry attempt logs a WARNING with the exception type +
+    sleep duration, so users can confirm from the dashboard whether
+    timeouts or 5xx are firing."""
+    import logging
+    success = {"choices": [{"message": {"content": "ok"}}]}
+    t = SequenceTransport([TransportError(503), success])
+    c = LLMClient(_openai_provider(), model="m", transport=t)
+    with caplog.at_level(logging.WARNING,
+                          logger="krakey.engines.llm_client_factory._client"):
+        await c.chat("hi")
+    warns = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("LLM retry 1/" in m and "TransportError" in m for m in warns), warns
