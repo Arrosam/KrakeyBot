@@ -150,14 +150,23 @@ async def test_max_input_tokens_never_sent_on_wire():
 
 
 async def test_openai_reasoning_translates_to_reasoning_effort():
-    """reasoning_mode=medium → reasoning_effort=medium, and the token
-    cap moves to max_completion_tokens (OpenAI o-series / GPT-5 contract)."""
+    """reasoning_mode=medium → reasoning_effort=medium. The token cap
+    field name comes from Provider.max_tokens_field — for OpenAI
+    o-series / GPT-5 the user pins it to max_completion_tokens."""
     t = FakeTransport({"choices": [{"message": {"content": "x"}}]})
     params = LLMParams(
         max_output_tokens=8000, reasoning_mode="medium", temperature=0.7,
         max_retries=0,
     )
-    c = LLMClient(_openai_provider(), model="m", transport=t, params=params)
+    # OpenAI o-series wire format — the user explicitly pins this on
+    # the provider. (Default Provider keeps max_tokens, which works
+    # for every other server.)
+    p = Provider(
+        type="openai_compatible", base_url="http://server:8080",
+        api_key="k1", models=[],
+        max_tokens_field="max_completion_tokens",
+    )
+    c = LLMClient(p, model="m", transport=t, params=params)
     await c.chat("hi")
     body = t.calls[0]["body"]
     assert body["reasoning_effort"] == "medium"
@@ -352,6 +361,86 @@ async def test_chat_logs_wall_time_on_failure(caplog):
         with pytest.raises(TransportError):
             await c.chat("ping")
     assert any("LLM chat done" in r.getMessage() for r in caplog.records)
+
+
+# ---- Provider.extra_body + max_tokens_field ---------------------------
+
+
+async def test_provider_extra_body_merged_into_request():
+    """Provider.extra_body fields land in the request body — used to
+    pass server-specific fields like Qwen3's enable_thinking."""
+    t = FakeTransport({"choices": [{"message": {"content": "ok"}}]})
+    p = Provider(
+        type="openai_compatible", base_url="http://x", api_key="k",
+        models=[],
+        extra_body={"enable_thinking": False, "repetition_penalty": 1.05},
+    )
+    c = LLMClient(p, model="qwen", transport=t,
+                   params=LLMParams(max_output_tokens=4096))
+    await c.chat("hi")
+    body = t.calls[0]["body"]
+    assert body["enable_thinking"] is False
+    assert body["repetition_penalty"] == 1.05
+
+
+async def test_provider_max_tokens_field_default_is_max_tokens():
+    """Default Provider config still sends classic max_tokens — no
+    behaviour change for existing setups."""
+    t = FakeTransport({"choices": [{"message": {"content": "ok"}}]})
+    c = LLMClient(_openai_provider(), model="m", transport=t,
+                   params=LLMParams(max_output_tokens=2048))
+    await c.chat("hi")
+    body = t.calls[0]["body"]
+    assert body["max_tokens"] == 2048
+    assert "max_completion_tokens" not in body
+
+
+async def test_provider_max_tokens_field_max_completion_tokens():
+    """When the provider pins ``max_completion_tokens`` (OpenAI
+    o-series / GPT-5 wire format), the cap goes there instead."""
+    t = FakeTransport({"choices": [{"message": {"content": "ok"}}]})
+    p = Provider(
+        type="openai_compatible", base_url="http://x", api_key="k",
+        models=[], max_tokens_field="max_completion_tokens",
+    )
+    c = LLMClient(p, model="o1", transport=t,
+                   params=LLMParams(max_output_tokens=4096,
+                                       reasoning_mode="low"))
+    await c.chat("hi")
+    body = t.calls[0]["body"]
+    assert body["max_completion_tokens"] == 4096
+    assert "max_tokens" not in body
+
+
+async def test_extra_body_does_not_override_per_call_kwargs():
+    """Per-call kwargs win over Provider.extra_body — caller intent
+    is the most specific layer."""
+    t = FakeTransport({"choices": [{"message": {"content": "ok"}}]})
+    p = Provider(
+        type="openai_compatible", base_url="http://x", api_key="k",
+        models=[], extra_body={"temperature": 0.1},
+    )
+    c = LLMClient(p, model="m", transport=t)
+    # kwargs are merged via _build_openai_body's overrides — caller
+    # passes them via **kwargs. Use a per-call temperature override.
+    await c.chat("hi", temperature=0.9)
+    body = t.calls[0]["body"]
+    assert body["temperature"] == 0.9
+
+
+async def test_extra_body_overrides_krakey_default_field():
+    """If Krakey would normally send ``temperature`` but extra_body
+    pins it, extra_body wins (it's applied after Krakey's defaults)."""
+    t = FakeTransport({"choices": [{"message": {"content": "ok"}}]})
+    p = Provider(
+        type="openai_compatible", base_url="http://x", api_key="k",
+        models=[], extra_body={"temperature": 0.0},
+    )
+    c = LLMClient(p, model="m", transport=t,
+                   params=LLMParams(temperature=0.7))
+    await c.chat("hi")
+    body = t.calls[0]["body"]
+    assert body["temperature"] == 0.0
 
 
 async def test_retry_logs_warning(caplog):

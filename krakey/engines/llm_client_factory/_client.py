@@ -149,18 +149,17 @@ class LLMClient:
         p = self.params
         body: dict[str, Any] = {"model": self.model, "messages": messages}
         reasoning_on = p.reasoning_mode and p.reasoning_mode != "off"
-        # Newer OpenAI reasoning models (o-series, GPT-5) require
-        # `max_completion_tokens` instead of `max_tokens`. Heuristic:
-        # if reasoning is enabled we're on a reasoning-capable endpoint,
-        # so use the new field. Otherwise stick with the classic one
-        # which DeepSeek / Qwen / vLLM / llama.cpp all still accept.
-        # max_input_tokens is intentionally never sent — providers
-        # have no wire field for it; it's a local declaration only.
+        # Output-token cap field name comes from the Provider, not
+        # from a reasoning_on heuristic. The previous heuristic sent
+        # ``max_completion_tokens`` whenever reasoning_mode was set,
+        # which silently broke the cap on local servers (Qwen/vLLM/
+        # OpenMLX/llama.cpp) that only recognise ``max_tokens`` —
+        # the model would generate without bound. Pinning per-provider
+        # via ``Provider.max_tokens_field`` makes the wire format
+        # explicit. ``max_input_tokens`` is intentionally never sent —
+        # providers have no wire field for it; it's a local declaration.
         if p.max_output_tokens is not None:
-            if reasoning_on:
-                body["max_completion_tokens"] = p.max_output_tokens
-            else:
-                body["max_tokens"] = p.max_output_tokens
+            body[self.provider.max_tokens_field] = p.max_output_tokens
         # Temperature: o-series + DeepSeek-Reasoner reject or ignore it;
         # dropping it silently is safer than letting the server 400.
         if p.temperature is not None and not reasoning_on:
@@ -175,6 +174,12 @@ class LLMClient:
             body["seed"] = p.seed
         if reasoning_on:
             body["reasoning_effort"] = p.reasoning_mode
+        # Provider-specific fields (e.g. Qwen3 ``enable_thinking``).
+        # Applied AFTER Krakey's own fields so the user can override
+        # anything Krakey would otherwise send. Per-call ``overrides``
+        # still win — they're caller intent, the most specific layer.
+        if self.provider.extra_body:
+            body.update(self.provider.extra_body)
         body.update(overrides)
         return body
 
