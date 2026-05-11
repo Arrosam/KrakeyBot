@@ -340,8 +340,21 @@ class HeartbeatOrchestrator:
 
     async def _phase_run_self(self, stimuli, recall_result,
                                 counts: "_GMCounts"):
-        """Build prompt + call Self LLM + parse. Returns None on LLM error
-        (sleeps min_interval and short-circuits the heartbeat)."""
+        """Build prompt + call Self LLM + parse.
+
+        When Self LLM is unreachable / failing, retry within the same
+        beat at ``idle.llm_failure_retry_interval`` second intervals
+        rather than letting ``beat()`` end. This keeps
+        ``heartbeat_count`` frozen while the LLM is down — failed
+        calls don't pollute heartbeat history, fatigue accounting, or
+        sleep distance. Loop exits when chat succeeds OR
+        ``runtime.stop_requested`` flips True (Ctrl+C / /kill).
+
+        Each per-attempt call is wrapped in ``asyncio.wait_for`` with
+        ``idle.self_max_wall_seconds`` ceiling — protects against a
+        server stuck in an infinite generation loop. A wait_for
+        timeout counts as one failed attempt and triggers the same
+        retry-idle delay as any other Exception."""
         rt = self._rt
         prompt, recall_result = await self.enforce_input_budget(
             stimuli, recall_result, counts,
@@ -351,13 +364,35 @@ class HeartbeatOrchestrator:
             heartbeat_id=rt.heartbeat_count,
             layers={"full_prompt": prompt},
         ))
-        try:
-            raw = await rt.self_llm.chat(
-                [{"role": "user", "content": prompt}]
-            )
-        except Exception as e:  # noqa: BLE001
-            rt.log.hb(f"Self LLM error: {e}")
-            await asyncio.sleep(rt._min)
+        idle_cfg = rt.config.idle
+        retry_idle = idle_cfg.llm_failure_retry_interval
+        wall_cap = idle_cfg.self_max_wall_seconds
+        attempt = 0
+        raw: str | None = None
+        while not rt.stop_requested:
+            try:
+                raw = await asyncio.wait_for(
+                    rt.self_llm.chat(
+                        [{"role": "user", "content": prompt}],
+                    ),
+                    timeout=wall_cap,
+                )
+                break
+            except Exception as e:  # noqa: BLE001
+                attempt += 1
+                rt.log.hb(
+                    f"Self LLM error (attempt {attempt}): "
+                    f"{type(e).__name__}: {e}; sleeping "
+                    f"{retry_idle}s before retrying same beat "
+                    f"(heartbeat_count frozen at {rt.heartbeat_count})"
+                )
+                await asyncio.sleep(retry_idle)
+        if raw is None:
+            # stop_requested flipped during a retry sleep / chat call —
+            # short-circuit the rest of this beat. heartbeat_count
+            # stays at its current value; we never advanced it for an
+            # outage. ``Runtime.run`` will exit the outer loop on its
+            # own next iteration.
             return None
         # Pair the raw response with the prompt-log entry created
         # above so the dashboard's Prompts tab can render the
