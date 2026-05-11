@@ -11,6 +11,21 @@ class IdleSection:
     min_interval: int = 2
     max_interval: int = 300
     default_interval: int = 10
+    # Per-call wall-clock ceiling on a single self_llm.chat() inside
+    # the heartbeat. Independent of LLM tag's timeout_seconds —
+    # protects against a server stuck in an infinite generation loop.
+    # When this fires the orchestrator's retry-idle loop counts it as
+    # one failed attempt (and waits llm_failure_retry_interval before
+    # the next try), NOT as a completed beat.
+    self_max_wall_seconds: float = 1800.0
+    # When self_llm.chat() raises (network error, timeout, server
+    # 5xx, malformed response) the orchestrator sleeps this many
+    # seconds and re-tries within the same beat. heartbeat_count does
+    # NOT advance during these retries — failed LLM calls don't
+    # pollute heartbeat history, fatigue accounting, or sleep
+    # distance. Loop exits when chat succeeds OR
+    # runtime.stop_requested goes True.
+    llm_failure_retry_interval: float = 30.0
 
 
 @dataclass
@@ -55,6 +70,12 @@ def _build_idle(raw: dict[str, Any]) -> IdleSection:
         max_interval=int(raw.get("max_interval", d.max_interval)),
         default_interval=int(raw.get("default_interval",
                                        d.default_interval)),
+        self_max_wall_seconds=float(raw.get(
+            "self_max_wall_seconds", d.self_max_wall_seconds,
+        )),
+        llm_failure_retry_interval=float(raw.get(
+            "llm_failure_retry_interval", d.llm_failure_retry_interval,
+        )),
     )
 
 

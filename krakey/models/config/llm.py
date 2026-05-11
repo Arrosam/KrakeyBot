@@ -127,7 +127,7 @@ class LLMParams:
 
     # Transport-level knobs
     timeout_seconds: float = 120.0
-    max_retries: int = 3
+    max_retries: int = 1
     retry_on_status: list[int] = field(
         default_factory=lambda: [429, 500, 502, 503, 504]
     )
@@ -149,7 +149,7 @@ _LLM_PARAM_HELP: dict[str, str] = {
     "reasoning_mode": "Reasoning intensity: off / low / medium / high. Translated to Anthropic thinking.budget_tokens or OpenAI reasoning_effort.",
     "reasoning_budget_tokens": "Anthropic thinking-budget tokens (≥ 1024 and < max_output_tokens). Active only when reasoning_mode != off. Empty = auto-derived from mode.",
     "timeout_seconds": "Per-request HTTP timeout in seconds. Suggested: 180 for Self, 20 for Hypothalamus.",
-    "max_retries": "Max retries on HTTP failure. Exponential backoff + jitter. Only 5xx and 429 retry; 4xx does not.",
+    "max_retries": "Max retries on HTTP failure. Exponential backoff + jitter. Only 5xx and 429 retry; 4xx + timeouts do not. Default 1 — beat-level retry-idle loop handles longer outages without amplifying request volume.",
     "retry_on_status": "List of HTTP status codes that trigger a retry. Default [429, 500, 502, 503, 504].",
 }
 

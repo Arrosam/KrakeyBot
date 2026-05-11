@@ -363,6 +363,28 @@ async def test_chat_logs_wall_time_on_failure(caplog):
     assert any("LLM chat done" in r.getMessage() for r in caplog.records)
 
 
+# ---- timeout fail-fast (no retry) ------------------------------------
+
+
+async def test_timeout_does_not_retry():
+    """``asyncio.TimeoutError`` bypasses retry — a 600s read timeout
+    on a slow local model is NOT a transient retryable condition;
+    retrying just amplifies the wait. Per-call retries only handle
+    transient 5xx / 429; longer-outage handling lives at the
+    beat-level retry-idle loop."""
+    import asyncio
+    t = SequenceTransport([
+        asyncio.TimeoutError(),
+        {"choices": [{"message": {"content": "would-be-success"}}]},
+    ])
+    params = LLMParams(max_retries=3)
+    c = LLMClient(_openai_provider(), model="m", transport=t, params=params)
+    with pytest.raises(asyncio.TimeoutError):
+        await c.chat("hi")
+    # Only one transport call — timeout raised before retry.
+    assert len(t.calls) == 1
+
+
 # ---- Provider.extra_body + max_tokens_field ---------------------------
 
 

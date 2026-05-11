@@ -236,11 +236,19 @@ class LLMClient:
         for i in range(attempts):
             try:
                 return await self.transport.post_json(url, headers, body)
+            except asyncio.TimeoutError:
+                # Timeouts fail-fast: a 600s read timeout on a slow
+                # local model is NOT a transient retryable condition —
+                # retrying just amplifies the wait (4 × 600s = 40min).
+                # The beat-level retry-idle loop owns longer-outage
+                # behavior; per-request retries are only for genuinely
+                # transient 5xx / 429.
+                raise
             except TransportError as e:
                 last_err = e
                 if e.status not in p.retry_on_status or i == attempts - 1:
                     raise
-            except Exception as e:  # noqa: BLE001 — network/timeouts etc.
+            except Exception as e:  # noqa: BLE001 — network errors etc.
                 last_err = e
                 if i == attempts - 1:
                     raise
