@@ -83,3 +83,37 @@ class PluginsService(Protocol):
         the dashboard is attached to one. State file IS written
         if rc==0; subsequent /api/plugins/deps_status reflects
         the new state."""
+
+    def find_stale_configs(self) -> list[dict[str, Any]]:
+        """List per-plugin config dirs that no longer back any
+        installed plugin.
+
+        A directory under the plugin-configs root is "stale" if it
+        is NOT itself a workspace plugin (no ``meta.yaml``) AND its
+        name is absent from the live catalogue. These are leftovers
+        from removed / renamed plugins; the dashboard's "delete
+        stale" button removes them.
+
+        Returns a list of ``{name, path, has_config}`` dicts. The
+        ``has_config`` flag tells the UI whether the folder
+        contains a saved ``config.yaml`` (vs. an empty leftover
+        folder) so it can label the row accordingly.
+        """
+
+    def delete_stale_config(self, name: str) -> dict[str, Any]:
+        """Delete a single stale plugin-config folder.
+
+        Safety contract:
+          * ``name`` must be a single segment of safe characters
+            (no path separators / dots / leading slash) — raises
+            ``ValueError`` otherwise so a malicious or malformed
+            name can never escape the plugin-configs root.
+          * The named plugin must NOT be in the live catalogue and
+            its folder must NOT contain a ``meta.yaml`` (which
+            would mean it IS a workspace plugin, just one whose
+            meta failed to parse). Both rejected with
+            ``ValueError`` so a typo can't wipe live plugin data.
+          * Missing folder → ``LookupError`` (404 from the route).
+
+        Returns ``{name, path, deleted: True}`` on success.
+        """
