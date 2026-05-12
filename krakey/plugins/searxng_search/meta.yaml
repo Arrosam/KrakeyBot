@@ -1,0 +1,111 @@
+name: searxng_search
+description: >
+  Web search via a local SearXNG aggregator (combines results across
+  Google / Bing / DuckDuckGo / Wikipedia / etc). Self picks per-call
+  args (query, max_results, categories, language, time_range,
+  safesearch, engines); the operator configures defaults + the
+  instance URL via the dashboard. With ``auto_start: true`` the
+  plugin spins up a local SearXNG Docker container on first call
+  if the configured URL doesn't respond. Tool name is
+  ``searxng_search`` so it coexists with the abstract ``search``
+  shipped by the ``duckduckgo_search`` plugin.
+
+  REQUIRES (auto_start mode only): Docker installed and the daemon
+  running. Docker is a system-level binary — ``krakey install``
+  CANNOT install it; install Docker Desktop separately
+  (https://docs.docker.com/get-docker/). The post_install probe
+  below warns at install time if ``docker`` isn't on PATH so this
+  doesn't surface as a confusing runtime connection error. If you
+  run SearXNG yourself, leave Docker out and set
+  ``auto_start: false`` + ``instance_url`` to your instance.
+
+config_schema:
+  - field: instance_url
+    type: text
+    default: http://127.0.0.1:8888
+    help: >
+      Base URL of the SearXNG instance (no trailing slash). Default
+      matches the auto_start container's host port.
+  - field: auto_start
+    type: boolean
+    default: true
+    help: >
+      When true, the plugin probes ``instance_url`` at runtime
+      startup and runs a Docker container if no instance answers.
+      Idempotent (no-op if already up). Requires ``docker`` on
+      PATH AND the Docker daemon (Docker Desktop on Windows) to be
+      running. If either is missing the plugin logs a clear
+      warning and the per-call HTTP error surfaces "connection
+      refused" to Self. Set to false if you run SearXNG yourself
+      (e.g. systemd unit, separate compose stack).
+  - field: docker_image
+    type: text
+    default: searxng/searxng:latest
+    help: >
+      Docker image used by ``auto_start``. Pin a digest or version
+      tag for reproducibility (``searxng/searxng@sha256:...``).
+  - field: container_name
+    type: text
+    default: krakey-searxng
+    help: >
+      Docker container name. Pinned so subsequent boots reuse the
+      same container instead of pile-launching new ones.
+  - field: host_port
+    type: number
+    default: 8888
+    help: >
+      Host port mapped to the container's 8080 (SearXNG's default
+      listening port). Match this to the port in ``instance_url``.
+  - field: request_timeout_s
+    type: number
+    default: 15
+    help: >
+      Per-search HTTP timeout in seconds. SearXNG aggregates many
+      engines so 10-30s is realistic; raise on slow networks.
+  - field: default_max_results
+    type: number
+    default: 10
+    help: >
+      Default max_results when Self omits it from a call. Hard
+      cap is 50 regardless — Self's ``max_results`` arg is
+      clamped silently.
+  - field: default_categories
+    type: text
+    default: ""
+    help: >
+      Comma-separated default SearXNG categories
+      (general,news,images,videos,...). Empty = SearXNG decides
+      from its own settings.
+  - field: default_language
+    type: text
+    default: ""
+    help: >
+      Default language hint, e.g. ``en`` or ``auto``. Empty = no
+      preference.
+  - field: default_safesearch
+    type: number
+    default: 0
+    help: >
+      0=off, 1=moderate, 2=strict. Self can override per call.
+
+dependencies:
+  - "aiohttp>=3.9"
+
+post_install:
+  # Docker is a system-level binary, NOT a pip dep — ``krakey
+  # install`` cannot install it. This optional step probes for
+  # ``docker`` on PATH so the operator sees a clear warning at
+  # install time rather than a confusing connection error at
+  # runtime when ``auto_start: true`` tries to spawn a container
+  # that can never start. ``optional: true`` so a missing Docker
+  # doesn't abort install — the plugin still loads (auto_start
+  # just won't work; operators who run SearXNG separately set
+  # ``auto_start: false``).
+  - args: ["{python}", "-m", "krakey.plugins.searxng_search.check_install"]
+    description: "Verify Docker is on PATH (auto_start mode requires it)"
+    optional: true
+
+components:
+  - kind: tool
+    factory_module: krakey.plugins.searxng_search.tool
+    factory_attr: build_tool
