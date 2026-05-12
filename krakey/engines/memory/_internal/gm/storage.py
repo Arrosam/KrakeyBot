@@ -20,18 +20,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 import aiosqlite
 
-from krakey.memory._db import (
+from krakey.engines.memory._internal._db import (
     apply_schema, decode_embedding as _decode_embedding,
     encode_embedding as _encode_embedding, open_db_with_vec,
 )
-
-
-class AsyncEmbedder(Protocol):
-    async def __call__(self, text: str) -> list[float]: ...
+from krakey.interfaces.duck import AsyncEmbedder
 
 
 def _row_to_node(row: aiosqlite.Row) -> dict[str, Any]:

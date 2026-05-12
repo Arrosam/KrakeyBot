@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from krakey.memory.graph_memory import GraphMemory
+from krakey.engines.memory._internal.graph_memory import GraphMemory
 from krakey.engines.heartbeat.compact import compact_if_needed
 from krakey.engines.explicit_history.sliding_window import SlidingWindow, ExplicitHistoryRound
 

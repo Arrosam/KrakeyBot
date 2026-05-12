@@ -12,20 +12,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from krakey.memory.graph_memory import GraphMemory
-from krakey.memory.knowledge_base import KBRegistry
-from krakey.memory.recall import Reranker
-from krakey.memory.sleep.clustering import run_leiden_clustering
-from krakey.memory.sleep.index_rebuild import rebuild_index_graph
-from krakey.memory.sleep.kb_lifecycle import archive_excess_kbs, consolidate_kbs
-from krakey.memory.sleep.migration import migrate_gm_to_kb
+from krakey.engines.memory._internal.graph_memory import GraphMemory
+from krakey.engines.memory._internal.knowledge_base import KBRegistry
+from krakey.engines.memory._internal.sleep.clustering import run_leiden_clustering
+from krakey.engines.memory._internal.sleep.index_rebuild import rebuild_index_graph
+from krakey.engines.memory._internal.sleep.kb_lifecycle import archive_excess_kbs, consolidate_kbs
+from krakey.engines.memory._internal.sleep.migration import migrate_gm_to_kb
+from krakey.interfaces.duck import ChatLike
 
 if TYPE_CHECKING:
+    from krakey.interfaces.engines.reranker import RerankerEngine
     from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
-
-
-class AsyncChatLLM(Protocol):
-    async def chat(self, messages, **kwargs) -> str: ...
 
 
 class AsyncEmbedder(Protocol):
@@ -34,8 +31,8 @@ class AsyncEmbedder(Protocol):
 
 async def enter_sleep_mode(
     gm: GraphMemory, reg: KBRegistry, channels: "StimulusBuffer",
-    *, llm: AsyncChatLLM, embedder: AsyncEmbedder,
-    reranker: Reranker | None = None,
+    *, llm: ChatLike, embedder: AsyncEmbedder,
+    reranker: "RerankerEngine | None" = None,
     log_dir: str | Path = "workspace/logs",
     min_community_size: int = 1,
     kb_consolidation_threshold: float = 0.85,

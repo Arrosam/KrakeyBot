@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 if TYPE_CHECKING:
-    from krakey.llm.client import LLMClient
+    from krakey.engines.llm_client_factory._client import LLMClient
     from krakey.main import RuntimeDeps
 
 _log = logging.getLogger(__name__)
@@ -71,20 +71,21 @@ class PluginContext:
 
         The plugin reads its own ``config.yaml`` to find which tag the
         user bound (typically under ``llm_purposes: { my_purpose:
-        my_tag }``), then calls this method with the tag name. Returns
-        ``None`` for: missing tag name, undefined tag, malformed tag,
-        unknown provider — all the failure modes of
-        ``resolve_llm_for_tag``.
+        my_tag }``), then calls this method with the tag name. Routes
+        through ``LLMClientFactoryEngine.client_for_tag`` (the
+        documented Protocol method), so any factory impl satisfying
+        the Protocol works — including third-party replacements that
+        don't expose internal cache state.
 
-        Plugins NEVER see provider configs / API keys; the resolved
-        ``LLMClient`` is the only thing that crosses the boundary.
+        Returns ``None`` for: missing tag name, undefined tag, malformed
+        tag, unknown provider — all the failure modes of the factory's
+        ``client_for_tag``. Plugins NEVER see provider configs / API
+        keys; the resolved ``LLMClient`` is the only thing that crosses
+        the boundary.
         """
         if not tag_name:
             return None
-        from krakey.llm.resolve import resolve_llm_for_tag
-        return resolve_llm_for_tag(
-            self.deps.config, tag_name, self.deps.llm_clients_by_tag,
-        )
+        return self.deps.llm_factory.client_for_tag(tag_name)
 
     def environment(self, env_name: str):
         """Resolve a named ``Environment`` for this plugin.

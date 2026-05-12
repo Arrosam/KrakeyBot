@@ -14,7 +14,7 @@ from typing import Any, Awaitable, Callable
 
 import aiosqlite
 
-from krakey.memory._db import cosine_similarity
+from krakey.engines.memory._internal._db import cosine_similarity
 
 
 RowDecoder = Callable[[aiosqlite.Row], dict[str, Any]]

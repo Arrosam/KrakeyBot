@@ -15,8 +15,8 @@ from krakey.models.config import LLMParams
 if TYPE_CHECKING:
     from krakey.interfaces.engines.memory import MemoryEngine
     from krakey.interfaces.engines.recall import RecallSession
-    from krakey.llm.resolve import AsyncEmbedder
-    from krakey.memory.recall.scoring import Reranker
+    from krakey.interfaces.engines.reranker import RerankerEngine
+    from krakey.interfaces.duck import AsyncEmbedder
     from krakey.models.config import Config
 
 
@@ -35,7 +35,7 @@ class IncrementalRecallEngine:
         cfg: "Config",
         memory: "MemoryEngine",
         embedder: "AsyncEmbedder",
-        reranker: "Reranker | None",
+        reranker: "RerankerEngine | None",
     ):
         self._cfg = cfg
         self._memory = memory

@@ -4,7 +4,7 @@ Embeddings mocked — tests focus on DB behavior.
 """
 import pytest
 
-from krakey.memory.graph_memory import GraphMemory
+from krakey.engines.memory._internal.graph_memory import GraphMemory
 
 
 class FakeEmbedder:

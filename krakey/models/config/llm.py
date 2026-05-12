@@ -40,6 +40,24 @@ class Provider:
     base_url: str = ""
     api_key: str | None = None
     models: list[ModelEntry] = field(default_factory=list)
+    # Wire field name for the per-call output token cap. OpenAI o-series
+    # / GPT-5 require ``max_completion_tokens``; everything else
+    # (DeepSeek, Qwen, vLLM, llama.cpp, OpenMLX, ollama, ...) accepts
+    # the classic ``max_tokens``. Pin this per-provider so the cap
+    # actually reaches the model — Krakey's previous reasoning_on
+    # heuristic silently sent ``max_completion_tokens`` to local
+    # servers that ignored it, leaving the model to generate without
+    # any output bound.
+    max_tokens_field: str = "max_tokens"
+    # Provider-specific fields injected into every chat / embed /
+    # rerank request body. Useful for local servers that accept
+    # non-standard fields outside the OpenAI / Anthropic schemas
+    # (e.g. Qwen3's ``enable_thinking: false`` to disable the
+    # built-in chain-of-thought, vLLM's ``repetition_penalty``,
+    # custom sampling params). Merged AFTER everything Krakey
+    # builds from LLMParams, so an extra_body entry can override
+    # any field Krakey would otherwise send.
+    extra_body: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -109,7 +127,7 @@ class LLMParams:
 
     # Transport-level knobs
     timeout_seconds: float = 120.0
-    max_retries: int = 3
+    max_retries: int = 1
     retry_on_status: list[int] = field(
         default_factory=lambda: [429, 500, 502, 503, 504]
     )
@@ -131,7 +149,7 @@ _LLM_PARAM_HELP: dict[str, str] = {
     "reasoning_mode": "Reasoning intensity: off / low / medium / high. Translated to Anthropic thinking.budget_tokens or OpenAI reasoning_effort.",
     "reasoning_budget_tokens": "Anthropic thinking-budget tokens (≥ 1024 and < max_output_tokens). Active only when reasoning_mode != off. Empty = auto-derived from mode.",
     "timeout_seconds": "Per-request HTTP timeout in seconds. Suggested: 180 for Self, 20 for Hypothalamus.",
-    "max_retries": "Max retries on HTTP failure. Exponential backoff + jitter. Only 5xx and 429 retry; 4xx does not.",
+    "max_retries": "Max retries on HTTP failure. Exponential backoff + jitter. Only 5xx and 429 retry; 4xx + timeouts do not. Default 1 — beat-level retry-idle loop handles longer outages without amplifying request volume.",
     "retry_on_status": "List of HTTP status codes that trigger a retry. Default [429, 500, 502, 503, 504].",
 }
 
@@ -200,11 +218,21 @@ def _build_llm(raw: dict[str, Any]) -> LLMSection:
             )
             for m in (pdata.get("models") or [])
         ]
+        # ``extra_body`` is yaml-passthrough — accept any mapping, drop
+        # silently otherwise (a typo like ``extra_body: ""`` shouldn't
+        # crash startup).
+        extra_body = pdata.get("extra_body") or {}
+        if not isinstance(extra_body, dict):
+            extra_body = {}
         providers[pname] = Provider(
             type=pdata.get("type", "openai_compatible"),
             base_url=pdata.get("base_url", ""),
             api_key=pdata.get("api_key"),
             models=models,
+            max_tokens_field=str(
+                pdata.get("max_tokens_field") or "max_tokens"
+            ),
+            extra_body=dict(extra_body),
         )
     # Detect old `roles:` shape — Samuel's tag-based refactor 2026-04-26
     # removed it. Legacy configs must migrate; we exit loud rather than

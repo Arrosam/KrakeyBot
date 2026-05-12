@@ -17,17 +17,14 @@ GraphMemory keeps thin wrapper methods (``gm.auto_ingest`` etc.) that
 forward to these functions, so callers don't change.
 """
 from __future__ import annotations
+from krakey.interfaces.duck import ChatLike
 
 import json
 import re
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from krakey.memory.graph_memory import GraphMemory
-
-
-class AsyncChatLLM(Protocol):
-    async def chat(self, messages, **kwargs) -> str: ...
+    from krakey.engines.memory._internal.graph_memory import GraphMemory
 
 
 # --------------------------------------------------------------------
@@ -214,7 +211,7 @@ async def explicit_write(
     gm: "GraphMemory",
     content: str,
     *,
-    extractor_llm: AsyncChatLLM,
+    extractor_llm: ChatLike,
     importance: str = "normal",
     recall_context: list[dict[str, Any]] | None = None,
     source_heartbeat: int | None = None,
@@ -260,7 +257,7 @@ async def explicit_write(
 async def classify_and_link_pending(
     gm: "GraphMemory",
     *,
-    classifier_llm: AsyncChatLLM,
+    classifier_llm: ChatLike,
     batch_size: int,
     existing_context: int,
 ) -> dict[str, int]:

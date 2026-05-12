@@ -144,21 +144,3 @@ def test_rerank_client_returns_none_when_tag_unset():
     cfg.llm.reranker = None
     f = DefaultLLMClientFactoryEngine(cfg)
     assert f.rerank_client() is None
-
-
-# --------------------------------------------------------------------
-# client_cache exposure (migration shim)
-# --------------------------------------------------------------------
-
-
-def test_client_cache_is_writable_dict():
-    """Composition root mirrors this dict into RuntimeDeps for plugin
-    back-compat. Must be the same instance across calls + reflect new
-    entries on resolution."""
-    f = DefaultLLMClientFactoryEngine(_make_cfg())
-    cache = f.client_cache
-    assert cache == {}
-    f.client_for_tag("chat_tag")
-    assert "chat_tag" in cache
-    # Same instance across reads
-    assert f.client_cache is cache

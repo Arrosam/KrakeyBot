@@ -26,12 +26,17 @@ exponential backoff (1s * 2^attempt) plus jitter, capped at
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
+import time
 from typing import Any, Protocol
 
 import aiohttp
 
 from krakey.models.config import LLMParams, Provider
+
+
+_log = logging.getLogger(__name__)
 
 
 class Transport(Protocol):
@@ -95,22 +100,33 @@ class LLMClient:
         )
 
     async def chat(self, messages, **kwargs) -> str:
-        if isinstance(messages, str):
-            messages = [{"role": "user", "content": messages}]
-        if self.provider.type == "anthropic":
-            body = self._build_anthropic_body(messages, kwargs)
-            url = self._url("/v1/messages")
-            headers = self._anthropic_headers()
+        # Wall-clock instrumentation: lets users diagnose perceived
+        # slowness from the dashboard log without instrumenting every
+        # caller. Emitted unconditionally (success + failure) so the
+        # log always shows where real time was spent.
+        t0 = time.monotonic()
+        try:
+            if isinstance(messages, str):
+                messages = [{"role": "user", "content": messages}]
+            if self.provider.type == "anthropic":
+                body = self._build_anthropic_body(messages, kwargs)
+                url = self._url("/v1/messages")
+                headers = self._anthropic_headers()
+                data = await self._post_with_retry(url, headers, body)
+                parts = [p["text"] for p in data.get("content", [])
+                         if p.get("type") == "text"]
+                return "".join(parts)
+            # openai_compatible
+            body = self._build_openai_body(messages, kwargs)
+            url = self._url("/v1/chat/completions")
+            headers = self._openai_headers()
             data = await self._post_with_retry(url, headers, body)
-            parts = [p["text"] for p in data.get("content", [])
-                     if p.get("type") == "text"]
-            return "".join(parts)
-        # openai_compatible
-        body = self._build_openai_body(messages, kwargs)
-        url = self._url("/v1/chat/completions")
-        headers = self._openai_headers()
-        data = await self._post_with_retry(url, headers, body)
-        return data["choices"][0]["message"]["content"]
+            return data["choices"][0]["message"]["content"]
+        finally:
+            _log.info(
+                "LLM chat done: model=%s elapsed=%.1fs",
+                self.model, time.monotonic() - t0,
+            )
 
     async def embed(self, text: str) -> list[float]:
         url = self._url("/v1/embeddings")
@@ -133,18 +149,17 @@ class LLMClient:
         p = self.params
         body: dict[str, Any] = {"model": self.model, "messages": messages}
         reasoning_on = p.reasoning_mode and p.reasoning_mode != "off"
-        # Newer OpenAI reasoning models (o-series, GPT-5) require
-        # `max_completion_tokens` instead of `max_tokens`. Heuristic:
-        # if reasoning is enabled we're on a reasoning-capable endpoint,
-        # so use the new field. Otherwise stick with the classic one
-        # which DeepSeek / Qwen / vLLM / llama.cpp all still accept.
-        # max_input_tokens is intentionally never sent — providers
-        # have no wire field for it; it's a local declaration only.
+        # Output-token cap field name comes from the Provider, not
+        # from a reasoning_on heuristic. The previous heuristic sent
+        # ``max_completion_tokens`` whenever reasoning_mode was set,
+        # which silently broke the cap on local servers (Qwen/vLLM/
+        # OpenMLX/llama.cpp) that only recognise ``max_tokens`` —
+        # the model would generate without bound. Pinning per-provider
+        # via ``Provider.max_tokens_field`` makes the wire format
+        # explicit. ``max_input_tokens`` is intentionally never sent —
+        # providers have no wire field for it; it's a local declaration.
         if p.max_output_tokens is not None:
-            if reasoning_on:
-                body["max_completion_tokens"] = p.max_output_tokens
-            else:
-                body["max_tokens"] = p.max_output_tokens
+            body[self.provider.max_tokens_field] = p.max_output_tokens
         # Temperature: o-series + DeepSeek-Reasoner reject or ignore it;
         # dropping it silently is safer than letting the server 400.
         if p.temperature is not None and not reasoning_on:
@@ -159,6 +174,12 @@ class LLMClient:
             body["seed"] = p.seed
         if reasoning_on:
             body["reasoning_effort"] = p.reasoning_mode
+        # Provider-specific fields (e.g. Qwen3 ``enable_thinking``).
+        # Applied AFTER Krakey's own fields so the user can override
+        # anything Krakey would otherwise send. Per-call ``overrides``
+        # still win — they're caller intent, the most specific layer.
+        if self.provider.extra_body:
+            body.update(self.provider.extra_body)
         body.update(overrides)
         return body
 
@@ -215,17 +236,29 @@ class LLMClient:
         for i in range(attempts):
             try:
                 return await self.transport.post_json(url, headers, body)
+            except asyncio.TimeoutError:
+                # Timeouts fail-fast: a 600s read timeout on a slow
+                # local model is NOT a transient retryable condition —
+                # retrying just amplifies the wait (4 × 600s = 40min).
+                # The beat-level retry-idle loop owns longer-outage
+                # behavior; per-request retries are only for genuinely
+                # transient 5xx / 429.
+                raise
             except TransportError as e:
                 last_err = e
                 if e.status not in p.retry_on_status or i == attempts - 1:
                     raise
-            except Exception as e:  # noqa: BLE001 — network/timeouts etc.
+            except Exception as e:  # noqa: BLE001 — network errors etc.
                 last_err = e
                 if i == attempts - 1:
                     raise
             # Exponential backoff with jitter. Base 1s, doubled per
             # attempt, capped at 30s to stay under the request timeout.
             delay = min(30.0, 1.0 * (2 ** i)) * (0.5 + random.random())
+            _log.warning(
+                "LLM retry %d/%d after %s: %s; sleeping %.1fs",
+                i + 1, attempts, type(last_err).__name__, last_err, delay,
+            )
             await asyncio.sleep(delay)
         if last_err is not None:  # pragma: no cover — loop always raises
             raise last_err

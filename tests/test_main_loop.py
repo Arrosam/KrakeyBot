@@ -828,3 +828,89 @@ async def test_idle_interrupts_on_adrenalin_stimulus():
     # Second heartbeat must have observed the urgent stimulus
     joined = json.dumps([m for m in self_llm.calls], ensure_ascii=False)
     assert "urgent!" in joined
+
+
+# ---- LLM-failure retry-idle loop (stage 3) -----------------------------
+
+
+class FlakyLLM:
+    """Raises ``RuntimeError`` for the first ``fail_count`` calls,
+    then returns from ``responses`` on subsequent calls. Used to
+    exercise the beat-level retry-idle loop."""
+
+    def __init__(self, fail_count: int, responses):
+        self.fail_count = fail_count
+        self._responses = list(responses)
+        self.call_count = 0
+
+    async def chat(self, messages, **kwargs):
+        self.call_count += 1
+        if self.call_count <= self.fail_count:
+            raise RuntimeError(f"server down (attempt {self.call_count})")
+        if not self._responses:
+            return ""
+        return self._responses.pop(0)
+
+
+async def test_heartbeat_count_does_not_advance_on_llm_failure():
+    """LLM failures retry inside the same beat — heartbeat_count
+    only advances when chat finally succeeds. Previously every
+    failure ended the beat → next beat ticked count → spam."""
+    self_llm = FlakyLLM(
+        fail_count=3,
+        responses=["[DECISION]\nNo action.\n[IDLE]\n1"],
+    )
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]),
+    )
+    # Tighten the retry delay so the test isn't slow.
+    runtime.config.idle.llm_failure_retry_interval = 0.01
+    runtime.config.idle.self_max_wall_seconds = 5.0
+
+    await runtime.run(iterations=1)
+    await runtime.close()
+
+    # 3 failures + 1 success = 4 chat calls, but only 1 heartbeat
+    # actually completed.
+    assert self_llm.call_count == 4, (
+        f"expected 4 chat calls (3 fail + 1 succeed); got "
+        f"{self_llm.call_count}"
+    )
+    assert runtime.heartbeat_count == 1, (
+        f"heartbeat_count should be 1 after a single successful "
+        f"beat with prior failures; got {runtime.heartbeat_count}"
+    )
+
+
+async def test_stop_requested_breaks_llm_retry_loop():
+    """If LLM is permanently down, request_stop must unblock the
+    retry loop so the runtime can shut down cleanly. Otherwise
+    Ctrl+C / /kill would be ignored as long as LLM stays unreachable."""
+    class AlwaysFail:
+        async def chat(self, messages, **kwargs):
+            raise RuntimeError("server permanently down")
+
+    runtime = build_runtime_with_fakes(
+        self_llm=AlwaysFail(), hypo_llm=ScriptedLLM([]),
+    )
+    runtime.config.idle.llm_failure_retry_interval = 0.05
+    runtime.config.idle.self_max_wall_seconds = 1.0
+
+    async def stop_after_short_delay():
+        await asyncio.sleep(0.2)
+        runtime.request_stop()
+
+    stop_task = asyncio.create_task(stop_after_short_delay())
+    # If retry loop doesn't honor stop_requested, this wait_for times
+    # out and the test fails loudly. 5s ceiling is generous (~100×
+    # the retry interval, plenty of room for a single chat attempt
+    # to also notice the stop).
+    await asyncio.wait_for(runtime.run(iterations=10), timeout=5.0)
+    await stop_task
+    await runtime.close()
+    # Count is 1 — exactly one beat entered + retried until stop_requested
+    # fired. Pre-fix behavior with the same stop delay would have ticked
+    # multiple beats (idle_min=0.01 × 200ms = ~20 wasted beats). 1 means
+    # the retry loop did its job: we stayed inside the single failing beat
+    # rather than tick-spamming.
+    assert runtime.heartbeat_count == 1

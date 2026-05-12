@@ -12,8 +12,9 @@ from typing import Any, Protocol
 import igraph as ig
 import leidenalg as la
 
-from krakey.memory._db import encode_embedding
-from krakey.memory.graph_memory import GraphMemory, _row_to_node
+from krakey.engines.memory._internal._db import encode_embedding
+from krakey.engines.memory._internal.graph_memory import GraphMemory, _row_to_node
+from krakey.interfaces.duck import ChatLike
 
 
 COMMUNITY_SUMMARY_PROMPT = """Below is a tightly related set of memory nodes (discovered by Sleep clustering):
@@ -26,16 +27,12 @@ long-term KB index summary).
 """
 
 
-class AsyncChatLLM(Protocol):
-    async def chat(self, messages, **kwargs) -> str: ...
-
-
 class AsyncEmbedder(Protocol):
     async def __call__(self, text: str) -> list[float]: ...
 
 
 async def run_leiden_clustering(
-    gm: GraphMemory, *, llm: AsyncChatLLM, embedder: AsyncEmbedder,
+    gm: GraphMemory, *, llm: ChatLike, embedder: AsyncEmbedder,
     min_size: int = 1,
 ) -> list[dict[str, Any]]:
     """Cluster GM, persist communities, return list of dicts:
@@ -101,7 +98,7 @@ def _partition_nodes(nodes: list[dict[str, Any]],
 
 
 async def _summarize(members: list[dict[str, Any]],
-                       llm: AsyncChatLLM) -> str:
+                       llm: ChatLike) -> str:
     body = "\n".join(
         f"- [{m['name']}] ({m['category']}) {(m.get('description') or '').strip()}"
         for m in members

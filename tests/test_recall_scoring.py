@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from krakey.memory.recall import (
+from krakey.engines.recall._scoring import (
     ScoringWeights, category_weight, scripted_score, time_decay,
 )
 
@@ -88,7 +88,7 @@ def test_scripted_score_type_weight_differentiation():
 
 
 async def test_vec_search_returns_top_k_sorted_desc(tmp_path):
-    from krakey.memory.graph_memory import GraphMemory
+    from krakey.engines.memory._internal.graph_memory import GraphMemory
 
     class Embed:
         async def __call__(self, text): return [0.0]

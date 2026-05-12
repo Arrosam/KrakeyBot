@@ -7,13 +7,14 @@ by tag name or by core-purpose name and never see the providers or
 their API keys.
 
 Replaces the previous ``resolve_llm_for_tag`` free function plus the
-ad-hoc client-cache passing in ``RuntimeDeps.llm_clients_by_tag``. The
-Engine owns the cache internally — one client instance per tag,
-shared across all consumers.
+ad-hoc client-cache passing on ``RuntimeDeps``. The Engine owns the
+cache as a private implementation detail — one client instance per
+tag, shared across all consumers via ``client_for_tag``. Third-party
+factory impls only need to satisfy the methods declared below.
 
 API-key isolation: the factory keeps providers + keys in its own
 state; clients it returns satisfy ``ChatLike`` (defined in
-``krakey/llm/resolve.py``) and expose only ``chat``/``embed``/
+``krakey/interfaces/duck.py``) and expose only ``chat``/``embed``/
 ``rerank`` methods. Plugins and other Engines never see API keys.
 
 A user replacing this Engine controls how clients are constructed —
@@ -25,7 +26,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from krakey.llm.resolve import ChatLike
+    from krakey.interfaces.duck import ChatLike
 
 
 @runtime_checkable

@@ -1,7 +1,7 @@
 """Phase 1.2c: auto_ingest (embedding + dedup) and cosine similarity."""
 import pytest
 
-from krakey.memory.graph_memory import GraphMemory, cosine_similarity
+from krakey.engines.memory._internal.graph_memory import GraphMemory, cosine_similarity
 
 
 class MappingEmbedder:

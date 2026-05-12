@@ -17,9 +17,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from krakey.memory._db import decode_embedding, encode_embedding
-from krakey.memory.graph_memory import GraphMemory
-from krakey.memory.knowledge_base.entry_store import (
+from krakey.engines.memory._internal._db import decode_embedding, encode_embedding
+from krakey.engines.memory._internal.graph_memory import GraphMemory
+from krakey.engines.memory._internal.knowledge_base.entry_store import (
     AsyncEmbedder, KnowledgeBase,
 )
 

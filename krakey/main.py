@@ -26,9 +26,10 @@ from krakey.models.config import load_config
 # Public re-exports — callers used to do ``from krakey.main import Runtime``
 # and we don't want to chase down every test importer just because the
 # class lives in a tidier file now.
-from krakey.llm.resolve import (  # noqa: F401
-    AsyncEmbedder, ChatLike, resolve_llm_for_tag,
+from krakey.engines.llm_factory._resolve import (  # noqa: F401
+    resolve_llm_for_tag,
 )
+from krakey.interfaces.duck import AsyncEmbedder, ChatLike  # noqa: F401
 from krakey.runtime.runtime import Runtime, RuntimeDeps  # noqa: F401
 from krakey.engines.heartbeat.orchestrator import (  # noqa: F401
     _summarize_stimuli,
@@ -54,9 +55,10 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
          (model-type slots, not "purposes")
 
     Each LLMClient is built once per tag and reused across every
-    purpose that shares it (cache lives inside the factory Engine,
-    mirrored into ``RuntimeDeps.llm_clients_by_tag`` for plugin
-    back-compat during the migration window).
+    purpose that shares it (cache lives inside the factory Engine).
+    Plugins reach the cache only through the factory's documented
+    Protocol method ``client_for_tag`` — no field on RuntimeDeps
+    leaks the cache.
     """
     cfg = load_config(config_path)
 
@@ -107,12 +109,6 @@ def build_runtime_from_config(config_path: str = "config.yaml") -> Runtime:
         compact_llm=compact_llm,
         classify_llm=classify_llm, embedder=embedder,
         config_path=str(config_path),
-        # Mirror the factory's internal cache onto deps so
-        # ``PluginContext.get_llm_for_tag`` (which reads
-        # ``deps.llm_clients_by_tag``) sees the same client
-        # instances Engine consumers do. Both paths share the same
-        # dict — no duplicate clients per tag.
-        llm_clients_by_tag=llm_factory.client_cache,
         llm_factory=llm_factory,
         # Pull the sliding-window state path straight from
         # config.yaml so dashboard edits to ``sliding_window.state_path``

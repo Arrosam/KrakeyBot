@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 import aiosqlite
 
-from krakey.memory._db import build_fts_query
+from krakey.engines.memory._internal._db import build_fts_query
 
 
 RowDecoder = Callable[[aiosqlite.Row], dict[str, Any]]

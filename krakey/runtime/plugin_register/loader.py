@@ -294,10 +294,16 @@ class PluginLoader:
                     # implements ``detach(runtime)``. Most don't —
                     # they hold an LLM ref + state, which Python
                     # GC reclaims when we drop the registry slot.
+                    # The runtime reference comes from the same
+                    # ``services`` dict factories see via
+                    # ``ctx.services["runtime"]``; ``None`` only when
+                    # composition didn't wire one in (test harnesses,
+                    # broken setups), in which case detach has no
+                    # runtime to clean up against anyway.
                     detach = getattr(removed, "detach", None)
                     if callable(detach):
                         try:
-                            detach(None)
+                            detach(self._services.get("runtime"))
                         except Exception as e:  # noqa: BLE001
                             report["errors"].append({
                                 "kind": kind, "name": inst_name,

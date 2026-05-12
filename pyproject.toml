@@ -57,7 +57,7 @@ where = ["."]
 include = ["krakey*"]
 
 [tool.setuptools.package-data]
-"krakey.memory" = ["schemas.sql"]
+"krakey.engines.memory._internal" = ["schemas.sql"]
 "krakey.prompt" = ["dna.txt"]
 "krakey.plugins.dashboard" = ["meta.yaml", "static/**/*"]
 "krakey.plugins.duckduckgo_search" = ["meta.yaml"]
