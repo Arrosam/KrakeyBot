@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from krakey.engines.decision.tool_call_parser import (
+from krakey.engines.decision._internal.tool_call_parser import (
     ToolCallParserDecisionEngine,
 )
 from krakey.interfaces.engines import (

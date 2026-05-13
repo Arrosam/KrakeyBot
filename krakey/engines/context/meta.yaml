@@ -1,0 +1,17 @@
+slot: context
+description: |
+  Prompt assembly — turns runtime state into the full Self prompt.
+  Default impl wraps PromptBuilder's render of DEFAULT_ELEMENT_KEYS
+  layers. The ContextEngine Protocol lives at
+  krakey.interfaces.engines.context.
+
+builtin_engines:
+  - name: prompt_builder
+    factory_module: krakey.engines.context.default
+    factory_attr: DefaultContextEngine
+    default: true
+    description: |
+      Standard PromptBuilder — assembles the canonical
+      DEFAULT_ELEMENT_KEYS prompt layers.
+
+config_schema: []

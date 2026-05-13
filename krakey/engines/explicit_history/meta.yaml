@@ -1,0 +1,18 @@
+slot: explicit_history
+description: |
+  Working-memory window — token-bounded ring of recent heartbeat
+  rounds. Sliding-window-of-rounds is one possible strategy; future
+  Engines could maintain a summary tree, a relevance-scored LRU
+  cache, etc. The ExplicitHistoryEngine Protocol lives at
+  krakey.interfaces.engines.explicit_history.
+
+builtin_engines:
+  - name: sliding_window
+    factory_module: krakey.engines.explicit_history.default
+    factory_attr: SlidingWindowExplicitHistoryEngine
+    default: true
+    description: |
+      Token-bounded ring of recent heartbeat rounds; oldest rounds
+      compact into GM when the budget overflows.
+
+config_schema: []

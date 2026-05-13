@@ -1,13 +1,17 @@
-"""Shared GM-query primitive for the recall Engine + memory_recall tool.
+"""Shared GM-query primitive: text → ranked GM nodes with FTS fallback.
 
-Both ``IncrementalRecall`` (the per-beat recall driver in this Engine
-package) and the ``memory_recall`` tool plugin (Self-driven explicit
-recall) need the same low-level operation: turn a query string into a
-list of GM nodes via vector search, falling back to FTS when the
-embedder is down or vec_search returns nothing. They each layer
-different orchestration on top — the engine accumulates across stimuli
-with weight-merge, the tool takes the first batch and dedups for top-K
-— but the bottom turn-text-into-candidates step is identical.
+Both the in-tree recall engine (``IncrementalRecall``) and the
+``memory_recall`` tool plugin need the same low-level operation: turn
+a query string into a list of GM nodes via vector search, falling
+back to FTS when the embedder is down or vec_search returns nothing.
+They each layer different orchestration on top — the engine
+accumulates across stimuli with weight-merge, the tool takes the
+first batch and dedups for top-K — but the bottom turn-text-into-
+candidates step is identical.
+
+Lives in ``krakey.utils`` rather than under either consumer so
+neither has to reach across an engine / plugin boundary; both
+depend only on the ``MemoryEngine`` + ``AsyncEmbedder`` Protocols.
 """
 from __future__ import annotations
 

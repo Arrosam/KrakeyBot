@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import sys
 
-from krakey.engines.registry import EngineRegistry
+from krakey.engine_system.registry import EngineRegistry
 from krakey.interfaces.engines import LLMClientFactoryEngine
 from krakey.models.config import load_config
 # Public re-exports — callers used to do ``from krakey.main import Runtime``

@@ -1,0 +1,21 @@
+slot: memory
+description: |
+  Unified GM CRUD + KB management + sleep cycle. Default impl
+  extends a bundled GraphMemory class (at
+  krakey.engines.memory._internal.graph_memory) with KB management
+  methods (delegating to an internal KBRegistry) and a sleep_cycle
+  method (wrapping the enter_sleep_mode pipeline under
+  _internal/sleep/). The MemoryEngine Protocol lives at
+  krakey.interfaces.engines.memory and is a single flat surface so
+  the runtime treats memory as one swappable component.
+
+builtin_engines:
+  - name: graph_memory
+    factory_module: krakey.engines.memory.default
+    factory_attr: GraphMemoryEngine
+    default: true
+    description: |
+      SQLite-backed graph memory + per-topic KB SQLite files +
+      enter_sleep_mode consolidation pipeline.
+
+config_schema: []

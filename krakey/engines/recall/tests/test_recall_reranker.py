@@ -12,8 +12,8 @@ from datetime import datetime
 
 import pytest
 
-from krakey.engines.recall._scoring import ScoringWeights
-from krakey.engines.recall.incremental import IncrementalRecall
+from krakey.engines.recall._internal.scoring import ScoringWeights
+from krakey.engines.recall._internal.incremental import IncrementalRecall
 
 
 def _node(id_, name, *, description="", category="FACT", access_count=0,

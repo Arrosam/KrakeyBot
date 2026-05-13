@@ -130,7 +130,7 @@ class Runtime:
                 deps.sliding_window_state_path
                 or "workspace/data/sliding_window.json"
             )
-        from krakey.engines.registry import EngineRegistry
+        from krakey.engine_system.registry import EngineRegistry
         from krakey.interfaces.engines import (
             ContextEngine,
             DecisionEngine,

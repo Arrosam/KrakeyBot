@@ -44,18 +44,18 @@ def _engine_overlap_hint(plugin_name: str) -> str:
     Common scenario: ``plugins: [hypothalamus, ...]`` from before the
     hypothalamus modifier-role plugin was retired into an Engine slot.
     """
-    import importlib
-
+    from krakey.engine_system.meta_loader import (
+        MetaParseError, load_slot_meta,
+    )
     from krakey.models.config.core_impls import CoreImplementations
 
     matches: list[str] = []
     for slot in CoreImplementations.__dataclass_fields__:
         try:
-            pkg = importlib.import_module(f"krakey.engines.{slot}")
-        except ImportError:
+            catalog, _ = load_slot_meta(slot)
+        except (FileNotFoundError, MetaParseError):
             continue
-        builtins = getattr(pkg, "BUILTIN_ENGINES", None) or {}
-        if plugin_name in builtins:
+        if plugin_name in catalog:
             matches.append(slot)
     if not matches:
         return ""

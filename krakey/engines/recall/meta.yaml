@@ -1,0 +1,18 @@
+slot: recall
+description: |
+  Per-beat memory recall. Default impl is a factory wrapper around
+  the IncrementalRecall driver: each beat's new_session() returns a
+  fresh per-beat state holder; the Engine itself is long-lived.
+  The RecallEngine + RecallSession Protocols live at
+  krakey.interfaces.engines.recall.
+
+builtin_engines:
+  - name: incremental
+    factory_module: krakey.engines.recall.default
+    factory_attr: IncrementalRecallEngine
+    default: true
+    description: |
+      Per-stimulus vec_search → rerank → token-budget cut +
+      covered/uncovered partition for the next beat.
+
+config_schema: []

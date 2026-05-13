@@ -1,0 +1,25 @@
+slot: llm_client_factory
+description: |
+  Per-tag LLMClient class substitution. Distinct from llm_factory:
+  that slot substitutes the entire factory Engine; this slot lets
+  the user swap the class the factory instantiates per tag. The
+  standard LLMClient handles OpenAI-compatible + Anthropic
+  providers; users who need a totally different transport (mock,
+  replay, gRPC) point this slot at their own class with the same
+  chat / embed / rerank surface.
+
+  Resolved per-tag by
+  krakey.engines.llm_factory._resolve.resolve_llm_for_tag rather
+  than once at startup — that's why this slot doesn't show up on
+  Runtime as self.<slot>.
+
+builtin_engines:
+  - name: standard
+    factory_module: krakey.engines.llm_client_factory._client
+    factory_attr: LLMClient
+    default: true
+    description: |
+      Standard LLMClient — speaks OpenAI-compatible and Anthropic
+      APIs. Used by every tag unless overridden.
+
+config_schema: []

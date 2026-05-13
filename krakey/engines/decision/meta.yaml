@@ -1,0 +1,23 @@
+slot: decision
+description: |
+  Translate Self's [DECISION] text into structured tool calls.
+  Two impls ship in-tree, mutually exclusive (the slot picks one).
+  The DecisionEngine Protocol lives at
+  krakey.interfaces.engines.decision.
+
+builtin_engines:
+  - name: tool_call_parser
+    factory_module: krakey.engines.decision._internal.tool_call_parser
+    factory_attr: ToolCallParserDecisionEngine
+    default: true
+    description: |
+      Scripted <tool_call>{...}</tool_call> parser. No LLM call.
+      Fast, cheap, but only as smart as the parser regex.
+  - name: hypothalamus
+    factory_module: krakey.engines.decision._internal.hypothalamus
+    factory_attr: HypothalamusDecisionEngine
+    description: |
+      LLM-based natural-language translator. Bind
+      core_purposes.hypothalamus to a tag before switching.
+
+config_schema: []

@@ -132,7 +132,7 @@ class Config:
     # ``config`` kwarg (engines that don't take one ignore it via
     # ``EngineRegistry._filter_kwargs``). Schema for each engine
     # comes from ``EngineImpl.config_schema`` in the slot's
-    # BUILTIN_ENGINES catalog (or, for plugin engines, from the
+    # ``engines/<slot>/meta.yaml`` (or, for plugin engines, from the
     # plugin's top-level ``config_schema:``). Dashboard renders the
     # form under the slot's dropdown when a schema-bearing impl is
     # selected.

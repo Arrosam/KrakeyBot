@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from krakey.engines.recall._scoring import (
+from krakey.engines.recall._internal.scoring import (
     ScoringWeights, category_weight, scripted_score, time_decay,
 )
 

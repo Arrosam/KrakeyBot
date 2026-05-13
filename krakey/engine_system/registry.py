@@ -4,14 +4,17 @@ instances.
 
 Resolution order for ``core_implementations.<slot>``:
 
-  1. Empty string / missing → use the slot's ``DEFAULT_ENGINE`` (each
-     ``engines/<slot>/__init__.py`` declares one).
+  1. Empty string / missing → use the slot's default impl declared by
+     ``engines/<slot>/meta.yaml`` (``default: true`` flag), falling
+     back to ``engine_system.defaults.FALLBACK_ENGINES[slot]`` when
+     the meta is missing or malformed.
   2. Value contains ``:`` → treat as ``module.path:ClassName`` dotted
      path (power-user fallback for impls that aren't catalogued).
   3. Otherwise → look up the short name in
-     ``engines/<slot>/BUILTIN_ENGINES``, then in the plugin-engine
-     catalog (plugins under ``workspace/plugins/`` declaring
-     ``kind: engine`` + ``slot: <slot>`` in their ``meta.yaml``).
+     ``engines/<slot>/meta.yaml``'s ``builtin_engines`` list, then in
+     the plugin-engine catalog (plugins under ``workspace/plugins/``
+     declaring ``kind: engine`` + ``slot: <slot>`` in their
+     ``meta.yaml``).
 
 Failure modes (all loud — DIP says fail-fast at startup beats failing
 30 minutes into a session with a confusing AttributeError):
@@ -29,7 +32,7 @@ from __future__ import annotations
 import importlib
 from typing import Any, Callable, TypeVar
 
-from krakey.engines.catalog import EngineImpl
+from krakey.engine_system.catalog import EngineImpl
 from krakey.models.config import Config
 
 T = TypeVar("T")
@@ -112,18 +115,76 @@ def _filter_kwargs(cls: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
 
 
 def _load_slot_catalog(slot: str) -> tuple[dict[str, EngineImpl], str]:
-    """Import ``engines/<slot>/__init__.py`` and return its
-    ``(BUILTIN_ENGINES, DEFAULT_ENGINE)`` pair."""
-    pkg = importlib.import_module(f"krakey.engines.{slot}")
-    builtins = getattr(pkg, "BUILTIN_ENGINES", None)
-    default = getattr(pkg, "DEFAULT_ENGINE", None)
-    if builtins is None or default is None:
-        raise ImportError(
-            f"engines.{slot}.__init__ is missing BUILTIN_ENGINES or "
-            "DEFAULT_ENGINE — every Engine slot package must declare "
-            "both so the registry can resolve short names."
+    """Return the ``({short_name: EngineImpl}, default_short_name)``
+    pair for ``slot``. Three-tier resolution:
+
+      1. **meta.yaml** — ``engines/<slot>/meta.yaml`` declares the
+         catalog. Authoritative when present and well-formed.
+      2. **defaults.py** — ``FALLBACK_ENGINES[slot]`` dotted-path is
+         used when meta.yaml is missing OR malformed. We synthesise a
+         single-entry catalog around it. Loud-warns to stderr so the
+         operator knows fallback fired.
+      3. **loud ImportError** — neither layer has anything for this
+         slot. Means the slot is genuinely unknown; the user typo'd
+         a slot name in cfg or somebody renamed a folder without
+         updating defaults.py.
+
+    The registry never imports ``krakey.engines.<X>`` directly — meta
+    parsing returns ``EngineImpl`` objects carrying their own
+    dotted-path factory references, and the fallback path uses
+    ``_default_importer`` on the FALLBACK_ENGINES string.
+    """
+    import sys
+
+    from krakey.engine_system.defaults import FALLBACK_ENGINES
+    from krakey.engine_system.meta_loader import (
+        MetaParseError, load_slot_meta,
+    )
+
+    try:
+        return load_slot_meta(slot)
+    except FileNotFoundError:
+        # No meta.yaml — silently fall through to defaults. Common
+        # during partial migrations or third-party engines that
+        # haven't authored a meta yet.
+        pass
+    except MetaParseError as e:
+        # meta.yaml is present but malformed. Warn loudly + try
+        # fallback; the operator wants to know their meta is broken,
+        # but a typo shouldn't take the runtime down.
+        print(
+            f"warning: engine slot {slot!r}: meta.yaml malformed "
+            f"({e}); falling back to engine_system.defaults",
+            file=sys.stderr,
         )
-    return builtins, default
+
+    fallback_path = FALLBACK_ENGINES.get(slot)
+    if fallback_path is None:
+        raise ImportError(
+            f"engine slot {slot!r}: no meta.yaml found at "
+            f"engines/{slot}/meta.yaml AND no entry in "
+            "engine_system.defaults.FALLBACK_ENGINES. Either add the "
+            "meta.yaml or register a fallback dotted path."
+        )
+
+    # Synthesize a one-entry catalog around the dotted path. The
+    # ``LazyImpl`` from meta_loader does the same trick — defer
+    # ``importlib.import_module`` to actual ``cls()`` time.
+    from krakey.engine_system.meta_loader import _LazyImpl
+    module, _, attr = fallback_path.partition(":")
+    fallback_name = "fallback"
+    return (
+        {
+            fallback_name: EngineImpl(
+                cls=_LazyImpl(module, attr),  # type: ignore[arg-type]
+                description=(
+                    f"emergency fallback for slot {slot!r} "
+                    f"({fallback_path})"
+                ),
+            ),
+        },
+        fallback_name,
+    )
 
 
 def _load_plugin_engine_catalog() -> dict[str, dict[str, dict[str, Any]]]:
@@ -188,12 +249,48 @@ class EngineRegistry:
         ``:`` in value → dotted path. Otherwise short name → walk the
         built-in catalog, then the plugin catalog. Misses raise with a
         list of available short names so the user can fix the typo.
+
+        When the chosen catalog entry holds a ``_LazyImpl`` (the meta-
+        loader's deferred-import wrapper), resolve it here — the
+        registry's downstream ``_filter_kwargs`` needs an introspectable
+        class object, and lazy was only valuable across the slot's
+        unchosen alternatives. The chosen impl always materialises.
+
+        Fallback contract: if the meta-declared factory path imports
+        cleanly but points at a wrong attribute, OR the module itself
+        doesn't import, that's "yaml-valid but semantically broken
+        meta" — same family of failure as a missing meta.yaml.
+        ``FALLBACK_ENGINES[slot]`` is consulted; the operator gets a
+        stderr warning so the typo doesn't hide behind a working
+        default. If ``FALLBACK_ENGINES`` itself doesn't import we
+        let the error bubble (truly nothing works for this slot).
         """
+        import sys
+
+        from krakey.engine_system.defaults import FALLBACK_ENGINES
+        from krakey.engine_system.meta_loader import _LazyImpl
+
         if ":" in name_or_path:
             return self._import(name_or_path)
         builtins, _ = _load_slot_catalog(slot)
         if name_or_path in builtins:
-            return builtins[name_or_path].cls
+            cls = builtins[name_or_path].cls
+            if isinstance(cls, _LazyImpl):
+                try:
+                    cls = cls._resolve()
+                except ImportError as e:
+                    fallback_path = FALLBACK_ENGINES.get(slot)
+                    if not fallback_path:
+                        raise
+                    print(
+                        f"warning: engine slot {slot!r}: meta-declared "
+                        f"impl {name_or_path!r} has unimportable "
+                        f"factory ({type(e).__name__}: {e}); falling "
+                        f"back to {fallback_path!r}",
+                        file=sys.stderr,
+                    )
+                    cls = self._import(fallback_path)
+            return cls
         plugin_entries = self._plugin_catalog().get(slot, {})
         if name_or_path in plugin_entries:
             return self._import(plugin_entries[name_or_path]["path"])
