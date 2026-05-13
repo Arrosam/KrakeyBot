@@ -1,0 +1,19 @@
+slot: llm_factory
+description: |
+  Long-lived factory for LLM clients — the only place that touches
+  cfg.llm. Every other Engine and every plugin asks the factory for
+  a client by tag name or core-purpose name, never reads providers
+  / api keys / models themselves. This is the API-key isolation
+  boundary. The LLMClientFactoryEngine Protocol lives at
+  krakey.interfaces.engines.llm_factory.
+
+builtin_engines:
+  - name: tag_cache
+    factory_module: krakey.engines.llm_factory.default
+    factory_attr: DefaultLLMClientFactoryEngine
+    default: true
+    description: |
+      Per-tag client cache backed by resolve_llm_for_tag; honours
+      the llm_client_factory class-substitution slot.
+
+config_schema: []

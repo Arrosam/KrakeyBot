@@ -1,0 +1,21 @@
+slot: reranker
+description: |
+  Score-based reordering for recall + KB dedup. Default impl embeds
+  the no-LLM fallback so the slot always has a working impl —
+  there's no reranker = None tri-state. When the user has bound a
+  reranker tag the Engine forwards to that client; when unbound or
+  the upstream call fails the Engine returns preserve-order scores
+  (decreasing floats) so callers' stable sort leaves the input
+  order intact. The RerankerEngine Protocol lives at
+  krakey.interfaces.engines.reranker.
+
+builtin_engines:
+  - name: passthrough
+    factory_module: krakey.engines.reranker.default
+    factory_attr: DefaultRerankerEngine
+    default: true
+    description: |
+      Forwards to the rerank-tag client when bound; preserve-order
+      fallback when unbound or upstream errors.
+
+config_schema: []

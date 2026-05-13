@@ -1,0 +1,18 @@
+slot: dispatch
+description: |
+  Run a DecisionResult's side-effects: log + dispatch tool calls +
+  apply memory writes + apply memory updates. Default impl wraps the
+  long-standing DecisionDispatcher class with per-call task
+  scheduling and BatchTracker registration. The DispatchEngine
+  Protocol lives at krakey.interfaces.engines.dispatch.
+
+builtin_engines:
+  - name: local
+    factory_module: krakey.engines.dispatch.default
+    factory_attr: LocalDispatchEngine
+    default: true
+    description: |
+      In-process dispatch — runs each ToolCall as an asyncio task,
+      applies memory writes/updates inline.
+
+config_schema: []

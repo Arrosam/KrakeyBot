@@ -1,0 +1,18 @@
+slot: heartbeat
+description: |
+  Per-beat orchestration + main loop driver. Default impl wraps the
+  canonical HeartbeatOrchestrator (13-phase pipeline) and owns the
+  iteration loop body. The HeartbeatEngine Protocol lives at
+  krakey.interfaces.engines.heartbeat.
+
+builtin_engines:
+  - name: phased
+    factory_module: krakey.engines.heartbeat.default
+    factory_attr: DefaultHeartbeatEngine
+    default: true
+    description: |
+      Canonical 13-phase pipeline: drain → fatigue → compact →
+      recall → run-Self → save-round → log → auto-ingest →
+      translate-decision → dispatch → schedule-classify → idle.
+
+config_schema: []

@@ -1,0 +1,18 @@
+slot: embedder
+description: |
+  Text → vector. Default impl walks
+  LLMClientFactoryEngine.embed_client() to reach the configured
+  embedding tag's client and calls its embed(text) method. The
+  EmbedderEngine Protocol lives at
+  krakey.interfaces.engines.embedder.
+
+builtin_engines:
+  - name: tag_bound
+    factory_module: krakey.engines.embedder.default
+    factory_attr: TagBoundEmbedderEngine
+    default: true
+    description: |
+      Forwards to the LLMClientFactory's embed_client (tag from
+      llm.embedding).
+
+config_schema: []

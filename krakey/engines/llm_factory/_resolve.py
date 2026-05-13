@@ -47,7 +47,7 @@ def resolve_llm_for_tag(
     chat tags but break those — keep the embedder / reranker slots
     in mind, or implement those methods on the same class.
     """
-    from krakey.engines.registry import EngineRegistry
+    from krakey.engine_system.registry import EngineRegistry
 
     if not tag_name:
         return None

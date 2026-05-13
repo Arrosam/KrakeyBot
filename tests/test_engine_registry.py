@@ -19,7 +19,7 @@ from typing import Protocol, runtime_checkable
 
 import pytest
 
-from krakey.engines.registry import EngineRegistry, _default_importer
+from krakey.engine_system.registry import EngineRegistry, _default_importer
 from krakey.models.config import Config
 from krakey.models.config.core_impls import CoreImplementations
 
@@ -254,8 +254,8 @@ def test_resolve_passes_per_engine_config_kwarg(monkeypatch):
     resolved engine's constructor as ``config=``. Impls that don't
     declare a ``config`` parameter ignore it via ``_filter_kwargs``
     — pinned here separately."""
-    from krakey.engines.catalog import EngineImpl
-    import krakey.engines.registry as reg_mod
+    from krakey.engine_system.catalog import EngineImpl
+    import krakey.engine_system.registry as reg_mod
 
     captured: dict = {}
 
@@ -292,8 +292,8 @@ def test_resolve_passes_empty_config_when_user_set_none(monkeypatch):
     constructor receives an empty dict, not None. Lets impls assume
     ``config`` is always a dict and read fields with .get(...,
     default)."""
-    from krakey.engines.catalog import EngineImpl
-    import krakey.engines.registry as reg_mod
+    from krakey.engine_system.catalog import EngineImpl
+    import krakey.engine_system.registry as reg_mod
 
     captured: dict = {}
 

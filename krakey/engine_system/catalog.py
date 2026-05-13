@@ -1,24 +1,26 @@
 """Engine catalog primitives — short-name → impl-class lookup.
 
-Each Engine slot ships a ``BUILTIN_ENGINES`` mapping in its own
-``engines/<slot>/__init__.py``::
+Each Engine slot ships a ``meta.yaml`` next to its ``__init__.py``::
 
-    BUILTIN_ENGINES = {
-        "tool_call_parser": EngineImpl(
-            cls=ToolCallParserDecisionEngine,
-            description="Scripted <tool_call> parser. No LLM call.",
-        ),
-        "hypothalamus": EngineImpl(
-            cls=HypothalamusDecisionEngine,
-            description="LLM translator. Bind core_purposes.hypothalamus.",
-            config_schema=[
-                {"field": "temperature", "type": "number_float",
-                 "default": 0.7,
-                 "help": "Sampling temperature for the translator LLM."},
-            ],
-        ),
-    }
-    DEFAULT_ENGINE = "tool_call_parser"
+    # krakey/engines/decision/meta.yaml
+    slot: decision
+    description: |
+      Translate Self's [DECISION] text into structured tool calls.
+    builtin_engines:
+      - name: tool_call_parser
+        factory_module: krakey.engines.decision.tool_call_parser
+        factory_attr: ToolCallParserDecisionEngine
+        default: true
+        description: Scripted <tool_call> parser. No LLM call.
+      - name: hypothalamus
+        factory_module: krakey.engines.decision.hypothalamus
+        factory_attr: HypothalamusDecisionEngine
+        description: LLM translator. Bind core_purposes.hypothalamus.
+    config_schema:
+      - field: temperature
+        type: number_float
+        default: 0.7
+        help: Sampling temperature for the translator LLM.
 
 The user picks an impl by SHORT NAME in ``config.yaml``::
 
@@ -29,13 +31,15 @@ The user picks an impl by SHORT NAME in ``config.yaml``::
         hypothalamus:
           temperature: 0.5
 
-Plugin-supplied engines extend the same catalog through their
+Plugin-supplied engines extend the same catalog through their own
 ``meta.yaml`` (``kind: engine``, ``slot: decision``); the plugin's
 top-level ``config_schema:`` block becomes the engine's
 ``config_schema``. The registry merges built-in + plugin catalogs
-at resolve time. The legacy ``module.path:ClassName`` dotted-path
-form keeps working as a power-user fallback when the value
-contains a colon.
+at resolve time. The ``module.path:ClassName`` dotted-path form
+keeps working as a power-user fallback when the value contains a
+colon. ``engine_system/defaults.py`` carries an emergency
+dotted-path table the loader falls back to when a slot's
+``meta.yaml`` is missing or malformed.
 """
 from __future__ import annotations
 

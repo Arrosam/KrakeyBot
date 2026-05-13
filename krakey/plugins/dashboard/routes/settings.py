@@ -107,17 +107,17 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
             }
 
         ``source`` is ``"builtin"`` for impls catalogued in
-        ``engines/<slot>/__init__.py`` and ``"plugin"`` for impls
+        ``engines/<slot>/meta.yaml`` and ``"plugin"`` for impls
         declared via ``kind: engine`` + ``slot:`` in any plugin's
         ``meta.yaml``. ``config_schema`` is the engine's user-tunable
         options (plugin engines reuse the plugin's top-level
-        ``config_schema``). The endpoint imports each engine
-        package's ``__init__`` to read BUILTIN_ENGINES but never
-        imports the impl classes themselves — schemas live on the
-        catalog metadata, not on the class.
+        ``config_schema``). The endpoint reads each slot's
+        ``meta.yaml`` via the engine_system loader; impl classes are
+        never imported here — schemas live on the meta, not the class.
         """
-        import importlib
-
+        from krakey.engine_system.meta_loader import (
+            MetaParseError, load_slot_meta,
+        )
         from krakey.models.config.core_impls import CoreImplementations
         from krakey.plugin_system.catalogue import (
             list_available_plugins,
@@ -139,18 +139,16 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
                     "config_schema": list(meta.config_schema or []),
                 })
 
-        # Built-in catalog: every slot field declared on
-        # CoreImplementations corresponds to a krakey.engines.<slot>
-        # subpackage with BUILTIN_ENGINES + DEFAULT_ENGINE.
+        # Built-in catalog: every slot field on CoreImplementations
+        # corresponds to a krakey/engines/<slot>/meta.yaml file.
+        # Missing / malformed meta means the slot is skipped here
+        # (the dashboard surface degrades gracefully; the runtime
+        # itself uses engine_system.defaults.FALLBACK_ENGINES at boot).
         out: dict[str, dict] = {}
         for slot in CoreImplementations.__dataclass_fields__:
             try:
-                pkg = importlib.import_module(f"krakey.engines.{slot}")
-            except ImportError:
-                continue
-            builtins = getattr(pkg, "BUILTIN_ENGINES", None)
-            default = getattr(pkg, "DEFAULT_ENGINE", None)
-            if builtins is None or default is None:
+                catalog, default = load_slot_meta(slot)
+            except (FileNotFoundError, MetaParseError):
                 continue
             options = [
                 {
@@ -159,7 +157,7 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
                     "description": impl.description,
                     "config_schema": list(impl.config_schema or []),
                 }
-                for name, impl in builtins.items()
+                for name, impl in catalog.items()
             ]
             options.extend(plugin_engines.get(slot, []))
             out[slot] = {"default": default, "options": options}
