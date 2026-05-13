@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from krakey.engines.recall.incremental import IncrementalRecall
+from krakey.engines.recall._internal.incremental import IncrementalRecall
 from krakey.models.config import LLMParams
 
 if TYPE_CHECKING:

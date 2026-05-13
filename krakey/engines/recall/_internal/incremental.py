@@ -17,7 +17,7 @@ Per-beat algorithm:
 
 Pure scoring helpers (``scripted_score`` / ``ScoringWeights`` /
 ``doc_for_rerank``) are recall-engine-private and live in the
-sibling ``_scoring`` module.
+sibling ``scoring`` module.
 """
 from __future__ import annotations
 
@@ -25,10 +25,10 @@ import math
 from datetime import datetime
 from typing import Any, Callable, TYPE_CHECKING
 
-from krakey.engines.recall._scoring import (
+from krakey.engines.recall._internal.scoring import (
     ScoringWeights, doc_for_rerank, scripted_score,
 )
-from krakey.engines.recall.gm_query import query_gm_with_fts_fallback
+from krakey.utils.gm_query import query_gm_with_fts_fallback
 from krakey.interfaces.engines.recall import RecallResult
 from krakey.utils.tokens import estimate_tokens
 

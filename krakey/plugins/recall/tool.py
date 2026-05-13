@@ -25,7 +25,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from krakey.engines.recall.gm_query import query_gm_with_fts_fallback
+from krakey.utils.gm_query import query_gm_with_fts_fallback
 from krakey.interfaces.tool import Tool
 from krakey.models.stimulus import Stimulus
 
