@@ -142,7 +142,7 @@ async def test_prompt_swaps_action_format_when_hypothalamus_decision_engine(tmp_
     # Swap in the LLM translator engine. Same Engine type the user
     # would wire via cfg.core_implementations.decision; we plug it
     # in directly here so the test doesn't need a full config rebuild.
-    from krakey.engines.decision.hypothalamus import (
+    from krakey.engines.decision._internal.hypothalamus import (
         HypothalamusDecisionEngine,
     )
     runtime.decision = HypothalamusDecisionEngine(

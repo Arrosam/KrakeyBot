@@ -7,14 +7,14 @@ description: |
 
 builtin_engines:
   - name: tool_call_parser
-    factory_module: krakey.engines.decision.tool_call_parser
+    factory_module: krakey.engines.decision._internal.tool_call_parser
     factory_attr: ToolCallParserDecisionEngine
     default: true
     description: |
       Scripted <tool_call>{...}</tool_call> parser. No LLM call.
       Fast, cheap, but only as smart as the parser regex.
   - name: hypothalamus
-    factory_module: krakey.engines.decision.hypothalamus
+    factory_module: krakey.engines.decision._internal.hypothalamus
     factory_attr: HypothalamusDecisionEngine
     description: |
       LLM-based natural-language translator. Bind

@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from krakey.engines.decision.hypothalamus import (
+from krakey.engines.decision._internal.hypothalamus import (
     HypothalamusDecisionEngine,
 )
 from krakey.interfaces.engines import DecisionEngine, DecisionResult

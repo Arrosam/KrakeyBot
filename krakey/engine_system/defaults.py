@@ -41,7 +41,7 @@ FALLBACK_ENGINES: dict[str, str] = {
     "dispatch":
         "krakey.engines.dispatch.default:DefaultDispatchEngine",
     "decision":
-        "krakey.engines.decision.tool_call_parser:ToolCallParserDecisionEngine",
+        "krakey.engines.decision._internal.tool_call_parser:ToolCallParserDecisionEngine",
     "llm_factory":
         "krakey.engines.llm_factory.default:DefaultLLMClientFactoryEngine",
     "llm_client_factory":

@@ -215,7 +215,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike,
     # fake. Otherwise the default ``ToolCallParserDecisionEngine``
     # (scripted ``<tool_call>`` parser) stays in place.
     if decision_translator_llm is not None:
-        from krakey.engines.decision.hypothalamus import (
+        from krakey.engines.decision._internal.hypothalamus import (
             HypothalamusDecisionEngine,
         )
         # Bind the fake under the ``hypothalamus`` core-purpose tag

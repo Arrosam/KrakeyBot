@@ -5,8 +5,8 @@ The slot's catalog (default = ``tool_call_parser``, alternative =
 DecisionEngine Protocol lives at
 ``krakey.interfaces.engines.decision``.
 """
-from krakey.engines.decision.hypothalamus import HypothalamusDecisionEngine
-from krakey.engines.decision.tool_call_parser import (
+from krakey.engines.decision._internal.hypothalamus import HypothalamusDecisionEngine
+from krakey.engines.decision._internal.tool_call_parser import (
     ToolCallParserDecisionEngine,
 )
 

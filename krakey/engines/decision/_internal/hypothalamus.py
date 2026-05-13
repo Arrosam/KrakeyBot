@@ -3,7 +3,7 @@
 Users opt in via::
 
     core_implementations:
-      decision: krakey.engines.decision.hypothalamus:HypothalamusDecisionEngine
+      decision: krakey.engines.decision._internal.hypothalamus:HypothalamusDecisionEngine
 
 The translator's LLM tag is bound through the ``hypothalamus``
 core-purpose entry::
