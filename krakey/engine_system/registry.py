@@ -255,7 +255,19 @@ class EngineRegistry:
         registry's downstream ``_filter_kwargs`` needs an introspectable
         class object, and lazy was only valuable across the slot's
         unchosen alternatives. The chosen impl always materialises.
+
+        Fallback contract: if the meta-declared factory path imports
+        cleanly but points at a wrong attribute, OR the module itself
+        doesn't import, that's "yaml-valid but semantically broken
+        meta" — same family of failure as a missing meta.yaml.
+        ``FALLBACK_ENGINES[slot]`` is consulted; the operator gets a
+        stderr warning so the typo doesn't hide behind a working
+        default. If ``FALLBACK_ENGINES`` itself doesn't import we
+        let the error bubble (truly nothing works for this slot).
         """
+        import sys
+
+        from krakey.engine_system.defaults import FALLBACK_ENGINES
         from krakey.engine_system.meta_loader import _LazyImpl
 
         if ":" in name_or_path:
@@ -264,7 +276,20 @@ class EngineRegistry:
         if name_or_path in builtins:
             cls = builtins[name_or_path].cls
             if isinstance(cls, _LazyImpl):
-                cls = cls._resolve()
+                try:
+                    cls = cls._resolve()
+                except ImportError as e:
+                    fallback_path = FALLBACK_ENGINES.get(slot)
+                    if not fallback_path:
+                        raise
+                    print(
+                        f"warning: engine slot {slot!r}: meta-declared "
+                        f"impl {name_or_path!r} has unimportable "
+                        f"factory ({type(e).__name__}: {e}); falling "
+                        f"back to {fallback_path!r}",
+                        file=sys.stderr,
+                    )
+                    cls = self._import(fallback_path)
             return cls
         plugin_entries = self._plugin_catalog().get(slot, {})
         if name_or_path in plugin_entries:

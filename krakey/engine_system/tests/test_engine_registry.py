@@ -420,3 +420,87 @@ def test_default_importer_raises_on_unknown_module():
 def test_default_importer_raises_on_missing_attr():
     with pytest.raises(ImportError, match="has no attribute"):
         _default_importer("collections:DefinitelyNotAClass")
+
+
+# --------------------------------------------------------------------
+# Defaults sanity — every FALLBACK_ENGINES entry must be importable
+# --------------------------------------------------------------------
+
+
+def test_fallback_engines_all_resolve():
+    """Regression: ``engine_system.defaults.FALLBACK_ENGINES`` is the
+    recovery path used when ``meta.yaml`` is missing or malformed. If
+    any entry points at a non-existent class, startup fails exactly
+    when fallback is supposed to keep the runtime alive — defeating
+    the point. Verify every entry can be imported."""
+    from krakey.engine_system.defaults import FALLBACK_ENGINES
+
+    failures: list[str] = []
+    for slot, path in FALLBACK_ENGINES.items():
+        try:
+            cls = _default_importer(path)
+            assert cls is not None
+        except Exception as e:  # noqa: BLE001
+            failures.append(f"{slot} → {path}: {type(e).__name__}: {e}")
+    assert not failures, (
+        "FALLBACK_ENGINES entries that don't resolve:\n  "
+        + "\n  ".join(failures)
+    )
+
+
+# --------------------------------------------------------------------
+# Bad meta.yaml factory paths fall back to defaults
+# --------------------------------------------------------------------
+
+
+def test_meta_with_bad_factory_module_falls_back_to_defaults(
+    tmp_path, monkeypatch, capsys,
+):
+    """When a slot's ``meta.yaml`` is yaml-valid but the
+    ``factory_module`` points at a non-importable module, the
+    registry must degrade to ``FALLBACK_ENGINES[slot]`` rather than
+    propagate the ImportError. Codex PR #18 review caught the
+    earlier behavior: typo in meta crashed instead of degrading."""
+    from types import SimpleNamespace
+
+    from krakey.engine_system import meta_loader
+
+    # Stub load_slot_meta to return a one-entry catalog whose factory
+    # path points at a non-existent module. The registry's
+    # _resolve_class should hit ImportError on _LazyImpl._resolve()
+    # and then fall back via FALLBACK_ENGINES[slot].
+    def fake_load_slot_meta(slot, *, engines_root=None):
+        from krakey.engine_system.catalog import EngineImpl
+        return (
+            {"broken": EngineImpl(
+                cls=meta_loader._LazyImpl(  # type: ignore[arg-type]
+                    "krakey_nonexistent_pkg_xyz",
+                    "DoesNotMatter",
+                ),
+                description="bogus factory path",
+            )},
+            "broken",
+        )
+    monkeypatch.setattr(meta_loader, "load_slot_meta", fake_load_slot_meta)
+    # Also intercept the registry's import of the same name (the
+    # registry imports load_slot_meta inside _load_slot_catalog).
+    import krakey.engine_system.registry as reg
+    monkeypatch.setattr(
+        "krakey.engine_system.meta_loader.load_slot_meta",
+        fake_load_slot_meta,
+    )
+
+    cfg = SimpleNamespace(
+        core_implementations=SimpleNamespace(get=lambda _slot: None),
+        engine_configs={},
+    )
+    registry = EngineRegistry(cfg)  # type: ignore[arg-type]
+    # Picking "memory" — its FALLBACK_ENGINES entry points at the real
+    # GraphMemoryEngine, which imports cleanly.
+    cls = registry._resolve_class("memory", "broken")
+    from krakey.engines.memory.default import GraphMemoryEngine
+    assert cls is GraphMemoryEngine
+    # Loud warning fired so the operator notices.
+    err = capsys.readouterr().err
+    assert "memory" in err
+    assert "falling back" in err

@@ -27,19 +27,19 @@ FALLBACK_ENGINES: dict[str, str] = {
     "memory":
         "krakey.engines.memory.default:GraphMemoryEngine",
     "context":
-        "krakey.engines.context.default:PromptBuilderContextEngine",
+        "krakey.engines.context.default:DefaultContextEngine",
     "embedder":
-        "krakey.engines.embedder.default:DefaultEmbedderEngine",
+        "krakey.engines.embedder.default:TagBoundEmbedderEngine",
     "reranker":
         "krakey.engines.reranker.default:DefaultRerankerEngine",
     "recall":
         "krakey.engines.recall.default:IncrementalRecallEngine",
     "explicit_history":
-        "krakey.engines.explicit_history.default:SlidingWindowEngine",
+        "krakey.engines.explicit_history.default:SlidingWindowExplicitHistoryEngine",
     "heartbeat":
         "krakey.engines.heartbeat.default:DefaultHeartbeatEngine",
     "dispatch":
-        "krakey.engines.dispatch.default:DefaultDispatchEngine",
+        "krakey.engines.dispatch.default:LocalDispatchEngine",
     "decision":
         "krakey.engines.decision._internal.tool_call_parser:ToolCallParserDecisionEngine",
     "llm_factory":
