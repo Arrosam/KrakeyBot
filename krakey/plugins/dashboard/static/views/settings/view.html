@@ -40,6 +40,30 @@
         </button>
       </div>
       <pre id="install-log" class="install-log" hidden></pre>
+      <!-- Stale-plugin-configs panel. Hidden by default; shown only
+           when /api/plugins/stale_configs returns at least one
+           leftover folder. Each row has a per-plugin Delete button;
+           the header carries a "Delete all" shortcut for the common
+           case (just removed several plugins → wipe their orphaned
+           configs in one click). -->
+      <div id="stale-configs" class="stale-configs" hidden>
+        <div class="stale-configs-header">
+          <span class="stale-configs-title">
+            <i data-bi="exclamation-circle-fill"></i>
+            Stale plugin configs
+            <span id="stale-configs-count" class="stale-configs-count"></span>
+          </span>
+          <span class="stale-configs-hint">
+            These config folders no longer back any installed plugin.
+          </span>
+          <button id="stale-configs-delete-all"
+                  class="danger"
+                  title="Delete every stale config folder. Skips folders the backend rejects (e.g. workspace plugins with a meta.yaml).">
+            <i data-bi="x-circle-fill"></i> Delete all
+          </button>
+        </div>
+        <ul id="stale-configs-list" class="stale-configs-list"></ul>
+      </div>
       <div id="settings-form">— loading —</div>
       </div>
       <div class="settings-actions">

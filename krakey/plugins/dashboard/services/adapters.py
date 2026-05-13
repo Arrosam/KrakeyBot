@@ -11,12 +11,15 @@ ValueError); the routes translate those into HTTPException.
 """
 from __future__ import annotations
 
+import re
+import shutil
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
 import yaml as _yaml
 
 from krakey.models.config_backup import backup_config
+from krakey.plugin_system.catalogue import list_available_plugins
 
 
 # ---------------- memory ----------------
@@ -214,11 +217,87 @@ class RuntimePluginsService:
             "stderr": _truncate(result.stderr, 8000),
         }
 
+    # ---- stale-config detection + deletion ----
+    # The plugin-configs root is the same one ``update_config``
+    # writes to, so we walk it directly here. Catalogue check uses
+    # the same ``list_available_plugins`` source the dashboard
+    # already trusts elsewhere (settings route's
+    # ``/api/modifiers/available`` endpoint) — keeping ONE source
+    # of truth for "what plugins exist" so a folder can't appear
+    # stale here but live in the install banner.
+
+    def find_stale_configs(self) -> list[dict[str, Any]]:
+        root = self._store._root  # noqa: SLF001 — same package
+        if not root.exists():
+            return []
+        catalogue = list_available_plugins()
+        out: list[dict[str, Any]] = []
+        for child in sorted(root.iterdir()):
+            if not child.is_dir():
+                continue
+            name = child.name
+            if name in catalogue:
+                continue
+            # A folder with its own meta.yaml is potentially a
+            # workspace plugin whose manifest failed to parse;
+            # the catalogue scanner skips bad meta but the folder
+            # is still a plugin. Never auto-delete.
+            if (child / "meta.yaml").exists():
+                continue
+            out.append({
+                "name": name,
+                "path": str(child),
+                "has_config": (child / "config.yaml").exists(),
+            })
+        return out
+
+    def delete_stale_config(self, name: str) -> dict[str, Any]:
+        if not _is_safe_plugin_name(name):
+            raise ValueError(
+                f"refusing to delete plugin-config folder with "
+                f"unsafe name {name!r}: must match "
+                f"[A-Za-z0-9_-]{{1,64}}"
+            )
+        root = self._store._root  # noqa: SLF001
+        target = root / name
+        if not target.exists() or not target.is_dir():
+            raise LookupError(
+                f"plugin-config folder {name!r} not found under {root}",
+            )
+        if (target / "meta.yaml").exists():
+            raise ValueError(
+                f"refusing to delete {name!r}: folder has a meta.yaml "
+                f"(it's a workspace plugin, not a stale config)",
+            )
+        if name in list_available_plugins():
+            raise ValueError(
+                f"refusing to delete {name!r}: plugin is still in "
+                f"the live catalogue",
+            )
+        shutil.rmtree(target)
+        return {
+            "name": name,
+            "path": str(target),
+            "deleted": True,
+        }
+
 
 def _truncate(s: str, limit: int) -> str:
     if len(s) <= limit:
         return s
     return s[:limit] + f"\n...[truncated, total {len(s)} chars]"
+
+
+# Plugin name policy — matches the on-disk folder convention used
+# everywhere else (lower_snake_case + occasional dashes). The strict
+# regex is the load-bearing safety boundary for ``delete_stale_config``;
+# no character that could escape the plugin-configs root (``.``, ``/``,
+# ``\``, whitespace) is permitted.
+_SAFE_PLUGIN_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _is_safe_plugin_name(name: Any) -> bool:
+    return isinstance(name, str) and bool(_SAFE_PLUGIN_NAME.match(name))
 
 
 # ---------------- config ----------------

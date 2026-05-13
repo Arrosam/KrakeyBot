@@ -1779,9 +1779,143 @@ async function loadSettings() {
     // Refresh the deps-install banner alongside the form. Failure
     // to fetch is non-fatal — the rest of settings still works.
     refreshInstallBanner().catch(() => {});
+    // Refresh the stale-plugin-configs panel. Hidden when empty so
+    // a clean install never sees the red banner; only rendered when
+    // /api/plugins/stale_configs returns at least one entry.
+    refreshStaleConfigs().catch(() => {});
   } catch (e) {
     settingsForm.innerHTML = "error loading: " + escapeHtml(String(e));
   }
+}
+
+
+// =====================================================================
+// Stale-plugin-configs panel — one-click cleanup for leftover
+// per-plugin config folders whose plugin has been removed / renamed.
+// Backed by /api/plugins/stale_configs (GET) +
+// /api/plugins/stale_configs/delete (POST {name}). The backend owns
+// every safety check (unsafe-name regex, "still in catalogue",
+// "folder is itself a workspace plugin"); the UI just lists what
+// the GET returns and forwards the operator's clicks.
+// =====================================================================
+
+
+async function refreshStaleConfigs() {
+  const panel = $("#stale-configs");
+  const list = $("#stale-configs-list");
+  const count = $("#stale-configs-count");
+  const deleteAllBtn = $("#stale-configs-delete-all");
+  if (!panel || !list || !count || !deleteAllBtn) return;
+  let stale = [];
+  try {
+    const r = await fetch("/api/plugins/stale_configs");
+    if (!r.ok) {
+      panel.hidden = true;
+      return;
+    }
+    const data = await r.json();
+    stale = Array.isArray(data.stale) ? data.stale : [];
+  } catch (_e) {
+    panel.hidden = true;
+    return;
+  }
+  if (stale.length === 0) {
+    panel.hidden = true;
+    list.innerHTML = "";
+    return;
+  }
+  panel.hidden = false;
+  count.textContent = String(stale.length);
+  list.innerHTML = "";
+  for (const entry of stale) {
+    list.appendChild(buildStaleConfigRow(entry));
+  }
+  // Hydrate the freshly-inserted icon placeholders. The shared
+  // bi.js helper only auto-runs at DOMContentLoaded; for nodes we
+  // append later we must call it explicitly or the <i data-bi=...>
+  // stays invisible.
+  if (typeof window.biHydrate === "function") {
+    window.biHydrate(panel);
+  }
+  // Wire the bulk-delete button. Re-binding on every refresh because
+  // we replaced the rows; the button itself is static markup.
+  deleteAllBtn.disabled = false;
+  deleteAllBtn.onclick = async () => {
+    const ok = window.confirm(
+      `Delete ${stale.length} stale plugin-config folder(s)? ` +
+      "This permanently removes the on-disk YAML and any other " +
+      "files in those folders. Cannot be undone."
+    );
+    if (!ok) return;
+    deleteAllBtn.disabled = true;
+    // Run deletions sequentially so a single failure (e.g. backend
+    // refusing one entry that's actually a workspace plugin) doesn't
+    // mask the others. Errors surface in the console; refresh after
+    // the loop reflects whatever actually got removed.
+    for (const entry of stale) {
+      try {
+        await deleteOneStaleConfig(entry.name, /*confirmed=*/ true);
+      } catch (e) {
+        console.warn("stale-config delete failed:", entry.name, e);
+      }
+    }
+    refreshStaleConfigs().catch(() => {});
+  };
+}
+
+function buildStaleConfigRow(entry) {
+  const li = document.createElement("li");
+  const name = document.createElement("span");
+  name.className = "stale-name";
+  name.textContent = entry.name || "(unnamed)";
+  const path = document.createElement("span");
+  path.className = "stale-path";
+  path.textContent = entry.path || "";
+  path.title = entry.path || "";
+  const tag = document.createElement("span");
+  tag.className = "stale-tag" + (entry.has_config ? " has-config" : "");
+  tag.textContent = entry.has_config ? "config.yaml" : "empty";
+  const btn = document.createElement("button");
+  btn.className = "danger";
+  btn.innerHTML = '<i data-bi="x-circle-fill"></i> Delete';
+  btn.onclick = async () => {
+    const ok = window.confirm(
+      `Delete stale plugin-config folder "${entry.name}"?\n` +
+      `${entry.path}\n\nCannot be undone.`
+    );
+    if (!ok) return;
+    btn.disabled = true;
+    try {
+      await deleteOneStaleConfig(entry.name, /*confirmed=*/ true);
+    } catch (e) {
+      btn.disabled = false;
+      window.alert("Delete failed: " + e);
+      return;
+    }
+    refreshStaleConfigs().catch(() => {});
+  };
+  li.append(name, path, tag, btn);
+  return li;
+}
+
+async function deleteOneStaleConfig(name, confirmed) {
+  if (!confirmed) {
+    throw new Error("internal: deleteOneStaleConfig requires confirmation");
+  }
+  const r = await fetch("/api/plugins/stale_configs/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!r.ok) {
+    let detail = `HTTP ${r.status}`;
+    try {
+      const body = await r.json();
+      if (body && body.detail) detail = body.detail;
+    } catch (_e) { /* not JSON */ }
+    throw new Error(detail);
+  }
+  return r.json();
 }
 
 
