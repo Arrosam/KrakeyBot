@@ -110,11 +110,11 @@ def test_no_override_with_tag_yields_default_engine(tmp_path):
 
 
 def test_override_yields_user_reranker(tmp_path):
-    """``core_implementations.reranker = "tests.test_reranker_slot:FakeUserReranker"``
+    """``core_implementations.reranker = "krakey.engines.reranker.tests.test_reranker_slot:FakeUserReranker"``
     → runtime.reranker is the user instance, regardless of tag."""
     p = _write_config(
         tmp_path,
-        override="tests.test_reranker_slot:FakeUserReranker",
+        override="krakey.engines.reranker.tests.test_reranker_slot:FakeUserReranker",
         reranker_tag="",
     )
     runtime = build_runtime_from_config(str(p))
@@ -124,7 +124,7 @@ def test_override_yields_user_reranker(tmp_path):
 async def test_override_actually_invoked(tmp_path):
     p = _write_config(
         tmp_path,
-        override="tests.test_reranker_slot:FakeUserReranker",
+        override="krakey.engines.reranker.tests.test_reranker_slot:FakeUserReranker",
         reranker_tag="",
     )
     runtime = build_runtime_from_config(str(p))
@@ -136,7 +136,7 @@ async def test_override_actually_invoked(tmp_path):
 def test_bad_override_raises_typeerror_at_startup(tmp_path):
     p = _write_config(
         tmp_path,
-        override="tests.test_reranker_slot:BadReranker",
+        override="krakey.engines.reranker.tests.test_reranker_slot:BadReranker",
         reranker_tag="",
     )
     with pytest.raises(TypeError, match="Reranker"):

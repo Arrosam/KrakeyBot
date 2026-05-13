@@ -98,11 +98,11 @@ def test_no_override_uses_default_embedder(tmp_path):
 
 
 def test_override_uses_user_embedder(tmp_path):
-    """``core_implementations.embedder = "tests.test_embedder_slot:FakeUserEmbedder"``
+    """``core_implementations.embedder = "krakey.engines.embedder.tests.test_embedder_slot:FakeUserEmbedder"``
     → runtime uses our user-supplied class."""
     p = _write_minimal_config(
         tmp_path,
-        override="tests.test_embedder_slot:FakeUserEmbedder",
+        override="krakey.engines.embedder.tests.test_embedder_slot:FakeUserEmbedder",
     )
     runtime = build_runtime_from_config(str(p))
     assert isinstance(runtime.embedder, FakeUserEmbedder)
@@ -112,7 +112,7 @@ async def test_override_actually_called_for_embedding(tmp_path):
     """Sanity: the runtime really calls the override (not just stores it)."""
     p = _write_minimal_config(
         tmp_path,
-        override="tests.test_embedder_slot:FakeUserEmbedder",
+        override="krakey.engines.embedder.tests.test_embedder_slot:FakeUserEmbedder",
     )
     runtime = build_runtime_from_config(str(p))
     # Reach through the embedder directly — the runtime forwards
@@ -131,7 +131,7 @@ def test_bad_override_raises_typeerror_at_startup(tmp_path):
     same shape at the structural level."""
     p = _write_minimal_config(
         tmp_path,
-        override="tests.test_embedder_slot:BadEmbedder",
+        override="krakey.engines.embedder.tests.test_embedder_slot:BadEmbedder",
     )
     with pytest.raises(TypeError, match="EmbedderEngine|AsyncEmbedder"):
         build_runtime_from_config(str(p))

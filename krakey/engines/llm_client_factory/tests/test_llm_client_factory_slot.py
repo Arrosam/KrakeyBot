@@ -90,7 +90,7 @@ def test_override_returns_user_class():
     """`core_implementations.llm_client_factory = ...` → resolver returns
     an instance of the user class."""
     cfg = _make_config(
-        override="tests.test_llm_client_factory_slot:FakeUserClient",
+        override="krakey.engines.llm_client_factory.tests.test_llm_client_factory_slot:FakeUserClient",
     )
     cache: dict = {}
     client = resolve_llm_for_tag(cfg, "t", cache)
@@ -102,7 +102,7 @@ def test_override_returns_user_class():
 def test_caching_preserved_across_resolve_calls():
     """Same tag → same client instance (caching contract unchanged)."""
     cfg = _make_config(
-        override="tests.test_llm_client_factory_slot:FakeUserClient",
+        override="krakey.engines.llm_client_factory.tests.test_llm_client_factory_slot:FakeUserClient",
     )
     cache: dict = {}
     a = resolve_llm_for_tag(cfg, "t", cache)
@@ -114,7 +114,7 @@ def test_caching_preserved_across_resolve_calls():
 async def test_override_actually_chats():
     """Sanity: the user class's chat() really gets invoked."""
     cfg = _make_config(
-        override="tests.test_llm_client_factory_slot:FakeUserClient",
+        override="krakey.engines.llm_client_factory.tests.test_llm_client_factory_slot:FakeUserClient",
     )
     cache: dict = {}
     client = resolve_llm_for_tag(cfg, "t", cache)
@@ -129,7 +129,7 @@ async def test_override_actually_chats():
 def test_bad_override_fails_protocol_check():
     """User class missing chat() → loud TypeError at first resolve."""
     cfg = _make_config(
-        override="tests.test_llm_client_factory_slot:BadUserClient",
+        override="krakey.engines.llm_client_factory.tests.test_llm_client_factory_slot:BadUserClient",
     )
     with pytest.raises(TypeError, match="ChatLike"):
         resolve_llm_for_tag(cfg, "t", {})
@@ -138,7 +138,7 @@ def test_bad_override_fails_protocol_check():
 def test_override_with_wrong_kwargs_fails_loud():
     """User class that doesn't accept (provider, model, params) → annotated TypeError."""
     cfg = _make_config(
-        override="tests.test_llm_client_factory_slot:WrongKwargsClient",
+        override="krakey.engines.llm_client_factory.tests.test_llm_client_factory_slot:WrongKwargsClient",
     )
     with pytest.raises(TypeError, match="kwargs"):
         resolve_llm_for_tag(cfg, "t", {})
