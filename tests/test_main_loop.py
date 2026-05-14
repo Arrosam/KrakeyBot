@@ -914,3 +914,97 @@ async def test_stop_requested_breaks_llm_retry_loop():
     # the retry loop did its job: we stayed inside the single failing beat
     # rather than tick-spamming.
     assert runtime.heartbeat_count == 1
+
+
+# ---- Structured-output retry (stage 4) ----------------------------------
+
+
+class MalformedThenGoodLLM:
+    """Returns tagless output for the first ``malformed_count`` calls,
+    then a well-formed response.  Exercises the structured-output
+    retry loop added alongside the HTTP-failure retry."""
+
+    def __init__(self, malformed_count: int, good_response: str):
+        self.malformed_count = malformed_count
+        self._good = good_response
+        self.call_count = 0
+
+    async def chat(self, messages, **kwargs):
+        self.call_count += 1
+        if self.call_count <= self.malformed_count:
+            return "Unstructured rambling without any tags."
+        return self._good
+
+
+GOOD_RESPONSE = (
+    "[THINKING]\nUser asked something.\n"
+    "[DECISION]\nNo action.\n"
+    "[IDLE]\n1"
+)
+
+
+async def test_struct_output_retry_succeeds_within_fast_budget():
+    """Two malformed responses then one good → 3 total calls,
+    heartbeat_count stays at 1 (never advanced during retries)."""
+    self_llm = MalformedThenGoodLLM(malformed_count=2,
+                                     good_response=GOOD_RESPONSE)
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]),
+    )
+    runtime.config.idle.llm_failure_retry_interval = 0.01
+    runtime.config.idle.struct_output_fast_retries = 3
+    runtime.config.idle.struct_output_slow_retry_interval = 0.02
+
+    await runtime.run(iterations=1)
+    await runtime.close()
+
+    assert self_llm.call_count == 3, (
+        f"expected 3 calls (2 malformed + 1 good); got {self_llm.call_count}"
+    )
+    assert runtime.heartbeat_count == 1
+
+
+async def test_struct_output_retry_escalates_to_slow():
+    """Five malformed responses (fast budget = 3) then one good →
+    6 total calls. The last 2 malformed retries use the slow interval."""
+    self_llm = MalformedThenGoodLLM(malformed_count=5,
+                                     good_response=GOOD_RESPONSE)
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]),
+    )
+    runtime.config.idle.llm_failure_retry_interval = 0.01
+    runtime.config.idle.struct_output_fast_retries = 3
+    runtime.config.idle.struct_output_slow_retry_interval = 0.02
+
+    await runtime.run(iterations=1)
+    await runtime.close()
+
+    assert self_llm.call_count == 6, (
+        f"expected 6 calls (5 malformed + 1 good); got {self_llm.call_count}"
+    )
+    assert runtime.heartbeat_count == 1
+
+
+async def test_stop_requested_breaks_struct_retry_loop():
+    """If LLM permanently returns tagless output, stop_requested
+    must unblock the struct-retry loop for clean shutdown."""
+    class AlwaysMalformed:
+        async def chat(self, messages, **kwargs):
+            return "Tagless output forever."
+
+    runtime = build_runtime_with_fakes(
+        self_llm=AlwaysMalformed(), hypo_llm=ScriptedLLM([]),
+    )
+    runtime.config.idle.llm_failure_retry_interval = 0.05
+    runtime.config.idle.struct_output_fast_retries = 2
+    runtime.config.idle.struct_output_slow_retry_interval = 0.05
+
+    async def stop_after_short_delay():
+        await asyncio.sleep(0.3)
+        runtime.request_stop()
+
+    stop_task = asyncio.create_task(stop_after_short_delay())
+    await asyncio.wait_for(runtime.run(iterations=10), timeout=5.0)
+    await stop_task
+    await runtime.close()
+    assert runtime.heartbeat_count == 1
