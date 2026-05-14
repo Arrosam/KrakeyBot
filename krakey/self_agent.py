@@ -16,6 +16,7 @@ class ParsedSelfOutput:
     decision: str = ""
     note: str = ""
     idle_seconds: int | None = None
+    found_tags: frozenset[str] = frozenset()
     # Full unparsed response. Kept so the tool-call parser
     # (default-off path) can locate ``<tool_call>...</tool_call>``
     # blocks wherever Self placed them in the response, not just
@@ -41,6 +42,7 @@ def parse_self_output(raw: str) -> ParsedSelfOutput:
         decision=sections.get("DECISION", "").strip(),
         note=sections.get("NOTE", "").strip(),
         idle_seconds=_parse_int(sections.get("IDLE", "")),
+        found_tags=frozenset(sections.keys()),
         raw=raw,
     )
 
