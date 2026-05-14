@@ -85,7 +85,7 @@ async def test_runtime_publishes_phase_events():
     received = []
     bus.subscribe(received.append)
 
-    self_llm = ScriptedLLM(["[DECISION]\nNo action.\n[IDLE]\n1"])
+    self_llm = ScriptedLLM(["[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1"])
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
     )
