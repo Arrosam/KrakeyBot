@@ -54,6 +54,11 @@ MAX_RECALL_RETRIES = 1
 """Cap on uncovered stimulus re-tries to prevent infinite pushback loops
 when GM has no related nodes yet (e.g. first-ever user message)."""
 
+_REQUIRED_SELF_TAGS = frozenset({"THINKING", "DECISION"})
+"""Tags that must appear in Self's response for it to count as
+structurally valid.  Missing either triggers the structured-output
+retry loop rather than forwarding a half-parsed result."""
+
 
 @dataclass
 class _GMCounts:
@@ -340,21 +345,28 @@ class HeartbeatOrchestrator:
 
     async def _phase_run_self(self, stimuli, recall_result,
                                 counts: "_GMCounts"):
-        """Build prompt + call Self LLM + parse.
+        """Build prompt + call Self LLM + parse + validate.
 
-        When Self LLM is unreachable / failing, retry within the same
-        beat at ``idle.llm_failure_retry_interval`` second intervals
-        rather than letting ``beat()`` end. This keeps
-        ``heartbeat_count`` frozen while the LLM is down — failed
-        calls don't pollute heartbeat history, fatigue accounting, or
-        sleep distance. Loop exits when chat succeeds OR
+        Two retry layers share one ``while`` loop:
+
+        1. **HTTP / timeout failures** — the ``except`` branch.
+           Retries indefinitely at ``llm_failure_retry_interval``.
+        2. **Structured-output failures** — the LLM returned text but
+           required tags (THINKING, DECISION) are missing.  Fast
+           retries (``struct_output_fast_retries`` attempts at
+           ``llm_failure_retry_interval``), then infinite slow
+           retries at ``struct_output_slow_retry_interval``.
+
+        ``heartbeat_count`` stays frozen during both retry tiers —
+        failed or malformed calls don't pollute heartbeat history,
+        fatigue accounting, or sleep distance. Loop exits when a
+        structurally valid response arrives OR
         ``runtime.stop_requested`` flips True (Ctrl+C / /kill).
 
         Each per-attempt call is wrapped in ``asyncio.wait_for`` with
         ``idle.self_max_wall_seconds`` ceiling — protects against a
         server stuck in an infinite generation loop. A wait_for
-        timeout counts as one failed attempt and triggers the same
-        retry-idle delay as any other Exception."""
+        timeout counts as one failed HTTP attempt."""
         rt = self._rt
         prompt, recall_result = await self.enforce_input_budget(
             stimuli, recall_result, counts,
@@ -367,9 +379,14 @@ class HeartbeatOrchestrator:
         idle_cfg = rt.config.idle
         retry_idle = idle_cfg.llm_failure_retry_interval
         wall_cap = idle_cfg.self_max_wall_seconds
-        attempt = 0
-        raw: str | None = None
+        fast_budget = idle_cfg.struct_output_fast_retries
+        slow_interval = idle_cfg.struct_output_slow_retry_interval
+
+        http_attempt = 0
+        struct_attempt = 0
+        parsed = None
         while not rt.stop_requested:
+            # ---- LLM call (HTTP-failure retry) ----
             try:
                 raw = await asyncio.wait_for(
                     rt.self_llm.chat(
@@ -377,22 +394,45 @@ class HeartbeatOrchestrator:
                     ),
                     timeout=wall_cap,
                 )
-                break
             except Exception as e:  # noqa: BLE001
-                attempt += 1
+                http_attempt += 1
                 rt.log.hb(
-                    f"Self LLM error (attempt {attempt}): "
+                    f"Self LLM error (attempt {http_attempt}): "
                     f"{type(e).__name__}: {e}; sleeping "
                     f"{retry_idle}s before retrying same beat "
                     f"(heartbeat_count frozen at {rt.heartbeat_count})"
                 )
                 await asyncio.sleep(retry_idle)
-        if raw is None:
-            # stop_requested flipped during a retry sleep / chat call —
-            # short-circuit the rest of this beat. heartbeat_count
-            # stays at its current value; we never advanced it for an
-            # outage. ``Runtime.run`` will exit the outer loop on its
-            # own next iteration.
+                continue
+
+            # ---- Structured-output validation ----
+            parsed = parse_self_output(raw)
+            missing = _REQUIRED_SELF_TAGS - parsed.found_tags
+            if not missing:
+                break
+
+            struct_attempt += 1
+            if struct_attempt <= fast_budget:
+                delay = retry_idle
+                tier = f"fast {struct_attempt}/{fast_budget}"
+            else:
+                if struct_attempt == fast_budget + 1:
+                    rt.log.hb_warn(
+                        f"struct output retries exhausted fast tier "
+                        f"({fast_budget} attempts); switching to slow "
+                        f"interval ({slow_interval}s)"
+                    )
+                delay = slow_interval
+                tier = f"slow, {slow_interval}s interval"
+            rt.log.hb(
+                f"Self output missing required tags "
+                f"(found: {{{', '.join(sorted(parsed.found_tags))}}}, "
+                f"required: {{{', '.join(sorted(_REQUIRED_SELF_TAGS))}}}); "
+                f"struct retry {struct_attempt} ({tier}), sleeping {delay}s"
+            )
+            await asyncio.sleep(delay)
+
+        if rt.stop_requested:
             return None
         # Pair the raw response with the prompt-log entry created
         # above so the dashboard's Prompts tab can render the
@@ -401,7 +441,7 @@ class HeartbeatOrchestrator:
         rt.events.publish(SelfOutputEvent(
             heartbeat_id=rt.heartbeat_count, raw=raw,
         ))
-        return parse_self_output(raw)
+        return parsed
 
     def _phase_save_round(self, parsed, stimuli) -> None:
         rt = self._rt
