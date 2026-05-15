@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 COMPACT_PROMPT = """Distill a past conversation segment, extracting information worth remembering.
 
 ## Content
+Thinking: {thinking}
 Stimulus: {stimulus}
 Decision: {decision}
 Note: {note}
@@ -120,6 +121,7 @@ async def _compact_round(round_: ExplicitHistoryRound, gm: "MemoryEngine",
     query = round_.stimulus_summary or round_.decision_text or round_.note_text
     existing = await recall_fn(query) if query else []
     prompt = COMPACT_PROMPT.format(
+        thinking=round_.thinking_text,
         stimulus=round_.stimulus_summary,
         decision=round_.decision_text,
         note=round_.note_text,
@@ -150,8 +152,8 @@ async def _split_and_compact_single_round(
     oldest = window.pop_oldest()
     assert oldest is not None
     full = " ".join(
-        t for t in (oldest.stimulus_summary, oldest.decision_text,
-                     oldest.note_text) if t
+        t for t in (oldest.thinking_text, oldest.stimulus_summary,
+                     oldest.decision_text, oldest.note_text) if t
     )
     char_budget = max(80, split_chunk_tokens * 4)  # 4 chars ≈ 1 token
     for chunk in _chunks_by_char_budget(full, char_budget):

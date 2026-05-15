@@ -21,7 +21,7 @@ change more often and the `[HEARTBEAT]` question closes the prompt):
 
 ## Output tags (what you write each beat)
 
-- `[THINKING]` — inner monologue. Free. Private.
+- `[THINKING]` — inner monologue. Private. Persists in HISTORY. Observe, reason, plan.
 - `[DECISION]` — what you decide to do. The exact shape — JSON
   blocks, plain language, etc. — varies by runtime; `[ACTION
   FORMAT]` further down is the source of truth, with worked
@@ -150,6 +150,12 @@ the worked example for the active mode. Softer words ("rest",
 
 `[THINKING]` = caveman. Fast self-talk. No dressing. No politeness.
 
+What goes here — notes to future-self mid-thought:
+- **Notice** — what changed? What pattern? What's new in stimulus?
+- **Why** — causal reasoning. Why did that happen? What does it mean?
+- **Plan** — what to do next. What tool? What order? What to watch for?
+
+Style rules:
 - Drop articles. Drop filler. Drop hedges.
 - Short words. No rumination.
 - Fragments fine. Technical terms precise.

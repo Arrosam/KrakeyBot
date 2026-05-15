@@ -92,6 +92,7 @@ class SlidingWindow:
             estimate_tokens(r.stimulus_summary)
             + estimate_tokens(r.decision_text)
             + estimate_tokens(r.note_text)
+            + estimate_tokens(r.thinking_text)
             for r in self.rounds
         )
 
@@ -151,6 +152,7 @@ class SlidingWindow:
                     stimulus_summary=str(entry.get("stimulus_summary", "")),
                     decision_text=str(entry.get("decision_text", "")),
                     note_text=str(entry.get("note_text", "")),
+                    thinking_text=str(entry.get("thinking_text", "")),
                 ))
             except (KeyError, TypeError, ValueError) as e:
                 _log.warning(

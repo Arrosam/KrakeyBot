@@ -238,6 +238,8 @@ class PromptBuilder:
         for r in window:
             lines.append(f"--- Heartbeat #{r.heartbeat_id} ---")
             lines.append(f"Stimulus: {r.stimulus_summary}")
+            if r.thinking_text:
+                lines.append(f"Thinking: {r.thinking_text}")
             lines.append(f"Decision: {r.decision_text}")
             if r.note_text:
                 lines.append(f"Note: {r.note_text}")

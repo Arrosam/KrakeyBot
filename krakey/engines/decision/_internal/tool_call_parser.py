@@ -72,7 +72,7 @@ parse. A parse failure in one tag does not affect the others.
 
 ```
 [THINKING]
-user asked time. answer.
+user asked time. simple factual. no ambiguity. answer direct.
 
 [DECISION]
 <tool_call>
@@ -86,7 +86,8 @@ user asked time. answer.
 
 ```
 [THINKING]
-need news + weather. fire both. weather urgent.
+two data needs: news + weather. independent — safe to parallel.
+weather affects user plans today → adrenalin. news can wait.
 
 [DECISION]
 <tool_call>
@@ -103,7 +104,8 @@ need news + weather. fire both. weather urgent.
 
 ```
 [THINKING]
-nothing in stimulus. low fatigue. wait.
+empty stimulus. fatigue low. no pending tasks from history.
+user mentioned friday deadline earlier — not yet friday. watch, don't act.
 
 [DECISION]
 (no tool call)
@@ -122,12 +124,47 @@ the end of this beat:
 
 ```
 [THINKING]
-fatigue 95. gm full. time to sleep.
+fatigue 95. gm near capacity — new writes won't stick well.
+consolidation needed before next active phase. sleep now.
 
 [DECISION]
 <tool_call>
 {"name": "sleep"}
 </tool_call>
+```
+
+**5. Behavioral pattern across beats**
+
+```
+[THINKING]
+user asked weather again. third day in a row: weather then news right after.
+pattern: user may always want news bundled with weather. ask to confirm —
+if yes, bundle both next time without waiting for second request.
+
+[DECISION]
+<tool_call>
+{"name": "web_chat_reply", "arguments": {"text": "Here's today's weather. By the way — I noticed you usually check the news right after. Want me to fetch both together from now on?"}}
+</tool_call>
+
+[IDLE] 30
+```
+
+**6. Emotional/preference pattern**
+
+```
+[THINKING]
+mentioned basketball scores. user reply short + irritated tone — second
+time this happened. last time was beat #41. pattern: user doesn't like
+basketball talk. avoid sports-adjacent topics unless user brings it up.
+
+[DECISION]
+(no tool call)
+
+[NOTE]
+User reacted negatively to basketball twice (beat #41, now). Don't raise
+basketball or related sports topics proactively.
+
+[IDLE] 120
 ```"""
 
 

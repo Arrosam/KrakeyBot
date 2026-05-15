@@ -450,6 +450,7 @@ class HeartbeatOrchestrator:
             stimulus_summary=_summarize_stimuli(stimuli),
             decision_text=parsed.decision,
             note_text=parsed.note,
+            thinking_text=parsed.thinking,
         ))
 
     def _phase_log_self_output(self, parsed) -> None:
