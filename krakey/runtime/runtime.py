@@ -593,14 +593,18 @@ class Runtime:
         """PluginInfo list — exposed as a property so call sites that
         historically read ``self._plugin_infos`` (mostly tests) keep
         working. Walks the live registries each call."""
-        return self._plugin_observer.collect_infos()
+        obs = getattr(self, "_plugin_observer", None)
+        return obs.collect_infos() if obs is not None else []
 
     def loaded_plugin_report(self) -> dict[str, Any]:
         """Pure runtime observation of which tools + channels are
         live (no plugin-config file reads). The dashboard adapter
         combines this with its own ``FilePluginConfigStore`` reads to
         build the ``/api/plugins`` payload."""
-        return self._plugin_observer.loaded_report()
+        obs = getattr(self, "_plugin_observer", None)
+        if obs is None:
+            return {"tools": [], "channels": [], "modifiers": []}
+        return obs.loaded_report()
 
     def _build_environment_router(self) -> EnvironmentRouter:
         """Compose Local + Sandbox-if-configured into a Router whose
