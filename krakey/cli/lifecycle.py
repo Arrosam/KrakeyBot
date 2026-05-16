@@ -319,13 +319,13 @@ def _spawn_daemon_unix(repo: Path, pidfile: Path, logfile: Path) -> int:
     pid = os.fork()
     if pid > 0:
         # Parent: wait briefly for grandchild to write pidfile, then report.
-        for _ in range(50):
+        for _ in range(160):
             time.sleep(0.05)
             child_pid = _read_pid(pidfile)
             if child_pid and _is_alive(child_pid):
                 print(f"krakey started (pid {child_pid}); log: {logfile}")
                 return 0
-        print("krakey: daemon failed to start within 2.5s", file=sys.stderr)
+        print("krakey: daemon failed to start within 8s", file=sys.stderr)
         return 1
 
     # First child
@@ -364,13 +364,13 @@ def _spawn_daemon_windows(repo: Path, pidfile: Path, logfile: Path) -> int:
         close_fds=True,
     )
     # Wait for child to write its pidfile (it will, before calling _exec_runtime).
-    for _ in range(50):
+    for _ in range(160):
         time.sleep(0.05)
         cpid = _read_pid(pidfile)
         if cpid == proc.pid and _is_alive(cpid):
             print(f"krakey started (pid {cpid}); log: {logfile}")
             return 0
-    print("krakey: daemon failed to start within 2.5s", file=sys.stderr)
+    print("krakey: daemon failed to start within 8s", file=sys.stderr)
     return 1
 
 
