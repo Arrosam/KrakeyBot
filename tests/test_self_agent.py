@@ -74,3 +74,21 @@ def test_parsed_self_output_dataclass_shape():
     p = ParsedSelfOutput(thinking="a", decision="b", note="c", idle_seconds=10)
     assert p.thinking == "a" and p.decision == "b" and p.note == "c"
     assert p.idle_seconds == 10
+
+
+def test_found_tags_all_four():
+    raw = "[THINKING]\nA\n[DECISION]\nB\n[NOTE]\nC\n[IDLE]\n5"
+    p = parse_self_output(raw)
+    assert p.found_tags == frozenset({"THINKING", "DECISION", "NOTE", "IDLE"})
+
+
+def test_found_tags_partial():
+    raw = "[DECISION]\nAct now."
+    p = parse_self_output(raw)
+    assert p.found_tags == frozenset({"DECISION"})
+
+
+def test_found_tags_empty_on_fallback():
+    raw = "Just some free text without markers."
+    p = parse_self_output(raw)
+    assert p.found_tags == frozenset()

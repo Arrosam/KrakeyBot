@@ -38,7 +38,7 @@ async def test_modifier_registry_unchanged_across_sleep(tmp_path):
     must match — same Python objects, same roles, same registration
     order."""
     self_llm = _ScriptedLLM([
-        '[DECISION]\nSleep now.\n'
+        '[THINKING]\n(quiet beat)\n[DECISION]\nSleep now.\n'
         '<tool_call>{"name": "sleep"}</tool_call>\n[IDLE]\n1',
     ])
     sleep_llm = _ScriptedLLM(["summary"] * 5)
@@ -117,10 +117,10 @@ async def test_hypothalamus_modify_prompt_fires_post_sleep(tmp_path):
     import json
     self_llm = _ScriptedLLM([
         # beat 1: ask for sleep
-        '[DECISION]\nEnter sleep mode.\n[IDLE]\n1',
+        '[THINKING]\n(quiet beat)\n[DECISION]\nEnter sleep mode.\n[IDLE]\n1',
         # beat 2 (post-sleep): no action — we just want to inspect
         # the assembled prompt
-        '[DECISION]\nNo action.\n[IDLE]\n1',
+        '[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1',
     ])
     hypo_llm = _ScriptedLLM([
         json.dumps({"tool_calls": [], "memory_writes": [],
@@ -173,8 +173,8 @@ async def test_modify_prompt_fires_on_post_sleep_beat(tmp_path):
     structure tells us instantly.
     """
     self_llm = _ScriptedLLM([
-        '[DECISION]\nSleep.\n<tool_call>{"name": "sleep"}</tool_call>\n[IDLE]\n1',
-        '[DECISION]\nNo action.\n[IDLE]\n1',
+        '[THINKING]\n(quiet beat)\n[DECISION]\nSleep.\n<tool_call>{"name": "sleep"}</tool_call>\n[IDLE]\n1',
+        '[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1',
     ])
     sleep_llm = _ScriptedLLM(["summary"] * 5)
     runtime = build_runtime_with_fakes(

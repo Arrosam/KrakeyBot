@@ -104,7 +104,7 @@ async def test_dispatch_event_carries_params_for_observability():
 
 async def test_no_action_decision_runs_no_tool():
     self_llm = ScriptedLLM([
-        "[DECISION]\nNo action.\n[IDLE]\n1"
+        "[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1"
     ])
     hypo_llm = ScriptedLLM([json.dumps({
         "tool_calls": [], "memory_writes": [], "memory_updates": [],
@@ -174,7 +174,7 @@ async def test_builtin_sleep_tool_triggers_voluntary_sleep_no_hypothalamus(tmp_p
     and the heartbeat loop runs the full sleep cycle. FACT in GM
     migrates to KB → confirms _perform_sleep actually executed."""
     self_llm = ScriptedLLM([
-        '[DECISION]\nTime to sleep.\n'
+        '[THINKING]\n(quiet beat)\n[DECISION]\nTime to sleep.\n'
         '<tool_call>{"name": "sleep"}</tool_call>\n[IDLE]\n1',
     ])
     sleep_llm = ScriptedLLM(["summary"] * 5)
@@ -229,7 +229,7 @@ async def test_sleep_failure_surfaces_via_three_channels(tmp_path, monkeypatch, 
     from krakey.runtime.events.event_bus import EventBus
 
     self_llm = ScriptedLLM([
-        '[DECISION]\nSleep now.\n<tool_call>{"name": "sleep"}</tool_call>\n[IDLE]\n1',
+        '[THINKING]\n(quiet beat)\n[DECISION]\nSleep now.\n<tool_call>{"name": "sleep"}</tool_call>\n[IDLE]\n1',
     ])
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
@@ -317,7 +317,7 @@ async def test_hypothalamus_error_pushes_system_event_stimulus():
     still learn about it via a system_event stimulus on the next heartbeat,
     otherwise failed dispatches look like silent successes."""
     self_llm = ScriptedLLM([
-        "[DECISION]\nDo something real.\n[IDLE]\n1",
+        "[THINKING]\n(quiet beat)\n[DECISION]\nDo something real.\n[IDLE]\n1",
     ])
     # Invalid JSON → Hypothalamus._parse_json raises → caught → pushed
     hypo_llm = ScriptedLLM(["not json at all"])
@@ -341,7 +341,7 @@ async def test_tool_feedback_does_not_inherit_adrenalin_from_hypothalamus():
     Self has already reacted to the urgent upstream stimulus; the echo is
     just bookkeeping."""
     self_llm = ScriptedLLM([
-        "[DECISION]\nAct fast, user waiting.\n[IDLE]\n1"
+        "[THINKING]\n(quiet beat)\n[DECISION]\nAct fast, user waiting.\n[IDLE]\n1"
     ])
     hypo_llm = ScriptedLLM([json.dumps({
         "tool_calls": [{"tool": "web_chat_reply",
@@ -367,7 +367,7 @@ async def test_heartbeat_with_connected_recall_nodes_does_not_crash():
     must render them without raising KeyError.
     """
     self_llm = ScriptedLLM([
-        "[DECISION]\nNo action.\n[IDLE]\n1",
+        "[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1",
     ])
     hypo_llm = ScriptedLLM([])
 
@@ -407,7 +407,7 @@ async def test_voluntary_sleep_via_hypothalamus_runs_full_sleep(tmp_path):
     """Self → 'enter sleep' → Hypothalamus sleep:true → enter_sleep_mode
     runs end-to-end; FACT migrates to KB; wake-up stimulus pushed."""
     self_llm = ScriptedLLM([
-        "[DECISION]\nenter sleep mode\n[IDLE]\n1",
+        "[THINKING]\n(quiet beat)\n[DECISION]\nenter sleep mode\n[IDLE]\n1",
     ])
     hypo_llm = ScriptedLLM([
         json.dumps({"tool_calls": [], "memory_writes": [],
@@ -497,10 +497,10 @@ async def test_bootstrap_self_model_update_and_completion(tmp_path):
     # HB #1: partial self-model update
     # HB #2: bootstrap complete signal
     self_llm = ScriptedLLM([
-        ('[DECISION]\nNo action.\n'
+        ('[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n'
          '[NOTE]\n<self-model>{"identity":{"name":"Krakey",'
          '"persona":"curious"}}</self-model>'),
-        ('[DECISION]\nNo action.\n'
+        ('[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n'
          '[NOTE]\nBootstrap complete'),
     ])
     hypo_llm = ScriptedLLM([])
@@ -537,7 +537,7 @@ async def test_bootstrap_self_model_update_and_completion(tmp_path):
 async def test_command_kill_stops_runtime():
     self_llm = ScriptedLLM([
         # Heartbeat 1 should hit /kill before reaching Self.
-        "[DECISION]\nNo action.\n[IDLE]\n1",
+        "[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1",
     ])
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
@@ -555,8 +555,8 @@ async def test_command_kill_stops_runtime():
 async def test_command_status_pushes_system_event_for_self(tmp_path):
     """Command result lands in buffer, visible on the *next* heartbeat."""
     self_llm = ScriptedLLM([
-        "[DECISION]\nNo action.\n[IDLE]\n1",  # HB #1: handles /status
-        "[DECISION]\nNo action.\n[IDLE]\n1",  # HB #2: sees system_event
+        "[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1",  # HB #1: handles /status
+        "[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1",  # HB #2: sees system_event
     ])
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
@@ -602,7 +602,7 @@ async def test_command_sleep_triggers_full_sleep(tmp_path):
 async def test_normal_text_passes_through_to_self():
     """Sanity: non-/cmd messages still reach Self normally."""
     self_llm = ScriptedLLM([
-        "[DECISION]\nNo action.\n[IDLE]\n1",
+        "[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1",
     ])
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
@@ -623,9 +623,9 @@ async def test_self_can_dispatch_memory_recall_and_see_feedback():
     tool → tool_feedback in next heartbeat's stimuli."""
     self_llm = ScriptedLLM([
         # HB #1: Self decides to recall
-        "[DECISION]\nRecall what I know about apple.\n[IDLE]\n1",
+        "[THINKING]\n(quiet beat)\n[DECISION]\nRecall what I know about apple.\n[IDLE]\n1",
         # HB #2: see recall result, take no further action
-        "[DECISION]\nNo action.\n[IDLE]\n1",
+        "[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1",
     ])
     hypo_llm = ScriptedLLM([
         json.dumps({
@@ -669,9 +669,9 @@ async def test_uncovered_stimulus_push_back_capped_at_one_retry():
     dropped — otherwise it loops every heartbeat forever.
     """
     self_llm = ScriptedLLM([
-        "[DECISION]\nNo action.\n[IDLE]\n1",  # HB #1
-        "[DECISION]\nNo action.\n[IDLE]\n1",  # HB #2
-        "[DECISION]\nNo action.\n[IDLE]\n1",  # HB #3
+        "[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1",  # HB #1
+        "[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1",  # HB #2
+        "[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1",  # HB #3
     ])
     hypo_llm = ScriptedLLM([])
     runtime = build_runtime_with_fakes(
@@ -697,8 +697,8 @@ async def test_tool_feedback_auto_ingested_to_gm():
     """Phase 1: tool_feedback stimuli seen on next heartbeat get
     auto_ingested into Graph Memory."""
     self_llm = ScriptedLLM([
-        "[DECISION]\nUse web_chat_reply to greet.\n[IDLE]\n1",
-        "[DECISION]\nNo action.\n[IDLE]\n1",
+        "[THINKING]\n(quiet beat)\n[DECISION]\nUse web_chat_reply to greet.\n[IDLE]\n1",
+        "[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1",
     ])
     hypo_llm = ScriptedLLM([
         json.dumps({"tool_calls": [{
@@ -732,8 +732,8 @@ async def test_batch_complete_stimulus_wakes_next_heartbeat():
     """After dispatch, BatchTracker fires a batch_complete adrenalin
     stimulus that Self sees on the subsequent heartbeat."""
     self_llm = ScriptedLLM([
-        "[DECISION]\nUse web_chat_reply.\n[IDLE]\n60",  # long interval
-        "[DECISION]\nNo action.\n[IDLE]\n1",
+        "[THINKING]\n(quiet beat)\n[DECISION]\nUse web_chat_reply.\n[IDLE]\n60",  # long interval
+        "[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1",
     ])
     hypo_llm = ScriptedLLM([
         json.dumps({"tool_calls": [{"tool": "web_chat_reply",
@@ -764,7 +764,7 @@ async def test_batch_complete_stimulus_wakes_next_heartbeat():
 async def test_explicit_write_from_hypothalamus_memory_writes():
     """Hypothalamus memory_writes trigger GM.explicit_write."""
     self_llm = ScriptedLLM([
-        "[DECISION]\nremember: user prefers detailed answers\n[IDLE]\n1",
+        "[THINKING]\n(quiet beat)\n[DECISION]\nremember: user prefers detailed answers\n[IDLE]\n1",
     ])
     hypo_llm = ScriptedLLM([
         json.dumps({
@@ -800,8 +800,8 @@ async def test_explicit_write_from_hypothalamus_memory_writes():
 
 async def test_idle_interrupts_on_adrenalin_stimulus():
     self_llm = ScriptedLLM([
-        "[DECISION]\nNo action.\n[IDLE]\n5",  # long interval
-        "[DECISION]\nNo action.\n[IDLE]\n1",
+        "[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n5",  # long interval
+        "[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1",
     ])
     hypo_llm = ScriptedLLM([
         json.dumps({"tool_calls": [], "memory_writes": [],
@@ -858,7 +858,7 @@ async def test_heartbeat_count_does_not_advance_on_llm_failure():
     failure ended the beat → next beat ticked count → spam."""
     self_llm = FlakyLLM(
         fail_count=3,
-        responses=["[DECISION]\nNo action.\n[IDLE]\n1"],
+        responses=["[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1"],
     )
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, hypo_llm=ScriptedLLM([]),
@@ -913,4 +913,98 @@ async def test_stop_requested_breaks_llm_retry_loop():
     # multiple beats (idle_min=0.01 × 200ms = ~20 wasted beats). 1 means
     # the retry loop did its job: we stayed inside the single failing beat
     # rather than tick-spamming.
+    assert runtime.heartbeat_count == 1
+
+
+# ---- Structured-output retry (stage 4) ----------------------------------
+
+
+class MalformedThenGoodLLM:
+    """Returns tagless output for the first ``malformed_count`` calls,
+    then a well-formed response.  Exercises the structured-output
+    retry loop added alongside the HTTP-failure retry."""
+
+    def __init__(self, malformed_count: int, good_response: str):
+        self.malformed_count = malformed_count
+        self._good = good_response
+        self.call_count = 0
+
+    async def chat(self, messages, **kwargs):
+        self.call_count += 1
+        if self.call_count <= self.malformed_count:
+            return "Unstructured rambling without any tags."
+        return self._good
+
+
+GOOD_RESPONSE = (
+    "[THINKING]\nUser asked something.\n"
+    "[DECISION]\nNo action.\n"
+    "[IDLE]\n1"
+)
+
+
+async def test_struct_output_retry_succeeds_within_fast_budget():
+    """Two malformed responses then one good → 3 total calls,
+    heartbeat_count stays at 1 (never advanced during retries)."""
+    self_llm = MalformedThenGoodLLM(malformed_count=2,
+                                     good_response=GOOD_RESPONSE)
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]),
+    )
+    runtime.config.idle.llm_failure_retry_interval = 0.01
+    runtime.config.idle.struct_output_fast_retries = 3
+    runtime.config.idle.struct_output_slow_retry_interval = 0.02
+
+    await runtime.run(iterations=1)
+    await runtime.close()
+
+    assert self_llm.call_count == 3, (
+        f"expected 3 calls (2 malformed + 1 good); got {self_llm.call_count}"
+    )
+    assert runtime.heartbeat_count == 1
+
+
+async def test_struct_output_retry_escalates_to_slow():
+    """Five malformed responses (fast budget = 3) then one good →
+    6 total calls. The last 2 malformed retries use the slow interval."""
+    self_llm = MalformedThenGoodLLM(malformed_count=5,
+                                     good_response=GOOD_RESPONSE)
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm, hypo_llm=ScriptedLLM([]),
+    )
+    runtime.config.idle.llm_failure_retry_interval = 0.01
+    runtime.config.idle.struct_output_fast_retries = 3
+    runtime.config.idle.struct_output_slow_retry_interval = 0.02
+
+    await runtime.run(iterations=1)
+    await runtime.close()
+
+    assert self_llm.call_count == 6, (
+        f"expected 6 calls (5 malformed + 1 good); got {self_llm.call_count}"
+    )
+    assert runtime.heartbeat_count == 1
+
+
+async def test_stop_requested_breaks_struct_retry_loop():
+    """If LLM permanently returns tagless output, stop_requested
+    must unblock the struct-retry loop for clean shutdown."""
+    class AlwaysMalformed:
+        async def chat(self, messages, **kwargs):
+            return "Tagless output forever."
+
+    runtime = build_runtime_with_fakes(
+        self_llm=AlwaysMalformed(), hypo_llm=ScriptedLLM([]),
+    )
+    runtime.config.idle.llm_failure_retry_interval = 0.05
+    runtime.config.idle.struct_output_fast_retries = 2
+    runtime.config.idle.struct_output_slow_retry_interval = 0.05
+
+    async def stop_after_short_delay():
+        await asyncio.sleep(0.3)
+        runtime.request_stop()
+
+    stop_task = asyncio.create_task(stop_after_short_delay())
+    await asyncio.wait_for(runtime.run(iterations=10), timeout=5.0)
+    await stop_task
+    await runtime.close()
     assert runtime.heartbeat_count == 1

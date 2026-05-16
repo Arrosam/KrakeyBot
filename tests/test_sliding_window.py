@@ -220,7 +220,7 @@ async def test_runtime_restart_preserves_sliding_window(tmp_path):
 
     rt_a = build_runtime_with_fakes(
         self_llm=ScriptedLLM([
-            "[DECISION]\nNo action.\n[IDLE]\n1",
+            "[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1",
         ]),
         hypo_llm=ScriptedLLM([]),
     )

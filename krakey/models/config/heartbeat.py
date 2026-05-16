@@ -26,6 +26,12 @@ class IdleSection:
     # distance. Loop exits when chat succeeds OR
     # runtime.stop_requested goes True.
     llm_failure_retry_interval: float = 30.0
+    # When Self returns a response but required structured tags
+    # ([THINKING], [DECISION]) are missing, the orchestrator retries
+    # within the same beat. Fast retries reuse llm_failure_retry_interval;
+    # after exhausting the fast budget the loop switches to slow cadence.
+    struct_output_fast_retries: int = 3
+    struct_output_slow_retry_interval: float = 300.0
 
 
 @dataclass
@@ -75,6 +81,13 @@ def _build_idle(raw: dict[str, Any]) -> IdleSection:
         )),
         llm_failure_retry_interval=float(raw.get(
             "llm_failure_retry_interval", d.llm_failure_retry_interval,
+        )),
+        struct_output_fast_retries=int(raw.get(
+            "struct_output_fast_retries", d.struct_output_fast_retries,
+        )),
+        struct_output_slow_retry_interval=float(raw.get(
+            "struct_output_slow_retry_interval",
+            d.struct_output_slow_retry_interval,
         )),
     )
 

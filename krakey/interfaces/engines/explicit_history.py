@@ -31,6 +31,7 @@ class ExplicitHistoryRound:
     stimulus_summary: str
     decision_text: str
     note_text: str
+    thinking_text: str = ""
 
 
 @runtime_checkable
