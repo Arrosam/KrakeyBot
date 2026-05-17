@@ -32,6 +32,7 @@ class ExplicitHistoryRound:
     decision_text: str
     note_text: str
     thinking_text: str = ""
+    recall_summary: str = ""
 
 
 @runtime_checkable

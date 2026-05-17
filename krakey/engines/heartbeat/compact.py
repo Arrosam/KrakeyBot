@@ -117,7 +117,8 @@ async def _apply_extraction(gm: "MemoryEngine", parsed: dict[str, Any]) -> None:
 
 
 async def _compact_round(round_: ExplicitHistoryRound, gm: "MemoryEngine",
-                          llm: ChatLike, recall_fn: RecallFn) -> None:
+                          llm: ChatLike, recall_fn: RecallFn,
+                          *, include_recall_context: bool = False) -> None:
     query = round_.stimulus_summary or round_.decision_text or round_.note_text
     existing = await recall_fn(query) if query else []
     prompt = COMPACT_PROMPT.format(
@@ -127,6 +128,8 @@ async def _compact_round(round_: ExplicitHistoryRound, gm: "MemoryEngine",
         note=round_.note_text,
         existing_nodes=_format_existing(existing),
     )
+    if include_recall_context and round_.recall_summary:
+        prompt += f"\nRecall context active during this beat: {round_.recall_summary}\n"
     raw = await llm.chat([{"role": "user", "content": prompt}])
     parsed = _parse_compact_json(raw)
     await _apply_extraction(gm, parsed)
@@ -169,6 +172,7 @@ async def _split_and_compact_single_round(
 async def compact_if_needed(
     window: SlidingWindow, gm: "MemoryEngine", llm: ChatLike,
     *, recall_fn: RecallFn, split_chunk_tokens: int = 1000,
+    include_recall_context: bool = False,
 ) -> None:
     """Blocking compact loop. Evict oldest rounds via LLM summarization until
     the window fits, or a single oversized round remains (then split it).
@@ -176,7 +180,8 @@ async def compact_if_needed(
     while window.needs_compact() and len(window.rounds) > 1:
         oldest = window.pop_oldest()
         assert oldest is not None
-        await _compact_round(oldest, gm, llm, recall_fn)
+        await _compact_round(oldest, gm, llm, recall_fn,
+                             include_recall_context=include_recall_context)
 
     if window.needs_compact() and len(window.rounds) == 1:
         await _split_and_compact_single_round(

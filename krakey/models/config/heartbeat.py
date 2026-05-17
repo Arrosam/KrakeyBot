@@ -60,12 +60,16 @@ class SlidingWindowSection:
     YAML loader.
     """
     state_path: str = "workspace/data/sliding_window.json"
+    compact_include_recall: bool = False
 
 
 def _build_sliding_window(raw: dict[str, Any]) -> SlidingWindowSection:
     d = SlidingWindowSection()
     return SlidingWindowSection(
         state_path=str(raw.get("state_path", d.state_path)),
+        compact_include_recall=bool(
+            raw.get("compact_include_recall", d.compact_include_recall)
+        ),
     )
 
 
