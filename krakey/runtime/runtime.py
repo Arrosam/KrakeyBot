@@ -193,6 +193,7 @@ class Runtime:
             memory=self.memory,
             embedder=deps.embedder,
             reranker=self.reranker,
+            factory=self.llm_factory,
         )
         self.dispatch = self._engine_registry.resolve(
             "dispatch",
