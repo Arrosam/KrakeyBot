@@ -1514,11 +1514,12 @@ const SECTION_DEFAULTS = {
   idle: { min_interval: 2, max_interval: 300, default_interval: 10 },
   fatigue: { gm_node_soft_limit: 1000, force_sleep_threshold: 1200, thresholds: {} },
   // `sliding_window` is back as a section (2026-05-07) carrying
-  // persistence config — `state_path` only; the SIZE budget is
-  // still derived from Self role's max_input_tokens ×
-  // history_token_fraction (visible in the LLM tag params UI).
+  // persistence config — `state_path` + `compact_include_recall`;
+  // the SIZE budget is still derived from Self role's
+  // max_input_tokens × history_token_fraction (LLM tag params UI).
   sliding_window: {
     state_path: "workspace/data/sliding_window.json",
+    compact_include_recall: false,
   },
   graph_memory: {
     db_path: "workspace/data/graph_memory.sqlite",
@@ -1578,6 +1579,7 @@ const HELP = {
   "fatigue.gm_node_soft_limit": "Soft upper bound on GM nodes. fatigue% = nodes / soft_limit * 100. Self uses fatigue% to decide whether to sleep proactively.",
   "fatigue.force_sleep_threshold": "Force-sleep threshold (fatigue%). Above this, runtime enters sleep without waiting for Self's consent.",
   "sliding_window.state_path": "JSON file mirroring the in-memory rounds buffer so working memory survives a restart. Default: workspace/data/sliding_window.json. Set to empty string to opt out (in-memory only — every restart loses the most recent uncompacted beats).",
+  "sliding_window.compact_include_recall": "When ON, the per-beat recall summary (which GM/KB nodes were active) is included in the compact prompt so the compactor LLM knows what context surrounded each decision. Costs ~30 tokens/round. Default OFF.",
   "graph_memory.db_path": "Path to the GM SQLite file.",
   "graph_memory.auto_ingest_similarity_threshold": "Similarity threshold (0-1) for stimulus auto_ingest. Below this, the stimulus is treated as a new GM node.",
   "graph_memory.recall_per_stimulus_k": "Hard cap on per-stimulus vec_search top_k. The actual top_k is computed dynamically from recall_screening_token_multiplier and never exceeds this.",
@@ -1648,6 +1650,7 @@ const SCHEMAS = {
   ],
   sliding_window: [
     ["state_path", "text"],
+    ["compact_include_recall", "bool"],
   ],
   graph_memory: [
     ["db_path", "text"],
