@@ -18,3 +18,15 @@ workspace/plugins/*
 *.sqlite
 *.sqlite-journal
 .env
+
+# modular-dev tracking artifacts — local-only bus-agent helpers,
+# regenerated from the codebase; never committed.
+/graph.json
+/overviews/
+/contracts/
+/shared/
+.claude/modular-dev-state.json
+.claude/modular-dev-queue.json
+# CLAUDE.md carries the local bus-agent workflow section; kept
+# local-only at the user's request.
+/CLAUDE.md
