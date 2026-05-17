@@ -10,12 +10,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from krakey.engines.recall._internal.incremental import IncrementalRecall
+from krakey.engines.recall._internal.enrich import SemanticAssociationEnricher
 from krakey.models.config import LLMParams
 
 if TYPE_CHECKING:
     from krakey.interfaces.engines.memory import MemoryEngine
     from krakey.interfaces.engines.recall import RecallSession
     from krakey.interfaces.engines.reranker import RerankerEngine
+    from krakey.interfaces.engines.llm_factory import LLMClientFactoryEngine
     from krakey.interfaces.duck import AsyncEmbedder
     from krakey.models.config import Config
 
@@ -36,11 +38,15 @@ class IncrementalRecallEngine:
         memory: "MemoryEngine",
         embedder: "AsyncEmbedder",
         reranker: "RerankerEngine | None",
+        factory: "LLMClientFactoryEngine | None" = None,
+        config: dict | None = None,
     ):
         self._cfg = cfg
         self._memory = memory
         self._embedder = embedder
         self._reranker = reranker
+        self._factory = factory
+        self._engine_cfg = config or {}
 
     def new_session(self) -> "RecallSession":
         """Build a fresh per-beat IncrementalRecall session.
@@ -54,6 +60,19 @@ class IncrementalRecallEngine:
         self_params = (
             self._cfg.llm.core_params("self_thinking") or LLMParams()
         )
+
+        enabled = bool(
+            self._engine_cfg.get("semantic_association_enabled", False)
+        )
+        purpose = self._engine_cfg.get(
+            "semantic_association_purpose", "recall_enrichment"
+        )
+        enricher = None
+        if enabled and self._factory is not None:
+            client = self._factory.client_for_core_purpose(purpose)
+            if client is not None:
+                enricher = SemanticAssociationEnricher(client)
+
         return IncrementalRecall(
             self._memory,
             embedder=self._embedder,
@@ -64,4 +83,5 @@ class IncrementalRecallEngine:
             ),
             reranker=self._reranker,
             neighbor_depth=self._cfg.graph_memory.neighbor_expand_depth,
+            enricher=enricher,
         )
