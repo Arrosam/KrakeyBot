@@ -244,7 +244,7 @@ class HeartbeatOrchestrator:
         self._phase_log_self_output(parsed)
         await self._phase_auto_ingest_feedback(stimuli)
         sleep_requested = await self._phase_apply_decision(
-            parsed, recall_result,
+            parsed, recall_result, counts,
         )
         if sleep_requested:
             await self._perform_sleep(
@@ -506,7 +506,8 @@ class HeartbeatOrchestrator:
             except Exception as e:  # noqa: BLE001
                 rt.log.runtime_error(f"auto_ingest error: {e}")
 
-    async def _phase_apply_decision(self, parsed, recall_result) -> bool:
+    async def _phase_apply_decision(self, parsed, recall_result,
+                                     counts: "_GMCounts") -> bool:
         """Convert Self's response into tool calls + dispatch.
 
         ``rt.decision.translate(...)`` produces the structured
@@ -593,6 +594,21 @@ class HeartbeatOrchestrator:
                 c for c in result.tool_calls
                 if c.tool != SLEEP_TOOL_NAME
             ]
+            # Guard: refuse voluntary sleep when energy is high.
+            # Mirrors the condition under which fatigue_hint() returns
+            # LOW_FATIGUE_HINT — pct below every configured threshold.
+            thresholds = rt.config.fatigue.thresholds
+            if thresholds and counts.fatigue_pct < min(thresholds):
+                result.sleep = False
+                await rt.buffer.push(Stimulus(
+                    type="system_event", source="system:sleep",
+                    content=(
+                        f"Sleep refused: energy is high (fatigue "
+                        f"{counts.fatigue_pct}% is below the minimum sleep "
+                        f"threshold {min(thresholds)}%). Stay active."
+                    ),
+                    timestamp=datetime.now(), adrenalin=False,
+                ))
         # Engine-mediated dispatch — runs the 4 side-effects (log +
         # publish, dispatch tool calls, apply memory writes, apply
         # memory updates) in one call. The DispatchEngine slot lets
