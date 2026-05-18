@@ -60,6 +60,26 @@ structurally valid.  Missing either triggers the structured-output
 retry loop rather than forwarding a half-parsed result."""
 
 
+def _raw_requests_builtin_sleep(raw: str) -> bool:
+    """True iff ``raw`` contains a <tool_call> block whose JSON
+    ``name`` is the built-in sleep tool. Used to waive the [IDLE]
+    requirement on sleep beats. Deliberately narrow: only a cleanly
+    parsed <tool_call>{"name":"sleep"} qualifies — malformed blocks
+    and natural-language phrasing do NOT (the hypothalamus decides
+    NL sleep post-translation; no pre-translation predicate exists)."""
+    import json
+    import re
+    from krakey.runtime.builtin_tools import SLEEP_TOOL_NAME
+    for block in re.findall(r"<tool_call>(.*?)</tool_call>", raw, re.DOTALL):
+        try:
+            data = json.loads(block.strip())
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(data, dict) and data.get("name") == SLEEP_TOOL_NAME:
+            return True
+    return False
+
+
 @dataclass
 class _GMCounts:
     """Snapshot from one heartbeat's fatigue phase, threaded into later
@@ -428,7 +448,11 @@ class HeartbeatOrchestrator:
 
             # ---- Structured-output validation ----
             parsed = parse_self_output(raw)
-            missing = _REQUIRED_SELF_TAGS - parsed.found_tags
+            required = _REQUIRED_SELF_TAGS | (
+                frozenset() if _raw_requests_builtin_sleep(raw)
+                else frozenset({"IDLE"})
+            )
+            missing = required - parsed.found_tags
             if not missing:
                 break
 
@@ -448,7 +472,7 @@ class HeartbeatOrchestrator:
             rt.log.hb(
                 f"Self output missing required tags "
                 f"(found: {{{', '.join(sorted(parsed.found_tags))}}}, "
-                f"required: {{{', '.join(sorted(_REQUIRED_SELF_TAGS))}}}); "
+                f"required: {{{', '.join(sorted(required))}}}); "
                 f"struct retry {struct_attempt} ({tier}), sleeping {delay}s"
             )
             await asyncio.sleep(delay)
