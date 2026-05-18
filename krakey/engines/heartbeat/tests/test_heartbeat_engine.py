@@ -26,7 +26,9 @@ class _FakeOrchestrator:
 class _FakeRuntime:
     """Bare runtime that exposes ``stop_requested`` (loop exit
     predicate the Engine reads per iteration) + ``request_stop()``
-    (cooperative shutdown signal tests flip to end the loop)."""
+    (cooperative shutdown signal tests flip to end the loop).
+    Also a no-op ``poll_pause_file()`` / ``paused`` pair the loop
+    consults each iteration (never paused in these tests)."""
 
     def __init__(self, stop_after: int | None = None):
         self._stop = False
@@ -40,6 +42,13 @@ class _FakeRuntime:
 
     def request_stop(self) -> None:
         self._stop = True
+
+    def poll_pause_file(self) -> None:
+        pass
+
+    @property
+    def paused(self) -> bool:
+        return False
 
 
 def test_satisfies_heartbeat_engine_protocol():

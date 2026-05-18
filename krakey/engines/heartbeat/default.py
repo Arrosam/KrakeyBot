@@ -14,6 +14,7 @@ orchestrator subclass, and override ``_make_orchestrator()``.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -77,6 +78,10 @@ class DefaultHeartbeatEngine:
         """
         count = 0
         while not runtime.stop_requested:
+            runtime.poll_pause_file()
+            if runtime.paused:
+                await asyncio.sleep(0.25)
+                continue
             await self.beat(runtime)
             count += 1
             if iterations is not None and count >= iterations:
