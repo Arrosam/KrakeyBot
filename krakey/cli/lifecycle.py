@@ -43,6 +43,31 @@ def _write_pidfile(pidfile: Path, pid: int) -> None:
     os.replace(tmp, pidfile)
 
 
+def _write_pausefile(text: str) -> None:
+    pf = _pausefile()
+    pf.parent.mkdir(parents=True, exist_ok=True)
+    tmp = pf.with_suffix(pf.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, pf)
+
+
+def _prepare_pause_file(start_paused: bool) -> None:
+    """Reconcile the pause control file at process start.
+
+    Paused start → (re)create it empty (indefinite pause). Normal
+    start → delete any pre-existing file so a stale pause left by a
+    previous run that did not exit cleanly does not silently pause
+    the new process.
+    """
+    if start_paused:
+        _write_pausefile("")
+    else:
+        try:
+            _pausefile().unlink()
+        except FileNotFoundError:
+            pass
+
+
 def _read_pid(pidfile: Path) -> int | None:
     if not pidfile.exists():
         return None
@@ -300,10 +325,7 @@ def run_foreground(start_paused: bool = False) -> int:
     _print_runtime_banner_if_needed(wizard_ran)
     _warn_if_install_pending(repo)
 
-    if start_paused:
-        pf = _pausefile()
-        pf.parent.mkdir(parents=True, exist_ok=True)
-        pf.write_text("", encoding="utf-8")
+    _prepare_pause_file(start_paused)
 
     _write_pidfile(pidfile, os.getpid())
     _install_pidfile_cleanup(pidfile)
@@ -364,10 +386,7 @@ def _spawn_daemon_unix(
     os.dup2(log_fd.fileno(), sys.stdout.fileno())
     os.dup2(log_fd.fileno(), sys.stderr.fileno())
 
-    if start_paused:
-        pf = _pausefile()
-        pf.parent.mkdir(parents=True, exist_ok=True)
-        pf.write_text("", encoding="utf-8")
+    _prepare_pause_file(start_paused)
 
     _write_pidfile(pidfile, os.getpid())
     _install_pidfile_cleanup(pidfile)
@@ -517,6 +536,8 @@ def status() -> int:
     except Exception:
         pass
 
+    # Presence-based check: may lag a timed pause whose deadline has already
+    # passed until the daemon's next heartbeat poll cleans up the file.
     paused_marker = " (paused)" if _pausefile().exists() else ""
     print(f"krakey: running  pid={pid}  version={ver}{extra}{paused_marker}")
     print(f"        log: {logfile}")
@@ -530,14 +551,12 @@ def pause_daemon(seconds: int | None = None) -> int:
         print("krakey: not running", file=sys.stderr)
         return _EXIT_NOT_RUNNING
 
-    pf = _pausefile()
-    pf.parent.mkdir(parents=True, exist_ok=True)
     if seconds is None:
-        pf.write_text("", encoding="utf-8")
+        _write_pausefile("")
         print("krakey: paused (indefinite; run `krakey resume` to unpause)")
     else:
         deadline = time.time() + seconds
-        pf.write_text(str(deadline), encoding="utf-8")
+        _write_pausefile(str(deadline))
         print(f"krakey: paused for {seconds}s (auto-resumes at deadline)")
     return 0
 
@@ -566,10 +585,7 @@ def _daemon_child_main(start_paused: bool = False) -> None:
     """
     repo, pidfile, _log = _paths()
 
-    if start_paused:
-        pf = _pausefile()
-        pf.parent.mkdir(parents=True, exist_ok=True)
-        pf.write_text("", encoding="utf-8")
+    _prepare_pause_file(start_paused)
 
     _write_pidfile(pidfile, os.getpid())
     _install_pidfile_cleanup(pidfile)
