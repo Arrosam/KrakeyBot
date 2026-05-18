@@ -37,6 +37,7 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "tiktoken>=0.7",
     "psutil>=5.9",
+    "mcp>=1.0",
 ]
 
 [project.optional-dependencies]
