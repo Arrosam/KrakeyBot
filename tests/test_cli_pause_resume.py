@@ -23,6 +23,7 @@ Design choices:
 from __future__ import annotations
 
 import io
+import shutil
 import time
 from contextlib import redirect_stderr
 from pathlib import Path
@@ -89,7 +90,6 @@ class TestArgParsingRunPauseFlag:
     """Positive: `-p` / `--pause` on the `run` subcommand."""
 
     def test_run_short_pause_flag_sets_start_paused_true(self):
-        parser = lifecycle.__module__  # import guard; real test below
         from krakey.cli import _build_parser  # type: ignore[attr-defined]
         p = _build_parser()
         ns = p.parse_args(["run", "-p"])
@@ -320,16 +320,17 @@ class TestPauseDaemonParentDirCreation:
 
     def test_creates_parent_dirs_when_missing(self, monkeypatch, tmp_path):
         _setup_alive(monkeypatch, tmp_path)
-        # Confirm workspace/ doesn't pre-exist
-        workspace = tmp_path / "workspace"
-        assert not workspace.exists()
+        # Remove the workspace dir _setup_alive created so the control
+        # file's parent genuinely does not pre-exist.
+        shutil.rmtree(tmp_path / "workspace")
+        assert not (tmp_path / "workspace").exists()
         lifecycle.pause_daemon(None)
         assert _pause_file(tmp_path).exists()
 
     def test_works_when_parent_already_exists(self, monkeypatch, tmp_path):
         _setup_alive(monkeypatch, tmp_path)
-        # Pre-create the workspace dir
-        (tmp_path / "workspace").mkdir(parents=True)
+        # Pre-create the workspace dir (already created by _setup_alive)
+        (tmp_path / "workspace").mkdir(parents=True, exist_ok=True)
         rc = lifecycle.pause_daemon(None)
         assert rc == 0
         assert _pause_file(tmp_path).exists()
@@ -536,7 +537,7 @@ class TestMainDispatchPause:
         calls: list = []
         monkeypatch.setattr(
             lifecycle, "pause_daemon",
-            lambda secs: calls.append(secs) or 0,
+            lambda seconds=None: calls.append(seconds) or 0,
         )
         main(["pause"])
         assert calls == [None]
@@ -547,13 +548,13 @@ class TestMainDispatchPause:
         calls: list = []
         monkeypatch.setattr(
             lifecycle, "pause_daemon",
-            lambda secs: calls.append(secs) or 0,
+            lambda seconds=None: calls.append(seconds) or 0,
         )
         main(["pause", "120"])
         assert calls == [120]
 
     def test_main_pause_propagates_return_code(self, monkeypatch, capsys):
-        monkeypatch.setattr(lifecycle, "pause_daemon", lambda _s: 7)
+        monkeypatch.setattr(lifecycle, "pause_daemon", lambda seconds=None: 7)
         rc = main(["pause"])
         assert rc == 7
 

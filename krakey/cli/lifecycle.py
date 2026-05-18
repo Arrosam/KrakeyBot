@@ -19,6 +19,9 @@ from . import _meta
 
 _PIDFILE_REL = "workspace/.krakey.pid"
 _LOG_REL = "workspace/logs/daemon.log"
+_PAUSEFILE_REL = "workspace/.krakey.pause"
+
+_EXIT_NOT_RUNNING = 1
 
 
 def _paths() -> tuple[Path, Path, Path]:
@@ -26,6 +29,11 @@ def _paths() -> tuple[Path, Path, Path]:
     pidfile = repo / _PIDFILE_REL
     logfile = repo / _LOG_REL
     return repo, pidfile, logfile
+
+
+def _pausefile() -> Path:
+    repo, _pidfile, _logfile = _paths()
+    return repo / _PAUSEFILE_REL
 
 
 def _write_pidfile(pidfile: Path, pid: int) -> None:
@@ -73,6 +81,10 @@ def _install_pidfile_cleanup(pidfile: Path) -> None:
 
     def _cleanup(*_args):
         _clear_pidfile(pidfile)
+        try:
+            _pausefile().unlink()
+        except FileNotFoundError:
+            pass
         if _args:  # called from signal handler → re-raise as clean exit
             sys.exit(0)
 
@@ -116,6 +128,7 @@ def _exec_runtime(repo: Path) -> int:
     from krakey.main import build_runtime_from_config
 
     rt = build_runtime_from_config()
+    rt.set_pause_file(_pausefile())
 
     # Cooperative shutdown — call ``rt.request_stop()`` on Ctrl+C /
     # SIGTERM and let the runtime exit its loop cleanly. Path differs
@@ -269,7 +282,7 @@ def _consume_restart_takeover_pid() -> int | None:
         return None
 
 
-def run_foreground() -> int:
+def run_foreground(start_paused: bool = False) -> int:
     repo, pidfile, _log = _paths()
     rc, wizard_ran = _ensure_config(repo)
     if rc is not None:
@@ -286,12 +299,18 @@ def run_foreground() -> int:
 
     _print_runtime_banner_if_needed(wizard_ran)
     _warn_if_install_pending(repo)
+
+    if start_paused:
+        pf = _pausefile()
+        pf.parent.mkdir(parents=True, exist_ok=True)
+        pf.write_text("", encoding="utf-8")
+
     _write_pidfile(pidfile, os.getpid())
     _install_pidfile_cleanup(pidfile)
     return _exec_runtime(repo)
 
 
-def start_daemon() -> int:
+def start_daemon(start_paused: bool = False) -> int:
     repo, pidfile, logfile = _paths()
     rc, wizard_ran = _ensure_config(repo)
     if rc is not None:
@@ -310,11 +329,13 @@ def start_daemon() -> int:
     _print_runtime_banner_if_needed(wizard_ran)
     _warn_if_install_pending(repo)
     if os.name == "nt":
-        return _spawn_daemon_windows(repo, pidfile, logfile)
-    return _spawn_daemon_unix(repo, pidfile, logfile)
+        return _spawn_daemon_windows(repo, pidfile, logfile, start_paused=start_paused)
+    return _spawn_daemon_unix(repo, pidfile, logfile, start_paused=start_paused)
 
 
-def _spawn_daemon_unix(repo: Path, pidfile: Path, logfile: Path) -> int:
+def _spawn_daemon_unix(
+    repo: Path, pidfile: Path, logfile: Path, *, start_paused: bool = False
+) -> int:
     # Double-fork to detach from controlling terminal.
     pid = os.fork()
     if pid > 0:
@@ -343,19 +364,30 @@ def _spawn_daemon_unix(repo: Path, pidfile: Path, logfile: Path) -> int:
     os.dup2(log_fd.fileno(), sys.stdout.fileno())
     os.dup2(log_fd.fileno(), sys.stderr.fileno())
 
+    if start_paused:
+        pf = _pausefile()
+        pf.parent.mkdir(parents=True, exist_ok=True)
+        pf.write_text("", encoding="utf-8")
+
     _write_pidfile(pidfile, os.getpid())
     _install_pidfile_cleanup(pidfile)
     _exec_runtime(repo)
     os._exit(0)
 
 
-def _spawn_daemon_windows(repo: Path, pidfile: Path, logfile: Path) -> int:
+def _spawn_daemon_windows(
+    repo: Path, pidfile: Path, logfile: Path, *, start_paused: bool = False
+) -> int:
     DETACHED_PROCESS = 0x00000008
     CREATE_NEW_PROCESS_GROUP = 0x00000200
 
+    child_argv = [sys.executable, "-m", "krakey.cli.lifecycle", "--daemon-child"]
+    if start_paused:
+        child_argv.append("--paused")
+
     log_fh = open(logfile, "ab", buffering=0)
     proc = subprocess.Popen(
-        [sys.executable, "-m", "krakey.cli.lifecycle", "--daemon-child"],
+        child_argv,
         cwd=str(repo),
         stdin=subprocess.DEVNULL,
         stdout=log_fh,
@@ -485,19 +517,60 @@ def status() -> int:
     except Exception:
         pass
 
-    print(f"krakey: running  pid={pid}  version={ver}{extra}")
+    paused_marker = " (paused)" if _pausefile().exists() else ""
+    print(f"krakey: running  pid={pid}  version={ver}{extra}{paused_marker}")
     print(f"        log: {logfile}")
+    return 0
+
+
+def pause_daemon(seconds: int | None = None) -> int:
+    _repo, pidfile, _log = _paths()
+    pid = _read_pid(pidfile)
+    if pid is None or not _is_alive(pid):
+        print("krakey: not running", file=sys.stderr)
+        return _EXIT_NOT_RUNNING
+
+    pf = _pausefile()
+    pf.parent.mkdir(parents=True, exist_ok=True)
+    if seconds is None:
+        pf.write_text("", encoding="utf-8")
+        print("krakey: paused (indefinite; run `krakey resume` to unpause)")
+    else:
+        deadline = time.time() + seconds
+        pf.write_text(str(deadline), encoding="utf-8")
+        print(f"krakey: paused for {seconds}s (auto-resumes at deadline)")
+    return 0
+
+
+def resume_daemon() -> int:
+    _repo, pidfile, _log = _paths()
+    pid = _read_pid(pidfile)
+    if pid is None or not _is_alive(pid):
+        print("krakey: not running", file=sys.stderr)
+        return _EXIT_NOT_RUNNING
+
+    try:
+        _pausefile().unlink()
+    except FileNotFoundError:
+        pass
+    print("krakey: resumed")
     return 0
 
 
 # -------- Windows daemon-child entrypoint --------
 
-def _daemon_child_main() -> None:
-    """Invoked as `python -m src.cli.lifecycle --daemon-child` on Windows.
+def _daemon_child_main(start_paused: bool = False) -> None:
+    """Invoked as `python -m krakey.cli.lifecycle --daemon-child` on Windows.
 
     Already detached by Popen flags; just write pidfile + run runtime.
     """
     repo, pidfile, _log = _paths()
+
+    if start_paused:
+        pf = _pausefile()
+        pf.parent.mkdir(parents=True, exist_ok=True)
+        pf.write_text("", encoding="utf-8")
+
     _write_pidfile(pidfile, os.getpid())
     _install_pidfile_cleanup(pidfile)
     _exec_runtime(repo)
@@ -505,4 +578,5 @@ def _daemon_child_main() -> None:
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--daemon-child":
-        _daemon_child_main()
+        _paused_flag = "--paused" in sys.argv[2:]
+        _daemon_child_main(start_paused=_paused_flag)
