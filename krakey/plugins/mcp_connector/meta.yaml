@@ -12,7 +12,7 @@ description: >
 
 config_schema:
   - field: reconnect
-    type: boolean
+    type: bool
     default: true
     help: >
       When true, a dead server connection is re-established transparently
