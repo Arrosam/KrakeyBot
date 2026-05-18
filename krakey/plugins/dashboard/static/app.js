@@ -1678,22 +1678,6 @@ const SCHEMAS = {
     ["gm_node_hard_limit", "number"],
     ["max_consecutive_no_action", "number"],
   ],
-  // 11-slot Engine override surface. Empty string = use the
-  // built-in default (the runtime treats unset + empty identically).
-  // Order mirrors the resolution order in Runtime.__init__.
-  core_implementations: [
-    ["memory", "text"],
-    ["context", "text"],
-    ["embedder", "text"],
-    ["reranker", "text"],
-    ["explicit_history", "text"],
-    ["decision", "text"],
-    ["recall", "text"],
-    ["heartbeat", "text"],
-    ["dispatch", "text"],
-    ["llm_factory", "text"],
-    ["llm_client_factory", "text"],
-  ],
   // Schemas under `environments.sandbox.*`. The top-level sandbox
   // section is gone in the runtime (rewrites to environments.sandbox),
   // so the dashboard's sandbox UI is now a sub-block of Environments.
@@ -2139,56 +2123,129 @@ function renderEngineOverridesSection(cfg) {
     + "engines (workspace/plugins/<name>/meta.yaml with `kind: engine`). "
     + '"(default)" leaves the field empty in config.yaml so the '
     + "runtime falls through to the slot's built-in default. "
-    + "Engines that declare config options surface a form below the "
-    + "dropdown. \"Custom path...\" lets you supply a "
+    + "Engines that declare config options surface a form inside the "
+    + "expanded card. \"Custom path...\" lets you supply a "
     + "`module.path:ClassName` directly.";
   body.appendChild(hint);
 
-  // Render one block per slot. Slot order matches CoreImplementations'
-  // dataclass field order (covered by SCHEMAS.core_implementations).
-  for (const [slot, _type] of SCHEMAS.core_implementations) {
+  // Render one collapsible card per slot. Slot order follows
+  // ENGINE_SLOT_ORDER (matches CoreImplementations dataclass field
+  // order). The catalog from /api/engines/available drives the
+  // dropdown options; SCHEMAS.core_implementations is not consulted.
+  for (const slot of ENGINE_SLOT_ORDER) {
     body.appendChild(_engineSlotBlock(slot, cfg));
   }
   return sec;
 }
 
 function _engineSlotBlock(slot, cfg) {
-  // Wrapper around the dropdown row + the schema-driven config form
-  // for the currently-selected impl. Re-rendered in place when the
-  // user picks a different impl from the dropdown.
-  const block = document.createElement("div");
-  block.className = "engine-slot-block";
-
-  const row = document.createElement("div");
-  row.className = "cfg-row";
-  const lab = document.createElement("label");
-  lab.textContent = slot;
-  const help = HELP[`core_implementations.${slot}`];
-  if (help) lab.title = help;
-  row.appendChild(lab);
-
-  const slotMeta = engineCatalog[slot] || {
-    default: "", options: [],
-  };
+  // Renders each engine slot as a collapsible plugin-card-style card.
+  // Head: caret + slot name (bold) + source badge if non-default impl
+  // selected + current selection as muted subtitle.
+  // Body: <select> dropdown, optional custom-path input, and the
+  // currently-selected impl's config_schema fields.
+  const slotMeta = engineCatalog[slot] || { default: "", options: [] };
   const currentValue = cfg[slot] || "";
   const isCustom = currentValue && currentValue.includes(":");
 
+  const card = document.createElement("div");
+  card.className = "plugin-card";
+
+  const isExpanded = engineSlotExpanded.has(slot);
+
+  // ── head row ──────────────────────────────────────────────────────
+  const head = document.createElement("div");
+  head.style.cssText =
+    "display:flex;align-items:center;gap:8px;flex-wrap:wrap;" +
+    "user-select:none;cursor:pointer";
+
+  // Caret — chevron-down when expanded, chevron-right when collapsed.
+  const caret = document.createElement("span");
+  caret.style.cssText = "color:var(--muted);display:inline-flex;align-items:center";
+  caret.innerHTML = window.biIcon(
+    isExpanded ? "chevron-down" : "chevron-right", 12,
+  );
+  head.appendChild(caret);
+
+  // Slot name (bold).
+  const title = document.createElement("strong");
+  title.textContent = slot;
+  head.appendChild(title);
+
+  // Source badge — shown when a non-default impl is currently
+  // selected and it comes from a plugin (matches plugin-card badge
+  // styling via _renderKindBadge).
+  const selectedOpt = (slotMeta.options || []).find(
+    (o) => o.name === (isCustom ? "" : currentValue),
+  );
+  if (!isCustom && currentValue && selectedOpt && selectedOpt.source === "plugin") {
+    head.appendChild(_renderKindBadge("plugin"));
+  }
+
+  // Current selection as a muted subtitle so all slots are
+  // scannable without expanding.
+  const subtitle = document.createElement("span");
+  subtitle.style.cssText =
+    "color:var(--muted);font-size:11px;font-weight:normal;flex:1";
+  if (isCustom) {
+    subtitle.textContent = currentValue || "(custom)";
+  } else if (currentValue) {
+    subtitle.textContent = currentValue;
+  } else {
+    subtitle.textContent = "(default" +
+      (slotMeta.default ? ": " + slotMeta.default : "") + ")";
+  }
+  head.appendChild(subtitle);
+
+  // Click toggles expand/collapse and re-renders.
+  head.addEventListener("click", () => {
+    if (engineSlotExpanded.has(slot)) {
+      engineSlotExpanded.delete(slot);
+    } else {
+      engineSlotExpanded.add(slot);
+    }
+    renderSettingsForm();
+  });
+
+  card.appendChild(head);
+
+  if (!isExpanded) return card;
+
+  // ── body ──────────────────────────────────────────────────────────
+
+  // Slot help text from HELP (rendered as a visible description block,
+  // not just a tooltip, matching the plugin-card pattern).
+  const slotHelp = HELP[`core_implementations.${slot}`];
+  if (slotHelp) {
+    const descBlock = document.createElement("div");
+    descBlock.className = "plugin-description";
+    descBlock.textContent = slotHelp;
+    card.appendChild(descBlock);
+  }
+
+  // <select> — blank = default, named = short name, __custom__ = path.
+  const selRow = document.createElement("div");
+  selRow.className = "cfg-row";
+  const selLabel = document.createElement("label");
+  selLabel.textContent = "implementation";
+  selRow.appendChild(selLabel);
+
+  const selWrap = document.createElement("div");
+  selWrap.style.cssText = "display:flex;flex-direction:column;gap:4px";
+
   const sel = document.createElement("select");
-  // Empty option = "(default)" — runtime sees no override, falls
-  // through to the slot's DEFAULT_ENGINE.
   const blank = document.createElement("option");
   blank.value = "";
-  blank.textContent = `(default: ${slotMeta.default || "?"})`;
+  blank.textContent = "(default: " + (slotMeta.default || "?") + ")";
   sel.appendChild(blank);
   for (const opt of slotMeta.options) {
     const o = document.createElement("option");
     o.value = opt.name;
-    const tag = opt.source === "plugin" ? " [plugin]" : "";
-    o.textContent = `${opt.name}${tag}`;
+    const sourceTag = opt.source === "plugin" ? " [plugin]" : "";
+    o.textContent = opt.name + sourceTag;
     o.title = opt.description || "";
     sel.appendChild(o);
   }
-  // "Custom..." for dotted paths the catalog doesn't know about.
   const customOpt = document.createElement("option");
   customOpt.value = "__custom__";
   customOpt.textContent = "Custom path…";
@@ -2197,20 +2254,22 @@ function _engineSlotBlock(slot, cfg) {
   if (isCustom) sel.value = "__custom__";
   else sel.value = currentValue;
 
+  // Custom-path text input — visible only when __custom__ is selected.
   const txt = document.createElement("input");
   txt.type = "text";
   txt.placeholder = "module.path:ClassName";
   txt.value = isCustom ? currentValue : "";
-  txt.style.marginLeft = "0.5em";
   txt.style.display = isCustom ? "" : "none";
 
-  // Schema form holder — rebuilt whenever the dropdown selection
-  // changes. Lives below the dropdown row inside the same block.
+  // Schema form holder — rebuilt whenever selection changes.
+  // Lives in the card body, below the dropdown.
   const schemaHolder = document.createElement("div");
   schemaHolder.className = "engine-schema-holder";
 
   function selectedShortName() {
-    if (sel.value === "__custom__") return "";  // dotted path, no schema
+    // When __custom__ or blank, fall back to the catalog default
+    // for schema lookup purposes; custom dotted paths have no schema.
+    if (sel.value === "__custom__") return "";
     return sel.value || slotMeta.default || "";
   }
 
@@ -2218,10 +2277,20 @@ function _engineSlotBlock(slot, cfg) {
     schemaHolder.innerHTML = "";
     const shortName = selectedShortName();
     if (!shortName) return;
-    const opt = (slotMeta.options || []).find(
-      (o) => o.name === shortName,
-    );
-    if (!opt || !opt.config_schema || !opt.config_schema.length) return;
+    const opt = (slotMeta.options || []).find((o) => o.name === shortName);
+    if (!opt) return;
+
+    // Render the selected impl's catalog description as a visible
+    // block so the operator sees what they're selecting.
+    if (opt.description) {
+      const implDesc = document.createElement("div");
+      implDesc.className = "plugin-description";
+      implDesc.style.borderLeftColor = "var(--green)";
+      implDesc.textContent = opt.description;
+      schemaHolder.appendChild(implDesc);
+    }
+
+    if (!opt.config_schema || !opt.config_schema.length) return;
     schemaHolder.appendChild(
       _renderEngineSchemaForm(slot, shortName, opt.config_schema),
     );
@@ -2235,18 +2304,20 @@ function _engineSlotBlock(slot, cfg) {
       txt.style.display = "none";
       cfg[slot] = sel.value;
     }
-    rebuildSchema();
+    // Re-render so head subtitle + source badge update too.
+    renderSettingsForm();
   });
   txt.addEventListener("input", () => {
     cfg[slot] = txt.value;
   });
 
-  row.appendChild(sel);
-  row.appendChild(txt);
-  block.appendChild(row);
-  block.appendChild(schemaHolder);
+  selWrap.appendChild(sel);
+  selWrap.appendChild(txt);
+  selRow.appendChild(selWrap);
+  card.appendChild(selRow);
+  card.appendChild(schemaHolder);
   rebuildSchema();
-  return block;
+  return card;
 }
 
 function _renderEngineSchemaForm(slot, shortName, schema) {
@@ -2269,7 +2340,12 @@ function _renderEngineSchemaForm(slot, shortName, schema) {
   cfgBlock.appendChild(head);
   for (const fdef of schema) {
     const fname = fdef.field;
-    const type = fdef.type || "text";
+    // Normalize `boolean` → `bool` so engine schema fields declared
+    // with Python's standard type name render as a toggle widget
+    // rather than falling through to a plain text input. renderRow
+    // only recognises `bool` (not `boolean`) — this is a known trap
+    // documented in MEMORY.md (renderRow bool token entry).
+    const type = (fdef.type === "boolean" ? "bool" : fdef.type) || "text";
     const helpPath = `engine.${slot}.${shortName}.${fname}`;
     if (fdef.help) HELP[helpPath] = fdef.help;
     if (target[fname] == null && fdef.default != null) {
@@ -3676,8 +3752,36 @@ async function loadAvailableModifiers() {
 // Engine slot catalog from /api/engines/available — populated on
 // settings load + consumed by renderEngineOverridesSection. Keyed
 // by slot name; each value is ``{default, options:[{name, source,
-// description}]}``. Empty until the first fetch lands.
+// description, config_schema}]}``. Empty until the first fetch lands.
 let engineCatalog = {};
+
+// Fixed slot order for the Engine Overrides section. Mirrors the
+// CoreImplementations dataclass field order in Runtime.__init__.
+// The catalog keys match these names; this list drives the card
+// render order so it stays stable regardless of iteration order
+// of the catalog object.
+const ENGINE_SLOT_ORDER = [
+  "memory",
+  "context",
+  "embedder",
+  "reranker",
+  "explicit_history",
+  "decision",
+  "recall",
+  "heartbeat",
+  "dispatch",
+  "llm_factory",
+  "llm_client_factory",
+];
+
+// Tracks which engine slot cards are expanded in the Engine
+// Overrides section. Analogous to pluginExpanded for plugin cards.
+// ALL slots start expanded so the user sees everything at first
+// paint (engine overrides are rare power-user changes, and seeing
+// the current selection for every slot is the main value of this
+// section). Clicking the card head toggles and triggers a
+// renderSettingsForm() re-render, same mechanism plugin cards use.
+const engineSlotExpanded = new Set(ENGINE_SLOT_ORDER);
 
 async function loadEngineCatalog() {
   try {
