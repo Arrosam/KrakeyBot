@@ -23,6 +23,10 @@ if TYPE_CHECKING:
     )
     from krakey.runtime.runtime import Runtime
 
+# How long to sleep between pause-file polls while the heartbeat
+# is paused (seconds).
+_PAUSE_POLL_INTERVAL_S = 0.25
+
 
 class DefaultHeartbeatEngine:
     """Default HeartbeatEngine — drives the canonical 13-phase
@@ -80,7 +84,7 @@ class DefaultHeartbeatEngine:
         while not runtime.stop_requested:
             runtime.poll_pause_file()
             if runtime.paused:
-                await asyncio.sleep(0.25)
+                await asyncio.sleep(_PAUSE_POLL_INTERVAL_S)
                 continue
             await self.beat(runtime)
             count += 1
