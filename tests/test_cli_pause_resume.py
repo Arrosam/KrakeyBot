@@ -575,3 +575,266 @@ class TestMainDispatchResume:
         monkeypatch.setattr(lifecycle, "resume_daemon", lambda: 3)
         rc = main(["resume"])
         assert rc == 3
+
+
+# ===========================================================================
+# F) _prepare_pause_file()
+# ===========================================================================
+
+def _workspace_dir(tmp_path: Path) -> Path:
+    """The workspace directory that the monkeypatched _paths() points to."""
+    return tmp_path / "workspace"
+
+
+class TestPreparePauseFileStartPausedTrue:
+    """_prepare_pause_file(True) must ensure the control file exists and is
+    empty, regardless of whether it previously existed or was non-empty."""
+
+    def test_creates_empty_control_file_when_none_existed(
+        self, monkeypatch, tmp_path
+    ):
+        """Parent dir missing → created; control file created as empty."""
+        _setup_alive(monkeypatch, tmp_path)
+        # Remove any workspace dir that _setup_alive may have created so
+        # the parent genuinely does not exist.
+        import shutil as _shutil
+        ws = _workspace_dir(tmp_path)
+        if ws.exists():
+            _shutil.rmtree(ws)
+        assert not ws.exists()
+
+        lifecycle._prepare_pause_file(True)
+
+        pf = _pause_file(tmp_path)
+        assert pf.exists(), "control file must be created"
+        assert pf.read_text(encoding="utf-8") == "", "control file must be empty"
+
+    def test_parent_dir_is_created_when_missing(self, monkeypatch, tmp_path):
+        """The parent directory of the control file must exist after the call."""
+        _setup_alive(monkeypatch, tmp_path)
+        import shutil as _shutil
+        ws = _workspace_dir(tmp_path)
+        if ws.exists():
+            _shutil.rmtree(ws)
+
+        lifecycle._prepare_pause_file(True)
+
+        assert _pause_file(tmp_path).parent.exists()
+
+    def test_truncates_preexisting_nonempty_control_file(
+        self, monkeypatch, tmp_path
+    ):
+        """A pre-existing control file with content (e.g. a deadline float)
+        must be replaced / truncated to empty."""
+        _setup_alive(monkeypatch, tmp_path)
+        pf = _pause_file(tmp_path)
+        pf.parent.mkdir(parents=True, exist_ok=True)
+        pf.write_text(str(time.time() + 3600), encoding="utf-8")
+        assert pf.stat().st_size > 0  # pre-condition: non-empty
+
+        lifecycle._prepare_pause_file(True)
+
+        assert pf.exists()
+        assert pf.read_text(encoding="utf-8") == ""
+
+    def test_replaces_preexisting_empty_control_file_remains_empty(
+        self, monkeypatch, tmp_path
+    ):
+        """If the control file already exists and is empty, calling with True
+        is idempotent — it stays empty (no exception, no size change)."""
+        _setup_alive(monkeypatch, tmp_path)
+        pf = _pause_file(tmp_path)
+        pf.parent.mkdir(parents=True, exist_ok=True)
+        pf.write_text("", encoding="utf-8")
+
+        lifecycle._prepare_pause_file(True)
+
+        assert pf.exists()
+        assert pf.read_text(encoding="utf-8") == ""
+
+    def test_calling_twice_with_true_is_idempotent(self, monkeypatch, tmp_path):
+        """Two consecutive calls with True must not raise and the control
+        file must still exist and be empty."""
+        _setup_alive(monkeypatch, tmp_path)
+
+        lifecycle._prepare_pause_file(True)
+        lifecycle._prepare_pause_file(True)
+
+        pf = _pause_file(tmp_path)
+        assert pf.exists()
+        assert pf.read_text(encoding="utf-8") == ""
+
+
+class TestPreparePauseFileStartPausedFalse:
+    """_prepare_pause_file(False) must delete a pre-existing (stale) control
+    file and be a no-op / not raise when no control file is present."""
+
+    def test_deletes_preexisting_stale_control_file(
+        self, monkeypatch, tmp_path
+    ):
+        """A stale empty control file from a previous run must be removed."""
+        _setup_alive(monkeypatch, tmp_path)
+        pf = _pause_file(tmp_path)
+        pf.parent.mkdir(parents=True, exist_ok=True)
+        pf.write_text("", encoding="utf-8")
+        assert pf.exists()  # pre-condition
+
+        lifecycle._prepare_pause_file(False)
+
+        assert not pf.exists(), "stale control file must be deleted"
+
+    def test_deletes_preexisting_nonempty_stale_control_file(
+        self, monkeypatch, tmp_path
+    ):
+        """A stale timed-pause control file (non-empty) must also be removed."""
+        _setup_alive(monkeypatch, tmp_path)
+        pf = _pause_file(tmp_path)
+        pf.parent.mkdir(parents=True, exist_ok=True)
+        pf.write_text(str(time.time() + 999), encoding="utf-8")
+
+        lifecycle._prepare_pause_file(False)
+
+        assert not pf.exists()
+
+    def test_noop_when_no_control_file_exists(self, monkeypatch, tmp_path):
+        """When no control file is present, calling with False must not raise."""
+        _setup_dead(monkeypatch, tmp_path)
+        pf = _pause_file(tmp_path)
+        assert not pf.exists()  # pre-condition
+
+        # Must not raise (e.g. FileNotFoundError)
+        lifecycle._prepare_pause_file(False)
+
+        assert not pf.exists()
+
+    def test_idempotent_double_call_with_false_no_raise(
+        self, monkeypatch, tmp_path
+    ):
+        """Calling twice with False when the file doesn't exist must not
+        raise on either call."""
+        _setup_dead(monkeypatch, tmp_path)
+
+        lifecycle._prepare_pause_file(False)   # first call
+        lifecycle._prepare_pause_file(False)   # second call — idempotent
+
+        assert not _pause_file(tmp_path).exists()
+
+    def test_false_does_not_create_control_file(self, monkeypatch, tmp_path):
+        """False must never CREATE the control file; if absent, it stays absent."""
+        _setup_alive(monkeypatch, tmp_path)
+        assert not _pause_file(tmp_path).exists()
+
+        lifecycle._prepare_pause_file(False)
+
+        assert not _pause_file(tmp_path).exists()
+
+
+# ===========================================================================
+# G) pause_daemon() — atomic write post-conditions
+#    Verifies that after pause_daemon() returns 0 (daemon alive):
+#      • the control file contains the correct content
+#      • no stray .tmp sibling file is left in the workspace dir
+# ===========================================================================
+
+def _no_tmp_files_in_workspace(tmp_path: Path) -> bool:
+    """Return True iff no file whose name ends with '.tmp' exists directly
+    inside the workspace directory (i.e. no leftover atomic-write temp)."""
+    ws = _workspace_dir(tmp_path)
+    if not ws.exists():
+        return True
+    return not any(f.name.endswith(".tmp") for f in ws.iterdir() if f.is_file())
+
+
+class TestPauseDaemonAtomicWriteIndefinite:
+    """pause_daemon(None) with daemon alive: empty control file, no .tmp left."""
+
+    def test_control_file_is_empty_after_indefinite_pause(
+        self, monkeypatch, tmp_path
+    ):
+        _setup_alive(monkeypatch, tmp_path)
+        rc = lifecycle.pause_daemon(None)
+        assert rc == 0
+        assert _pause_file(tmp_path).read_text(encoding="utf-8") == ""
+
+    def test_no_tmp_sibling_after_indefinite_pause(
+        self, monkeypatch, tmp_path
+    ):
+        """No file ending in '.tmp' must remain in the workspace dir after
+        pause_daemon(None) returns — the atomic tmp file must have been
+        renamed away or cleaned up."""
+        _setup_alive(monkeypatch, tmp_path)
+        lifecycle.pause_daemon(None)
+        assert _no_tmp_files_in_workspace(tmp_path), (
+            "stray .tmp file found in workspace after pause_daemon(None)"
+        )
+
+    def test_no_tmp_sibling_on_second_indefinite_pause(
+        self, monkeypatch, tmp_path
+    ):
+        """Calling pause_daemon(None) twice must leave no .tmp on either call."""
+        _setup_alive(monkeypatch, tmp_path)
+        lifecycle.pause_daemon(None)
+        lifecycle.pause_daemon(None)
+        assert _no_tmp_files_in_workspace(tmp_path)
+
+
+class TestPauseDaemonAtomicWriteTimed:
+    """pause_daemon(seconds=N) with daemon alive: float content within tolerance,
+    no .tmp left."""
+
+    def test_content_parses_as_float_after_timed_pause(
+        self, monkeypatch, tmp_path
+    ):
+        _setup_alive(monkeypatch, tmp_path)
+        rc = lifecycle.pause_daemon(120)
+        assert rc == 0
+        content = _pause_file(tmp_path).read_text(encoding="utf-8").strip()
+        float(content)  # must not raise
+
+    def test_deadline_within_tolerance_after_timed_pause(
+        self, monkeypatch, tmp_path
+    ):
+        """Content must be approximately time.time() + 120 (5s tolerance)."""
+        _setup_alive(monkeypatch, tmp_path)
+        before = time.time()
+        lifecycle.pause_daemon(120)
+        after = time.time()
+        deadline = float(
+            _pause_file(tmp_path).read_text(encoding="utf-8").strip()
+        )
+        assert before + 120 <= deadline <= after + 120 + 5
+
+    def test_no_tmp_sibling_after_timed_pause(self, monkeypatch, tmp_path):
+        """No file ending in '.tmp' must remain in the workspace dir after
+        pause_daemon(120) returns."""
+        _setup_alive(monkeypatch, tmp_path)
+        lifecycle.pause_daemon(120)
+        assert _no_tmp_files_in_workspace(tmp_path), (
+            "stray .tmp file found in workspace after pause_daemon(120)"
+        )
+
+    def test_no_tmp_sibling_after_zero_seconds(self, monkeypatch, tmp_path):
+        """Boundary: seconds=0 must also leave no .tmp behind."""
+        _setup_alive(monkeypatch, tmp_path)
+        lifecycle.pause_daemon(0)
+        assert _no_tmp_files_in_workspace(tmp_path)
+
+    def test_no_tmp_sibling_after_large_seconds(self, monkeypatch, tmp_path):
+        """Large seconds value (86400) must also leave no .tmp behind."""
+        _setup_alive(monkeypatch, tmp_path)
+        lifecycle.pause_daemon(86400)
+        assert _no_tmp_files_in_workspace(tmp_path)
+
+    def test_no_tmp_sibling_after_overwrite_timed_then_indefinite(
+        self, monkeypatch, tmp_path
+    ):
+        """Chain: timed then indefinite — no .tmp after either call."""
+        _setup_alive(monkeypatch, tmp_path)
+        lifecycle.pause_daemon(60)
+        assert _no_tmp_files_in_workspace(tmp_path), (
+            "stray .tmp after first (timed) pause_daemon call"
+        )
+        lifecycle.pause_daemon(None)
+        assert _no_tmp_files_in_workspace(tmp_path), (
+            "stray .tmp after second (indefinite) pause_daemon call"
+        )
