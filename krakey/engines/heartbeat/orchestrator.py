@@ -348,7 +348,7 @@ class HeartbeatOrchestrator:
         await compact_if_needed(
             rt.explicit_history, rt.memory, rt.compact_llm,
             recall_fn=_recall_fn,
-            include_recall_context=rt.cfg.sliding_window.compact_include_recall,
+            include_recall_context=rt.config.sliding_window.compact_include_recall,
         )
 
     async def _phase_finalize_recall_and_pushback(self):
@@ -730,7 +730,7 @@ class HeartbeatOrchestrator:
             try:
                 await compact_round(
                 oldest, rt.memory, rt.compact_llm, _recall_fn,
-                include_recall_context=rt.cfg.sliding_window.compact_include_recall,
+                include_recall_context=rt.config.sliding_window.compact_include_recall,
             )
             except Exception as e:  # noqa: BLE001 — never crash the beat
                 rt.log.hb_warn(
