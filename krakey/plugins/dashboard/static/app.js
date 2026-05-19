@@ -786,7 +786,9 @@ function renderAttachStrip() {
       `${escapeHtml(a.name)} (${escapeHtml(formatBytes(a.size))})`,
     );
     const x = document.createElement("span");
-    x.className = "x"; x.textContent = "×"; x.title = "remove";
+    x.className = "x";
+    x.title = "remove"; x.setAttribute("aria-label", "remove");
+    if (typeof window.biIcon === "function") { x.innerHTML = window.biIcon("x-lg", 12); } else { x.textContent = "×"; }
     x.addEventListener("click", () => {
       pendingAttachments.splice(i, 1);
       renderAttachStrip();
@@ -2111,6 +2113,9 @@ function renderSettingsForm() {
   settingsForm.appendChild(renderEngineOverridesSection(
     cfgState.core_implementations,
   ));
+  // Rebuild the jump-rail and attach scrollspy after all sections
+  // are in the DOM. Must run last so every .cfg-section is present.
+  renderSettingsRail();
 }
 
 function renderEngineOverridesSection(cfg) {
@@ -2483,6 +2488,124 @@ function _wireSectionToggle() {
 }
 _wireSectionToggle();
 
+// ── Settings jump-rail + scrollspy ───────────────────────────────────────
+// Active IntersectionObserver for the scrollspy. Disconnected and
+// recreated on every renderSettingsRail() call so stale section
+// references don't leak across form rebuilds.
+let _settingsSpy = null;
+
+// Shortened display labels for rail links where the full title is too
+// long for the compact rail column.
+const _RAIL_SHORT_LABELS = {
+  "Sliding Window (Working Memory)": "Sliding Window",
+};
+
+// Derive a CSS-id-safe slug from a section title.
+function _sectionSlug(title) {
+  return "cfg-sec-" + title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+// Build/rebuild the #settings-rail nav and attach a scrollspy observer.
+// Called at the end of renderSettingsForm() after all .cfg-section
+// elements have been appended to #settings-form.
+function renderSettingsRail() {
+  const rail = document.getElementById("settings-rail");
+  const scroll = document.querySelector(".settings-scroll");
+  // Defensive guard — if either element is absent (e.g. a different
+  // tab is active and the DOM hasn't been injected yet), bail out
+  // without throwing.
+  if (!rail || !scroll) return;
+
+  // Disconnect any previous scrollspy observer before rebuilding.
+  if (_settingsSpy) {
+    _settingsSpy.disconnect();
+    _settingsSpy = null;
+  }
+
+  // Collect all cfg-sections and assign stable slug ids.
+  const sections = Array.from(
+    document.querySelectorAll("#settings-form > .cfg-section"),
+  );
+
+  rail.innerHTML = "";
+
+  for (const sec of sections) {
+    const h3 = sec.querySelector("h3[data-section-title]");
+    if (!h3) continue;
+    const title = h3.getAttribute("data-section-title");
+    const id = _sectionSlug(title);
+    sec.id = id;
+    sec.style.scrollMarginTop = "12px";
+
+    // Build rail link.
+    const a = document.createElement("a");
+    a.className = "rail-link";
+    a.href = "#" + id;
+    a.dataset.title = title;
+
+    // Icon span.
+    const icSpan = document.createElement("span");
+    icSpan.className = "rail-ic";
+    const iconName = SECTION_ICONS[title];
+    if (iconName && window.biIcon) {
+      const tpl = document.createElement("template");
+      tpl.innerHTML = window.biIcon(iconName, 16);
+      const svg = tpl.content.firstElementChild;
+      if (svg) icSpan.appendChild(svg);
+    }
+    a.appendChild(icSpan);
+
+    // Label span — use short label if available.
+    const lblSpan = document.createElement("span");
+    lblSpan.className = "rail-lbl";
+    lblSpan.textContent = _RAIL_SHORT_LABELS[title] || title;
+    a.appendChild(lblSpan);
+
+    // Click handler: expand section if collapsed, then smooth-scroll.
+    a.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      const target = document.getElementById(id);
+      if (!target) return;
+      if (collapsedSections.has(title)) {
+        collapsedSections.delete(title);
+        // renderSettingsForm rebuilds the DOM (including the rail),
+        // so schedule the scroll for after the next paint.
+        renderSettingsForm();
+        requestAnimationFrame(() => {
+          const el = document.getElementById(id);
+          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      } else {
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    });
+
+    rail.appendChild(a);
+  }
+
+  // Scrollspy via IntersectionObserver on .settings-scroll.
+  const links = Array.from(rail.querySelectorAll(".rail-link"));
+  if (links.length === 0) return;
+
+  _settingsSpy = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        const targetId = "#" + entry.target.id;
+        for (const lk of links) lk.classList.remove("active");
+        const active = links.find((lk) => lk.getAttribute("href") === targetId);
+        if (active) active.classList.add("active");
+      }
+    },
+    { root: scroll, rootMargin: "-8% 0px -80% 0px", threshold: 0 },
+  );
+
+  for (const sec of sections) {
+    if (sec.id) _settingsSpy.observe(sec);
+  }
+}
+// ── end settings rail ────────────────────────────────────────────────────
+
 function renderGenericSection(key, title, target, schema) {
   const sec = makeSection(title);
   const body = sec.querySelector(".body");
@@ -2520,7 +2643,8 @@ function _renderStringList(arr, opts) {
       chip.appendChild(document.createTextNode(v));
       const x = document.createElement("span");
       x.className = "x";
-      x.textContent = "×";
+      x.title = "remove"; x.setAttribute("aria-label", "remove");
+      if (typeof window.biIcon === "function") { x.innerHTML = window.biIcon("x-lg", 12); } else { x.textContent = "×"; }
       x.addEventListener("click", () => {
         const idx = arr.indexOf(v);
         if (idx !== -1) arr.splice(idx, 1);
@@ -2926,7 +3050,7 @@ function renderFatigueThresholds(fatigue) {
       keyIn.type = "number"; keyIn.value = k; keyIn.style.maxWidth = "80px";
       const valIn = document.createElement("input");
       valIn.type = "text"; valIn.value = fatigue.thresholds[k];
-      const del = mkBtn("×", () => { delete fatigue.thresholds[k]; redraw(); }, "btn-x");
+      const del = iconBtn("x-lg", () => { delete fatigue.thresholds[k]; redraw(); }, "btn-x", "remove", 13, "×");
       keyIn.addEventListener("change", () => {
         const newK = parseInt(keyIn.value, 10);
         if (Number.isNaN(newK) || String(newK) === k) return;
@@ -2954,6 +3078,24 @@ function mkBtn(text, onClick, cls = "") {
   b.type = "button";
   b.className = "btn-mini" + (cls ? " " + cls : "");
   b.textContent = text;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+// Like mkBtn but renders an SVG icon via biIcon instead of a text glyph.
+// `label` is used as title + aria-label for accessibility.
+// Falls back gracefully to a text glyph when window.biIcon is unavailable.
+function iconBtn(iconName, onClick, cls, label, size, fallbackGlyph) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "btn-mini" + (cls ? " " + cls : "");
+  b.title = label;
+  b.setAttribute("aria-label", label);
+  if (typeof window.biIcon === "function") {
+    b.innerHTML = window.biIcon(iconName, size);
+  } else {
+    b.textContent = fallbackGlyph;
+  }
   b.addEventListener("click", onClick);
   return b;
 }
@@ -3199,7 +3341,7 @@ function renderModelRow(prov, idx) {
   nameIn.addEventListener("input", () => { m.name = nameIn.value; });
   row.appendChild(nameIn);
   row.appendChild(renderCapabilitiesMulti(m));
-  const del = mkBtn("×", () => { prov.models.splice(idx, 1); renderSettingsForm(); }, "btn-x");
+  const del = iconBtn("x-lg", () => { prov.models.splice(idx, 1); renderSettingsForm(); }, "btn-x", "remove", 13, "×");
   row.appendChild(del);
   return row;
 }
@@ -3216,7 +3358,9 @@ function renderCapabilitiesMulti(model) {
       chip.className = "cap-chip";
       chip.appendChild(document.createTextNode(cap));
       const x = document.createElement("span");
-      x.className = "x"; x.textContent = "×";
+      x.className = "x";
+      x.title = "remove"; x.setAttribute("aria-label", "remove");
+      if (typeof window.biIcon === "function") { x.innerHTML = window.biIcon("x-lg", 12); } else { x.textContent = "×"; }
       x.addEventListener("click", () => {
         model.capabilities = model.capabilities.filter((c) => c !== cap);
         repaint();
@@ -3400,7 +3544,7 @@ function renderTagRow(tname, tags, providers) {
   });
   refreshModels();
 
-  const del = mkBtn("×", () => {
+  const del = iconBtn("x-lg", () => {
     if (!confirm(`delete tag "${tname}"?`)) return;
     delete tags[tname];
     // Also clear any core_purpose mapping that referenced this tag —
@@ -3412,7 +3556,7 @@ function renderTagRow(tname, tags, providers) {
     if (llm.embedding === tname) llm.embedding = "";
     if (llm.reranker === tname) llm.reranker = "";
     renderSettingsForm();
-  }, "btn-x");
+  }, "btn-x", "remove", 13, "×");
 
   wrap.appendChild(provSel); wrap.appendChild(modSel); wrap.appendChild(del);
   row.appendChild(wrap);
@@ -3641,9 +3785,9 @@ function _purposeRow(llm, purp, tagNames, helpText) {
   // are persistent. (`isKnown` was already computed above to gate
   // the editable-name path — reuse instead of redeclaring.)
   if (!isKnown) {
-    const del = mkBtn("×", () => {
+    const del = iconBtn("x-lg", () => {
       delete llm.core_purposes[purp]; renderSettingsForm();
-    }, "btn-x");
+    }, "btn-x", "remove", 13, "×");
     wrap.appendChild(del);
   } else {
     wrap.appendChild(document.createElement("span"));
@@ -4048,8 +4192,8 @@ function _renderPluginCard(plugin, enabled, liveByName, modIdx, modCount) {
   // ordered modifiers list. modIdx === -1 means "not in modifier
   // block" (tool/channel-only plugin or disabled).
   if (enabled && _hasModifierKind(plugin) && modIdx >= 0 && modCount > 1) {
-    const upBtn = mkBtn("↑", () => _reorderEnabled(modIdx, -1));
-    const dnBtn = mkBtn("↓", () => _reorderEnabled(modIdx, +1));
+    const upBtn = iconBtn("arrow-up", () => _reorderEnabled(modIdx, -1), "", "move up", 12, "↑");
+    const dnBtn = iconBtn("arrow-down", () => _reorderEnabled(modIdx, +1), "", "move down", 12, "↓");
     upBtn.disabled = (modIdx === 0);
     dnBtn.disabled = (modIdx === modCount - 1);
     head.appendChild(upBtn);

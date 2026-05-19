@@ -8,9 +8,9 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   font-size: 11px;
-  color: var(--muted);
+  color: var(--text-2);
 }
 .log-toolbar .log-toggle {
   display: inline-flex;
@@ -19,25 +19,26 @@
   cursor: pointer;
   user-select: none;
 }
-.log-toolbar #log-count { margin-left: auto; }
+.log-toolbar #log-count { margin-left: auto; color: var(--muted); }
 
 .log-stream {
   flex: 1;
   margin: 0;
-  padding: 8px 10px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  padding: 12px 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 11px;
-  line-height: 1.45;
+  line-height: 1.5;
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
   overflow: auto;
 }
 .log-stream .log-line { display: block; }
-.log-stream .log-line.warn { color: var(--yellow); }
+.log-stream .log-line.warn  { color: var(--yellow); }
 .log-stream .log-line.error { color: var(--red); }
 
 /* ANSI colour spans. Parsed client-side from \x1b[<n>m sequences.
