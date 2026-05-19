@@ -15,4 +15,23 @@ builtin_engines:
       Per-stimulus vec_search → rerank → token-budget cut +
       covered/uncovered partition for the next beat.
 
-config_schema: []
+config_schema:
+  - field: semantic_association_enabled
+    type: boolean
+    default: false
+    help: >
+      When enabled, each stimulus is sent to a bound LLM that derives
+      key persons, dated events (relative dates resolved to absolute
+      ISO YYYY-MM-DD), places, and relations — each as its own recall
+      query through the existing vec_search → rerank → weighted-merge
+      loop. OFF = raw text queries only (byte-identical to baseline
+      behavior). Auto-falls back to raw text if the bound LLM is
+      unavailable or returns an error.
+  - field: semantic_association_purpose
+    type: text
+    default: "recall_enrichment"
+    help: >
+      Core-purpose name resolved via ``llm.core_purposes`` → tag →
+      client. Bind it in LLM settings to choose which model derives
+      the search phrases. When the purpose is unbound the enrichment
+      layer is inert and raw text queries are used instead.

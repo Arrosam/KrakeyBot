@@ -14,6 +14,7 @@ orchestrator subclass, and override ``_make_orchestrator()``.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -21,6 +22,10 @@ if TYPE_CHECKING:
         HeartbeatOrchestrator,
     )
     from krakey.runtime.runtime import Runtime
+
+# How long to sleep between pause-file polls while the heartbeat
+# is paused (seconds).
+_PAUSE_POLL_INTERVAL_S = 0.25
 
 
 class DefaultHeartbeatEngine:
@@ -77,6 +82,10 @@ class DefaultHeartbeatEngine:
         """
         count = 0
         while not runtime.stop_requested:
+            runtime.poll_pause_file()
+            if runtime.paused:
+                await asyncio.sleep(_PAUSE_POLL_INTERVAL_S)
+                continue
             await self.beat(runtime)
             count += 1
             if iterations is not None and count >= iterations:

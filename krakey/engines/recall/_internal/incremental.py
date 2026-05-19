@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from krakey.interfaces.engines.reranker import RerankerEngine
     from krakey.interfaces.duck import AsyncEmbedder
     from krakey.models.stimulus import Stimulus
+    from krakey.engines.recall._internal.enrich import SemanticAssociationEnricher
 
 
 # Heuristic average rendered-token cost of a single GM node header.
@@ -85,7 +86,8 @@ class IncrementalRecall:
                   reranker: "RerankerEngine | None" = None,
                   neighbor_depth: int = 1,
                   vec_min_similarity: float = 0.3,
-                  now: Callable[[], datetime] | None = None):
+                  now: Callable[[], datetime] | None = None,
+                  enricher: "SemanticAssociationEnricher | None" = None):
         """``recall_token_budget`` is an absolute cap: finalize() walks
         candidates in weight-descending order and stops once the
         cumulative rendered-token cost would exceed the budget.
@@ -107,6 +109,7 @@ class IncrementalRecall:
         self._neighbor_depth = neighbor_depth
         self._vec_min_sim = vec_min_similarity
         self._now = now or datetime.now
+        self._enricher = enricher
         self._merged: dict[int, dict[str, Any]] = {}
         self.processed_stimuli: list["Stimulus"] = []
         self._per_stimulus_ids: list[set[int]] = []
@@ -155,21 +158,49 @@ class IncrementalRecall:
 
     async def add_stimuli(self, stimuli: list["Stimulus"]) -> None:
         for s in stimuli:
-            candidates = await query_gm_with_fts_fallback(
-                self._memory, self._embedder, s.content,
-                top_k=self._screening_top_k(),
-                min_similarity=self._vec_min_sim,
-            )
-            ranked = await self._rerank_or_fallback(s.content, candidates)
+            # Build the list of queries for this stimulus. When semantic
+            # association is enabled and the enricher returns phrases, each
+            # phrase becomes its own query; otherwise fall back to raw text.
+            queries: list[str] = [s.content]
+            if self._enricher is not None:
+                try:
+                    assoc = await self._enricher.enrich(
+                        s.content, now=self._now()
+                    )
+                except Exception:  # noqa: BLE001 — enrichment must never break recall
+                    assoc = None
+                if assoc:
+                    queries = assoc
+
             weight = 10.0 if getattr(s, "adrenalin", False) else 1.0
+
+            # Intra-stimulus dedup: accumulate the UNION of results across
+            # all sub-queries of THIS stimulus, keeping the highest score
+            # seen per node id. Weight is merged into self._merged exactly
+            # ONCE per node id per stimulus, regardless of how many
+            # sub-queries hit it.
+            stimulus_best: dict[int, tuple[dict[str, Any], float]] = {}
+            for q in queries:
+                candidates = await query_gm_with_fts_fallback(
+                    self._memory, self._embedder, q,
+                    top_k=self._screening_top_k(),
+                    min_similarity=self._vec_min_sim,
+                )
+                ranked = await self._rerank_or_fallback(q, candidates)
+                for (node, score) in ranked:
+                    nid = node["id"]
+                    if nid not in stimulus_best or score > stimulus_best[nid][1]:
+                        stimulus_best[nid] = (node, score)
+
+            # Merge the per-stimulus union into the shared accumulator.
             hit_ids: set[int] = set()
-            for (node, _score) in ranked:
-                nid = node["id"]
+            for nid, (node, _score) in stimulus_best.items():
                 hit_ids.add(nid)
                 if nid in self._merged:
                     self._merged[nid]["weight"] += weight
                 else:
                     self._merged[nid] = {"node": node, "weight": weight}
+
             self._per_stimulus_ids.append(hit_ids)
             self.processed_stimuli.append(s)
 

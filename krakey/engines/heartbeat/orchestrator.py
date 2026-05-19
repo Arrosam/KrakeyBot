@@ -45,7 +45,7 @@ from krakey.runtime.commands.commands import (
 from krakey.self_agent import parse_self_output
 
 if TYPE_CHECKING:
-    from krakey.interfaces.engines.recall import RecallSession
+    from krakey.interfaces.engines.recall import RecallResult, RecallSession
     from krakey.prompt.views import CapabilityView, StatusSnapshot
     from krakey.runtime.runtime import Runtime
 
@@ -58,6 +58,26 @@ _REQUIRED_SELF_TAGS = frozenset({"THINKING", "DECISION"})
 """Tags that must appear in Self's response for it to count as
 structurally valid.  Missing either triggers the structured-output
 retry loop rather than forwarding a half-parsed result."""
+
+
+def _raw_requests_builtin_sleep(raw: str) -> bool:
+    """True iff ``raw`` contains a <tool_call> block whose JSON
+    ``name`` is the built-in sleep tool. Used to waive the [IDLE]
+    requirement on sleep beats. Deliberately narrow: only a cleanly
+    parsed <tool_call>{"name":"sleep"} qualifies — malformed blocks
+    and natural-language phrasing do NOT (the hypothalamus decides
+    NL sleep post-translation; no pre-translation predicate exists)."""
+    import json
+    import re
+    from krakey.runtime.builtin_tools import SLEEP_TOOL_NAME
+    for block in re.findall(r"<tool_call>(.*?)</tool_call>", raw, re.DOTALL):
+        try:
+            data = json.loads(block.strip())
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(data, dict) and data.get("name") == SLEEP_TOOL_NAME:
+            return True
+    return False
 
 
 @dataclass
@@ -91,6 +111,24 @@ def _summarize_stimuli(stimuli: list[Stimulus]) -> str:
     if not stimuli:
         return "(none)"
     return " | ".join(f"{s.source}: {s.content}" for s in stimuli)
+
+
+def _summarize_recall(recall_result: "RecallResult") -> str:
+    """Compact one-liner for history persistence: node names + categories + edge count."""
+    if not recall_result.nodes:
+        return ""
+    parts = []
+    for n in recall_result.nodes[:8]:
+        name = n.get("name", "?")
+        cat = n.get("category", "?")
+        parts.append(f"[{name}]({cat})")
+    overflow = len(recall_result.nodes) - 8
+    summary = ", ".join(parts)
+    if overflow > 0:
+        summary += f" +{overflow} more"
+    if recall_result.edges:
+        summary += f" | {len(recall_result.edges)} edge(s)"
+    return summary
 
 
 # Per-block payload truncation in the format-failure stimulus.
@@ -218,7 +256,7 @@ class HeartbeatOrchestrator:
         parsed = await self._phase_run_self(stimuli, recall_result, counts)
         if parsed is None:
             return  # Self LLM error already logged + slept
-        self._phase_save_round(parsed, stimuli)
+        self._phase_save_round(parsed, stimuli, recall_result)
         # ``_phase_log_self_output`` publishes a ``NoteEvent`` when
         # parsed.note is non-empty; the bootstrap plugin (and any
         # future Note observer) subscribes to that event for its
@@ -226,7 +264,7 @@ class HeartbeatOrchestrator:
         self._phase_log_self_output(parsed)
         await self._phase_auto_ingest_feedback(stimuli)
         sleep_requested = await self._phase_apply_decision(
-            parsed, recall_result,
+            parsed, recall_result, counts,
         )
         if sleep_requested:
             await self._perform_sleep(
@@ -327,8 +365,11 @@ class HeartbeatOrchestrator:
         rt = self._rt
         async def _recall_fn(text: str):
             return await rt.memory.fts_search(text, top_k=10)
-        await compact_if_needed(rt.explicit_history, rt.memory, rt.compact_llm,
-                                 recall_fn=_recall_fn)
+        await compact_if_needed(
+            rt.explicit_history, rt.memory, rt.compact_llm,
+            recall_fn=_recall_fn,
+            include_recall_context=rt.config.sliding_window.compact_include_recall,
+        )
 
     async def _phase_finalize_recall_and_pushback(self):
         """Finalize recall + cap-1 retry of uncovered stimuli."""
@@ -407,7 +448,11 @@ class HeartbeatOrchestrator:
 
             # ---- Structured-output validation ----
             parsed = parse_self_output(raw)
-            missing = _REQUIRED_SELF_TAGS - parsed.found_tags
+            required = _REQUIRED_SELF_TAGS | (
+                frozenset() if _raw_requests_builtin_sleep(raw)
+                else frozenset({"IDLE"})
+            )
+            missing = required - parsed.found_tags
             if not missing:
                 break
 
@@ -427,7 +472,7 @@ class HeartbeatOrchestrator:
             rt.log.hb(
                 f"Self output missing required tags "
                 f"(found: {{{', '.join(sorted(parsed.found_tags))}}}, "
-                f"required: {{{', '.join(sorted(_REQUIRED_SELF_TAGS))}}}); "
+                f"required: {{{', '.join(sorted(required))}}}); "
                 f"struct retry {struct_attempt} ({tier}), sleeping {delay}s"
             )
             await asyncio.sleep(delay)
@@ -443,7 +488,7 @@ class HeartbeatOrchestrator:
         ))
         return parsed
 
-    def _phase_save_round(self, parsed, stimuli) -> None:
+    def _phase_save_round(self, parsed, stimuli, recall_result) -> None:
         rt = self._rt
         rt.explicit_history.append(ExplicitHistoryRound(
             heartbeat_id=rt.heartbeat_count,
@@ -451,6 +496,7 @@ class HeartbeatOrchestrator:
             decision_text=parsed.decision,
             note_text=parsed.note,
             thinking_text=parsed.thinking,
+            recall_summary=_summarize_recall(recall_result),
         ))
 
     def _phase_log_self_output(self, parsed) -> None:
@@ -484,7 +530,8 @@ class HeartbeatOrchestrator:
             except Exception as e:  # noqa: BLE001
                 rt.log.runtime_error(f"auto_ingest error: {e}")
 
-    async def _phase_apply_decision(self, parsed, recall_result) -> bool:
+    async def _phase_apply_decision(self, parsed, recall_result,
+                                     counts: "_GMCounts") -> bool:
         """Convert Self's response into tool calls + dispatch.
 
         ``rt.decision.translate(...)`` produces the structured
@@ -571,6 +618,25 @@ class HeartbeatOrchestrator:
                 c for c in result.tool_calls
                 if c.tool != SLEEP_TOOL_NAME
             ]
+        # Guard: refuse voluntary sleep when energy is high. Applies to
+        # BOTH the sleep-tool-call path above AND a DecisionEngine that
+        # sets result.sleep directly (e.g. the Hypothalamus boolean) —
+        # otherwise that engine bypasses the policy entirely. Mirrors
+        # the condition under which fatigue_hint() returns
+        # LOW_FATIGUE_HINT — pct below every configured threshold.
+        if result.sleep:
+            thresholds = rt.config.fatigue.thresholds
+            if thresholds and counts.fatigue_pct < min(thresholds):
+                result.sleep = False
+                await rt.buffer.push(Stimulus(
+                    type="system_event", source="system:sleep",
+                    content=(
+                        f"Sleep refused: energy is high (fatigue "
+                        f"{counts.fatigue_pct}% is below the minimum sleep "
+                        f"threshold {min(thresholds)}%). Stay active."
+                    ),
+                    timestamp=datetime.now(), adrenalin=False,
+                ))
         # Engine-mediated dispatch — runs the 4 side-effects (log +
         # publish, dispatch tool calls, apply memory writes, apply
         # memory updates) in one call. The DispatchEngine slot lets
@@ -706,8 +772,10 @@ class HeartbeatOrchestrator:
                 f"round (heartbeat #{oldest.heartbeat_id}) into GM"
             )
             try:
-                await compact_round(oldest, rt.memory, rt.compact_llm,
-                                      _recall_fn)
+                await compact_round(
+                oldest, rt.memory, rt.compact_llm, _recall_fn,
+                include_recall_context=rt.config.sliding_window.compact_include_recall,
+            )
             except Exception as e:  # noqa: BLE001 — never crash the beat
                 rt.log.hb_warn(
                     f"budget-driven compact failed: {e} — round "

@@ -209,6 +209,11 @@ class PromptBuilder:
         if not recall.nodes and not recall.edges:
             return "# [GRAPH MEMORY]\n(no recall)"
         lines = ["# [GRAPH MEMORY]"]
+        recalled_names: set[str] = set()
+        for n in recall.nodes:
+            recalled_names.add(n.get("name", ""))
+        unexplored_count = 0
+        kb_refs: list[str] = []
         for n in recall.nodes:
             kw = ", ".join(n.get("neighbor_keywords", []))
             lines.append(
@@ -217,12 +222,32 @@ class PromptBuilder:
             )
             if kw:
                 lines.append(f"  neighbors: {kw}")
+                for k in n.get("neighbor_keywords", []):
+                    if k not in recalled_names:
+                        unexplored_count += 1
+            meta = n.get("metadata") or {}
+            if meta.get("is_kb_index"):
+                kb_id = meta.get("kb_id", n.get("name", "?"))
+                kb_refs.append(kb_id)
         for e in recall.edges:
             lines.append(
                 f"- [{e.get('source', '?')}] "
                 f"--{e.get('predicate', '?')}--> "
                 f"[{e.get('target', '?')}]"
             )
+        if unexplored_count > 0 or kb_refs:
+            lines.append("")
+            lines.append("Exploration hints:")
+            if unexplored_count > 0:
+                lines.append(
+                    f"- {unexplored_count} neighbor(s) not shown "
+                    f"(use memory_recall to explore)"
+                )
+            for kb_id in kb_refs:
+                lines.append(
+                    f"- KB \"{kb_id}\" available — "
+                    f"use memory_recall with kb_id to browse full content"
+                )
         return "\n".join(lines)
 
     def render_history(self, window: list[ExplicitHistoryRound]) -> str:
@@ -238,6 +263,8 @@ class PromptBuilder:
         for r in window:
             lines.append(f"--- Heartbeat #{r.heartbeat_id} ---")
             lines.append(f"Stimulus: {r.stimulus_summary}")
+            if r.recall_summary:
+                lines.append(f"Recalled: {r.recall_summary}")
             if r.thinking_text:
                 lines.append(f"Thinking: {r.thinking_text}")
             lines.append(f"Decision: {r.decision_text}")

@@ -11,6 +11,7 @@ algorithm lives in
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -193,6 +194,7 @@ class Runtime:
             memory=self.memory,
             embedder=deps.embedder,
             reranker=self.reranker,
+            factory=self.llm_factory,
         )
         self.dispatch = self._engine_registry.resolve(
             "dispatch",
@@ -298,6 +300,8 @@ class Runtime:
         # dashboard. Not persisted across restarts.
         self._sleep_cycles = 0
         self._stop = False
+        self._paused: bool = False
+        self._pause_file: Path | None = None
         self._min = idle_min if idle_min is not None else self.config.idle.min_interval
         self._max = idle_max if idle_max is not None else self.config.idle.max_interval
 
@@ -715,6 +719,78 @@ class Runtime:
         """Public read-side of ``request_stop`` — what the heartbeat
         Engine polls between beats."""
         return self._stop
+
+    def set_pause_file(self, path: Path | None) -> None:
+        """Store the pause-control-file path.
+
+        When set, ``poll_pause_file`` reads this file each call to
+        determine whether the heartbeat should be paused. Passing
+        ``None`` clears the control file path AND resets ``_paused``
+        to ``False`` — if you stop watching a pause file you are no
+        longer paused. (When a real path is passed ``_paused`` is left
+        unchanged; the next ``poll_pause_file`` call will update it.)
+        """
+        self._pause_file = path
+        if path is None:
+            self._paused = False
+
+    def poll_pause_file(self) -> None:
+        """Synchronously update ``_paused`` from the control file.
+
+        Idempotent — safe to call every beat.
+
+        Rules:
+        - No control file configured → return immediately; ``_paused``
+          is left unchanged (defaults to ``False`` from ``__init__``).
+        - File absent → ``_paused = False``.
+        - File present, content non-numeric (empty/junk) → indefinite
+          pause: ``_paused = True``.
+        - File present, content is a float → epoch-seconds deadline:
+          past deadline → ``_paused = False``, file unlinked best-effort;
+          future deadline → ``_paused = True``, file left in place.
+        - All I/O errors (vanished file, permission, etc.) are swallowed;
+          method must not raise.
+        """
+        if self._pause_file is None:
+            return
+
+        if not self._pause_file.exists():
+            self._paused = False
+            return
+
+        try:
+            text = self._pause_file.read_text(encoding="utf-8", errors="replace")
+        except (FileNotFoundError, OSError):
+            # File disappeared between exists() check and read — treat
+            # as absent (not paused).
+            self._paused = False
+            return
+
+        stripped = text.strip()
+        try:
+            deadline = float(stripped)
+        except ValueError:
+            # Empty, whitespace-only, or non-numeric → indefinite pause.
+            self._paused = True
+            return
+
+        if time.time() >= deadline:
+            # Deadline has passed — resume and clean up stale file.
+            self._paused = False
+            try:
+                self._pause_file.unlink()
+            except (FileNotFoundError, OSError):
+                pass
+        else:
+            self._paused = True
+
+    @property
+    def paused(self) -> bool:
+        """Read-only view of the pause flag set by ``poll_pause_file``.
+
+        Analogous to ``stop_requested``. The heartbeat Engine polls this
+        between beats to decide whether to skip the next cycle."""
+        return self._paused
 
     # ---------- heartbeat algorithm ----------
 

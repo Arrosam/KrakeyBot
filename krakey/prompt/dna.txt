@@ -149,10 +149,15 @@ Two layers:
 Four ways to use:
 - **Auto-recall (passive).** Runtime vec_searches GM against
   `[STIMULUS]` before each beat → `[GRAPH MEMORY]`. Reflex.
+  Shows surface nodes only. Check "Exploration hints" at the end —
+  when it says neighbors not shown or a KB is available, use
+  `memory_recall` to explore deeper.
 - **Proactive recall (explicit).** `[DECISION]` to recall or modifier
   on topic → dispatches a recall tool if one is in
   `[CAPABILITIES]` → topic nodes + neighbors + edges → YOUR RECENT
-  ACTIONS next beat.
+  ACTIONS next beat. **Use this whenever [GRAPH MEMORY] hints at
+  deeper content** — KB indexes, unexplored neighbors, or when you
+  need the full graph context to make a decision.
 - **Explicit write.** `[DECISION]` to remember something → writes into
   GM immediately. Full detail. Bypasses lossy auto-compact.
 - **Auto-compact (passive).** Sliding window overflow → runtime

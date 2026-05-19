@@ -499,9 +499,11 @@ async def test_bootstrap_self_model_update_and_completion(tmp_path):
     self_llm = ScriptedLLM([
         ('[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n'
          '[NOTE]\n<self-model>{"identity":{"name":"Krakey",'
-         '"persona":"curious"}}</self-model>'),
+         '"persona":"curious"}}</self-model>\n'
+         '[IDLE]\n1'),
         ('[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n'
-         '[NOTE]\nBootstrap complete'),
+         '[NOTE]\nBootstrap complete\n'
+         '[IDLE]\n1'),
     ])
     hypo_llm = ScriptedLLM([])
 

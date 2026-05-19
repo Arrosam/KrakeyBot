@@ -41,7 +41,7 @@ _log = logging.getLogger(__name__)
 
 # Bump if the on-disk shape changes. Older files with a different
 # version are ignored (window starts empty + a stderr nudge).
-_STATE_SCHEMA_VERSION = 1
+_STATE_SCHEMA_VERSION = 2
 
 
 class SlidingWindow:
@@ -93,6 +93,7 @@ class SlidingWindow:
             + estimate_tokens(r.decision_text)
             + estimate_tokens(r.note_text)
             + estimate_tokens(r.thinking_text)
+            + estimate_tokens(r.recall_summary)
             for r in self.rounds
         )
 
@@ -153,6 +154,7 @@ class SlidingWindow:
                     decision_text=str(entry.get("decision_text", "")),
                     note_text=str(entry.get("note_text", "")),
                     thinking_text=str(entry.get("thinking_text", "")),
+                    recall_summary=str(entry.get("recall_summary", "")),
                 ))
             except (KeyError, TypeError, ValueError) as e:
                 _log.warning(

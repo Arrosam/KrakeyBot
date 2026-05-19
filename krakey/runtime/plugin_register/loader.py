@@ -189,6 +189,10 @@ class PluginLoader:
         plugin_cache: dict[str, Any] = {}
 
         any_registered = False
+        # Tracks whether at least one component was processed without
+        # error — includes components that intentionally returned an
+        # empty list (explicit no-op), as distinct from None (opt-out).
+        any_ok_component = False
         any_error: str | None = None
         for component in meta.components:
             # Engine components are metadata for the EngineRegistry's
@@ -223,11 +227,44 @@ class PluginLoader:
             if instance is None:
                 continue  # factory opted out (e.g. unbound LLM)
 
+            # Tool factories may return a list of Tool instances so
+            # that a single plugin component declaration can vend
+            # multiple tools (e.g. a family of related actions).
+            # Each element is registered independently and gets its
+            # own bookkeeping entry. An empty list is an intentional
+            # no-op (the factory decided at runtime to contribute
+            # zero tools); it is counted as a successfully-processed
+            # component so the plugin does not appear to have failed.
+            # Channel/Modifier factories are single-instance only — a
+            # list there falls through to _register_component which
+            # will reject the unknown type and print a clear error
+            # rather than silently misbehave.
+            if component.kind == "tool" and isinstance(instance, list):
+                # Empty list: intentional no-op — mark as ok, register
+                # nothing. Non-empty list: register each item.
+                any_ok_component = True
+                for item in instance:
+                    registered_ok = self._register_component(
+                        plugin_name, component, item,
+                    )
+                    if registered_ok:
+                        any_registered = True
+                        item_name = getattr(item, "name", "?")
+                        report["components"].append({
+                            "kind": component.kind,
+                            "name": item_name,
+                        })
+                        self.plugin_components.setdefault(
+                            plugin_name, [],
+                        ).append((component.kind, item_name))
+                continue
+
             registered_ok = self._register_component(
                 plugin_name, component, instance,
             )
             if registered_ok:
                 any_registered = True
+                any_ok_component = True
                 inst_name = getattr(instance, "name", "?")
                 report["components"].append({
                     "kind": component.kind,
@@ -237,17 +274,17 @@ class PluginLoader:
                     plugin_name, [],
                 ).append((component.kind, inst_name))
 
-        report["ok"] = any_registered
-        if any_registered:
+        report["ok"] = any_ok_component
+        if any_ok_component:
             self.loaded_plugin_names.add(plugin_name)
-        if not any_registered and any_error is None:
+        if not any_ok_component and any_error is None:
             # Meta parsed and components iterated, but everything
             # opted out (None returns). Not strictly a failure.
             report["error"] = (
                 "all components opted out (returned None) — check "
                 "plugin config / LLM bindings"
             )
-        elif not any_registered:
+        elif not any_ok_component:
             report["error"] = any_error
         return report
 
@@ -347,12 +384,22 @@ class PluginLoader:
         """Route a built component to the right registry by kind. On
         success, record ``(kind, name)`` in ``self.registered`` so
         the observer can label it as plugin-sourced. Returns
-        True iff the component was successfully registered."""
+        True iff the component was successfully registered.
+
+        For tool kind, expects a single Tool instance. List dispatch
+        is handled upstream in ``register_one`` before this is
+        called; individual items are passed here one at a time.
+        Duplicate tool names are resolved by deregistering the
+        existing entry first (last-registration-wins, no raise)."""
         kind = component.kind
         try:
             if kind == "modifier":
                 self._modifiers.register(instance)
             elif kind == "tool":
+                # Deregister any existing entry under the same name
+                # before registering so duplicate-name collisions
+                # follow last-registration-wins instead of raising.
+                self._tools.deregister(instance.name)
                 self._tools.register(instance)
             elif kind == "channel":
                 self._channels.register(instance)

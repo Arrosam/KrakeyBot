@@ -30,8 +30,22 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="cmd", metavar="<command>")
 
-    sub.add_parser("run", help="run heartbeat in foreground (Ctrl+C to stop)")
-    sub.add_parser("start", help="start heartbeat as background daemon")
+    run_p = sub.add_parser("run", help="run heartbeat in foreground (Ctrl+C to stop)")
+    run_p.add_argument(
+        "-p", "--pause",
+        action="store_true",
+        dest="start_paused",
+        help="start with heartbeat paused (use `krakey resume` to unpause)",
+    )
+
+    start_p = sub.add_parser("start", help="start heartbeat as background daemon")
+    start_p.add_argument(
+        "-p", "--pause",
+        action="store_true",
+        dest="start_paused",
+        help="start with heartbeat paused (use `krakey resume` to unpause)",
+    )
+
     sub.add_parser("stop", help="stop the running daemon")
     sub.add_parser(
         "restart",
@@ -39,6 +53,22 @@ def _build_parser() -> argparse.ArgumentParser:
              "that need a fresh process)",
     )
     sub.add_parser("status", help="show whether the daemon is running")
+
+    pause_p = sub.add_parser(
+        "pause",
+        help="pause the running daemon's heartbeat (optional duration in seconds)",
+    )
+    pause_p.add_argument(
+        "seconds",
+        type=int,
+        nargs="?",
+        default=None,
+        metavar="SECONDS",
+        help="pause for this many seconds then auto-resume; omit for indefinite pause",
+    )
+
+    sub.add_parser("resume", help="resume a paused daemon")
+
     sub.add_parser("onboard", help="run the interactive onboarding wizard")
 
     inst = sub.add_parser(

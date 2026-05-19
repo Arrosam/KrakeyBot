@@ -100,6 +100,8 @@ consolidation needed before next active phase. sleep now.
 
 [DECISION]
 enter sleep mode
+
+[IDLE] 120
 ```
 
 **5. Behavioral pattern across beats**

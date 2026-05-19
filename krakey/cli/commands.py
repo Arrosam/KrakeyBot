@@ -14,12 +14,22 @@ import argparse
 
 def run(args: argparse.Namespace) -> int:
     from . import lifecycle
-    return lifecycle.run_foreground()
+    return lifecycle.run_foreground(start_paused=getattr(args, "start_paused", False))
 
 
 def start(args: argparse.Namespace) -> int:
     from . import lifecycle
-    return lifecycle.start_daemon()
+    return lifecycle.start_daemon(start_paused=getattr(args, "start_paused", False))
+
+
+def pause(args: argparse.Namespace) -> int:
+    from . import lifecycle
+    return lifecycle.pause_daemon(seconds=args.seconds)
+
+
+def resume(args: argparse.Namespace) -> int:
+    from . import lifecycle
+    return lifecycle.resume_daemon()
 
 
 def stop(args: argparse.Namespace) -> int:

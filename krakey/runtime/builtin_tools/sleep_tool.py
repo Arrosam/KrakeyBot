@@ -54,7 +54,11 @@ class SleepTool(Tool):
             "runs the full 7-phase Sleep cycle (clustering, GM→KB "
             "migration, KB consolidation/archival, FOCUS clearing, "
             "index rebuild). Use when fatigue is high or you want "
-            "to consolidate recent learning. No arguments."
+            "to consolidate recent learning. No arguments. "
+            "If energy is currently high (fatigue below the minimum "
+            "configured fatigue threshold), the request is refused and "
+            "you will receive a notice — sleep only takes effect once "
+            "fatigue has built up sufficiently."
         )
 
     @property

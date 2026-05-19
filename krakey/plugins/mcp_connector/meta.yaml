@@ -1,0 +1,43 @@
+name: mcp_connector
+description: >
+  Bridges external Model Context Protocol (MCP) servers into KlarkyBot,
+  exposing each remote MCP tool as a native krakey Tool. Supports stdio
+  (subprocess), SSE, and Streamable HTTP transports. Each enabled server
+  is contacted at startup; its advertised tools are registered into the
+  ToolRegistry under ``<server_id>_<tool_name>`` (or
+  ``<tool_prefix>_<tool_name>`` when ``tool_prefix`` is set). Sessions
+  are kept alive for the runtime lifetime and transparently reconnected
+  on drop. Servers that are unreachable at startup contribute zero tools
+  without preventing other servers or the core loop from working.
+
+config_schema:
+  - field: reconnect
+    type: bool
+    default: true
+    help: >
+      When true, a dead server connection is re-established transparently
+      on the next tool call. The in-process tool registry entry stays
+      alive so Self keeps seeing the tool; calls before reconnect
+      completes return an error stimulus. Set to false to keep the
+      session as-is after a drop (calls will fail with an error stimulus
+      until the plugin is reloaded).
+  - field: servers
+    type: text
+    default: ""
+    help: >
+      JSON-encoded list of server definitions. Each entry is a dict with
+      keys: id (str), transport ("stdio"|"sse"|"http"), command (list,
+      stdio only), url (str, sse/http only), env (dict, stdio extra vars),
+      tool_prefix (str, optional), timeout_s (number, default 30),
+      enabled (bool, default true). Leave blank for no servers. Best
+      managed by editing workspace/plugins/mcp_connector/config.yaml
+      directly — the dashboard text field is a stopgap until a list-of-
+      objects widget is available.
+
+dependencies:
+  - "mcp>=1.27.1"
+
+components:
+  - kind: tool
+    factory_module: krakey.plugins.mcp_connector
+    factory_attr: build_tool
