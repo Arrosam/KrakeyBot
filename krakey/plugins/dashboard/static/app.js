@@ -20,7 +20,7 @@ const $$ = (sel) => document.querySelectorAll(sel);
   function toggleTheme() {
     var current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
     var next = current === 'light' ? 'dark' : 'light';
-    localStorage.setItem('krakey-theme', next === 'light' ? 'light' : '');
+    localStorage.setItem('krakey-theme', next);
     _apply(next);
   }
 
