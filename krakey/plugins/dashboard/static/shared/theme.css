@@ -1,18 +1,26 @@
 /* Krakey Dashboard — design tokens (colors, fonts, radii).
-   Every other stylesheet references these vars; change here to reskin. */
+   Every other stylesheet references these vars; change here to reskin.
+   Refined-Dark additions (2026-05-19): --text-2, --raise, --border-soft,
+   --shadow, --radius, --accent. All existing variable names preserved. */
 
 :root {
-  --bg: #0d0f12;
-  --panel: #14181d;
-  --panel-2: #1a1f26;
-  --border: #262c34;
-  --text: #d8dee9;
-  --muted: #6b7280;
-  --cyan: #6cd5d5;
-  --green: #7ec77e;
-  --yellow: #e8c060;
-  --magenta: #c585c5;
-  --red: #d27575;
-  --user-bubble: #2a3340;
-  --bot-bubble: #14302a;
+  --bg:#0c0e12;
+  --panel:#15191f;
+  --panel-2:#1b212a;
+  --raise:#222a35;          /* raised chip/icon-well surface */
+  --border:#2a313c;
+  --border-soft:#222730;    /* quieter divider */
+  --text:#e6ebf2;
+  --text-2:#aab3c0;         /* secondary text */
+  --muted:#717b8a;
+  --cyan:#5fd4d4;
+  --green:#7ec77e;
+  --yellow:#e8c060;
+  --magenta:#c585c5;
+  --red:#e07b7b;
+  --accent:#5fd4d4;         /* primary action / active accent (== cyan) */
+  --user-bubble:#243040;
+  --bot-bubble:#15302a;
+  --shadow:0 8px 24px -12px rgba(0,0,0,.7);
+  --radius:10px;
 }
