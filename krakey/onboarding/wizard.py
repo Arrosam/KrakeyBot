@@ -779,11 +779,6 @@ def _build_config(
             "self_thinking": "self_main",
             "compact": "self_main",
             "classifier": "self_main",
-            # Bind hypothalamus to the same chat tag so users who
-            # later switch DecisionEngine to HypothalamusDecisionEngine
-            # (LLM translator) don't have to hand-edit config.yaml to
-            # add a tag mapping the engine looks up at translate-time.
-            "hypothalamus": "self_main",
         }
     embedding_tag: str | None = None
     if embed is not None:
