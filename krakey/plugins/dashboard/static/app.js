@@ -2356,9 +2356,50 @@ function _renderEngineSchemaForm(slot, shortName, schema) {
     if (target[fname] == null && fdef.default != null) {
       target[fname] = fdef.default;
     }
-    cfgBlock.appendChild(renderRow(fname, target, fname, type, helpPath));
+    if (type === "core_purpose") {
+      cfgBlock.appendChild(_renderCorePurposeRow(fname, target, fname, helpPath));
+    } else {
+      cfgBlock.appendChild(renderRow(fname, target, fname, type, helpPath));
+    }
   }
   return cfgBlock;
+}
+
+// Renders a `core_purpose` schema field as a <select> over the
+// configured llm.core_purposes keys (plus the floor value "compact").
+// Mirrors the DOM shape of renderEnumRow exactly (.cfg-row > label + select).
+function _renderCorePurposeRow(label, target, key, helpPath) {
+  const row = document.createElement("div");
+  row.className = "cfg-row";
+  const lab = document.createElement("label");
+  lab.textContent = label;
+  if (helpPath && HELP[helpPath]) lab.title = HELP[helpPath];
+  row.appendChild(lab);
+
+  const knownSet = new Set([...Object.keys(cfgState.llm.core_purposes), "compact"]);
+  const options = Array.from(knownSet);
+  // If the saved value is a non-empty string not already in the set
+  // (orphaned saved value), append it so it is never silently dropped.
+  const saved = target[key];
+  if (saved && !knownSet.has(saved)) {
+    options.push(saved);
+  }
+
+  const sel = document.createElement("select");
+  for (const c of options) {
+    const opt = document.createElement("option");
+    opt.value = c;
+    opt.textContent = c;
+    sel.appendChild(opt);
+  }
+  // Preselect saved value; fall back to "compact" if null/undefined/empty.
+  sel.value = (saved != null && saved !== "") ? saved : "compact";
+  sel.addEventListener("change", () => {
+    target[key] = sel.value;
+  });
+  if (helpPath && HELP[helpPath]) sel.title = HELP[helpPath];
+  row.appendChild(sel);
+  return row;
 }
 
 function ensure(obj, key, factory) {
@@ -3614,7 +3655,6 @@ const KNOWN_CORE_PURPOSES = [
   ["self_thinking", "required — Self's per-beat heartbeat LLM"],
   ["compact", "sliding-window history -> GM compaction LLM (also drives sleep clustering + KB index rebuild)"],
   ["classifier", "node category classifier (extractor + classifier; falls back to compact then self_thinking)"],
-  ["hypothalamus", "optional — bound when DecisionEngine is HypothalamusDecisionEngine (LLM translator instead of the default scripted <tool_call> parser)"],
 ];
 
 function renderCorePurposesBlock(llm) {
