@@ -1,26 +1,37 @@
 /* Memory view: sub-nav + GM nodes/edges table + KB cards. */
 
-.sub-nav { display: flex; gap: 4px; margin-bottom: 4px; }
+/* Sub-nav segment switcher — pill-style buttons */
+.sub-nav { display: flex; gap: 6px; margin-bottom: 8px; }
 .mem-btn {
-  background: var(--panel);
+  background: var(--raise);
   border: 1px solid var(--border);
-  color: var(--muted);
-  padding: 4px 10px;
+  color: var(--text-2);
+  padding: 5px 12px;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: 99px;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  transition: none;
 }
-.mem-btn.active { color: var(--text); border-color: var(--cyan); }
+.mem-btn:hover { color: var(--text); background: var(--panel-2); }
+.mem-btn.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--panel-2);
+}
 
 #mem-content {
   flex: 1;
   background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 14px;
   overflow: auto;
 }
+
+/* Memory table — zebra rows, subtle borders */
 table.mem-table {
   width: 100%;
   border-collapse: collapse;
@@ -28,44 +39,63 @@ table.mem-table {
 }
 table.mem-table th, table.mem-table td {
   text-align: left;
-  padding: 4px 6px;
-  border-bottom: 1px solid var(--border);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-soft);
 }
-table.mem-table th { color: var(--cyan); font-weight: normal; }
-.cat-FACT { color: var(--green); }
+table.mem-table th {
+  color: var(--text-2);
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+table.mem-table tbody tr:nth-child(odd)  { background: var(--panel); }
+table.mem-table tbody tr:nth-child(even) { background: var(--panel-2); }
+
+/* Category colour semantics — unchanged names, refined tokens */
+.cat-FACT     { color: var(--green); }
 .cat-RELATION { color: var(--magenta); }
 .cat-KNOWLEDGE { color: var(--cyan); }
-.cat-TARGET { color: var(--yellow); }
-.cat-FOCUS { color: var(--red); }
+.cat-TARGET   { color: var(--yellow); }
+.cat-FOCUS    { color: var(--red); }
 
+/* Knowledge-base cards */
 .kb-card {
-  padding: 8px;
-  margin-bottom: 8px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
   background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
 }
-.kb-card h4 { margin: 0 0 4px; color: var(--cyan); }
-.kb-card .meta { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.kb-card h4 { margin: 0 0 4px; color: var(--text); font-size: 13px; font-weight: 650; }
+.kb-card .meta { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
 .kb-card button {
-  padding: 4px 10px;
-  background: var(--panel);
-  border: 1px solid var(--cyan);
-  color: var(--cyan);
-  border-radius: 4px;
+  padding: 5px 12px;
+  background: var(--raise);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 7px;
   cursor: pointer;
   font-family: inherit;
   font-size: 11px;
 }
+.kb-card button:hover { filter: brightness(1.1); }
 
+/* KB entry rows */
 .kb-entry {
-  padding: 6px 8px;
+  padding: 7px 10px;
   margin: 4px 0;
-  background: var(--bg);
-  border-left: 2px solid var(--cyan);
+  background: var(--panel);
+  border-left: 2px solid var(--border-soft);
+  border-radius: 0 6px 6px 0;
   font-size: 11px;
 }
-.kb-entry .tags { color: var(--magenta); margin-right: 6px; }
+.kb-entry .tags {
+  color: var(--magenta);
+  margin-right: 6px;
+  font-weight: 600;
+}
 
 /* Graph browser: cytoscape canvas on the left, inspector on the right.
    The wrap fills #mem-content; we kill its padding for this view so
@@ -80,28 +110,29 @@ table.mem-table th { color: var(--cyan); font-weight: normal; }
 }
 #gm-graph {
   background: var(--bg);
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--border-soft);
   /* Cytoscape needs a sized container; the grid + min-height above
      handles width/height, but explicit `position: relative` lets
      cytoscape's internal absolute-positioned canvas anchor. */
   position: relative;
 }
 .gm-graph-inspect {
-  padding: 10px 12px;
+  padding: 14px;
   font-size: 11px;
   overflow: auto;
   background: var(--panel-2);
 }
 .gm-graph-inspect h4 {
-  margin: 0 0 6px;
+  margin: 0 0 8px;
   font-size: 12px;
-  color: var(--cyan);
+  font-weight: 650;
+  color: var(--text);
 }
 .gm-graph-inspect dl {
   margin: 0;
   display: grid;
   grid-template-columns: 80px 1fr;
-  gap: 2px 8px;
+  gap: 3px 8px;
 }
 .gm-graph-inspect dt { color: var(--muted); }
 .gm-graph-inspect dd {
@@ -112,6 +143,7 @@ table.mem-table th { color: var(--cyan); font-weight: normal; }
      panel itself scrolls (overflow:auto on .gm-graph-inspect) so
      multi-paragraph descriptions stay inside their column. */
   white-space: pre-wrap;
+  color: var(--text-2);
 }
 .gm-graph-hint {
   position: absolute;
@@ -120,9 +152,10 @@ table.mem-table th { color: var(--cyan); font-weight: normal; }
   color: var(--muted);
   font-size: 10px;
   pointer-events: none;
-  background: rgba(20, 24, 29, 0.6);
-  padding: 2px 6px;
-  border-radius: 3px;
+  background: rgba(12, 14, 18, 0.75);
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-soft);
 }
 /* Stats overlay: pinned to the graph canvas bottom-left so the user
    gets node/edge counts + category breakdown without leaving the
@@ -134,14 +167,14 @@ table.mem-table th { color: var(--cyan); font-weight: normal; }
   left: 8px;
   pointer-events: none;
   font-size: 10px;
-  color: var(--text);
-  background: rgba(20, 24, 29, 0.7);
-  border: 1px solid var(--border);
-  padding: 6px 8px;
-  border-radius: 4px;
+  color: var(--text-2);
+  background: rgba(12, 14, 18, 0.8);
+  border: 1px solid var(--border-soft);
+  padding: 7px 10px;
+  border-radius: 8px;
   max-width: 240px;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 .gm-graph-stats .row { display: flex; gap: 6px; }
 .gm-graph-stats .label { color: var(--muted); }
-.gm-graph-stats .cats { margin-top: 3px; display: flex; flex-wrap: wrap; gap: 6px; }
+.gm-graph-stats .cats { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 6px; }
