@@ -2111,6 +2111,9 @@ function renderSettingsForm() {
   settingsForm.appendChild(renderEngineOverridesSection(
     cfgState.core_implementations,
   ));
+  // Rebuild the jump-rail and attach scrollspy after all sections
+  // are in the DOM. Must run last so every .cfg-section is present.
+  renderSettingsRail();
 }
 
 function renderEngineOverridesSection(cfg) {
@@ -2482,6 +2485,124 @@ function _wireSectionToggle() {
   });
 }
 _wireSectionToggle();
+
+// ── Settings jump-rail + scrollspy ───────────────────────────────────────
+// Active IntersectionObserver for the scrollspy. Disconnected and
+// recreated on every renderSettingsRail() call so stale section
+// references don't leak across form rebuilds.
+let _settingsSpy = null;
+
+// Shortened display labels for rail links where the full title is too
+// long for the compact rail column.
+const _RAIL_SHORT_LABELS = {
+  "Sliding Window (Working Memory)": "Sliding Window",
+};
+
+// Derive a CSS-id-safe slug from a section title.
+function _sectionSlug(title) {
+  return "cfg-sec-" + title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+// Build/rebuild the #settings-rail nav and attach a scrollspy observer.
+// Called at the end of renderSettingsForm() after all .cfg-section
+// elements have been appended to #settings-form.
+function renderSettingsRail() {
+  const rail = document.getElementById("settings-rail");
+  const scroll = document.querySelector(".settings-scroll");
+  // Defensive guard — if either element is absent (e.g. a different
+  // tab is active and the DOM hasn't been injected yet), bail out
+  // without throwing.
+  if (!rail || !scroll) return;
+
+  // Disconnect any previous scrollspy observer before rebuilding.
+  if (_settingsSpy) {
+    _settingsSpy.disconnect();
+    _settingsSpy = null;
+  }
+
+  // Collect all cfg-sections and assign stable slug ids.
+  const sections = Array.from(
+    document.querySelectorAll("#settings-form > .cfg-section"),
+  );
+
+  rail.innerHTML = "";
+
+  for (const sec of sections) {
+    const h3 = sec.querySelector("h3[data-section-title]");
+    if (!h3) continue;
+    const title = h3.getAttribute("data-section-title");
+    const id = _sectionSlug(title);
+    sec.id = id;
+    sec.style.scrollMarginTop = "12px";
+
+    // Build rail link.
+    const a = document.createElement("a");
+    a.className = "rail-link";
+    a.href = "#" + id;
+    a.dataset.title = title;
+
+    // Icon span.
+    const icSpan = document.createElement("span");
+    icSpan.className = "rail-ic";
+    const iconName = SECTION_ICONS[title];
+    if (iconName && window.biIcon) {
+      const tpl = document.createElement("template");
+      tpl.innerHTML = window.biIcon(iconName, 16);
+      const svg = tpl.content.firstElementChild;
+      if (svg) icSpan.appendChild(svg);
+    }
+    a.appendChild(icSpan);
+
+    // Label span — use short label if available.
+    const lblSpan = document.createElement("span");
+    lblSpan.className = "rail-lbl";
+    lblSpan.textContent = _RAIL_SHORT_LABELS[title] || title;
+    a.appendChild(lblSpan);
+
+    // Click handler: expand section if collapsed, then smooth-scroll.
+    a.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      const target = document.getElementById(id);
+      if (!target) return;
+      if (collapsedSections.has(title)) {
+        collapsedSections.delete(title);
+        // renderSettingsForm rebuilds the DOM (including the rail),
+        // so schedule the scroll for after the next paint.
+        renderSettingsForm();
+        requestAnimationFrame(() => {
+          const el = document.getElementById(id);
+          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      } else {
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    });
+
+    rail.appendChild(a);
+  }
+
+  // Scrollspy via IntersectionObserver on .settings-scroll.
+  const links = Array.from(rail.querySelectorAll(".rail-link"));
+  if (links.length === 0) return;
+
+  _settingsSpy = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        const targetId = "#" + entry.target.id;
+        for (const lk of links) lk.classList.remove("active");
+        const active = links.find((lk) => lk.getAttribute("href") === targetId);
+        if (active) active.classList.add("active");
+      }
+    },
+    { root: scroll, rootMargin: "-8% 0px -80% 0px", threshold: 0 },
+  );
+
+  for (const sec of sections) {
+    if (sec.id) _settingsSpy.observe(sec);
+  }
+}
+// ── end settings rail ────────────────────────────────────────────────────
 
 function renderGenericSection(key, title, target, schema) {
   const sec = makeSection(title);

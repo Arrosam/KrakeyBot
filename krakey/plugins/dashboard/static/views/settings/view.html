@@ -1,5 +1,12 @@
     <!-- SETTINGS -->
     <section id="tab-settings" class="tab-panel">
+      <!-- Shell: side rail (jump-nav) + main content column.
+           The rail is populated by renderSettingsRail() in app.js
+           after the form sections are appended. It is left empty
+           here so the initial "— loading —" state is uncluttered. -->
+      <div class="settings-shell">
+        <nav class="settings-rail" id="settings-rail" aria-label="Jump to section"></nav>
+        <div class="settings-main">
       <!-- Wrap everything above the action bar in a single scroll
            region so the page hint scrolls WITH the form rather
            than sticking to the viewport top. Only the action bar
@@ -78,4 +85,6 @@
         <button id="settings-restart" class="danger"><i data-bi="arrow-clockwise"></i> Restart Krakey</button>
         <span id="settings-toast"></span>
       </div>
+        </div><!-- /.settings-main -->
+      </div><!-- /.settings-shell -->
     </section>
