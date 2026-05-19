@@ -3,6 +3,37 @@
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
+// ============== THEME (light/dark toggle) ==============
+(function () {
+  function _apply(theme) {
+    if (theme === 'light') {
+      document.documentElement.setAttribute('data-theme', 'light');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+    var btn = document.getElementById('theme-toggle');
+    if (btn && window.biIcon) {
+      btn.innerHTML = window.biIcon(theme === 'light' ? 'moon' : 'sunrise', 16);
+    }
+  }
+
+  function toggleTheme() {
+    var current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    var next = current === 'light' ? 'dark' : 'light';
+    localStorage.setItem('krakey-theme', next === 'light' ? 'light' : '');
+    _apply(next);
+  }
+
+  // Sync icon to current theme (already set by the head script).
+  var initialTheme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  _apply(initialTheme);
+
+  var btn = document.getElementById('theme-toggle');
+  if (btn) {
+    btn.addEventListener('click', toggleTheme);
+  }
+})();
+
 // ============== AUTH (cookie session) ==============
 //
 // The server gates the entire app on a per-installation token, set

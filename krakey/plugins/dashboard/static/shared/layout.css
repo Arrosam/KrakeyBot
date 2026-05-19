@@ -328,3 +328,24 @@ main {
 .btn-mini:hover { filter: brightness(1.12); }
 .btn-mini.danger { border-color: var(--muted); color: var(--muted); }
 .btn-mini.danger:hover { border-color: var(--red); color: var(--red); }
+
+/* Theme toggle — placed in the header strip, right of status-bar. */
+.theme-toggle-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  padding: 6px 8px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  flex-shrink: 0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+}
+.theme-toggle-btn:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}

@@ -81,7 +81,7 @@
   color: var(--text);
 }
 .rail-link.active {
-  background: rgba(95, 212, 212, 0.13);
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
   color: var(--accent);
   border-left-color: var(--accent);
   font-weight: 600;
@@ -276,7 +276,7 @@
   transition: left 0.15s, background 0.15s;
 }
 .toggle.on {
-  background: rgba(95, 212, 212, 0.25);
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
   border-color: var(--accent);
 }
 .toggle.on::after {
@@ -336,7 +336,7 @@
   background: var(--panel-2);
 }
 .plugin-card:hover {
-  border-color: #384150;
+  border-color: var(--border);
 }
 .plugin-card.disabled {
   border-color: transparent;
@@ -371,11 +371,11 @@
   color: var(--text-2);
 }
 .cfg-badge.plugin {
-  background: rgba(95, 212, 212, 0.14);
+  background: color-mix(in srgb, var(--cyan) 14%, transparent);
   color: var(--cyan);
 }
 .cfg-badge.live {
-  background: rgba(126, 199, 126, 0.14);
+  background: color-mix(in srgb, var(--green) 14%, transparent);
   color: var(--green);
 }
 
@@ -551,7 +551,7 @@
 /* Primary — Save */
 #settings-save {
   background: var(--accent);
-  color: #04201f;
+  color: var(--on-accent);
 }
 /* Ghost — Apply changes */
 #settings-apply {

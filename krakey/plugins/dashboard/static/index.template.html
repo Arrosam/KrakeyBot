@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
+  <script>(function(){var t=localStorage.getItem('krakey-theme');if(t===null||t===''){t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'';}if(t==='light'){document.documentElement.setAttribute('data-theme','light');}})();</script>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Krakey Dashboard</title>
@@ -26,6 +27,7 @@
       <button class="tab-btn" data-tab="settings"><i data-bi="gear"></i> Settings</button>
     </nav>
     <div class="status-bar" id="status-bar">— connecting —</div>
+    <button id="theme-toggle" class="theme-toggle-btn" aria-label="Toggle light/dark mode"></button>
   </header>
 
   <!-- Runtime-state banner — shown when the SPA receives a
