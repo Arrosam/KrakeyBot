@@ -64,9 +64,7 @@ class IncrementalRecallEngine:
         enabled = bool(
             self._engine_cfg.get("semantic_association_enabled", False)
         )
-        purpose = self._engine_cfg.get(
-            "semantic_association_purpose", "recall_enrichment"
-        )
+        purpose = (self._engine_cfg.get("semantic_association_purpose") or "").strip() or "compact"
         enricher = None
         if enabled and self._factory is not None:
             client = self._factory.client_for_core_purpose(purpose)
