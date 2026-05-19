@@ -28,6 +28,7 @@ See ``proxy_tool.py`` for the execute()-time bridge (wrap_future).
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -86,6 +87,20 @@ def build_tool(ctx) -> list[Tool]:
 def _parse_config(raw: dict[str, Any]) -> dict[str, Any]:
     """Normalise the plugin config dict into a well-typed structure."""
     servers_raw = raw.get("servers")
+    if isinstance(servers_raw, str):
+        stripped = servers_raw.strip()
+        if stripped:
+            try:
+                servers_raw = json.loads(stripped)
+            except (json.JSONDecodeError, ValueError, TypeError) as exc:
+                log.warning(
+                    "mcp_connector: could not decode 'servers' JSON string: %s — "
+                    "treating as no servers.",
+                    exc,
+                )
+                servers_raw = []
+        else:
+            servers_raw = []
     if not isinstance(servers_raw, list):
         servers_raw = []
 
