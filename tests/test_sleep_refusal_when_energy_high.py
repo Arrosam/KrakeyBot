@@ -588,3 +588,471 @@ async def test_voluntary_sleep_refused_with_single_threshold_entry(tmp_path):
     ]
     assert refusal_stims, "Expected refusal Stimulus for single-entry thresholds"
     assert refusal_stims[0].adrenalin is False
+
+
+# ===========================================================================
+# Tests for the BUG FIX: guard must also apply when DecisionResult.sleep=True
+# is set directly by the engine WITHOUT any sleep tool call (e.g. Hypothalamus
+# translator sets the boolean field rather than emitting a ToolCall(tool=sleep)).
+#
+# The existing tests above only cover the tool-call path.  These tests cover
+# the boolean-field path and the combined path.
+#
+# Harness: same conventions as above, but rt.decision is replaced with a
+# _StubbedDecision whose translate() returns a pre-built DecisionResult
+# directly.  The Self LLM still emits a non-empty [DECISION] so
+# _phase_apply_decision is not short-circuited by the "no action" early-return.
+# ===========================================================================
+
+from krakey.interfaces.engines.decision import DecisionResult, ToolCall
+from krakey.runtime.builtin_tools import SLEEP_TOOL_NAME
+
+
+class _StubbedDecision:
+    """Decision engine stub that returns a fixed DecisionResult."""
+
+    def __init__(self, result: DecisionResult):
+        self._result = result
+
+    async def translate(self, decision: str, raw: str, tools: list) -> DecisionResult:
+        return self._result
+
+
+def _non_sleep_decision_llm() -> ScriptedLLM:
+    """Self LLM whose [DECISION] is non-empty but describes sleep in natural
+    language — the stub decision engine interprets it however we want."""
+    return ScriptedLLM([
+        '[THINKING]\n(tired)\n[DECISION]\nI need to rest.\n[IDLE]\n1',
+    ])
+
+
+# ---------------------------------------------------------------------------
+# Spec point 1 (no-tool-call path):
+#   DecisionResult(sleep=True, tool_calls=[]), pct < min_threshold → REFUSED
+# ---------------------------------------------------------------------------
+
+async def test_boolean_sleep_refused_when_fatigue_below_min_threshold(tmp_path):
+    """BUG FIX — boolean sleep path: sleep=True with no sleep tool call is
+    refused when fatigue_pct(20) < min_threshold(50).
+
+    Before the fix _phase_apply_decision's guard only ran inside
+    ``if any(c.tool == SLEEP_TOOL_NAME ...)`` so it was skipped entirely when
+    no tool call was present, and sleep proceeded despite low energy.
+
+    After the fix:
+    - _sleep_cycles stays at 0.
+    - Exactly one refusal system_event/system:sleep Stimulus is pushed with
+      adrenalin=False and content starting with "Sleep refused: energy is high".
+    """
+    self_llm = _non_sleep_decision_llm()
+    sleep_llm = ScriptedLLM(["summary"] * 5)
+
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm,
+        hypo_llm=ScriptedLLM([]),
+        compact_llm=sleep_llm,
+        modifiers=[],
+    )
+    _configure_fatigue(runtime)
+    runtime.sleep_log_dir = str(tmp_path / "logs")
+    runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
+    runtime.self_model = default_self_model()
+
+    # Inject stub: sleep=True, NO sleep tool call.
+    runtime.decision = _StubbedDecision(DecisionResult(sleep=True, tool_calls=[]))
+
+    # 20 nodes → fatigue_pct = 20 (< 50 = min_threshold)
+    await _seed_nodes(runtime, 20)
+
+    sleep_cycles_before = runtime._sleep_cycles
+    await runtime.run(iterations=1)
+    await runtime.close()
+
+    # Sleep must NOT have happened.
+    assert runtime._sleep_cycles == sleep_cycles_before, (
+        "Sleep must be refused when DecisionResult.sleep=True (no tool call) "
+        f"and fatigue_pct(20) < min_threshold({_MIN_THRESHOLD}); "
+        f"_sleep_cycles incremented despite low energy."
+    )
+
+    # A refusal Stimulus must be in the buffer.
+    drained = runtime.buffer.drain()
+    refusal_stims = [
+        s for s in drained
+        if s.type == "system_event" and s.source == "system:sleep"
+        and s.content.startswith("Sleep refused: energy is high")
+    ]
+    assert refusal_stims, (
+        "Expected exactly one system_event/system:sleep refusal Stimulus "
+        "starting with 'Sleep refused: energy is high'; "
+        f"got sources: {[s.source for s in drained]}, "
+        f"contents: {[s.content[:60] for s in drained if s.type == 'system_event']}"
+    )
+    stim = refusal_stims[0]
+    assert stim.adrenalin is False, (
+        f"Refusal Stimulus must have adrenalin=False; got {stim.adrenalin}"
+    )
+    # Content must include the current fatigue % and the threshold %.
+    assert "20" in stim.content, (
+        f"Refusal content must mention current fatigue%(20); got: {stim.content!r}"
+    )
+    assert str(_MIN_THRESHOLD) in stim.content, (
+        f"Refusal content must mention min threshold%({_MIN_THRESHOLD}); "
+        f"got: {stim.content!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Spec point 2 (no-tool-call path):
+#   DecisionResult(sleep=True, tool_calls=[]), pct >= min_threshold → ALLOWED
+# ---------------------------------------------------------------------------
+
+async def test_boolean_sleep_allowed_when_fatigue_at_or_above_min_threshold(tmp_path):
+    """Boolean sleep path: sleep=True with no tool call is NOT refused when
+    fatigue_pct(60) >= min_threshold(50).
+
+    After fix: _sleep_cycles increments by 1; no refusal Stimulus pushed.
+    """
+    self_llm = _non_sleep_decision_llm()
+    sleep_llm = ScriptedLLM(["summary"] * 5)
+
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm,
+        hypo_llm=ScriptedLLM([]),
+        compact_llm=sleep_llm,
+        modifiers=[],
+    )
+    _configure_fatigue(runtime)
+    runtime.sleep_log_dir = str(tmp_path / "logs")
+    runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
+    runtime.self_model = default_self_model()
+
+    runtime.decision = _StubbedDecision(DecisionResult(sleep=True, tool_calls=[]))
+
+    # 60 nodes → fatigue_pct = 60 (>= 50 = min_threshold)
+    await _seed_nodes(runtime, 60)
+
+    sleep_cycles_before = runtime._sleep_cycles
+    await runtime.run(iterations=1)
+    await runtime.close()
+
+    assert runtime._sleep_cycles == sleep_cycles_before + 1, (
+        "Sleep must NOT be refused when DecisionResult.sleep=True (no tool call) "
+        f"and fatigue_pct(60) >= min_threshold({_MIN_THRESHOLD}); "
+        f"_sleep_cycles={runtime._sleep_cycles}"
+    )
+
+    # No refusal Stimulus should be present.
+    drained = runtime.buffer.drain()
+    refusal_stims = [
+        s for s in drained
+        if s.type == "system_event"
+        and s.source == "system:sleep"
+        and s.content.startswith("Sleep refused: energy is high")
+    ]
+    assert not refusal_stims, (
+        f"No refusal Stimulus should exist when fatigue is sufficient; "
+        f"got: {[s.content for s in refusal_stims]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Spec point 3 (no-tool-call path):
+#   DecisionResult(sleep=True, tool_calls=[]), thresholds={} → guard inactive
+# ---------------------------------------------------------------------------
+
+async def test_boolean_sleep_allowed_when_thresholds_empty(tmp_path):
+    """Empty thresholds: boolean sleep=True with no tool call is never refused.
+
+    fatigue_pct=0 (no nodes), thresholds={} → guard must be inactive.
+    Sleep proceeds and _sleep_cycles increments by 1.
+    """
+    self_llm = _non_sleep_decision_llm()
+    sleep_llm = ScriptedLLM(["summary"] * 5)
+
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm,
+        hypo_llm=ScriptedLLM([]),
+        compact_llm=sleep_llm,
+        modifiers=[],
+    )
+    runtime.config.fatigue.gm_node_soft_limit = _SOFT_LIMIT
+    runtime.config.fatigue.force_sleep_threshold = _FORCE_THRESHOLD
+    runtime.config.fatigue.thresholds = {}
+    runtime.sleep_log_dir = str(tmp_path / "logs")
+    runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
+    runtime.self_model = default_self_model()
+
+    runtime.decision = _StubbedDecision(DecisionResult(sleep=True, tool_calls=[]))
+
+    # 0 nodes → fatigue_pct = 0 (worst possible energy, but no guard applies)
+    await runtime.memory.initialize()
+
+    sleep_cycles_before = runtime._sleep_cycles
+    await runtime.run(iterations=1)
+    await runtime.close()
+
+    assert runtime._sleep_cycles == sleep_cycles_before + 1, (
+        "With empty thresholds, boolean sleep=True (no tool call) must not be "
+        f"refused even at fatigue_pct=0; _sleep_cycles={runtime._sleep_cycles}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Spec point 4 — regression: existing tool-call path still refused when
+# energy is high (no double-counting or breakage from the fix).
+# ---------------------------------------------------------------------------
+
+async def test_tool_call_sleep_still_refused_after_fix(tmp_path):
+    """Regression: the original tool-call interception + guard path still works.
+
+    The stub decision engine returns a sleep ToolCall (not the boolean).
+    _phase_apply_decision must:
+    - Strip the sleep tool call from result.tool_calls.
+    - Set result.sleep = True internally.
+    - Then apply the guard → refuse (pct=20 < min_threshold=50).
+    - Return False; _sleep_cycles stays unchanged; refusal Stimulus pushed.
+    """
+    self_llm = _non_sleep_decision_llm()
+    sleep_llm = ScriptedLLM(["summary"] * 5)
+
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm,
+        hypo_llm=ScriptedLLM([]),
+        compact_llm=sleep_llm,
+        modifiers=[],
+    )
+    _configure_fatigue(runtime)
+    runtime.sleep_log_dir = str(tmp_path / "logs")
+    runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
+    runtime.self_model = default_self_model()
+
+    # Return a sleep ToolCall (the OLD path) — sleep boolean starts False.
+    runtime.decision = _StubbedDecision(DecisionResult(
+        sleep=False,
+        tool_calls=[ToolCall(tool=SLEEP_TOOL_NAME, intent="sleep")],
+    ))
+
+    # 20 nodes → fatigue_pct = 20 (< 50 = min_threshold)
+    await _seed_nodes(runtime, 20)
+
+    sleep_cycles_before = runtime._sleep_cycles
+    await runtime.run(iterations=1)
+    await runtime.close()
+
+    assert runtime._sleep_cycles == sleep_cycles_before, (
+        "Regression: tool-call sleep path must still be refused when "
+        f"fatigue_pct(20) < min_threshold({_MIN_THRESHOLD}) after fix."
+    )
+
+    drained = runtime.buffer.drain()
+    refusal_stims = [
+        s for s in drained
+        if s.type == "system_event" and s.source == "system:sleep"
+        and s.content.startswith("Sleep refused: energy is high")
+    ]
+    assert refusal_stims, (
+        "Regression: refusal Stimulus must still be pushed for the tool-call path."
+    )
+    assert refusal_stims[0].adrenalin is False
+
+
+async def test_tool_call_sleep_proceeds_above_threshold(tmp_path):
+    """Regression: tool-call sleep is NOT refused when fatigue_pct >= min_threshold.
+
+    Stub returns a sleep ToolCall; fatigue_pct=60 >= min_threshold=50.
+    Sleep must proceed (_sleep_cycles increments by 1).
+    """
+    self_llm = _non_sleep_decision_llm()
+    sleep_llm = ScriptedLLM(["summary"] * 5)
+
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm,
+        hypo_llm=ScriptedLLM([]),
+        compact_llm=sleep_llm,
+        modifiers=[],
+    )
+    _configure_fatigue(runtime)
+    runtime.sleep_log_dir = str(tmp_path / "logs")
+    runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
+    runtime.self_model = default_self_model()
+
+    runtime.decision = _StubbedDecision(DecisionResult(
+        sleep=False,
+        tool_calls=[ToolCall(tool=SLEEP_TOOL_NAME, intent="sleep")],
+    ))
+
+    # 60 nodes → fatigue_pct = 60 (>= 50)
+    await _seed_nodes(runtime, 60)
+
+    sleep_cycles_before = runtime._sleep_cycles
+    await runtime.run(iterations=1)
+    await runtime.close()
+
+    assert runtime._sleep_cycles == sleep_cycles_before + 1, (
+        "Regression: tool-call sleep must proceed when "
+        f"fatigue_pct(60) >= min_threshold({_MIN_THRESHOLD})."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Spec point 5 — refusal fires only ONCE when both boolean AND tool call are
+# set simultaneously and energy is high (no duplicate stimulus).
+# ---------------------------------------------------------------------------
+
+async def test_refusal_fires_exactly_once_when_both_boolean_and_tool_call_set(tmp_path):
+    """No duplicate refusal when DecisionResult has both sleep=True AND a sleep
+    ToolCall with fatigue_pct(10) < min_threshold(50).
+
+    The guard must apply exactly once regardless of how many signals request
+    sleep.  Exactly one refusal system_event/system:sleep Stimulus must be
+    in the buffer — not two.
+    """
+    self_llm = _non_sleep_decision_llm()
+    sleep_llm = ScriptedLLM(["summary"] * 5)
+
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm,
+        hypo_llm=ScriptedLLM([]),
+        compact_llm=sleep_llm,
+        modifiers=[],
+    )
+    _configure_fatigue(runtime)
+    runtime.sleep_log_dir = str(tmp_path / "logs")
+    runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
+    runtime.self_model = default_self_model()
+
+    # Both the boolean AND a sleep ToolCall — the "belt and suspenders" case.
+    runtime.decision = _StubbedDecision(DecisionResult(
+        sleep=True,
+        tool_calls=[ToolCall(tool=SLEEP_TOOL_NAME, intent="sleep")],
+    ))
+
+    # 10 nodes → fatigue_pct = 10 (< 50)
+    await _seed_nodes(runtime, 10)
+
+    sleep_cycles_before = runtime._sleep_cycles
+    await runtime.run(iterations=1)
+    await runtime.close()
+
+    # Sleep must be refused.
+    assert runtime._sleep_cycles == sleep_cycles_before, (
+        "Sleep must be refused (both boolean and tool call set, pct < threshold)."
+    )
+
+    # Exactly ONE refusal Stimulus must exist — not duplicated.
+    drained = runtime.buffer.drain()
+    refusal_stims = [
+        s for s in drained
+        if s.type == "system_event"
+        and s.source == "system:sleep"
+        and s.content.startswith("Sleep refused: energy is high")
+    ]
+    assert len(refusal_stims) == 1, (
+        f"Expected exactly 1 refusal Stimulus; got {len(refusal_stims)}: "
+        f"{[s.content[:60] for s in refusal_stims]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# BVA — boundary: fatigue_pct == min_threshold exactly (no-tool-call path)
+# ---------------------------------------------------------------------------
+
+async def test_boolean_sleep_allowed_at_exactly_min_threshold(tmp_path):
+    """BVA boundary: boolean sleep=True with no tool call; pct == min_threshold.
+
+    Guard fires only when pct is STRICTLY LESS THAN min_threshold.
+    At the boundary (pct == 50 == min_threshold) sleep must NOT be refused.
+    """
+    self_llm = _non_sleep_decision_llm()
+    sleep_llm = ScriptedLLM(["summary"] * 5)
+
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm,
+        hypo_llm=ScriptedLLM([]),
+        compact_llm=sleep_llm,
+        modifiers=[],
+    )
+    _configure_fatigue(runtime)
+    runtime.sleep_log_dir = str(tmp_path / "logs")
+    runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
+    runtime.self_model = default_self_model()
+
+    runtime.decision = _StubbedDecision(DecisionResult(sleep=True, tool_calls=[]))
+
+    # Exactly _MIN_THRESHOLD nodes → pct == _MIN_THRESHOLD (50)
+    await _seed_nodes(runtime, _MIN_THRESHOLD)
+
+    sleep_cycles_before = runtime._sleep_cycles
+    await runtime.run(iterations=1)
+    await runtime.close()
+
+    assert runtime._sleep_cycles == sleep_cycles_before + 1, (
+        f"Boolean sleep at fatigue_pct == min_threshold({_MIN_THRESHOLD}) "
+        "must NOT be refused (strictly-less-than semantics)."
+    )
+
+    drained = runtime.buffer.drain()
+    refusal_stims = [
+        s for s in drained
+        if s.type == "system_event"
+        and s.source == "system:sleep"
+        and s.content.startswith("Sleep refused: energy is high")
+    ]
+    assert not refusal_stims, (
+        f"No refusal Stimulus expected at the boundary pct == min_threshold; "
+        f"got: {[s.content for s in refusal_stims]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# BVA — one below boundary: fatigue_pct == min_threshold - 1 (no-tool-call path)
+# ---------------------------------------------------------------------------
+
+async def test_boolean_sleep_refused_at_one_below_min_threshold(tmp_path):
+    """BVA: boolean sleep=True with no tool call; pct == min_threshold - 1 == 49.
+
+    This is the last integer in the 'refused' zone.  Guard must fire.
+    """
+    self_llm = _non_sleep_decision_llm()
+    sleep_llm = ScriptedLLM(["summary"] * 5)
+
+    runtime = build_runtime_with_fakes(
+        self_llm=self_llm,
+        hypo_llm=ScriptedLLM([]),
+        compact_llm=sleep_llm,
+        modifiers=[],
+    )
+    _configure_fatigue(runtime)
+    runtime.sleep_log_dir = str(tmp_path / "logs")
+    runtime._self_model_store = SelfModelStore(tmp_path / "self_model.yaml")
+    runtime.self_model = default_self_model()
+
+    runtime.decision = _StubbedDecision(DecisionResult(sleep=True, tool_calls=[]))
+
+    # 49 nodes → pct = 49 (one below min_threshold=50)
+    await _seed_nodes(runtime, _MIN_THRESHOLD - 1)
+
+    sleep_cycles_before = runtime._sleep_cycles
+    await runtime.run(iterations=1)
+    await runtime.close()
+
+    assert runtime._sleep_cycles == sleep_cycles_before, (
+        f"Boolean sleep must be refused when fatigue_pct({_MIN_THRESHOLD - 1}) "
+        f"< min_threshold({_MIN_THRESHOLD}) — last integer in refused zone."
+    )
+
+    drained = runtime.buffer.drain()
+    refusal_stims = [
+        s for s in drained
+        if s.type == "system_event"
+        and s.source == "system:sleep"
+        and s.content.startswith("Sleep refused: energy is high")
+    ]
+    assert refusal_stims, (
+        f"Refusal Stimulus must be pushed at pct({_MIN_THRESHOLD - 1}) "
+        f"< min_threshold({_MIN_THRESHOLD})."
+    )
+    assert refusal_stims[0].adrenalin is False
+    assert str(_MIN_THRESHOLD - 1) in refusal_stims[0].content
+    assert str(_MIN_THRESHOLD) in refusal_stims[0].content
