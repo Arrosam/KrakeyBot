@@ -618,9 +618,13 @@ class HeartbeatOrchestrator:
                 c for c in result.tool_calls
                 if c.tool != SLEEP_TOOL_NAME
             ]
-            # Guard: refuse voluntary sleep when energy is high.
-            # Mirrors the condition under which fatigue_hint() returns
-            # LOW_FATIGUE_HINT — pct below every configured threshold.
+        # Guard: refuse voluntary sleep when energy is high. Applies to
+        # BOTH the sleep-tool-call path above AND a DecisionEngine that
+        # sets result.sleep directly (e.g. the Hypothalamus boolean) —
+        # otherwise that engine bypasses the policy entirely. Mirrors
+        # the condition under which fatigue_hint() returns
+        # LOW_FATIGUE_HINT — pct below every configured threshold.
+        if result.sleep:
             thresholds = rt.config.fatigue.thresholds
             if thresholds and counts.fatigue_pct < min(thresholds):
                 result.sleep = False
