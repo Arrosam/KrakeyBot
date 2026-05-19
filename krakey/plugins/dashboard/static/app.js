@@ -786,7 +786,9 @@ function renderAttachStrip() {
       `${escapeHtml(a.name)} (${escapeHtml(formatBytes(a.size))})`,
     );
     const x = document.createElement("span");
-    x.className = "x"; x.textContent = "×"; x.title = "remove";
+    x.className = "x";
+    x.title = "remove"; x.setAttribute("aria-label", "remove");
+    if (typeof window.biIcon === "function") { x.innerHTML = window.biIcon("x-lg", 12); } else { x.textContent = "×"; }
     x.addEventListener("click", () => {
       pendingAttachments.splice(i, 1);
       renderAttachStrip();
@@ -2641,7 +2643,8 @@ function _renderStringList(arr, opts) {
       chip.appendChild(document.createTextNode(v));
       const x = document.createElement("span");
       x.className = "x";
-      x.textContent = "×";
+      x.title = "remove"; x.setAttribute("aria-label", "remove");
+      if (typeof window.biIcon === "function") { x.innerHTML = window.biIcon("x-lg", 12); } else { x.textContent = "×"; }
       x.addEventListener("click", () => {
         const idx = arr.indexOf(v);
         if (idx !== -1) arr.splice(idx, 1);
@@ -3047,7 +3050,7 @@ function renderFatigueThresholds(fatigue) {
       keyIn.type = "number"; keyIn.value = k; keyIn.style.maxWidth = "80px";
       const valIn = document.createElement("input");
       valIn.type = "text"; valIn.value = fatigue.thresholds[k];
-      const del = mkBtn("×", () => { delete fatigue.thresholds[k]; redraw(); }, "btn-x");
+      const del = iconBtn("x-lg", () => { delete fatigue.thresholds[k]; redraw(); }, "btn-x", "remove", 13, "×");
       keyIn.addEventListener("change", () => {
         const newK = parseInt(keyIn.value, 10);
         if (Number.isNaN(newK) || String(newK) === k) return;
@@ -3075,6 +3078,24 @@ function mkBtn(text, onClick, cls = "") {
   b.type = "button";
   b.className = "btn-mini" + (cls ? " " + cls : "");
   b.textContent = text;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+// Like mkBtn but renders an SVG icon via biIcon instead of a text glyph.
+// `label` is used as title + aria-label for accessibility.
+// Falls back gracefully to a text glyph when window.biIcon is unavailable.
+function iconBtn(iconName, onClick, cls, label, size, fallbackGlyph) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "btn-mini" + (cls ? " " + cls : "");
+  b.title = label;
+  b.setAttribute("aria-label", label);
+  if (typeof window.biIcon === "function") {
+    b.innerHTML = window.biIcon(iconName, size);
+  } else {
+    b.textContent = fallbackGlyph;
+  }
   b.addEventListener("click", onClick);
   return b;
 }
@@ -3320,7 +3341,7 @@ function renderModelRow(prov, idx) {
   nameIn.addEventListener("input", () => { m.name = nameIn.value; });
   row.appendChild(nameIn);
   row.appendChild(renderCapabilitiesMulti(m));
-  const del = mkBtn("×", () => { prov.models.splice(idx, 1); renderSettingsForm(); }, "btn-x");
+  const del = iconBtn("x-lg", () => { prov.models.splice(idx, 1); renderSettingsForm(); }, "btn-x", "remove", 13, "×");
   row.appendChild(del);
   return row;
 }
@@ -3337,7 +3358,9 @@ function renderCapabilitiesMulti(model) {
       chip.className = "cap-chip";
       chip.appendChild(document.createTextNode(cap));
       const x = document.createElement("span");
-      x.className = "x"; x.textContent = "×";
+      x.className = "x";
+      x.title = "remove"; x.setAttribute("aria-label", "remove");
+      if (typeof window.biIcon === "function") { x.innerHTML = window.biIcon("x-lg", 12); } else { x.textContent = "×"; }
       x.addEventListener("click", () => {
         model.capabilities = model.capabilities.filter((c) => c !== cap);
         repaint();
@@ -3521,7 +3544,7 @@ function renderTagRow(tname, tags, providers) {
   });
   refreshModels();
 
-  const del = mkBtn("×", () => {
+  const del = iconBtn("x-lg", () => {
     if (!confirm(`delete tag "${tname}"?`)) return;
     delete tags[tname];
     // Also clear any core_purpose mapping that referenced this tag —
@@ -3533,7 +3556,7 @@ function renderTagRow(tname, tags, providers) {
     if (llm.embedding === tname) llm.embedding = "";
     if (llm.reranker === tname) llm.reranker = "";
     renderSettingsForm();
-  }, "btn-x");
+  }, "btn-x", "remove", 13, "×");
 
   wrap.appendChild(provSel); wrap.appendChild(modSel); wrap.appendChild(del);
   row.appendChild(wrap);
@@ -3762,9 +3785,9 @@ function _purposeRow(llm, purp, tagNames, helpText) {
   // are persistent. (`isKnown` was already computed above to gate
   // the editable-name path — reuse instead of redeclaring.)
   if (!isKnown) {
-    const del = mkBtn("×", () => {
+    const del = iconBtn("x-lg", () => {
       delete llm.core_purposes[purp]; renderSettingsForm();
-    }, "btn-x");
+    }, "btn-x", "remove", 13, "×");
     wrap.appendChild(del);
   } else {
     wrap.appendChild(document.createElement("span"));
@@ -4169,8 +4192,8 @@ function _renderPluginCard(plugin, enabled, liveByName, modIdx, modCount) {
   // ordered modifiers list. modIdx === -1 means "not in modifier
   // block" (tool/channel-only plugin or disabled).
   if (enabled && _hasModifierKind(plugin) && modIdx >= 0 && modCount > 1) {
-    const upBtn = mkBtn("↑", () => _reorderEnabled(modIdx, -1));
-    const dnBtn = mkBtn("↓", () => _reorderEnabled(modIdx, +1));
+    const upBtn = iconBtn("arrow-up", () => _reorderEnabled(modIdx, -1), "", "move up", 12, "↑");
+    const dnBtn = iconBtn("arrow-down", () => _reorderEnabled(modIdx, +1), "", "move down", 12, "↓");
     upBtn.disabled = (modIdx === 0);
     dnBtn.disabled = (modIdx === modCount - 1);
     head.appendChild(upBtn);
