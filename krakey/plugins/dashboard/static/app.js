@@ -34,6 +34,93 @@ const $$ = (sel) => document.querySelectorAll(sel);
   }
 })();
 
+// ============== RUNTIME PAUSE/RESUME TOGGLE ==============
+(function () {
+  var btn = document.getElementById('runtime-toggle');
+  if (!btn) return; // template variant without the button — no-op
+
+  function _renderRuntimeToggle(isPaused) {
+    var icon, label, title;
+    if (isPaused) {
+      icon = (window.biIcon && window.biIcon('play-fill', 16)) || '&#9654;';
+      label = ' Resume';
+      title = 'Resume heartbeat';
+    } else {
+      icon = (window.biIcon && window.biIcon('pause-fill', 16)) || '&#9208;';
+      label = ' Pause';
+      title = 'Pause heartbeat';
+    }
+    btn.innerHTML = icon + label;
+    btn.dataset.paused = String(isPaused);
+    btn.title = title;
+  }
+
+  function _fetchState() {
+    fetch('/api/runtime/state', { credentials: 'same-origin' })
+      .then(function (r) {
+        if (!r.ok) {
+          console.warn('[runtime-toggle] /api/runtime/state returned', r.status);
+          btn.innerHTML = '—';
+          btn.title = '';
+          return null;
+        }
+        return r.json();
+      })
+      .then(function (body) {
+        if (body && typeof body.paused === 'boolean') {
+          _renderRuntimeToggle(body.paused);
+        }
+      })
+      .catch(function (err) {
+        console.warn('[runtime-toggle] fetch error:', err);
+      });
+  }
+
+  btn.addEventListener('click', function () {
+    var currentlyPaused = btn.dataset.paused === 'true';
+    var endpoint = currentlyPaused ? '/api/runtime/resume' : '/api/runtime/pause';
+
+    fetch(endpoint, { method: 'POST', credentials: 'same-origin' })
+      .then(function (r) {
+        if (!r.ok) {
+          console.error('[runtime-toggle] POST', endpoint, 'failed with', r.status);
+          // Roll back — keep prior state (no re-render needed)
+          return null;
+        }
+        return r.json();
+      })
+      .then(function (body) {
+        if (!body) return; // HTTP error already handled above
+        if (body.applied) {
+          _renderRuntimeToggle(body.paused);
+        } else {
+          // Runtime accepted the call but it had no effect (e.g. no pause-file
+          // configured). Re-render from the response's paused field anyway.
+          _renderRuntimeToggle(body.paused);
+          btn.classList.add('runtime-toggle-btn--warn');
+          setTimeout(function () {
+            btn.classList.remove('runtime-toggle-btn--warn');
+          }, 1500);
+          console.warn('[runtime-toggle] action had no effect (applied=false)');
+        }
+      })
+      .catch(function (err) {
+        console.error('[runtime-toggle] fetch error on', endpoint, err);
+        // Roll back UI — re-render from prior state
+        _renderRuntimeToggle(currentlyPaused);
+      });
+  });
+
+  // Initial state fetch
+  _fetchState();
+
+  // Re-sync when the tab becomes visible again (e.g. CLI pause/resume
+  // happened while the browser tab was in the background).
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) _fetchState();
+  });
+})();
+
 // ============== AUTH (cookie session) ==============
 //
 // The server gates the entire app on a per-installation token, set

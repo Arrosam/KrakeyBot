@@ -349,3 +349,37 @@ main {
   color: var(--text);
   background: var(--panel-2);
 }
+
+/* Runtime pause/resume toggle — placed in the header strip, left of
+   theme-toggle. Icon + label breathe via gap; paused state tints
+   yellow so the operator can't miss it in either theme. */
+.runtime-toggle-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  padding: 6px 10px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1;
+  flex-shrink: 0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+}
+.runtime-toggle-btn:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.runtime-toggle-btn[data-paused="true"] {
+  color: var(--yellow);
+  border-color: var(--yellow);
+}
+.runtime-toggle-btn--warn {
+  animation: runtime-toggle-warn-flash 0.3s ease-in-out 2;
+}
+@keyframes runtime-toggle-warn-flash {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
