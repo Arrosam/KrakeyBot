@@ -778,3 +778,35 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ── Engine slot inline help ─────────────────────────────────────── */
+.engine-slot-help {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.45;
+  margin-top: 4px;
+}
+
+/* ── Engine Override warning banner (slim) ───────────────────────── */
+.engine-override-warning {
+  margin: 0 0 12px;
+  border-radius: 6px;
+  padding: 2px;
+  background: repeating-linear-gradient(
+    45deg,
+    #e8c060 0px,
+    #e8c060 8px,
+    #0c0e12 8px,
+    #0c0e12 16px
+  );
+}
+.engine-override-warning-inner {
+  background: var(--panel-2);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--yellow);
+  line-height: 1.45;
+}

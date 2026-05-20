@@ -2249,6 +2249,15 @@ function renderEngineOverridesSection(cfg) {
     + "Engines that declare config options surface a form inside the "
     + "expanded card. \"Custom path...\" lets you supply a "
     + "`module.path:ClassName` directly.";
+  const warnBanner = document.createElement('div');
+  warnBanner.className = 'engine-override-warning';
+  const warnInner = document.createElement('div');
+  warnInner.className = 'engine-override-warning-inner';
+  warnInner.textContent =
+    '⚠ WARNING: Misconfiguring engine slots will cause runtime crashes. ' +
+    'Do not modify unless you know exactly what you are doing.';
+  warnBanner.appendChild(warnInner);
+  body.appendChild(warnBanner);
   body.appendChild(hint);
 
   // Render one collapsible card per slot. Slot order follows
@@ -2335,16 +2344,6 @@ function _engineSlotBlock(slot, cfg) {
   if (!isExpanded) return card;
 
   // ── body ──────────────────────────────────────────────────────────
-
-  // Slot help text from HELP (rendered as a visible description block,
-  // not just a tooltip, matching the plugin-card pattern).
-  const slotHelp = HELP[`core_implementations.${slot}`];
-  if (slotHelp) {
-    const descBlock = document.createElement("div");
-    descBlock.className = "plugin-description";
-    descBlock.textContent = slotHelp;
-    card.appendChild(descBlock);
-  }
 
   // <select> — blank = default, named = short name, __custom__ = path.
   const selRow = document.createElement("div");
@@ -2436,6 +2435,13 @@ function _engineSlotBlock(slot, cfg) {
 
   selWrap.appendChild(sel);
   selWrap.appendChild(txt);
+  const slotHelp = HELP[`core_implementations.${slot}`];
+  if (slotHelp) {
+    const helpLine = document.createElement('small');
+    helpLine.className = 'engine-slot-help';
+    helpLine.textContent = slotHelp;
+    selWrap.appendChild(helpLine);
+  }
   selRow.appendChild(selWrap);
   card.appendChild(selRow);
   card.appendChild(schemaHolder);
