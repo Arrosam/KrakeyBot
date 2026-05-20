@@ -792,6 +792,32 @@ class Runtime:
         between beats to decide whether to skip the next cycle."""
         return self._paused
 
+    def request_pause(self, seconds: int | None = None) -> bool:
+        """Programmatically request a pause. Returns True if applied
+        (a pause-control-file path is configured), False if no-op.
+
+        Writes the canonical pause-control-file (indefinite when seconds
+        is None, decimal-epoch deadline when given) and immediately
+        refreshes ``self._paused`` via ``poll_pause_file`` so callers can
+        observe the new state on the next ``paused`` read."""
+        if self._pause_file is None:
+            return False
+        from krakey.runtime import _pause_io
+        _pause_io.write_pause_file(self._pause_file, seconds)
+        self.poll_pause_file()
+        return True
+
+    def request_resume(self) -> bool:
+        """Programmatically clear a pause. Returns True if applied
+        (path configured), False if no-op. Idempotent — calling when
+        not paused is a safe no-op (returns True, file already absent)."""
+        if self._pause_file is None:
+            return False
+        from krakey.runtime import _pause_io
+        _pause_io.clear_pause_file(self._pause_file)
+        self.poll_pause_file()
+        return True
+
     # ---------- heartbeat algorithm ----------
 
     async def _heartbeat(self) -> None:
