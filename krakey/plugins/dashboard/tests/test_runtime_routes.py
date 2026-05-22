@@ -235,6 +235,14 @@ class TestPostRuntimePause:
             await c.post("/api/runtime/pause")
         assert len(rt.pause_calls) == 1
 
+    async def test_paused_reflects_runtime_state_when_not_applied(self):
+        """When pause_applied=False (no pause-file configured), runtime stays
+        unpaused. The response must report paused=False, not a hardcoded True."""
+        rt = _FakeRuntime(paused=False, pause_applied=False)
+        async with _client_with_runtime(rt) as c:
+            r = await c.post("/api/runtime/pause")
+        assert r.json()["paused"] is False
+
     # --- boundary: idempotent pause when already paused ---
 
     async def test_idempotent_pause_still_returns_200(self):
@@ -330,6 +338,14 @@ class TestPostRuntimeResume:
         async with _client_with_runtime(rt) as c:
             await c.post("/api/runtime/resume")
         assert rt.resume_calls == 1
+
+    async def test_paused_reflects_runtime_state_when_not_applied(self):
+        """When resume_applied=False (no pause-file configured), runtime stays
+        paused. The response must report paused=True, not a hardcoded False."""
+        rt = _FakeRuntime(paused=True, resume_applied=False)
+        async with _client_with_runtime(rt) as c:
+            r = await c.post("/api/runtime/resume")
+        assert r.json()["paused"] is True
 
     # --- boundary: idempotent resume when already running ---
 
