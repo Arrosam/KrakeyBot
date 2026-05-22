@@ -32,6 +32,8 @@ Output ONE self-contained search phrase per line. Surface:
 - Key events (resolve EVERY relative date — "tomorrow", "next week", weekday names — to an absolute ISO YYYY-MM-DD computed against the provided CURRENT DATETIME)
 - Key places
 - Key relations between entities
+- Situational/role context (when the message implies Self is being asked to act, respond, or do something, emit a phrase describing the request pattern, e.g. "Self asked to perform a task by Sam")
+- Procedural/task context (when the message contains an actionable task, emit a phrase naming the task type and domain, e.g. "flight booking procedure", "travel planning experience")
 
 Rules:
 - No numbering, no bullet points, no markdown, no JSON
@@ -40,11 +42,14 @@ Rules:
 
 Example:
 CURRENT DATETIME: 2026-05-17T00:00:00
-MESSAGE: A message from Tom: "I'm heading to London tomorrow, going to meet Sam."
+MESSAGE: Sam: "Can you book me a flight to Auckland next Friday for a client meeting?"
 Output:
-Tom (key person)
-Travelling to London on 2026-05-18 (key event)
-Visiting Sam in London\
+Sam (key person)
+Flight to Auckland on 2026-05-22 (key event)
+Auckland (key place)
+Sam travelling to Auckland for a client meeting
+Self asked to perform a task by Sam
+Flight booking procedure\
 """
 
 
