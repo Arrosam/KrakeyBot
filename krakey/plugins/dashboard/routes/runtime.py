@@ -2,9 +2,9 @@
 
 - ``GET  /api/runtime/state``   — return ``{"paused": bool}``
 - ``POST /api/runtime/pause``   — request an indefinite pause;
-                                  return ``{"paused": True, "applied": bool}``
+                                  return ``{"paused": bool, "applied": bool}``
 - ``POST /api/runtime/resume``  — request a resume;
-                                  return ``{"paused": False, "applied": bool}``
+                                  return ``{"paused": bool, "applied": bool}``
 
 Routes are registered unconditionally. When ``runtime`` is None the
 handlers return 503 so the test suite can assert the correct shape
@@ -35,7 +35,7 @@ def register(app: FastAPI, *, runtime) -> None:
                 content={"error": "runtime not available"},
             )
         applied = bool(runtime.request_pause())
-        return {"paused": True, "applied": applied}
+        return {"paused": bool(runtime.paused), "applied": applied}
 
     @app.post("/api/runtime/resume")
     async def runtime_resume():  # noqa: ANN201
@@ -45,4 +45,4 @@ def register(app: FastAPI, *, runtime) -> None:
                 content={"error": "runtime not available"},
             )
         applied = bool(runtime.request_resume())
-        return {"paused": False, "applied": applied}
+        return {"paused": bool(runtime.paused), "applied": applied}
