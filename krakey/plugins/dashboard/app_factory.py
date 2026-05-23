@@ -34,6 +34,7 @@ from krakey.plugins.dashboard.routes import (
     memory as _memory,
     plugins as _plugins,
     prompts as _prompts,
+    runtime as runtime_routes,
     settings as _settings_route,
     uploads as _uploads,
 )
@@ -120,6 +121,7 @@ def create_app(
     _prompts.register(app, prompts=prompts)
     _plugins.register(app, plugins=plugins)
     _settings_route.register(app, config=config)
+    runtime_routes.register(app, runtime=runtime)
 
     # --- WS endpoints (only when their backing is available) ---
     if web_chat_service is None and web_chat_history is not None:

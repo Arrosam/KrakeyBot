@@ -3,6 +3,124 @@
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
+// ============== THEME (light/dark toggle) ==============
+(function () {
+  function _apply(theme) {
+    if (theme === 'light') {
+      document.documentElement.setAttribute('data-theme', 'light');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+    var btn = document.getElementById('theme-toggle');
+    if (btn && window.biIcon) {
+      btn.innerHTML = window.biIcon(theme === 'light' ? 'moon' : 'sunrise', 16);
+    }
+  }
+
+  function toggleTheme() {
+    var current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    var next = current === 'light' ? 'dark' : 'light';
+    localStorage.setItem('krakey-theme', next);
+    _apply(next);
+  }
+
+  // Sync icon to current theme (already set by the head script).
+  var initialTheme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  _apply(initialTheme);
+
+  var btn = document.getElementById('theme-toggle');
+  if (btn) {
+    btn.addEventListener('click', toggleTheme);
+  }
+})();
+
+// ============== RUNTIME PAUSE/RESUME TOGGLE ==============
+(function () {
+  var btn = document.getElementById('runtime-toggle');
+  if (!btn) return; // template variant without the button — no-op
+
+  function _renderRuntimeToggle(isPaused) {
+    var icon, label, title;
+    if (isPaused) {
+      icon = (window.biIcon && window.biIcon('play-fill', 16)) || '&#9654;';
+      label = ' Resume';
+      title = 'Resume heartbeat';
+    } else {
+      icon = (window.biIcon && window.biIcon('pause-fill', 16)) || '&#9208;';
+      label = ' Pause';
+      title = 'Pause heartbeat';
+    }
+    btn.innerHTML = icon + label;
+    btn.dataset.paused = String(isPaused);
+    btn.title = title;
+  }
+
+  function _fetchState() {
+    fetch('/api/runtime/state', { credentials: 'same-origin' })
+      .then(function (r) {
+        if (!r.ok) {
+          console.warn('[runtime-toggle] /api/runtime/state returned', r.status);
+          btn.innerHTML = '—';
+          btn.title = '';
+          return null;
+        }
+        return r.json();
+      })
+      .then(function (body) {
+        if (body && typeof body.paused === 'boolean') {
+          _renderRuntimeToggle(body.paused);
+        }
+      })
+      .catch(function (err) {
+        console.warn('[runtime-toggle] fetch error:', err);
+      });
+  }
+
+  btn.addEventListener('click', function () {
+    var currentlyPaused = btn.dataset.paused === 'true';
+    var endpoint = currentlyPaused ? '/api/runtime/resume' : '/api/runtime/pause';
+
+    fetch(endpoint, { method: 'POST', credentials: 'same-origin' })
+      .then(function (r) {
+        if (!r.ok) {
+          console.error('[runtime-toggle] POST', endpoint, 'failed with', r.status);
+          // Roll back — keep prior state (no re-render needed)
+          return null;
+        }
+        return r.json();
+      })
+      .then(function (body) {
+        if (!body) return; // HTTP error already handled above
+        if (body.applied) {
+          _renderRuntimeToggle(body.paused);
+        } else {
+          // Runtime accepted the call but it had no effect (e.g. no pause-file
+          // configured). Re-render from the response's paused field anyway.
+          _renderRuntimeToggle(body.paused);
+          btn.classList.add('runtime-toggle-btn--warn');
+          setTimeout(function () {
+            btn.classList.remove('runtime-toggle-btn--warn');
+          }, 1500);
+          console.warn('[runtime-toggle] action had no effect (applied=false)');
+        }
+      })
+      .catch(function (err) {
+        console.error('[runtime-toggle] fetch error on', endpoint, err);
+        // Roll back UI — re-render from prior state
+        _renderRuntimeToggle(currentlyPaused);
+      });
+  });
+
+  // Initial state fetch
+  _fetchState();
+
+  // Re-sync when the tab becomes visible again (e.g. CLI pause/resume
+  // happened while the browser tab was in the background).
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) _fetchState();
+  });
+})();
+
 // ============== AUTH (cookie session) ==============
 //
 // The server gates the entire app on a per-installation token, set
@@ -2131,6 +2249,15 @@ function renderEngineOverridesSection(cfg) {
     + "Engines that declare config options surface a form inside the "
     + "expanded card. \"Custom path...\" lets you supply a "
     + "`module.path:ClassName` directly.";
+  const warnBanner = document.createElement('div');
+  warnBanner.className = 'engine-override-warning';
+  const warnInner = document.createElement('div');
+  warnInner.className = 'engine-override-warning-inner';
+  warnInner.textContent =
+    '⚠ WARNING: Misconfiguring engine slots will cause runtime crashes. ' +
+    'Do not modify unless you know exactly what you are doing.';
+  warnBanner.appendChild(warnInner);
+  body.appendChild(warnBanner);
   body.appendChild(hint);
 
   // Render one collapsible card per slot. Slot order follows
@@ -2217,16 +2344,6 @@ function _engineSlotBlock(slot, cfg) {
   if (!isExpanded) return card;
 
   // ── body ──────────────────────────────────────────────────────────
-
-  // Slot help text from HELP (rendered as a visible description block,
-  // not just a tooltip, matching the plugin-card pattern).
-  const slotHelp = HELP[`core_implementations.${slot}`];
-  if (slotHelp) {
-    const descBlock = document.createElement("div");
-    descBlock.className = "plugin-description";
-    descBlock.textContent = slotHelp;
-    card.appendChild(descBlock);
-  }
 
   // <select> — blank = default, named = short name, __custom__ = path.
   const selRow = document.createElement("div");
@@ -2318,6 +2435,13 @@ function _engineSlotBlock(slot, cfg) {
 
   selWrap.appendChild(sel);
   selWrap.appendChild(txt);
+  const slotHelp = HELP[`core_implementations.${slot}`];
+  if (slotHelp) {
+    const helpLine = document.createElement('small');
+    helpLine.className = 'engine-slot-help';
+    helpLine.textContent = slotHelp;
+    selWrap.appendChild(helpLine);
+  }
   selRow.appendChild(selWrap);
   card.appendChild(selRow);
   card.appendChild(schemaHolder);
@@ -2356,9 +2480,50 @@ function _renderEngineSchemaForm(slot, shortName, schema) {
     if (target[fname] == null && fdef.default != null) {
       target[fname] = fdef.default;
     }
-    cfgBlock.appendChild(renderRow(fname, target, fname, type, helpPath));
+    if (type === "core_purpose") {
+      cfgBlock.appendChild(_renderCorePurposeRow(fname, target, fname, helpPath));
+    } else {
+      cfgBlock.appendChild(renderRow(fname, target, fname, type, helpPath));
+    }
   }
   return cfgBlock;
+}
+
+// Renders a `core_purpose` schema field as a <select> over the
+// configured llm.core_purposes keys (plus the floor value "compact").
+// Mirrors the DOM shape of renderEnumRow exactly (.cfg-row > label + select).
+function _renderCorePurposeRow(label, target, key, helpPath) {
+  const row = document.createElement("div");
+  row.className = "cfg-row";
+  const lab = document.createElement("label");
+  lab.textContent = label;
+  if (helpPath && HELP[helpPath]) lab.title = HELP[helpPath];
+  row.appendChild(lab);
+
+  const knownSet = new Set([...Object.keys(cfgState.llm.core_purposes), "compact"]);
+  const options = Array.from(knownSet);
+  // If the saved value is a non-empty string not already in the set
+  // (orphaned saved value), append it so it is never silently dropped.
+  const saved = target[key];
+  if (saved && !knownSet.has(saved)) {
+    options.push(saved);
+  }
+
+  const sel = document.createElement("select");
+  for (const c of options) {
+    const opt = document.createElement("option");
+    opt.value = c;
+    opt.textContent = c;
+    sel.appendChild(opt);
+  }
+  // Preselect saved value; fall back to "compact" if null/undefined/empty.
+  sel.value = (saved != null && saved !== "") ? saved : "compact";
+  sel.addEventListener("change", () => {
+    target[key] = sel.value;
+  });
+  if (helpPath && HELP[helpPath]) sel.title = HELP[helpPath];
+  row.appendChild(sel);
+  return row;
 }
 
 function ensure(obj, key, factory) {
@@ -3614,7 +3779,6 @@ const KNOWN_CORE_PURPOSES = [
   ["self_thinking", "required — Self's per-beat heartbeat LLM"],
   ["compact", "sliding-window history -> GM compaction LLM (also drives sleep clustering + KB index rebuild)"],
   ["classifier", "node category classifier (extractor + classifier; falls back to compact then self_thinking)"],
-  ["hypothalamus", "optional — bound when DecisionEngine is HypothalamusDecisionEngine (LLM translator instead of the default scripted <tool_call> parser)"],
 ];
 
 function renderCorePurposesBlock(llm) {

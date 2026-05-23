@@ -15,6 +15,8 @@ import sys
 import time
 from pathlib import Path
 
+from krakey.runtime._pause_io import clear_pause_file, write_pause_file
+
 from . import _meta
 
 _PIDFILE_REL = "workspace/.krakey.pid"
@@ -551,12 +553,10 @@ def pause_daemon(seconds: int | None = None) -> int:
         print("krakey: not running", file=sys.stderr)
         return _EXIT_NOT_RUNNING
 
+    write_pause_file(_pausefile(), seconds)
     if seconds is None:
-        _write_pausefile("")
         print("krakey: paused (indefinite; run `krakey resume` to unpause)")
     else:
-        deadline = time.time() + seconds
-        _write_pausefile(str(deadline))
         print(f"krakey: paused for {seconds}s (auto-resumes at deadline)")
     return 0
 
@@ -568,10 +568,7 @@ def resume_daemon() -> int:
         print("krakey: not running", file=sys.stderr)
         return _EXIT_NOT_RUNNING
 
-    try:
-        _pausefile().unlink()
-    except FileNotFoundError:
-        pass
+    clear_pause_file(_pausefile())
     print("krakey: resumed")
     return 0
 

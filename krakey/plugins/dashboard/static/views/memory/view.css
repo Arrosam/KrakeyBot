@@ -152,7 +152,7 @@ table.mem-table tbody tr:nth-child(even) { background: var(--panel-2); }
   color: var(--muted);
   font-size: 10px;
   pointer-events: none;
-  background: rgba(12, 14, 18, 0.75);
+  background: var(--overlay);
   padding: 3px 8px;
   border-radius: 6px;
   border: 1px solid var(--border-soft);
@@ -168,7 +168,7 @@ table.mem-table tbody tr:nth-child(even) { background: var(--panel-2); }
   pointer-events: none;
   font-size: 10px;
   color: var(--text-2);
-  background: rgba(12, 14, 18, 0.8);
+  background: var(--overlay);
   border: 1px solid var(--border-soft);
   padding: 7px 10px;
   border-radius: 8px;

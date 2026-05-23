@@ -28,10 +28,11 @@ config_schema:
       behavior). Auto-falls back to raw text if the bound LLM is
       unavailable or returns an error.
   - field: semantic_association_purpose
-    type: text
-    default: "recall_enrichment"
+    type: core_purpose
+    default: "compact"
     help: >
-      Core-purpose name resolved via ``llm.core_purposes`` → tag →
-      client. Bind it in LLM settings to choose which model derives
-      the search phrases. When the purpose is unbound the enrichment
-      layer is inert and raw text queries are used instead.
+      Must match a key in ``llm.core_purposes`` (e.g. ``compact`` = the
+      sliding-window / GM compaction LLM). Binding a tag to that purpose
+      in LLM settings selects the model used to derive extra recall
+      queries. When the purpose is unbound (no tag assigned) the
+      enrichment layer is inert and raw text queries are used instead.

@@ -69,7 +69,7 @@
   background: var(--accent);
   border: none;
   border-radius: 8px;
-  color: #04201f;
+  color: var(--on-accent);
   font-weight: 650;
   font-family: inherit;
   font-size: 13px;
@@ -135,7 +135,7 @@
   font-size: 22px;
   font-weight: bold;
   color: var(--text);
-  background: rgba(13, 15, 18, 0.85);
+  background: var(--overlay);
   border: 2px dashed var(--accent);
   border-radius: var(--radius);
   z-index: 10;
