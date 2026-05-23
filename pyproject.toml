@@ -73,7 +73,6 @@ include = ["krakey*"]
 "krakey.prompt" = ["dna.txt"]
 "krakey.plugins.dashboard" = ["meta.yaml", "static/**/*"]
 "krakey.plugins.duckduckgo_search" = ["meta.yaml"]
-"krakey.plugins.hypothalamus" = ["meta.yaml"]
 "krakey.plugins.in_mind_note" = ["meta.yaml"]
 "krakey.plugins.recall" = ["meta.yaml"]
 "krakey.plugins.telegram" = ["meta.yaml"]
@@ -86,4 +85,7 @@ include = ["krakey*"]
 # excludes browser_exec's .py files would break browser_exec
 # entirely. Listing it here makes that requirement visible at
 # the packaging-config level.
+"krakey.plugins.bootstrap" = ["meta.yaml"]
 "krakey.plugins.browser_exec" = ["meta.yaml", "server.py"]
+"krakey.plugins.mcp_connector" = ["meta.yaml"]
+"krakey.plugins.searxng_search" = ["meta.yaml"]

@@ -38,7 +38,7 @@ jobs:
           whl = glob.glob("dist/krakey-*.whl")[0]
           names = zipfile.ZipFile(whl).namelist()
           required = [
-              "krakey/memory/schemas.sql",
+              "krakey/engines/memory/_internal/schemas.sql",
               "krakey/prompt/dna.txt",
               "krakey/plugins/dashboard/meta.yaml",
               "krakey/plugins/dashboard/static/index.template.html",
