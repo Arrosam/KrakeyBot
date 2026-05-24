@@ -3,6 +3,18 @@
 Adrenalin only interrupts hibernation, never LLM inference.
 Preloads recall during the wait so the next heartbeat's prompt
 already has fresh context.
+
+Two helpers are provided:
+
+``idle_with_recall`` — full hibernation wait: polls the buffer,
+  preloads recall with any new stimuli that arrive, and breaks early
+  on adrenalin.
+
+``wait_or_adrenalin`` — lightweight interruption signal only: does NOT
+  touch recall or drain the buffer; returns True as soon as an adrenalin
+  stimulus is present, False if the full duration elapses with none.
+  Used by _phase_run_self to make retry-waits interruptible while
+  keeping the LLM call itself non-interruptible.
 """
 from __future__ import annotations
 
@@ -14,6 +26,54 @@ from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
 def clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
+
+
+async def wait_or_adrenalin(
+    buffer: StimulusBuffer,
+    seconds: float,
+    *,
+    poll_slice: float = 0.05,
+) -> bool:
+    """Wait up to ``seconds`` for an adrenalin stimulus.
+
+    Returns True as soon as ``buffer.has_adrenalin()`` is True —
+    including immediately on entry if it is already True before any
+    sleeping occurs. Returns False if the full ``seconds`` elapse with
+    no adrenalin.
+
+    This helper is the interruptible side of the retry-wait pattern:
+    it signals interruption only. It does NOT drain, peek, or touch
+    recall — the caller is responsible for draining and rebuilding
+    context when True is returned.
+
+    Adrenalin only interrupts hibernation, never LLM inference; callers
+    must not wrap an LLM call with this helper.
+    """
+    # Fast path: already-adrenalin buffer — return without sleeping.
+    if buffer.has_adrenalin():
+        return True
+
+    if seconds <= 0:
+        return False
+
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + seconds
+
+    while True:
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            break
+        try:
+            await asyncio.wait_for(
+                buffer.wait_for_any(), timeout=min(remaining, poll_slice),
+            )
+        except asyncio.TimeoutError:
+            pass
+
+        if buffer.has_adrenalin():
+            return True
+
+    return False
 
 
 async def idle_with_recall(
