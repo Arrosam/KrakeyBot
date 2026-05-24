@@ -43,12 +43,12 @@ const $$ = (sel) => document.querySelectorAll(sel);
     var icon, label, title;
     if (isPaused) {
       icon = (window.biIcon && window.biIcon('play-fill', 16)) || '&#9654;';
-      label = ' Resume';
-      title = 'Resume heartbeat';
+      label = ' ' + window.t('runtime_resume');
+      title = window.t('runtime_resume_title');
     } else {
       icon = (window.biIcon && window.biIcon('pause-fill', 16)) || '&#9208;';
-      label = ' Pause';
-      title = 'Pause heartbeat';
+      label = ' ' + window.t('runtime_pause');
+      title = window.t('runtime_pause_title');
     }
     btn.innerHTML = icon + label;
     btn.dataset.paused = String(isPaused);
@@ -141,13 +141,50 @@ const $$ = (sel) => document.querySelectorAll(sel);
     applyLocale();
     _syncLangToggle();
   });
+  // If a non-default locale was previously selected (and is still
+  // registered), apply it now so the initial English DOM is localised.
+  if (window.getLocale() !== 'en' && window.LOCALES[window.getLocale()]) {
+    applyLocale();
+  }
   _syncLangToggle();
 })();
 
-// Re-renders localised strings in place. Skeleton for now — later i18n units
-// populate this to refresh tab labels, settings, tooltips, etc. on locale switch.
+// Re-renders localised strings in place when the active locale changes.
+// Static chrome (tabs, header aria) is updated directly; data-driven views
+// (settings, prompts, memory, chat) pick up the new locale on their next
+// render — we re-render the settings form here since its section titles are
+// localised and it has a clean full-rebuild path.
 function applyLocale() {
-  // placeholder — populated by later i18n units
+  // Tab labels — preserve each button's leading icon node, swap the text.
+  document.querySelectorAll(".tab-btn").forEach(function (btn) {
+    var label = window.t("tab_" + btn.dataset.tab);
+    var icon = btn.firstElementChild;  // <svg>/<i> icon, if present
+    btn.textContent = "";
+    if (icon) {
+      btn.appendChild(icon);
+      btn.appendChild(document.createTextNode(" " + label));
+    } else {
+      btn.textContent = label;
+    }
+  });
+
+  // Header control aria-labels.
+  var rt = document.getElementById("runtime-toggle");
+  if (rt) rt.setAttribute("aria-label", window.t("aria_runtime_toggle"));
+  var lt = document.getElementById("lang-toggle");
+  if (lt) lt.setAttribute("aria-label", window.t("aria_lang_toggle"));
+  var tt = document.getElementById("theme-toggle");
+  if (tt) tt.setAttribute("aria-label", window.t("aria_theme_toggle"));
+
+  // Settings form — re-render so localised section titles refresh. Guarded
+  // against running before the settings DOM is mounted or while inactive.
+  try {
+    if (typeof renderSettingsForm === "function" &&
+        typeof settingsForm !== "undefined" && settingsForm &&
+        settingsForm.children.length) {
+      renderSettingsForm();
+    }
+  } catch (e) { /* settings not mounted yet — ignore */ }
 }
 
 // ============== AUTH (cookie session) ==============
@@ -224,8 +261,7 @@ function _showSleepBanner(reason) {
   const txt = el.querySelector(".banner-text");
   if (txt) {
     txt.textContent =
-      "Krakey is sleeping (" + (reason || "compacting memory") +
-      ") — Memory tab is paused until sleep finishes.";
+      window.t("sleep_banner", { reason: reason || window.t("sleep_reason_default") });
   }
   el.classList.remove("hidden");
 }
@@ -789,15 +825,15 @@ document.addEventListener("visibilitychange", () => {
 
 function connectChat() {
   chatWS = new WebSocket(_wsUrl("/ws/chat"));
-  chatWS.onopen = () => { chatMeta.textContent = "connected"; setStatus(); };
+  chatWS.onopen = () => { chatMeta.textContent = window.t("ws_connected"); setStatus(); };
   chatWS.onclose = (ev) => {
-    chatMeta.textContent = "disconnected — reconnecting...";
+    chatMeta.textContent = window.t("ws_disconnected");
     setStatus();
     // 1008 → expired session; events-WS handler also reloads.
     if (ev && ev.code === 1008) { location.reload(); return; }
     setTimeout(connectChat, 2000);
   };
-  chatWS.onerror = () => { chatMeta.textContent = "error"; setStatus(); };
+  chatWS.onerror = () => { chatMeta.textContent = window.t("ws_error"); setStatus(); };
   chatWS.onmessage = (msg) => {
     const data = JSON.parse(msg.data);
     if (data.kind === "history") {
@@ -999,13 +1035,12 @@ async function loadMemory(view, opts) {
     target.classList.remove("graph-mode");
     target.innerHTML =
       `<p style="padding:20px;color:var(--muted);text-align:center">` +
-      `Krakey is sleeping — Memory will load automatically when ` +
-      `sleep finishes.</p>`;
+      `${escapeHtml(window.t("memory_sleeping"))}</p>`;
     _lastRenderedMemView = null;  // force a real render once awake
     return;
   }
   target.classList.toggle("graph-mode", view === "graph");
-  target.textContent = "loading...";
+  target.textContent = window.t("loading");
   try {
     if (view === "graph") {
       await renderGraph(target);
@@ -1018,7 +1053,7 @@ async function loadMemory(view, opts) {
     }
     _lastRenderedMemView = view;
   } catch (e) {
-    target.textContent = "error: " + e;
+    target.textContent = window.t("error_prefix") + e;
     _lastRenderedMemView = null;
   }
 }
@@ -1054,7 +1089,7 @@ async function renderGraph(target) {
   canvas.id = "gm-graph";
   const hint = document.createElement("div");
   hint.className = "gm-graph-hint";
-  hint.textContent = "drag to pan · scroll to zoom · drag a node to move it";
+  hint.textContent = window.t("memory_graph_hint");
   const stats = document.createElement("div");
   stats.className = "gm-graph-stats";
   stats.innerHTML = "<i>loading stats…</i>";
@@ -1281,7 +1316,7 @@ function renderKBs(r) {
 async function loadKBEntries(kbid) {
   const target = document.getElementById(`kb-entries-${kbid}`);
   if (!target) return;
-  target.innerHTML = "loading...";
+  target.innerHTML = window.t("loading");
   try {
     const r = await fetch(`/api/kb/${encodeURIComponent(kbid)}/entries?limit=200`).then((r) => r.json());
     if (!r.entries.length) { target.innerHTML = "<i>(no entries)</i>"; return; }
@@ -1291,7 +1326,7 @@ async function loadKBEntries(kbid) {
         ${escapeHtml(e.content)}
       </div>`).join("");
   } catch (e) {
-    target.textContent = "error: " + e;
+    target.textContent = window.t("error_prefix") + e;
   }
 }
 
@@ -1456,7 +1491,7 @@ let _promptsLive = true;
 let _promptsPendingCount = 0;
 
 async function loadPrompts() {
-  promptsList.textContent = "loading...";
+  promptsList.textContent = window.t("loading");
   try {
     const r = await fetch("/api/prompts?limit=200").then((r) => r.json());
     promptsCache = r.prompts || [];
@@ -1464,7 +1499,7 @@ async function loadPrompts() {
     _updatePendingHint();
     renderPromptsList();
   } catch (e) {
-    promptsList.textContent = "error: " + e;
+    promptsList.textContent = window.t("error_prefix") + e;
   }
 }
 
@@ -1523,10 +1558,10 @@ function _updatePendingHint() {
   if (!promptsPending) return;
   if (!_promptsLive && _promptsPendingCount > 0) {
     promptsPending.textContent =
-      `${_promptsPendingCount} new prompt${_promptsPendingCount === 1 ? "" : "s"} since paused`;
+      window.t("prompts_pending", { count: _promptsPendingCount, plural: _promptsPendingCount === 1 ? "" : "s" });
     promptsPending.classList.add("has-pending");
   } else if (!_promptsLive) {
-    promptsPending.textContent = "paused — toggle live to resume";
+    promptsPending.textContent = window.t("prompts_paused");
     promptsPending.classList.remove("has-pending");
   } else {
     promptsPending.textContent = "";
@@ -1559,7 +1594,7 @@ function fmtTs(iso) {
 function renderPromptsList() {
   promptsList.innerHTML = "";
   if (!promptsCache.length) {
-    promptsList.textContent = "(no prompts yet — wait one heartbeat)";
+    promptsList.textContent = window.t("prompts_empty");
     return;
   }
   for (const p of promptsCache) {
@@ -1865,7 +1900,7 @@ let configSchema = { llm_params: [] };
 
 async function loadSettings() {
   settingsToast.textContent = "";
-  settingsForm.innerHTML = "loading...";
+  settingsForm.innerHTML = window.t("loading");
   try {
     // Load config + plugin discovery + schema in parallel
     const [cfgRes, pluginRes, schemaRes] = await Promise.all([
@@ -1920,7 +1955,7 @@ async function loadSettings() {
     // /api/plugins/stale_configs returns at least one entry.
     refreshStaleConfigs().catch(() => {});
   } catch (e) {
-    settingsForm.innerHTML = "error loading: " + escapeHtml(String(e));
+    settingsForm.innerHTML = window.t("error_loading_prefix") + escapeHtml(String(e));
   }
 }
 
@@ -2196,11 +2231,11 @@ function renderSettingsForm() {
   // Generic sections (each seeded from SECTION_DEFAULTS so missing fields
   // pre-populate to runtime defaults instead of looking "off"/empty)
   ensureSection("idle");
-  settingsForm.appendChild(renderGenericSection("idle", "Idle",
+  settingsForm.appendChild(renderGenericSection("idle", window.t("section_idle"),
     cfgState.idle, SCHEMAS.idle));
 
   ensureSection("fatigue");
-  const fatSec = renderGenericSection("fatigue", "Fatigue",
+  const fatSec = renderGenericSection("fatigue", window.t("section_fatigue"),
     cfgState.fatigue, SCHEMAS.fatigue_scalars);
   fatSec.querySelector(".body").appendChild(renderFatigueThresholds(cfgState.fatigue));
   settingsForm.appendChild(fatSec);
@@ -2211,22 +2246,22 @@ function renderSettingsForm() {
   // (rounds compact INTO GM when the budget overflows).
   ensureSection("sliding_window");
   settingsForm.appendChild(renderGenericSection(
-    "sliding_window", "Sliding Window (Working Memory)",
+    "sliding_window", window.t("section_sliding_window"),
     cfgState.sliding_window, SCHEMAS.sliding_window,
   ));
 
   ensureSection("graph_memory");
-  settingsForm.appendChild(renderGenericSection("graph_memory", "Graph Memory",
+  settingsForm.appendChild(renderGenericSection("graph_memory", window.t("section_graph_memory"),
     cfgState.graph_memory, SCHEMAS.graph_memory));
   ensureSection("knowledge_base");
-  settingsForm.appendChild(renderGenericSection("knowledge_base", "Knowledge Base",
+  settingsForm.appendChild(renderGenericSection("knowledge_base", window.t("section_knowledge_base"),
     cfgState.knowledge_base, SCHEMAS.knowledge_base));
 
   ensureSection("sleep");
-  settingsForm.appendChild(renderGenericSection("sleep", "Sleep",
+  settingsForm.appendChild(renderGenericSection("sleep", window.t("section_sleep"),
     cfgState.sleep, SCHEMAS.sleep));
   ensureSection("safety");
-  const safetySec = renderGenericSection("safety", "Safety",
+  const safetySec = renderGenericSection("safety", window.t("section_safety"),
     cfgState.safety, SCHEMAS.safety);
   // Hint at the top of the section body: the SafetySection dataclass
   // is parsed and persisted but the runtime currently has zero
@@ -2234,8 +2269,7 @@ function renderSettingsForm() {
   // don't expect their hard-limit to fire.
   const advisoryHint = document.createElement("p");
   advisoryHint.className = "section-hint";
-  advisoryHint.textContent =
-    "advisory only — runtime does not yet enforce these limits";
+  advisoryHint.textContent = window.t("safety_advisory");
   const safetyBody = safetySec.querySelector(".body");
   safetyBody.insertBefore(advisoryHint, safetyBody.firstChild);
   settingsForm.appendChild(safetySec);
@@ -2266,7 +2300,7 @@ function renderSettingsForm() {
 }
 
 function renderEngineOverridesSection(cfg) {
-  const sec = makeSection("core_implementations", "Engine Overrides");
+  const sec = makeSection("core_implementations", window.t("section_core_implementations"));
   const body = sec.querySelector(".body");
   const hint = document.createElement("p");
   hint.className = "section-hint";
@@ -2399,7 +2433,7 @@ function _engineSlotBlock(slot, cfg) {
   }
   const customOpt = document.createElement("option");
   customOpt.value = "__custom__";
-  customOpt.textContent = "Custom path…";
+  customOpt.textContent = window.t("opt_custom_path");
   sel.appendChild(customOpt);
 
   if (isCustom) sel.value = "__custom__";
@@ -2987,7 +3021,7 @@ function renderEnvironmentsSection(envs) {
   // krakey.models.config.environments.EnvironmentsSection — `local`
   // is always-on with just an allow-list; `sandbox` is optional and
   // gated by an enable toggle.
-  const sec = makeSection("environments", "Environments");
+  const sec = makeSection("environments", window.t("section_environments"));
   const body = sec.querySelector(".body");
 
   // Plugin-name suggestions for the allow-list editors come from
@@ -3266,7 +3300,7 @@ function renderFatigueThresholds(fatigue) {
   h.appendChild(document.createTextNode("thresholds (% → hint)"));
   const actions = document.createElement("span");
   actions.className = "actions";
-  const addBtn = mkBtn("+ add", () => {
+  const addBtn = mkBtn(window.t("btn_add"), () => {
     let key = 0;
     while (key in fatigue.thresholds) key += 25;
     fatigue.thresholds[key] = "";
@@ -3421,14 +3455,14 @@ function renderLLMSection(llm) {
     llm.core_purposes = llm.core_purposes || {};
   }
 
-  const sec = makeSection("llm", "LLM");
+  const sec = makeSection("llm", window.t("section_llm"));
   const body = sec.querySelector(".body");
 
   // Providers
   const provHead = document.createElement("h4");
   provHead.style.cssText = "color:var(--text);font-weight:bold;font-size:11px;margin:0 0 6px";
   provHead.appendChild(document.createTextNode("Providers"));
-  const addProv = mkBtn("+ add provider", () => {
+  const addProv = mkBtn(window.t("btn_add_provider"), () => {
     // Add directly with a placeholder name; the heading enters
     // edit-mode on render so the user types the real name inline.
     const name = _uniqueDraftName(llm.providers, "provider");
@@ -3460,7 +3494,7 @@ function renderLLMSection(llm) {
     "Purposes both bind a tag name; multiple purposes can share " +
     "the same tag, and a tag can be re-tuned in one place to " +
     "change every consumer at once.";
-  const addTag = mkBtn("+ add tag", () => {
+  const addTag = mkBtn(window.t("btn_add_tag"), () => {
     const provNames = Object.keys(llm.providers || {});
     if (!provNames.length) { alert("add a provider first"); return; }
     const firstProv = llm.providers[provNames[0]];
@@ -3550,7 +3584,7 @@ function renderProviderBlock(pname, prov, llm) {
   const modHead = document.createElement("div");
   modHead.style.cssText = "display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);margin-bottom:4px";
   modHead.appendChild(document.createTextNode("models"));
-  const addModel = mkBtn("+ add model", () => {
+  const addModel = mkBtn(window.t("btn_add_model"), () => {
     if (!Array.isArray(prov.models)) prov.models = [];
     prov.models.push({ name: "", capabilities: ["chat"] });
     renderSettingsForm();
@@ -3873,7 +3907,7 @@ function renderCorePurposesBlock(llm) {
     sub.appendChild(_purposeRow(llm, purp, tagNames, ""));
   }
 
-  const addBtn = mkBtn("+ add purpose", () => {
+  const addBtn = mkBtn(window.t("btn_add_purpose"), () => {
     const name = _uniqueDraftName(llm.core_purposes, "purpose");
     llm.core_purposes[name] = "";
     _pendingNewKey = { scope: "purpose", name };
@@ -4246,7 +4280,7 @@ function _isPluginEnabled(plugin) {
 }
 
 function renderPluginsSection() {
-  const sec = makeSection("plugins", "Plugins");
+  const sec = makeSection("plugins", window.t("section_plugins"));
   const body = sec.querySelector(".body");
 
   const intro = document.createElement("p");
@@ -4301,7 +4335,7 @@ function renderPluginsSection() {
   if (disabled.length) {
     const head = document.createElement("h4");
     head.style.cssText = "color:var(--muted);font-size:11px;margin:12px 0 6px";
-    head.textContent = "Available (disabled)";
+    head.textContent = window.t("available_disabled");
     body.appendChild(head);
     for (const p of disabled) {
       body.appendChild(_renderPluginCard(p, false, live, -1, 0));
@@ -4486,7 +4520,7 @@ function _renderPluginCard(plugin, enabled, liveByName, modIdx, modCount) {
     const cfgHead = document.createElement("div");
     cfgHead.style.cssText =
       "font-size:11px;color:var(--muted);margin-bottom:4px";
-    cfgHead.textContent = "Config";
+    cfgHead.textContent = window.t("config_label");
     cfgBlock.appendChild(cfgHead);
     for (const fdef of plugin.config_schema) {
       const fname = fdef.field;
@@ -4527,7 +4561,7 @@ function _renderLLMPurposesEditor(plugin, cfg) {
   const head = document.createElement("div");
   head.style.cssText =
     "font-size:11px;color:var(--muted);margin-bottom:4px";
-  head.textContent = "LLM purpose bindings (tag picker)";
+  head.textContent = window.t("llm_purpose_bindings");
   block.appendChild(head);
 
   const tagNames = Object.keys((cfgState.llm || {}).tags || {});
@@ -4639,7 +4673,7 @@ $("#settings-save").addEventListener("click", async () => {
 });
 
 $("#settings-restart").addEventListener("click", async () => {
-  if (!confirm("Restart Krakey? The web UI will briefly disconnect.")) return;
+  if (!confirm(window.t("confirm_restart"))) return;
   try {
     const r = await fetch("/api/restart", { method: "POST" });
     if (r.ok) {

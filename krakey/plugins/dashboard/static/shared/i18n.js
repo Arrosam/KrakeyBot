@@ -3,8 +3,85 @@
 // (or 'en') becomes the active locale. setLocale() swaps the active
 // locale and persists the choice; the app.js IIFE is responsible for
 // updating <html lang> and re-rendering strings via applyLocale().
+//
+//   t(key)           -> resolved string (active locale, then en, then key)
+//   t(key, {n: 3})   -> same, with {n} placeholders substituted
+//
+// Adding a language is a pure data drop-in: register another entry on
+// LOCALES (e.g. LOCALES.zh = {...}) and the #lang-toggle activates
+// automatically (it stays hidden while only one locale is registered).
 (function () {
-  window.LOCALES = { en: {} };   // en starts empty; later units inject keys
+  window.LOCALES = {
+    en: {
+      // ── Tabs (header nav) ──────────────────────────────────────────
+      tab_thoughts: "Inner Thoughts",
+      tab_chat: "Chat",
+      tab_memory: "Memory",
+      tab_prompts: "Prompts",
+      tab_log: "Log",
+      tab_settings: "Settings",
+
+      // ── Header control aria-labels ─────────────────────────────────
+      aria_runtime_toggle: "Pause/resume heartbeat",
+      aria_lang_toggle: "Switch language",
+      aria_theme_toggle: "Toggle light/dark mode",
+
+      // ── Runtime pause/resume toggle ────────────────────────────────
+      runtime_resume: "Resume",
+      runtime_pause: "Pause",
+      runtime_resume_title: "Resume heartbeat",
+      runtime_pause_title: "Pause heartbeat",
+
+      // ── Sleep banners ──────────────────────────────────────────────
+      sleep_reason_default: "compacting memory",
+      sleep_banner: "Krakey is sleeping ({reason}) — Memory tab is paused until sleep finishes.",
+      memory_sleeping: "Krakey is sleeping — Memory will load automatically when sleep finishes.",
+
+      // ── WebSocket / async status ───────────────────────────────────
+      ws_connected: "connected",
+      ws_disconnected: "disconnected — reconnecting...",
+      ws_error: "error",
+      loading: "loading...",
+      error_prefix: "error: ",
+      error_loading_prefix: "error loading: ",
+
+      // ── Prompts view ───────────────────────────────────────────────
+      prompts_empty: "(no prompts yet — wait one heartbeat)",
+      prompts_paused: "paused — toggle live to resume",
+      prompts_pending: "{count} new prompt{plural} since paused",
+
+      // ── Memory view ────────────────────────────────────────────────
+      memory_graph_hint: "drag to pan · scroll to zoom · drag a node to move it",
+
+      // ── Settings: section titles (keyed by stable section key) ─────
+      section_llm: "LLM",
+      section_plugins: "Plugins",
+      section_idle: "Idle",
+      section_fatigue: "Fatigue",
+      section_sliding_window: "Sliding Window (Working Memory)",
+      section_graph_memory: "Graph Memory",
+      section_knowledge_base: "Knowledge Base",
+      section_sleep: "Sleep",
+      section_safety: "Safety",
+      section_environments: "Environments",
+      section_core_implementations: "Engine Overrides",
+
+      // ── Settings: misc labels & buttons ────────────────────────────
+      safety_advisory: "advisory only — runtime does not yet enforce these limits",
+      opt_custom_path: "Custom path…",
+      available_disabled: "Available (disabled)",
+      config_label: "Config",
+      llm_purpose_bindings: "LLM purpose bindings (tag picker)",
+      btn_add: "+ add",
+      btn_add_provider: "+ add provider",
+      btn_add_tag: "+ add tag",
+      btn_add_model: "+ add model",
+      btn_add_purpose: "+ add purpose",
+
+      // ── Confirm dialogs ────────────────────────────────────────────
+      confirm_restart: "Restart Krakey? The web UI will briefly disconnect.",
+    },
+  };
 
   var _locale = localStorage.getItem('krakey-lang') || 'en';
 
@@ -12,10 +89,18 @@
 
   window.availableLocales = function () { return Object.keys(window.LOCALES); };
 
-  window.t = function (key) {
-    return (window.LOCALES[_locale] && window.LOCALES[_locale][key]) ||
-           (window.LOCALES.en     && window.LOCALES.en[key])         ||
-           key;
+  // Resolve a key in the active locale, falling back to en, then to the
+  // raw key. Optional `params` substitutes {name} placeholders.
+  window.t = function (key, params) {
+    var s = (window.LOCALES[_locale] && window.LOCALES[_locale][key]);
+    if (s == null) s = (window.LOCALES.en && window.LOCALES.en[key]);
+    if (s == null) s = key;
+    if (params) {
+      s = s.replace(/\{(\w+)\}/g, function (m, name) {
+        return (params[name] != null) ? params[name] : m;
+      });
+    }
+    return s;
   };
 
   // NO-OP for unregistered langs. Does NOT touch <html lang> or any
