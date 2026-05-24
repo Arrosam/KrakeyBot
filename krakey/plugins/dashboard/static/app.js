@@ -1827,6 +1827,26 @@ const HELP = {
   "core_implementations.llm_client_factory": "Per-tag LLMClient class substitution slot. One layer below llm_factory. Empty = use the standard LLMClient class. Rarely set.",
 };
 
+// Register the English config-help text into the i18n layer so a future
+// locale can supply LOCALES.<lang>.help = {...} and have tHelp() pick it up.
+// HELP is also extended at runtime from plugin/engine config schemas
+// (fdef.help); LOCALES.en.help is the SAME object reference, so those
+// additions stay visible automatically.
+if (window.LOCALES) {
+  window.LOCALES.en = window.LOCALES.en || {};
+  window.LOCALES.en.help = HELP;
+}
+
+// Resolve a config-field help string for the active locale, falling back to
+// the English HELP table, then to "" (so the existing
+// `if (helpPath && tHelp(helpPath))` guards still short-circuit cleanly).
+function tHelp(path) {
+  var loc = window.getLocale ? window.getLocale() : "en";
+  var locHelp = window.LOCALES && window.LOCALES[loc] && window.LOCALES[loc].help;
+  if (locHelp && locHelp[path] != null) return locHelp[path];
+  return (HELP[path] != null) ? HELP[path] : "";
+}
+
 // Fixed numeric/string dataclass schemas — drives generic renderer.
 const SCHEMAS = {
   idle: [
@@ -2504,7 +2524,7 @@ function _engineSlotBlock(slot, cfg) {
 
   selWrap.appendChild(sel);
   selWrap.appendChild(txt);
-  const slotHelp = HELP[`core_implementations.${slot}`];
+  const slotHelp = tHelp(`core_implementations.${slot}`);
   if (slotHelp) {
     const helpLine = document.createElement('small');
     helpLine.className = 'engine-slot-help';
@@ -2566,7 +2586,7 @@ function _renderCorePurposeRow(label, target, key, helpPath) {
   row.className = "cfg-row";
   const lab = document.createElement("label");
   lab.textContent = label;
-  if (helpPath && HELP[helpPath]) lab.title = HELP[helpPath];
+  if (helpPath && tHelp(helpPath)) lab.title = tHelp(helpPath);
   row.appendChild(lab);
 
   const knownSet = new Set([...Object.keys(cfgState.llm.core_purposes), "compact"]);
@@ -2590,7 +2610,7 @@ function _renderCorePurposeRow(label, target, key, helpPath) {
   sel.addEventListener("change", () => {
     target[key] = sel.value;
   });
-  if (helpPath && HELP[helpPath]) sel.title = HELP[helpPath];
+  if (helpPath && tHelp(helpPath)) sel.title = tHelp(helpPath);
   row.appendChild(sel);
   return row;
 }
@@ -3016,7 +3036,7 @@ function _renderListRow(label, arr, helpPath, opts) {
   row.className = "cfg-row";
   const lab = document.createElement("label");
   lab.textContent = label;
-  if (helpPath && HELP[helpPath]) lab.title = HELP[helpPath];
+  if (helpPath && tHelp(helpPath)) lab.title = tHelp(helpPath);
   row.appendChild(lab);
   row.appendChild(_renderStringList(arr, opts));
   return row;
@@ -3165,8 +3185,8 @@ function renderRow(label, target, key, type, helpPath) {
   row.className = "cfg-row";
   const lab = document.createElement("label");
   lab.textContent = label;
-  if (helpPath && HELP[helpPath]) {
-    lab.title = HELP[helpPath];
+  if (helpPath && tHelp(helpPath)) {
+    lab.title = tHelp(helpPath);
   }
   row.appendChild(lab);
 
@@ -3175,7 +3195,7 @@ function renderRow(label, target, key, type, helpPath) {
   if (type === "bool") {
     widget = document.createElement("span");
     widget.className = "toggle" + (val ? " on" : "");
-    if (helpPath && HELP[helpPath]) widget.title = HELP[helpPath];
+    if (helpPath && tHelp(helpPath)) widget.title = tHelp(helpPath);
     widget.addEventListener("click", () => {
       const wasOn = !!target[key];
       const willBeOn = !wasOn;
@@ -3230,7 +3250,7 @@ function renderRow(label, target, key, type, helpPath) {
     widget.value = val == null ? "" : val;
     widget.addEventListener("input", () => { target[key] = widget.value; });
   }
-  if (helpPath && HELP[helpPath] && type !== "bool") widget.title = HELP[helpPath];
+  if (helpPath && tHelp(helpPath) && type !== "bool") widget.title = tHelp(helpPath);
   row.appendChild(widget);
   return row;
 }
@@ -3244,7 +3264,7 @@ function renderEnumRow(label, target, key, choices, helpPath) {
   row.className = "cfg-row";
   const lab = document.createElement("label");
   lab.textContent = label;
-  if (helpPath && HELP[helpPath]) lab.title = HELP[helpPath];
+  if (helpPath && tHelp(helpPath)) lab.title = tHelp(helpPath);
   row.appendChild(lab);
   const sel = document.createElement("select");
   for (const c of choices) {
@@ -3262,7 +3282,7 @@ function renderEnumRow(label, target, key, choices, helpPath) {
       target[key] = sel.value;
     }
   });
-  if (helpPath && HELP[helpPath]) sel.title = HELP[helpPath];
+  if (helpPath && tHelp(helpPath)) sel.title = tHelp(helpPath);
   row.appendChild(sel);
   return row;
 }
@@ -3278,14 +3298,14 @@ function renderComboRow(label, target, key, choices, helpPath) {
   row.className = "cfg-row";
   const lab = document.createElement("label");
   lab.textContent = label;
-  if (helpPath && HELP[helpPath]) lab.title = HELP[helpPath];
+  if (helpPath && tHelp(helpPath)) lab.title = tHelp(helpPath);
   row.appendChild(lab);
   const dlId = "dl-sandbox-" + key;
   const widget = document.createElement("input");
   widget.type = "text";
   widget.setAttribute("list", dlId);
   widget.value = target[key] == null ? "" : target[key];
-  if (helpPath && HELP[helpPath]) widget.title = HELP[helpPath];
+  if (helpPath && tHelp(helpPath)) widget.title = tHelp(helpPath);
   widget.addEventListener("input", () => { target[key] = widget.value; });
   row.appendChild(widget);
   const dl = document.createElement("datalist");
