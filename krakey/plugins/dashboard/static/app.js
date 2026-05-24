@@ -2266,7 +2266,7 @@ function renderSettingsForm() {
 }
 
 function renderEngineOverridesSection(cfg) {
-  const sec = makeSection("Engine Overrides");
+  const sec = makeSection("core_implementations", "Engine Overrides");
   const body = sec.querySelector(".body");
   const hint = document.createElement("p");
   hint.className = "section-hint";
@@ -2568,20 +2568,20 @@ function ensureSection(key) {
   }
 }
 
-// Per-section leading icon (Bootstrap Icons name). Looked up by title;
-// sections without an entry just render no icon.
+// Per-section leading icon (Bootstrap Icons name). Keyed by the stable
+// snake_case section key; sections without an entry just render no icon.
 const SECTION_ICONS = {
-  "LLM": "cpu",
-  "Plugins": "gear",
-  "Idle": "moon",
-  "Fatigue": "bar-chart",
-  "Sliding Window (Working Memory)": "stack",
-  "Graph Memory": "geo-alt",
-  "Knowledge Base": "book",
-  "Sleep": "moon",
-  "Safety": "shield-check",
-  "Environments": "hdd",
-  "Engine Overrides": "puzzle",
+  "llm": "cpu",
+  "plugins": "gear",
+  "idle": "moon",
+  "fatigue": "bar-chart",
+  "sliding_window": "stack",
+  "graph_memory": "geo-alt",
+  "knowledge_base": "book",
+  "sleep": "moon",
+  "safety": "shield-check",
+  "environments": "hdd",
+  "core_implementations": "puzzle",
 };
 
 // Synthwave-ish accent per section. Renders on the heading icon +
@@ -2589,21 +2589,21 @@ const SECTION_ICONS = {
 // configuration stays readable. Token names match the CSS variables
 // defined in shared/theme.css.
 const SECTION_TINT = {
-  "LLM": "cyan",
-  "Plugins": "magenta",
-  "Idle": "muted",
-  "Fatigue": "yellow",
-  "Sliding Window (Working Memory)": "muted",
-  "Graph Memory": "magenta",
-  "Knowledge Base": "green",
-  "Sleep": "muted",
-  "Safety": "red",
-  "Environments": "cyan",
-  "Engine Overrides": "muted",
+  "llm": "cyan",
+  "plugins": "magenta",
+  "idle": "muted",
+  "fatigue": "yellow",
+  "sliding_window": "muted",
+  "graph_memory": "magenta",
+  "knowledge_base": "green",
+  "sleep": "muted",
+  "safety": "red",
+  "environments": "cyan",
+  "core_implementations": "muted",
 };
 
-// Titles whose body is currently collapsed. Module-scoped so the
-// state survives renderSettingsForm() rebuilds within a session.
+// Keys (snake_case) whose section body is currently collapsed. Module-scoped
+// so the state survives renderSettingsForm() rebuilds within a session.
 let collapsedSections = new Set();
 
 function _svgFromBiHtml(html) {
@@ -2612,26 +2612,28 @@ function _svgFromBiHtml(html) {
   return tpl.content.firstElementChild;
 }
 
-function makeSection(title) {
+function makeSection(key, title) {
   const sec = document.createElement("div");
   sec.className = "cfg-section";
-  const tint = SECTION_TINT[title];
+  const tint = SECTION_TINT[key];
   if (tint) sec.classList.add("tint-" + tint);
-  const isCollapsed = collapsedSections.has(title);
+  const isCollapsed = collapsedSections.has(key);
   if (isCollapsed) sec.classList.add("collapsed");
 
   const h = document.createElement("h3");
-  // Title carried as a data attribute so the delegated click handler
-  // on #settings-form (see _wireSectionToggle below) can identify
-  // which section was clicked without needing per-section closures.
-  h.setAttribute("data-section-title", title);
+  // Stable snake_case key carried as a data attribute so the delegated
+  // click handler on #settings-form (see _wireSectionToggle below) can
+  // identify which section was clicked without needing per-section
+  // closures — and so section identity stays decoupled from the
+  // (translatable) display title.
+  h.setAttribute("data-section-key", key);
 
   // Insert the icon SVG directly as a flex child so the h3's
   // align-items:center positions it on the same cross-axis line as
   // the title text and the trailing caret. Wrapping the SVG in a
   // span added an extra layout layer where the SVG and the text
   // ended up vertically offset by ~1-2px in some browsers.
-  const iconName = SECTION_ICONS[title];
+  const iconName = SECTION_ICONS[key];
   if (iconName && window.biIcon) {
     const svg = _svgFromBiHtml(window.biIcon(iconName, 14));
     if (svg) h.appendChild(svg);
@@ -2672,11 +2674,11 @@ function _wireSectionToggle() {
   settingsForm.addEventListener("click", (ev) => {
     const target = ev.target;
     if (!target || !target.closest) return;
-    const h = target.closest("h3[data-section-title]");
+    const h = target.closest("h3[data-section-key]");
     if (!h || !settingsForm.contains(h)) return;
-    const title = h.getAttribute("data-section-title");
-    if (collapsedSections.has(title)) collapsedSections.delete(title);
-    else collapsedSections.add(title);
+    const key = h.getAttribute("data-section-key");
+    if (collapsedSections.has(key)) collapsedSections.delete(key);
+    else collapsedSections.add(key);
     renderSettingsForm();
   });
 }
@@ -2691,7 +2693,7 @@ let _settingsSpy = null;
 // Shortened display labels for rail links where the full title is too
 // long for the compact rail column.
 const _RAIL_SHORT_LABELS = {
-  "Sliding Window (Working Memory)": "Sliding Window",
+  "sliding_window": "Sliding Window",
 };
 
 // Derive a CSS-id-safe slug from a section title.
@@ -2724,10 +2726,11 @@ function renderSettingsRail() {
   rail.innerHTML = "";
 
   for (const sec of sections) {
-    const h3 = sec.querySelector("h3[data-section-title]");
+    const h3 = sec.querySelector("h3[data-section-key]");
     if (!h3) continue;
-    const title = h3.getAttribute("data-section-title");
-    const id = _sectionSlug(title);
+    const key = h3.getAttribute("data-section-key");
+    const displayLabel = h3.querySelector(".section-title").textContent;
+    const id = _sectionSlug(key);
     sec.id = id;
     sec.style.scrollMarginTop = "12px";
 
@@ -2735,12 +2738,12 @@ function renderSettingsRail() {
     const a = document.createElement("a");
     a.className = "rail-link";
     a.href = "#" + id;
-    a.dataset.title = title;
+    a.dataset.key = key;
 
     // Icon span.
     const icSpan = document.createElement("span");
     icSpan.className = "rail-ic";
-    const iconName = SECTION_ICONS[title];
+    const iconName = SECTION_ICONS[key];
     if (iconName && window.biIcon) {
       const tpl = document.createElement("template");
       tpl.innerHTML = window.biIcon(iconName, 16);
@@ -2752,7 +2755,7 @@ function renderSettingsRail() {
     // Label span — use short label if available.
     const lblSpan = document.createElement("span");
     lblSpan.className = "rail-lbl";
-    lblSpan.textContent = _RAIL_SHORT_LABELS[title] || title;
+    lblSpan.textContent = _RAIL_SHORT_LABELS[key] || displayLabel;
     a.appendChild(lblSpan);
 
     // Click handler: expand section if collapsed, then smooth-scroll.
@@ -2760,8 +2763,8 @@ function renderSettingsRail() {
       ev.preventDefault();
       const target = document.getElementById(id);
       if (!target) return;
-      if (collapsedSections.has(title)) {
-        collapsedSections.delete(title);
+      if (collapsedSections.has(key)) {
+        collapsedSections.delete(key);
         // renderSettingsForm rebuilds the DOM (including the rail),
         // so schedule the scroll for after the next paint.
         renderSettingsForm();
@@ -2801,7 +2804,7 @@ function renderSettingsRail() {
 // ── end settings rail ────────────────────────────────────────────────────
 
 function renderGenericSection(key, title, target, schema) {
-  const sec = makeSection(title);
+  const sec = makeSection(key, title);
   const body = sec.querySelector(".body");
   for (const [field, type] of schema) {
     body.appendChild(renderRow(field, target, field, type, `${key}.${field}`));
@@ -2984,7 +2987,7 @@ function renderEnvironmentsSection(envs) {
   // krakey.models.config.environments.EnvironmentsSection — `local`
   // is always-on with just an allow-list; `sandbox` is optional and
   // gated by an enable toggle.
-  const sec = makeSection("Environments");
+  const sec = makeSection("environments", "Environments");
   const body = sec.querySelector(".body");
 
   // Plugin-name suggestions for the allow-list editors come from
@@ -3418,7 +3421,7 @@ function renderLLMSection(llm) {
     llm.core_purposes = llm.core_purposes || {};
   }
 
-  const sec = makeSection("LLM");
+  const sec = makeSection("llm", "LLM");
   const body = sec.querySelector(".body");
 
   // Providers
@@ -4243,7 +4246,7 @@ function _isPluginEnabled(plugin) {
 }
 
 function renderPluginsSection() {
-  const sec = makeSection("Plugins");
+  const sec = makeSection("plugins", "Plugins");
   const body = sec.querySelector(".body");
 
   const intro = document.createElement("p");
