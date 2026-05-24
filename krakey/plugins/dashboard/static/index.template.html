@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <script>(function(){var t=localStorage.getItem('krakey-theme');if(t===null){t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';}if(t==='light'){document.documentElement.setAttribute('data-theme','light');}})();</script>
   <meta charset="utf-8">
@@ -28,6 +28,7 @@
     </nav>
     <div class="status-bar" id="status-bar">— connecting —</div>
     <button id="runtime-toggle" class="runtime-toggle-btn" aria-label="Pause/resume heartbeat"></button>
+    <button id="lang-toggle" class="lang-toggle-btn" aria-label="Switch language"></button>
     <button id="theme-toggle" class="theme-toggle-btn" aria-label="Toggle light/dark mode"></button>
   </header>
 
@@ -55,6 +56,7 @@
     <!-- @@view:settings@@ -->
   </main>
 
+  <script src="/static/shared/i18n.js"></script>
   <script src="/static/shared/bi.js"></script>
   <!-- Cytoscape powers the Memory tab's graph browser (pan/zoom/drag).
        Same CDN+version pinning the docs/ arch-graph tool uses, so the

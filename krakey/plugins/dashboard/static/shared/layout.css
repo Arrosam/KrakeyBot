@@ -383,3 +383,26 @@ main {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.35; }
 }
+
+/* Lang toggle — header strip, between runtime-toggle and theme-toggle. Renders a
+   short locale code (EN, etc.) rather than an SVG; min-width prevents layout shift. */
+.lang-toggle-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  padding: 6px 8px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  line-height: 1;
+  flex-shrink: 0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+}
+.lang-toggle-btn:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}

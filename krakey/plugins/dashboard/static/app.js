@@ -121,6 +121,35 @@ const $$ = (sel) => document.querySelectorAll(sel);
   });
 })();
 
+// ============== LANG TOGGLE ==============
+(function () {
+  var btn = document.getElementById('lang-toggle');
+  if (!btn) return;
+  function _syncLangToggle() {
+    var locales = window.availableLocales();
+    if (locales.length < 2) { btn.style.display = 'none'; return; }
+    btn.style.display = '';
+    btn.textContent = window.getLocale().toUpperCase();
+  }
+  btn.addEventListener('click', function () {
+    var locales = window.availableLocales();
+    if (locales.length < 2) return;
+    var idx = locales.indexOf(window.getLocale());
+    var next = locales[(idx + 1) % locales.length];
+    window.setLocale(next);
+    document.documentElement.setAttribute('lang', next);
+    applyLocale();
+    _syncLangToggle();
+  });
+  _syncLangToggle();
+})();
+
+// Re-renders localised strings in place. Skeleton for now — later i18n units
+// populate this to refresh tab labels, settings, tooltips, etc. on locale switch.
+function applyLocale() {
+  // placeholder — populated by later i18n units
+}
+
 // ============== AUTH (cookie session) ==============
 //
 // The server gates the entire app on a per-installation token, set
