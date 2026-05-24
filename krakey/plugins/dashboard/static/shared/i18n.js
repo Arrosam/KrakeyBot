@@ -77,6 +77,26 @@
       btn_add_tag: "+ add tag",
       btn_add_model: "+ add model",
       btn_add_purpose: "+ add purpose",
+      btn_save: "Save",
+      btn_apply_changes: "Apply changes",
+      btn_restart: "Restart Krakey",
+      btn_send: "Send",
+      btn_clear: "clear",
+
+      // ── View panels & static chrome (view.html / index.template) ───
+      brand_tag: "digital being",
+      panel_thinking: "Thinking (inner monologue)",
+      panel_decision: "Decision",
+      panel_tool_usage: "Tool Usage",
+      panel_stimulus: "Stimulus",
+      panel_status: "Status (runtime state)",
+      mem_graph: "GM Graph",
+      mem_kbs: "KBs",
+      log_autoscroll: "auto-scroll",
+      prompts_hint: "The full prompt built for each heartbeat (last 50 beats, in-memory ring buffer; cleared on restart).",
+      prompts_live: "Live updates",
+      chat_placeholder: "Say something to Krakey... (Enter to send, Shift+Enter for newline)",
+      chat_attach_title: "Attach image / file",
 
       // ── Confirm dialogs ────────────────────────────────────────────
       confirm_restart: "Restart Krakey? The web UI will briefly disconnect.",

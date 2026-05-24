@@ -155,26 +155,32 @@ const $$ = (sel) => document.querySelectorAll(sel);
 // render — we re-render the settings form here since its section titles are
 // localised and it has a clean full-rebuild path.
 function applyLocale() {
-  // Tab labels — preserve each button's leading icon node, swap the text.
-  document.querySelectorAll(".tab-btn").forEach(function (btn) {
-    var label = window.t("tab_" + btn.dataset.tab);
-    var icon = btn.firstElementChild;  // <svg>/<i> icon, if present
-    btn.textContent = "";
-    if (icon) {
-      btn.appendChild(icon);
-      btn.appendChild(document.createTextNode(" " + label));
+  // Text nodes — [data-i18n="key"]. If the element leads with an icon
+  // (<i data-bi> or the <svg> bi.js swaps it for), preserve it and only
+  // swap the trailing label (tabs, memory sub-nav, settings actions).
+  document.querySelectorAll("[data-i18n]").forEach(function (el) {
+    var label = window.t(el.getAttribute("data-i18n"));
+    var icon = el.firstElementChild;
+    var tag = icon && icon.tagName ? icon.tagName.toLowerCase() : "";
+    if (icon && (icon.hasAttribute("data-bi") || tag === "svg" || tag === "i")) {
+      el.textContent = "";
+      el.appendChild(icon);
+      el.appendChild(document.createTextNode(" " + label));
     } else {
-      btn.textContent = label;
+      el.textContent = label;
     }
   });
 
-  // Header control aria-labels.
-  var rt = document.getElementById("runtime-toggle");
-  if (rt) rt.setAttribute("aria-label", window.t("aria_runtime_toggle"));
-  var lt = document.getElementById("lang-toggle");
-  if (lt) lt.setAttribute("aria-label", window.t("aria_lang_toggle"));
-  var tt = document.getElementById("theme-toggle");
-  if (tt) tt.setAttribute("aria-label", window.t("aria_theme_toggle"));
+  // Attribute variants: placeholder / aria-label / title.
+  document.querySelectorAll("[data-i18n-ph]").forEach(function (el) {
+    el.placeholder = window.t(el.getAttribute("data-i18n-ph"));
+  });
+  document.querySelectorAll("[data-i18n-aria]").forEach(function (el) {
+    el.setAttribute("aria-label", window.t(el.getAttribute("data-i18n-aria")));
+  });
+  document.querySelectorAll("[data-i18n-title]").forEach(function (el) {
+    el.setAttribute("title", window.t(el.getAttribute("data-i18n-title")));
+  });
 
   // Settings form — re-render so localised section titles refresh. Guarded
   // against running before the settings DOM is mounted or while inactive.
