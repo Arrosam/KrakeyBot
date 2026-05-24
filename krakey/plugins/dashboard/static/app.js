@@ -1802,11 +1802,11 @@ const SCHEMAS = {
   // section is gone in the runtime (rewrites to environments.sandbox),
   // so the dashboard's sandbox UI is now a sub-block of Environments.
   env_sandbox_scalars: [
-    ["guest_os", "text"],
-    ["provider", "text"],
-    ["vm_name", "text"],
-    ["display", "text"],
-    ["network_mode", "text"],
+    ["guest_os",     "combo", ["linux", "macos", "windows"]],
+    ["provider",     "combo", ["qemu", "virtualbox", "utm"]],
+    ["vm_name",      "text"],
+    ["display",      "combo", ["headed", "headless"]],
+    ["network_mode", "combo", ["nat_allowlist", "host_only", "isolated"]],
   ],
   env_sandbox_resources: [
     ["cpu", "number"],
@@ -3040,10 +3040,16 @@ function renderEnvironmentsSection(envs) {
         suggestions: pluginSuggestions,
       },
     ));
-    for (const [f, t] of SCHEMAS.env_sandbox_scalars) {
-      sbBlock.appendChild(renderRow(
-        f, sb, f, t, `environments.sandbox.${f}`,
-      ));
+    for (const [f, t, choices] of SCHEMAS.env_sandbox_scalars) {
+      if (t === "combo") {
+        sbBlock.appendChild(renderComboRow(
+          f, sb, f, choices, `environments.sandbox.${f}`,
+        ));
+      } else {
+        sbBlock.appendChild(renderRow(
+          f, sb, f, t, `environments.sandbox.${f}`,
+        ));
+      }
     }
     sbBlock.appendChild(_renderListRow(
       "allowlist_domains", sb.allowlist_domains,
@@ -3186,6 +3192,38 @@ function renderEnumRow(label, target, key, choices, helpPath) {
   });
   if (helpPath && HELP[helpPath]) sel.title = HELP[helpPath];
   row.appendChild(sel);
+  return row;
+}
+
+// Combobox row — free-text <input> backed by a <datalist> of valid
+// values. Unlike renderEnumRow's strict <select>, the user can type
+// ANY value AND pick a known-good one from the dropdown. Used for the
+// sandbox enum fields (guest_os / provider / display / network_mode).
+// Empty input keeps the key as "" (does NOT delete) — guest_os is
+// required-when-enabled and the sandbox toggle hydrates it as "".
+function renderComboRow(label, target, key, choices, helpPath) {
+  const row = document.createElement("div");
+  row.className = "cfg-row";
+  const lab = document.createElement("label");
+  lab.textContent = label;
+  if (helpPath && HELP[helpPath]) lab.title = HELP[helpPath];
+  row.appendChild(lab);
+  const dlId = "dl-sandbox-" + key;
+  const widget = document.createElement("input");
+  widget.type = "text";
+  widget.setAttribute("list", dlId);
+  widget.value = target[key] == null ? "" : target[key];
+  if (helpPath && HELP[helpPath]) widget.title = HELP[helpPath];
+  widget.addEventListener("input", () => { target[key] = widget.value; });
+  row.appendChild(widget);
+  const dl = document.createElement("datalist");
+  dl.id = dlId;
+  for (const c of choices) {
+    const opt = document.createElement("option");
+    opt.value = c;
+    dl.appendChild(opt);
+  }
+  row.appendChild(dl);
   return row;
 }
 
