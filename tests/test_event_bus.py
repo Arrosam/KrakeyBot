@@ -108,3 +108,25 @@ def test_event_kind_property_for_serialization():
     assert ToolResultEvent("action", "x").kind == "tool_result"
     # Acronym run preserved as one token
     assert GMStatsEvent(1, 0, 0, 0).kind == "gm_stats"
+
+
+def test_stimulus_read_event_carries_ids_and_kind():
+    """event-bus: heartbeat publishes StimulusReadEvent at drain time so
+    the dashboard can flip web-chat bubbles to 'read'. The kind string
+    must auto-derive to 'stimulus_read', and the payload carries the list
+    of drained chat_message_ids."""
+    from krakey.runtime.events.event_types import StimulusReadEvent
+    e = StimulusReadEvent(chat_message_ids=["m1", "m2"])
+    assert e.chat_message_ids == ["m1", "m2"]
+    assert e.kind == "stimulus_read"
+
+
+def test_stimulus_read_event_routes_through_bus():
+    """event-bus: the new event fans out to subscribers like any other."""
+    from krakey.runtime.events.event_types import StimulusReadEvent
+    bus = EventBus()
+    seen: list = []
+    bus.subscribe(seen.append)
+    e = StimulusReadEvent(chat_message_ids=["only"])
+    bus.publish(e)
+    assert seen == [e]
