@@ -51,7 +51,7 @@ class SandboxEnvironmentConfig:
     allowed_plugins: list[str] = field(default_factory=list)
     guest_os: str = ""         # "linux" | "macos" | "windows"
     provider: str = "qemu"     # qemu | virtualbox | utm
-    vm_name: str = ""
+    vm_name: str = "krakey-vm"
     display: str = "headed"    # headed | headless (declarative only)
     resources: SandboxResourcesSection = field(
         default_factory=SandboxResourcesSection

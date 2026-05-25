@@ -25,5 +25,8 @@ class SandboxResourcesSection:
 
 @dataclass
 class SandboxAgentSection:
-    url: str = ""
-    token: str = ""
+    url: str = "http://10.0.2.10:8765"
+    token: str = ""  # shared secret — no safe default; empty token keeps sandbox
+                     # disabled-by-default at Router-build time (a non-empty
+                     # default would silently enable the sandbox for anyone who
+                     # copy-pastes a config without setting their own token)
