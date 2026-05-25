@@ -154,3 +154,11 @@ class SleepFailedEvent(_BaseEvent):
     Self both need to know so the failure isn't silent."""
     reason: str    # the reason _perform_sleep was called
     error: str     # ``"<ExceptionType>: <message>"``
+
+
+@dataclass
+class StimulusReadEvent(_BaseEvent):
+    """Published at the start of each beat listing the chat_message_ids of
+    all stimuli drained this beat that carry one, so the dashboard can flip
+    the matching web-chat bubbles to 'read'."""
+    chat_message_ids: list[str]
