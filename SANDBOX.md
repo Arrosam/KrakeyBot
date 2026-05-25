@@ -2,9 +2,13 @@
 
 Krakey routes every non-idempotent / privacy-touching operation
 (coding, CLI, file I/O, GUI control, browser) through a guest VM so
-the host is insulated from anything she does. This is **default-on**;
-the runtime will refuse to start if you enable a sandboxed tool
-without configuring the VM.
+the host is insulated from anything she does. This is **default-on**.
+If the `environments.sandbox:` block is incomplete (missing
+`guest_os` / `agent.url` / `agent.token`), the sandbox is **disabled
+with a warning** rather than blocking boot — startup is never held
+hostage to incomplete optional-feature config. Any tool allow-listed
+for the (now absent) sandbox is denied at call time until you finish
+configuring the VM.
 
 **Scope of Phase S1 (this release):** `coding` tool only. Other
 sandboxed tools land in S2–S3.

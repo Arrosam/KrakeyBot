@@ -74,15 +74,15 @@
       <div id="settings-form">— loading —</div>
       </div>
       <div class="settings-actions">
-        <button id="settings-save"><i data-bi="floppy"></i> Save</button>
+        <button id="settings-save" data-i18n="btn_save"><i data-bi="floppy"></i> Save</button>
         <!-- Apply changes WITHOUT restarting: tries to hot-reload
              newly-enabled plugins. Bigger changes (LLM swap,
              memory backend, plugin REMOVAL) still need the
              Restart button. The endpoint reports back which
              plugins are still pending removal so the toast
              tells the operator. -->
-        <button id="settings-apply" title="Hot-add newly enabled plugins without process restart"><i data-bi="arrow-repeat"></i> Apply changes</button>
-        <button id="settings-restart" class="danger"><i data-bi="arrow-clockwise"></i> Restart Krakey</button>
+        <button id="settings-apply" title="Hot-add newly enabled plugins without process restart" data-i18n="btn_apply_changes"><i data-bi="arrow-repeat"></i> Apply changes</button>
+        <button id="settings-restart" class="danger" data-i18n="btn_restart"><i data-bi="arrow-clockwise"></i> Restart Krakey</button>
         <span id="settings-toast"></span>
       </div>
         </div><!-- /.settings-main -->

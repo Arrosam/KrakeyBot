@@ -38,7 +38,7 @@ from krakey.runtime.events.event_types import (
     SleepFailedEvent, SleepStartEvent, StimuliQueuedEvent, ThinkingEvent
 )
 from krakey.engines.heartbeat.fatigue import calculate_fatigue
-from krakey.engines.heartbeat.idle import idle_with_recall
+from krakey.engines.heartbeat.idle import idle_with_recall, wait_or_adrenalin
 from krakey.runtime.commands.commands import (
     CommandAction, handle_command, parse_command,
 )
@@ -443,7 +443,17 @@ class HeartbeatOrchestrator:
                     f"{retry_idle}s before retrying same beat "
                     f"(heartbeat_count frozen at {rt.heartbeat_count})"
                 )
-                await asyncio.sleep(retry_idle)
+                interrupted = await wait_or_adrenalin(rt.buffer, retry_idle)
+                if interrupted:
+                    stimuli, recall_result, prompt = await self._reassemble_on_adrenalin(
+                        stimuli, recall_result, counts,
+                    )
+                    if stimuli is None:
+                        # KILL or SLEEP handled inside _reassemble; stop_requested
+                        # is set (KILL) or None return signals SLEEP to caller.
+                        return None
+                    http_attempt = 0
+                    struct_attempt = 0
                 continue
 
             # ---- Structured-output validation ----
@@ -475,7 +485,17 @@ class HeartbeatOrchestrator:
                 f"required: {{{', '.join(sorted(required))}}}); "
                 f"struct retry {struct_attempt} ({tier}), sleeping {delay}s"
             )
-            await asyncio.sleep(delay)
+            interrupted = await wait_or_adrenalin(rt.buffer, delay)
+            if interrupted:
+                stimuli, recall_result, prompt = await self._reassemble_on_adrenalin(
+                    stimuli, recall_result, counts,
+                )
+                if stimuli is None:
+                    # KILL or SLEEP handled inside _reassemble; stop_requested
+                    # is set (KILL) or None return signals SLEEP to caller.
+                    return None
+                http_attempt = 0
+                struct_attempt = 0
 
         if rt.stop_requested:
             return None
@@ -487,6 +507,78 @@ class HeartbeatOrchestrator:
             heartbeat_id=rt.heartbeat_count, raw=raw,
         ))
         return parsed
+
+    async def _reassemble_on_adrenalin(
+        self, stimuli, recall_result, counts: "_GMCounts",
+    ):
+        """Drain the buffer, handle commands, fold new stimuli in, rebuild
+        the recall session and prompt in response to an adrenalin interrupt
+        during a retry wait.
+
+        Returns a (stimuli, recall_result, prompt) triple with the refreshed
+        context if the beat should continue, or (None, None, None) if it
+        should stop (KILL or SLEEP handled here).
+
+        Called only from _phase_run_self when wait_or_adrenalin returns True.
+        heartbeat_count is NOT incremented — the beat is still in progress.
+        The LLM call is non-interruptible; only the between-attempt waits
+        use this path.
+        """
+        rt = self._rt
+
+        # a. Drain new stimuli.
+        new = rt.buffer.drain()
+
+        # b. Handle any slash-commands in the new batch.
+        filtered_new, cmd_action = await self._phase_handle_commands(new)
+        if cmd_action is CommandAction.KILL:
+            # rt.request_stop() already called by _phase_handle_commands.
+            return None, None, None
+        if cmd_action is CommandAction.SLEEP:
+            await self._perform_sleep(
+                'voluntary sleep requested by Self',
+                wake_msg=(
+                    'Completed a full sleep cycle (clustering + KB '
+                    'migration + index rebuild). Feeling refreshed.'
+                ),
+            )
+            return None, None, None
+
+        # c. Fold surviving non-command stimuli into this beat.
+        stimuli = stimuli + filtered_new
+
+        # d. Fresh recall session (mirror enforce_input_budget pattern).
+        fresh = rt.recall.new_session()
+        await fresh.add_stimuli(stimuli)
+        recall_result = await fresh.finalize()
+        rt._recall = fresh
+
+        # e. Rebuild prompt with updated recall + stimuli.
+        prompt, recall_result = await self.enforce_input_budget(
+            stimuli, recall_result, counts,
+        )
+
+        # f. Update the existing prompt-log entry IN PLACE (do NOT append).
+        #    record_prompt would push a second dict — that creates a phantom
+        #    'no output' entry visible in the Prompts tab dashboard.
+        for entry in reversed(rt._prompt_log):
+            if entry.get('heartbeat_id') == rt.heartbeat_count:
+                entry['full_prompt'] = prompt
+                break
+
+        # g. Re-publish the rebuilt prompt so subscribers see the refreshed version.
+        rt.events.publish(PromptBuiltEvent(
+            heartbeat_id=rt.heartbeat_count,
+            layers={'full_prompt': prompt},
+        ))
+
+        # i. Log the reassembly.
+        rt.log.hb(
+            'beat reassembled on adrenalin during retry; '
+            'rebuilt prompt, retry counters reset'
+        )
+
+        return stimuli, recall_result, prompt
 
     def _phase_save_round(self, parsed, stimuli, recall_result) -> None:
         rt = self._rt

@@ -43,12 +43,12 @@ const $$ = (sel) => document.querySelectorAll(sel);
     var icon, label, title;
     if (isPaused) {
       icon = (window.biIcon && window.biIcon('play-fill', 16)) || '&#9654;';
-      label = ' Resume';
-      title = 'Resume heartbeat';
+      label = ' ' + window.t('runtime_resume');
+      title = window.t('runtime_resume_title');
     } else {
       icon = (window.biIcon && window.biIcon('pause-fill', 16)) || '&#9208;';
-      label = ' Pause';
-      title = 'Pause heartbeat';
+      label = ' ' + window.t('runtime_pause');
+      title = window.t('runtime_pause_title');
     }
     btn.innerHTML = icon + label;
     btn.dataset.paused = String(isPaused);
@@ -120,6 +120,158 @@ const $$ = (sel) => document.querySelectorAll(sel);
     if (!document.hidden) _fetchState();
   });
 })();
+
+// ============== LANG SWITCHER ==============
+// Globe-icon button in the header; clicking opens a dropdown of the
+// registered locales (the active one is marked). Selecting one swaps
+// the locale, updates <html lang>, and re-renders strings via
+// applyLocale(). The whole switcher hides while <2 locales exist.
+(function () {
+  var btn = document.getElementById('lang-toggle');
+  if (!btn) return;
+
+  // Wrap the button in a positioned container and hang the dropdown
+  // menu off it as a sibling so the menu can anchor under the button.
+  var wrap = document.createElement('div');
+  wrap.className = 'lang-switcher';
+  btn.parentNode.insertBefore(wrap, btn);
+  wrap.appendChild(btn);
+
+  var menu = document.createElement('div');
+  menu.className = 'lang-menu';
+  menu.setAttribute('role', 'menu');
+  wrap.appendChild(menu);
+
+  // Globe icon (glyph fallback if bi.js hasn't loaded).
+  btn.innerHTML = window.biIcon ? window.biIcon('globe', 16) : '🌐';
+  btn.setAttribute('aria-haspopup', 'true');
+  btn.setAttribute('aria-expanded', 'false');
+
+  function _checkMark() {
+    return window.biIcon ? window.biIcon('check-circle-fill', 14) : '✓';
+  }
+
+  function _markActive() {
+    var cur = window.getLocale();
+    menu.querySelectorAll('.lang-option').forEach(function (opt) {
+      opt.setAttribute('aria-checked', String(opt.dataset.locale === cur));
+    });
+  }
+
+  function _buildMenu() {
+    menu.innerHTML = '';
+    window.availableLocales().forEach(function (code) {
+      var opt = document.createElement('button');
+      opt.type = 'button';
+      opt.className = 'lang-option';
+      opt.setAttribute('role', 'menuitemradio');
+      opt.dataset.locale = code;
+
+      var name = document.createElement('span');
+      name.className = 'lang-name';
+      name.textContent = window.localeName ? window.localeName(code) : code;
+
+      var chk = document.createElement('span');
+      chk.className = 'lang-check';
+      chk.innerHTML = _checkMark();
+
+      opt.appendChild(name);
+      opt.appendChild(chk);
+      opt.addEventListener('click', function () { _select(code); });
+      menu.appendChild(opt);
+    });
+    _markActive();
+  }
+
+  function _onDocClick(ev) { if (!wrap.contains(ev.target)) _close(); }
+  function _onKey(ev) { if (ev.key === 'Escape') { _close(); btn.focus(); } }
+
+  function _open() {
+    menu.classList.add('open');
+    btn.setAttribute('aria-expanded', 'true');
+    document.addEventListener('click', _onDocClick, true);
+    document.addEventListener('keydown', _onKey);
+  }
+  function _close() {
+    menu.classList.remove('open');
+    btn.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('click', _onDocClick, true);
+    document.removeEventListener('keydown', _onKey);
+  }
+
+  function _select(code) {
+    if (code !== window.getLocale()) {
+      window.setLocale(code);
+      document.documentElement.setAttribute('lang', code);
+      applyLocale();
+    }
+    _markActive();
+    _close();
+  }
+
+  btn.addEventListener('click', function () {
+    if (menu.classList.contains('open')) { _close(); return; }
+    _markActive();
+    _open();
+  });
+
+  function _syncVisibility() {
+    wrap.style.display = (window.availableLocales().length < 2) ? 'none' : '';
+  }
+
+  _buildMenu();
+  _syncVisibility();
+
+  // If a non-default locale was previously selected (and is still
+  // registered), apply it now so the initial English DOM is localised.
+  if (window.getLocale() !== 'en' && window.LOCALES[window.getLocale()]) {
+    applyLocale();
+  }
+})();
+
+// Re-renders localised strings in place when the active locale changes.
+// Static chrome (tabs, header aria) is updated directly; data-driven views
+// (settings, prompts, memory, chat) pick up the new locale on their next
+// render — we re-render the settings form here since its section titles are
+// localised and it has a clean full-rebuild path.
+function applyLocale() {
+  // Text nodes — [data-i18n="key"]. If the element leads with an icon
+  // (<i data-bi> or the <svg> bi.js swaps it for), preserve it and only
+  // swap the trailing label (tabs, memory sub-nav, settings actions).
+  document.querySelectorAll("[data-i18n]").forEach(function (el) {
+    var label = window.t(el.getAttribute("data-i18n"));
+    var icon = el.firstElementChild;
+    var tag = icon && icon.tagName ? icon.tagName.toLowerCase() : "";
+    if (icon && (icon.hasAttribute("data-bi") || tag === "svg" || tag === "i")) {
+      el.textContent = "";
+      el.appendChild(icon);
+      el.appendChild(document.createTextNode(" " + label));
+    } else {
+      el.textContent = label;
+    }
+  });
+
+  // Attribute variants: placeholder / aria-label / title.
+  document.querySelectorAll("[data-i18n-ph]").forEach(function (el) {
+    el.placeholder = window.t(el.getAttribute("data-i18n-ph"));
+  });
+  document.querySelectorAll("[data-i18n-aria]").forEach(function (el) {
+    el.setAttribute("aria-label", window.t(el.getAttribute("data-i18n-aria")));
+  });
+  document.querySelectorAll("[data-i18n-title]").forEach(function (el) {
+    el.setAttribute("title", window.t(el.getAttribute("data-i18n-title")));
+  });
+
+  // Settings form — re-render so localised section titles refresh. Guarded
+  // against running before the settings DOM is mounted or while inactive.
+  try {
+    if (typeof renderSettingsForm === "function" &&
+        typeof settingsForm !== "undefined" && settingsForm &&
+        settingsForm.children.length) {
+      renderSettingsForm();
+    }
+  } catch (e) { /* settings not mounted yet — ignore */ }
+}
 
 // ============== AUTH (cookie session) ==============
 //
@@ -195,8 +347,7 @@ function _showSleepBanner(reason) {
   const txt = el.querySelector(".banner-text");
   if (txt) {
     txt.textContent =
-      "Krakey is sleeping (" + (reason || "compacting memory") +
-      ") — Memory tab is paused until sleep finishes.";
+      window.t("sleep_banner", { reason: reason || window.t("sleep_reason_default") });
   }
   el.classList.remove("hidden");
 }
@@ -760,15 +911,15 @@ document.addEventListener("visibilitychange", () => {
 
 function connectChat() {
   chatWS = new WebSocket(_wsUrl("/ws/chat"));
-  chatWS.onopen = () => { chatMeta.textContent = "connected"; setStatus(); };
+  chatWS.onopen = () => { chatMeta.textContent = window.t("ws_connected"); setStatus(); };
   chatWS.onclose = (ev) => {
-    chatMeta.textContent = "disconnected — reconnecting...";
+    chatMeta.textContent = window.t("ws_disconnected");
     setStatus();
     // 1008 → expired session; events-WS handler also reloads.
     if (ev && ev.code === 1008) { location.reload(); return; }
     setTimeout(connectChat, 2000);
   };
-  chatWS.onerror = () => { chatMeta.textContent = "error"; setStatus(); };
+  chatWS.onerror = () => { chatMeta.textContent = window.t("ws_error"); setStatus(); };
   chatWS.onmessage = (msg) => {
     const data = JSON.parse(msg.data);
     if (data.kind === "history") {
@@ -970,13 +1121,12 @@ async function loadMemory(view, opts) {
     target.classList.remove("graph-mode");
     target.innerHTML =
       `<p style="padding:20px;color:var(--muted);text-align:center">` +
-      `Krakey is sleeping — Memory will load automatically when ` +
-      `sleep finishes.</p>`;
+      `${escapeHtml(window.t("memory_sleeping"))}</p>`;
     _lastRenderedMemView = null;  // force a real render once awake
     return;
   }
   target.classList.toggle("graph-mode", view === "graph");
-  target.textContent = "loading...";
+  target.textContent = window.t("loading");
   try {
     if (view === "graph") {
       await renderGraph(target);
@@ -989,7 +1139,7 @@ async function loadMemory(view, opts) {
     }
     _lastRenderedMemView = view;
   } catch (e) {
-    target.textContent = "error: " + e;
+    target.textContent = window.t("error_prefix") + e;
     _lastRenderedMemView = null;
   }
 }
@@ -1025,7 +1175,7 @@ async function renderGraph(target) {
   canvas.id = "gm-graph";
   const hint = document.createElement("div");
   hint.className = "gm-graph-hint";
-  hint.textContent = "drag to pan · scroll to zoom · drag a node to move it";
+  hint.textContent = window.t("memory_graph_hint");
   const stats = document.createElement("div");
   stats.className = "gm-graph-stats";
   stats.innerHTML = "<i>loading stats…</i>";
@@ -1252,7 +1402,7 @@ function renderKBs(r) {
 async function loadKBEntries(kbid) {
   const target = document.getElementById(`kb-entries-${kbid}`);
   if (!target) return;
-  target.innerHTML = "loading...";
+  target.innerHTML = window.t("loading");
   try {
     const r = await fetch(`/api/kb/${encodeURIComponent(kbid)}/entries?limit=200`).then((r) => r.json());
     if (!r.entries.length) { target.innerHTML = "<i>(no entries)</i>"; return; }
@@ -1262,7 +1412,7 @@ async function loadKBEntries(kbid) {
         ${escapeHtml(e.content)}
       </div>`).join("");
   } catch (e) {
-    target.textContent = "error: " + e;
+    target.textContent = window.t("error_prefix") + e;
   }
 }
 
@@ -1427,7 +1577,7 @@ let _promptsLive = true;
 let _promptsPendingCount = 0;
 
 async function loadPrompts() {
-  promptsList.textContent = "loading...";
+  promptsList.textContent = window.t("loading");
   try {
     const r = await fetch("/api/prompts?limit=200").then((r) => r.json());
     promptsCache = r.prompts || [];
@@ -1435,7 +1585,7 @@ async function loadPrompts() {
     _updatePendingHint();
     renderPromptsList();
   } catch (e) {
-    promptsList.textContent = "error: " + e;
+    promptsList.textContent = window.t("error_prefix") + e;
   }
 }
 
@@ -1494,10 +1644,10 @@ function _updatePendingHint() {
   if (!promptsPending) return;
   if (!_promptsLive && _promptsPendingCount > 0) {
     promptsPending.textContent =
-      `${_promptsPendingCount} new prompt${_promptsPendingCount === 1 ? "" : "s"} since paused`;
+      window.t("prompts_pending", { count: _promptsPendingCount, plural: _promptsPendingCount === 1 ? "" : "s" });
     promptsPending.classList.add("has-pending");
   } else if (!_promptsLive) {
-    promptsPending.textContent = "paused — toggle live to resume";
+    promptsPending.textContent = window.t("prompts_paused");
     promptsPending.classList.remove("has-pending");
   } else {
     promptsPending.textContent = "";
@@ -1530,7 +1680,7 @@ function fmtTs(iso) {
 function renderPromptsList() {
   promptsList.innerHTML = "";
   if (!promptsCache.length) {
-    promptsList.textContent = "(no prompts yet — wait one heartbeat)";
+    promptsList.textContent = window.t("prompts_empty");
     return;
   }
   for (const p of promptsCache) {
@@ -1757,6 +1907,26 @@ const HELP = {
   "core_implementations.llm_client_factory": "Per-tag LLMClient class substitution slot. One layer below llm_factory. Empty = use the standard LLMClient class. Rarely set.",
 };
 
+// Register the English config-help text into the i18n layer so a future
+// locale can supply LOCALES.<lang>.help = {...} and have tHelp() pick it up.
+// HELP is also extended at runtime from plugin/engine config schemas
+// (fdef.help); LOCALES.en.help is the SAME object reference, so those
+// additions stay visible automatically.
+if (window.LOCALES) {
+  window.LOCALES.en = window.LOCALES.en || {};
+  window.LOCALES.en.help = HELP;
+}
+
+// Resolve a config-field help string for the active locale, falling back to
+// the English HELP table, then to "" (so the existing
+// `if (helpPath && tHelp(helpPath))` guards still short-circuit cleanly).
+function tHelp(path) {
+  var loc = window.getLocale ? window.getLocale() : "en";
+  var locHelp = window.LOCALES && window.LOCALES[loc] && window.LOCALES[loc].help;
+  if (locHelp && locHelp[path] != null) return locHelp[path];
+  return (HELP[path] != null) ? HELP[path] : "";
+}
+
 // Fixed numeric/string dataclass schemas — drives generic renderer.
 const SCHEMAS = {
   idle: [
@@ -1802,11 +1972,11 @@ const SCHEMAS = {
   // section is gone in the runtime (rewrites to environments.sandbox),
   // so the dashboard's sandbox UI is now a sub-block of Environments.
   env_sandbox_scalars: [
-    ["guest_os", "text"],
-    ["provider", "text"],
-    ["vm_name", "text"],
-    ["display", "text"],
-    ["network_mode", "text"],
+    ["guest_os",     "combo", ["linux", "macos", "windows"]],
+    ["provider",     "combo", ["qemu", "virtualbox", "utm"]],
+    ["vm_name",      "text"],
+    ["display",      "combo", ["headed", "headless"]],
+    ["network_mode", "combo", ["nat_allowlist", "host_only", "isolated"]],
   ],
   env_sandbox_resources: [
     ["cpu", "number"],
@@ -1836,7 +2006,7 @@ let configSchema = { llm_params: [] };
 
 async function loadSettings() {
   settingsToast.textContent = "";
-  settingsForm.innerHTML = "loading...";
+  settingsForm.innerHTML = window.t("loading");
   try {
     // Load config + plugin discovery + schema in parallel
     const [cfgRes, pluginRes, schemaRes] = await Promise.all([
@@ -1891,7 +2061,7 @@ async function loadSettings() {
     // /api/plugins/stale_configs returns at least one entry.
     refreshStaleConfigs().catch(() => {});
   } catch (e) {
-    settingsForm.innerHTML = "error loading: " + escapeHtml(String(e));
+    settingsForm.innerHTML = window.t("error_loading_prefix") + escapeHtml(String(e));
   }
 }
 
@@ -2167,11 +2337,11 @@ function renderSettingsForm() {
   // Generic sections (each seeded from SECTION_DEFAULTS so missing fields
   // pre-populate to runtime defaults instead of looking "off"/empty)
   ensureSection("idle");
-  settingsForm.appendChild(renderGenericSection("idle", "Idle",
+  settingsForm.appendChild(renderGenericSection("idle", window.t("section_idle"),
     cfgState.idle, SCHEMAS.idle));
 
   ensureSection("fatigue");
-  const fatSec = renderGenericSection("fatigue", "Fatigue",
+  const fatSec = renderGenericSection("fatigue", window.t("section_fatigue"),
     cfgState.fatigue, SCHEMAS.fatigue_scalars);
   fatSec.querySelector(".body").appendChild(renderFatigueThresholds(cfgState.fatigue));
   settingsForm.appendChild(fatSec);
@@ -2182,22 +2352,22 @@ function renderSettingsForm() {
   // (rounds compact INTO GM when the budget overflows).
   ensureSection("sliding_window");
   settingsForm.appendChild(renderGenericSection(
-    "sliding_window", "Sliding Window (Working Memory)",
+    "sliding_window", window.t("section_sliding_window"),
     cfgState.sliding_window, SCHEMAS.sliding_window,
   ));
 
   ensureSection("graph_memory");
-  settingsForm.appendChild(renderGenericSection("graph_memory", "Graph Memory",
+  settingsForm.appendChild(renderGenericSection("graph_memory", window.t("section_graph_memory"),
     cfgState.graph_memory, SCHEMAS.graph_memory));
   ensureSection("knowledge_base");
-  settingsForm.appendChild(renderGenericSection("knowledge_base", "Knowledge Base",
+  settingsForm.appendChild(renderGenericSection("knowledge_base", window.t("section_knowledge_base"),
     cfgState.knowledge_base, SCHEMAS.knowledge_base));
 
   ensureSection("sleep");
-  settingsForm.appendChild(renderGenericSection("sleep", "Sleep",
+  settingsForm.appendChild(renderGenericSection("sleep", window.t("section_sleep"),
     cfgState.sleep, SCHEMAS.sleep));
   ensureSection("safety");
-  const safetySec = renderGenericSection("safety", "Safety",
+  const safetySec = renderGenericSection("safety", window.t("section_safety"),
     cfgState.safety, SCHEMAS.safety);
   // Hint at the top of the section body: the SafetySection dataclass
   // is parsed and persisted but the runtime currently has zero
@@ -2205,8 +2375,7 @@ function renderSettingsForm() {
   // don't expect their hard-limit to fire.
   const advisoryHint = document.createElement("p");
   advisoryHint.className = "section-hint";
-  advisoryHint.textContent =
-    "advisory only — runtime does not yet enforce these limits";
+  advisoryHint.textContent = window.t("safety_advisory");
   const safetyBody = safetySec.querySelector(".body");
   safetyBody.insertBefore(advisoryHint, safetyBody.firstChild);
   settingsForm.appendChild(safetySec);
@@ -2237,7 +2406,7 @@ function renderSettingsForm() {
 }
 
 function renderEngineOverridesSection(cfg) {
-  const sec = makeSection("Engine Overrides");
+  const sec = makeSection("core_implementations", window.t("section_core_implementations"));
   const body = sec.querySelector(".body");
   const hint = document.createElement("p");
   hint.className = "section-hint";
@@ -2370,7 +2539,7 @@ function _engineSlotBlock(slot, cfg) {
   }
   const customOpt = document.createElement("option");
   customOpt.value = "__custom__";
-  customOpt.textContent = "Custom path…";
+  customOpt.textContent = window.t("opt_custom_path");
   sel.appendChild(customOpt);
 
   if (isCustom) sel.value = "__custom__";
@@ -2435,7 +2604,7 @@ function _engineSlotBlock(slot, cfg) {
 
   selWrap.appendChild(sel);
   selWrap.appendChild(txt);
-  const slotHelp = HELP[`core_implementations.${slot}`];
+  const slotHelp = tHelp(`core_implementations.${slot}`);
   if (slotHelp) {
     const helpLine = document.createElement('small');
     helpLine.className = 'engine-slot-help';
@@ -2497,7 +2666,7 @@ function _renderCorePurposeRow(label, target, key, helpPath) {
   row.className = "cfg-row";
   const lab = document.createElement("label");
   lab.textContent = label;
-  if (helpPath && HELP[helpPath]) lab.title = HELP[helpPath];
+  if (helpPath && tHelp(helpPath)) lab.title = tHelp(helpPath);
   row.appendChild(lab);
 
   const knownSet = new Set([...Object.keys(cfgState.llm.core_purposes), "compact"]);
@@ -2521,7 +2690,7 @@ function _renderCorePurposeRow(label, target, key, helpPath) {
   sel.addEventListener("change", () => {
     target[key] = sel.value;
   });
-  if (helpPath && HELP[helpPath]) sel.title = HELP[helpPath];
+  if (helpPath && tHelp(helpPath)) sel.title = tHelp(helpPath);
   row.appendChild(sel);
   return row;
 }
@@ -2539,20 +2708,20 @@ function ensureSection(key) {
   }
 }
 
-// Per-section leading icon (Bootstrap Icons name). Looked up by title;
-// sections without an entry just render no icon.
+// Per-section leading icon (Bootstrap Icons name). Keyed by the stable
+// snake_case section key; sections without an entry just render no icon.
 const SECTION_ICONS = {
-  "LLM": "cpu",
-  "Plugins": "gear",
-  "Idle": "moon",
-  "Fatigue": "bar-chart",
-  "Sliding Window (Working Memory)": "stack",
-  "Graph Memory": "geo-alt",
-  "Knowledge Base": "book",
-  "Sleep": "moon",
-  "Safety": "shield-check",
-  "Environments": "hdd",
-  "Engine Overrides": "puzzle",
+  "llm": "cpu",
+  "plugins": "gear",
+  "idle": "moon",
+  "fatigue": "bar-chart",
+  "sliding_window": "stack",
+  "graph_memory": "geo-alt",
+  "knowledge_base": "book",
+  "sleep": "moon",
+  "safety": "shield-check",
+  "environments": "hdd",
+  "core_implementations": "puzzle",
 };
 
 // Synthwave-ish accent per section. Renders on the heading icon +
@@ -2560,21 +2729,21 @@ const SECTION_ICONS = {
 // configuration stays readable. Token names match the CSS variables
 // defined in shared/theme.css.
 const SECTION_TINT = {
-  "LLM": "cyan",
-  "Plugins": "magenta",
-  "Idle": "muted",
-  "Fatigue": "yellow",
-  "Sliding Window (Working Memory)": "muted",
-  "Graph Memory": "magenta",
-  "Knowledge Base": "green",
-  "Sleep": "muted",
-  "Safety": "red",
-  "Environments": "cyan",
-  "Engine Overrides": "muted",
+  "llm": "cyan",
+  "plugins": "magenta",
+  "idle": "muted",
+  "fatigue": "yellow",
+  "sliding_window": "muted",
+  "graph_memory": "magenta",
+  "knowledge_base": "green",
+  "sleep": "muted",
+  "safety": "red",
+  "environments": "cyan",
+  "core_implementations": "muted",
 };
 
-// Titles whose body is currently collapsed. Module-scoped so the
-// state survives renderSettingsForm() rebuilds within a session.
+// Keys (snake_case) whose section body is currently collapsed. Module-scoped
+// so the state survives renderSettingsForm() rebuilds within a session.
 let collapsedSections = new Set();
 
 function _svgFromBiHtml(html) {
@@ -2583,26 +2752,28 @@ function _svgFromBiHtml(html) {
   return tpl.content.firstElementChild;
 }
 
-function makeSection(title) {
+function makeSection(key, title) {
   const sec = document.createElement("div");
   sec.className = "cfg-section";
-  const tint = SECTION_TINT[title];
+  const tint = SECTION_TINT[key];
   if (tint) sec.classList.add("tint-" + tint);
-  const isCollapsed = collapsedSections.has(title);
+  const isCollapsed = collapsedSections.has(key);
   if (isCollapsed) sec.classList.add("collapsed");
 
   const h = document.createElement("h3");
-  // Title carried as a data attribute so the delegated click handler
-  // on #settings-form (see _wireSectionToggle below) can identify
-  // which section was clicked without needing per-section closures.
-  h.setAttribute("data-section-title", title);
+  // Stable snake_case key carried as a data attribute so the delegated
+  // click handler on #settings-form (see _wireSectionToggle below) can
+  // identify which section was clicked without needing per-section
+  // closures — and so section identity stays decoupled from the
+  // (translatable) display title.
+  h.setAttribute("data-section-key", key);
 
   // Insert the icon SVG directly as a flex child so the h3's
   // align-items:center positions it on the same cross-axis line as
   // the title text and the trailing caret. Wrapping the SVG in a
   // span added an extra layout layer where the SVG and the text
   // ended up vertically offset by ~1-2px in some browsers.
-  const iconName = SECTION_ICONS[title];
+  const iconName = SECTION_ICONS[key];
   if (iconName && window.biIcon) {
     const svg = _svgFromBiHtml(window.biIcon(iconName, 14));
     if (svg) h.appendChild(svg);
@@ -2643,11 +2814,11 @@ function _wireSectionToggle() {
   settingsForm.addEventListener("click", (ev) => {
     const target = ev.target;
     if (!target || !target.closest) return;
-    const h = target.closest("h3[data-section-title]");
+    const h = target.closest("h3[data-section-key]");
     if (!h || !settingsForm.contains(h)) return;
-    const title = h.getAttribute("data-section-title");
-    if (collapsedSections.has(title)) collapsedSections.delete(title);
-    else collapsedSections.add(title);
+    const key = h.getAttribute("data-section-key");
+    if (collapsedSections.has(key)) collapsedSections.delete(key);
+    else collapsedSections.add(key);
     renderSettingsForm();
   });
 }
@@ -2660,9 +2831,10 @@ _wireSectionToggle();
 let _settingsSpy = null;
 
 // Shortened display labels for rail links where the full title is too
-// long for the compact rail column.
+// long for the compact rail column. Values are i18n keys (resolved via
+// t() at render time) so the short label tracks the active locale.
 const _RAIL_SHORT_LABELS = {
-  "Sliding Window (Working Memory)": "Sliding Window",
+  "sliding_window": "section_sliding_window_short",
 };
 
 // Derive a CSS-id-safe slug from a section title.
@@ -2695,10 +2867,11 @@ function renderSettingsRail() {
   rail.innerHTML = "";
 
   for (const sec of sections) {
-    const h3 = sec.querySelector("h3[data-section-title]");
+    const h3 = sec.querySelector("h3[data-section-key]");
     if (!h3) continue;
-    const title = h3.getAttribute("data-section-title");
-    const id = _sectionSlug(title);
+    const key = h3.getAttribute("data-section-key");
+    const displayLabel = h3.querySelector(".section-title").textContent;
+    const id = _sectionSlug(key);
     sec.id = id;
     sec.style.scrollMarginTop = "12px";
 
@@ -2706,12 +2879,12 @@ function renderSettingsRail() {
     const a = document.createElement("a");
     a.className = "rail-link";
     a.href = "#" + id;
-    a.dataset.title = title;
+    a.dataset.key = key;
 
     // Icon span.
     const icSpan = document.createElement("span");
     icSpan.className = "rail-ic";
-    const iconName = SECTION_ICONS[title];
+    const iconName = SECTION_ICONS[key];
     if (iconName && window.biIcon) {
       const tpl = document.createElement("template");
       tpl.innerHTML = window.biIcon(iconName, 16);
@@ -2720,10 +2893,11 @@ function renderSettingsRail() {
     }
     a.appendChild(icSpan);
 
-    // Label span — use short label if available.
+    // Label span — use the (localised) short label if one is registered.
     const lblSpan = document.createElement("span");
     lblSpan.className = "rail-lbl";
-    lblSpan.textContent = _RAIL_SHORT_LABELS[title] || title;
+    const shortKey = _RAIL_SHORT_LABELS[key];
+    lblSpan.textContent = shortKey ? window.t(shortKey) : displayLabel;
     a.appendChild(lblSpan);
 
     // Click handler: expand section if collapsed, then smooth-scroll.
@@ -2731,8 +2905,8 @@ function renderSettingsRail() {
       ev.preventDefault();
       const target = document.getElementById(id);
       if (!target) return;
-      if (collapsedSections.has(title)) {
-        collapsedSections.delete(title);
+      if (collapsedSections.has(key)) {
+        collapsedSections.delete(key);
         // renderSettingsForm rebuilds the DOM (including the rail),
         // so schedule the scroll for after the next paint.
         renderSettingsForm();
@@ -2772,7 +2946,7 @@ function renderSettingsRail() {
 // ── end settings rail ────────────────────────────────────────────────────
 
 function renderGenericSection(key, title, target, schema) {
-  const sec = makeSection(title);
+  const sec = makeSection(key, title);
   const body = sec.querySelector(".body");
   for (const [field, type] of schema) {
     body.appendChild(renderRow(field, target, field, type, `${key}.${field}`));
@@ -2944,7 +3118,7 @@ function _renderListRow(label, arr, helpPath, opts) {
   row.className = "cfg-row";
   const lab = document.createElement("label");
   lab.textContent = label;
-  if (helpPath && HELP[helpPath]) lab.title = HELP[helpPath];
+  if (helpPath && tHelp(helpPath)) lab.title = tHelp(helpPath);
   row.appendChild(lab);
   row.appendChild(_renderStringList(arr, opts));
   return row;
@@ -2955,7 +3129,7 @@ function renderEnvironmentsSection(envs) {
   // krakey.models.config.environments.EnvironmentsSection — `local`
   // is always-on with just an allow-list; `sandbox` is optional and
   // gated by an enable toggle.
-  const sec = makeSection("Environments");
+  const sec = makeSection("environments", window.t("section_environments"));
   const body = sec.querySelector(".body");
 
   // Plugin-name suggestions for the allow-list editors come from
@@ -3040,10 +3214,16 @@ function renderEnvironmentsSection(envs) {
         suggestions: pluginSuggestions,
       },
     ));
-    for (const [f, t] of SCHEMAS.env_sandbox_scalars) {
-      sbBlock.appendChild(renderRow(
-        f, sb, f, t, `environments.sandbox.${f}`,
-      ));
+    for (const [f, t, choices] of SCHEMAS.env_sandbox_scalars) {
+      if (t === "combo") {
+        sbBlock.appendChild(renderComboRow(
+          f, sb, f, choices, `environments.sandbox.${f}`,
+        ));
+      } else {
+        sbBlock.appendChild(renderRow(
+          f, sb, f, t, `environments.sandbox.${f}`,
+        ));
+      }
     }
     sbBlock.appendChild(_renderListRow(
       "allowlist_domains", sb.allowlist_domains,
@@ -3087,8 +3267,8 @@ function renderRow(label, target, key, type, helpPath) {
   row.className = "cfg-row";
   const lab = document.createElement("label");
   lab.textContent = label;
-  if (helpPath && HELP[helpPath]) {
-    lab.title = HELP[helpPath];
+  if (helpPath && tHelp(helpPath)) {
+    lab.title = tHelp(helpPath);
   }
   row.appendChild(lab);
 
@@ -3097,7 +3277,7 @@ function renderRow(label, target, key, type, helpPath) {
   if (type === "bool") {
     widget = document.createElement("span");
     widget.className = "toggle" + (val ? " on" : "");
-    if (helpPath && HELP[helpPath]) widget.title = HELP[helpPath];
+    if (helpPath && tHelp(helpPath)) widget.title = tHelp(helpPath);
     widget.addEventListener("click", () => {
       const wasOn = !!target[key];
       const willBeOn = !wasOn;
@@ -3152,7 +3332,7 @@ function renderRow(label, target, key, type, helpPath) {
     widget.value = val == null ? "" : val;
     widget.addEventListener("input", () => { target[key] = widget.value; });
   }
-  if (helpPath && HELP[helpPath] && type !== "bool") widget.title = HELP[helpPath];
+  if (helpPath && tHelp(helpPath) && type !== "bool") widget.title = tHelp(helpPath);
   row.appendChild(widget);
   return row;
 }
@@ -3166,7 +3346,7 @@ function renderEnumRow(label, target, key, choices, helpPath) {
   row.className = "cfg-row";
   const lab = document.createElement("label");
   lab.textContent = label;
-  if (helpPath && HELP[helpPath]) lab.title = HELP[helpPath];
+  if (helpPath && tHelp(helpPath)) lab.title = tHelp(helpPath);
   row.appendChild(lab);
   const sel = document.createElement("select");
   for (const c of choices) {
@@ -3184,8 +3364,40 @@ function renderEnumRow(label, target, key, choices, helpPath) {
       target[key] = sel.value;
     }
   });
-  if (helpPath && HELP[helpPath]) sel.title = HELP[helpPath];
+  if (helpPath && tHelp(helpPath)) sel.title = tHelp(helpPath);
   row.appendChild(sel);
+  return row;
+}
+
+// Combobox row — free-text <input> backed by a <datalist> of valid
+// values. Unlike renderEnumRow's strict <select>, the user can type
+// ANY value AND pick a known-good one from the dropdown. Used for the
+// sandbox enum fields (guest_os / provider / display / network_mode).
+// Empty input keeps the key as "" (does NOT delete) — guest_os is
+// required-when-enabled and the sandbox toggle hydrates it as "".
+function renderComboRow(label, target, key, choices, helpPath) {
+  const row = document.createElement("div");
+  row.className = "cfg-row";
+  const lab = document.createElement("label");
+  lab.textContent = label;
+  if (helpPath && tHelp(helpPath)) lab.title = tHelp(helpPath);
+  row.appendChild(lab);
+  const dlId = "dl-sandbox-" + key;
+  const widget = document.createElement("input");
+  widget.type = "text";
+  widget.setAttribute("list", dlId);
+  widget.value = target[key] == null ? "" : target[key];
+  if (helpPath && tHelp(helpPath)) widget.title = tHelp(helpPath);
+  widget.addEventListener("input", () => { target[key] = widget.value; });
+  row.appendChild(widget);
+  const dl = document.createElement("datalist");
+  dl.id = dlId;
+  for (const c of choices) {
+    const opt = document.createElement("option");
+    opt.value = c;
+    dl.appendChild(opt);
+  }
+  row.appendChild(dl);
   return row;
 }
 
@@ -3196,7 +3408,7 @@ function renderFatigueThresholds(fatigue) {
   h.appendChild(document.createTextNode("thresholds (% → hint)"));
   const actions = document.createElement("span");
   actions.className = "actions";
-  const addBtn = mkBtn("+ add", () => {
+  const addBtn = mkBtn(window.t("btn_add"), () => {
     let key = 0;
     while (key in fatigue.thresholds) key += 25;
     fatigue.thresholds[key] = "";
@@ -3351,14 +3563,14 @@ function renderLLMSection(llm) {
     llm.core_purposes = llm.core_purposes || {};
   }
 
-  const sec = makeSection("LLM");
+  const sec = makeSection("llm", window.t("section_llm"));
   const body = sec.querySelector(".body");
 
   // Providers
   const provHead = document.createElement("h4");
   provHead.style.cssText = "color:var(--text);font-weight:bold;font-size:11px;margin:0 0 6px";
   provHead.appendChild(document.createTextNode("Providers"));
-  const addProv = mkBtn("+ add provider", () => {
+  const addProv = mkBtn(window.t("btn_add_provider"), () => {
     // Add directly with a placeholder name; the heading enters
     // edit-mode on render so the user types the real name inline.
     const name = _uniqueDraftName(llm.providers, "provider");
@@ -3390,7 +3602,7 @@ function renderLLMSection(llm) {
     "Purposes both bind a tag name; multiple purposes can share " +
     "the same tag, and a tag can be re-tuned in one place to " +
     "change every consumer at once.";
-  const addTag = mkBtn("+ add tag", () => {
+  const addTag = mkBtn(window.t("btn_add_tag"), () => {
     const provNames = Object.keys(llm.providers || {});
     if (!provNames.length) { alert("add a provider first"); return; }
     const firstProv = llm.providers[provNames[0]];
@@ -3480,7 +3692,7 @@ function renderProviderBlock(pname, prov, llm) {
   const modHead = document.createElement("div");
   modHead.style.cssText = "display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);margin-bottom:4px";
   modHead.appendChild(document.createTextNode("models"));
-  const addModel = mkBtn("+ add model", () => {
+  const addModel = mkBtn(window.t("btn_add_model"), () => {
     if (!Array.isArray(prov.models)) prov.models = [];
     prov.models.push({ name: "", capabilities: ["chat"] });
     renderSettingsForm();
@@ -3803,7 +4015,7 @@ function renderCorePurposesBlock(llm) {
     sub.appendChild(_purposeRow(llm, purp, tagNames, ""));
   }
 
-  const addBtn = mkBtn("+ add purpose", () => {
+  const addBtn = mkBtn(window.t("btn_add_purpose"), () => {
     const name = _uniqueDraftName(llm.core_purposes, "purpose");
     llm.core_purposes[name] = "";
     _pendingNewKey = { scope: "purpose", name };
@@ -4176,7 +4388,7 @@ function _isPluginEnabled(plugin) {
 }
 
 function renderPluginsSection() {
-  const sec = makeSection("Plugins");
+  const sec = makeSection("plugins", window.t("section_plugins"));
   const body = sec.querySelector(".body");
 
   const intro = document.createElement("p");
@@ -4231,7 +4443,7 @@ function renderPluginsSection() {
   if (disabled.length) {
     const head = document.createElement("h4");
     head.style.cssText = "color:var(--muted);font-size:11px;margin:12px 0 6px";
-    head.textContent = "Available (disabled)";
+    head.textContent = window.t("available_disabled");
     body.appendChild(head);
     for (const p of disabled) {
       body.appendChild(_renderPluginCard(p, false, live, -1, 0));
@@ -4416,7 +4628,7 @@ function _renderPluginCard(plugin, enabled, liveByName, modIdx, modCount) {
     const cfgHead = document.createElement("div");
     cfgHead.style.cssText =
       "font-size:11px;color:var(--muted);margin-bottom:4px";
-    cfgHead.textContent = "Config";
+    cfgHead.textContent = window.t("config_label");
     cfgBlock.appendChild(cfgHead);
     for (const fdef of plugin.config_schema) {
       const fname = fdef.field;
@@ -4457,7 +4669,7 @@ function _renderLLMPurposesEditor(plugin, cfg) {
   const head = document.createElement("div");
   head.style.cssText =
     "font-size:11px;color:var(--muted);margin-bottom:4px";
-  head.textContent = "LLM purpose bindings (tag picker)";
+  head.textContent = window.t("llm_purpose_bindings");
   block.appendChild(head);
 
   const tagNames = Object.keys((cfgState.llm || {}).tags || {});
@@ -4569,7 +4781,7 @@ $("#settings-save").addEventListener("click", async () => {
 });
 
 $("#settings-restart").addEventListener("click", async () => {
-  if (!confirm("Restart Krakey? The web UI will briefly disconnect.")) return;
+  if (!confirm(window.t("confirm_restart"))) return;
   try {
     const r = await fetch("/api/restart", { method: "POST" });
     if (r.ok) {

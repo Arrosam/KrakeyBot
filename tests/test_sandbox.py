@@ -100,12 +100,13 @@ async def test_runner_reports_timeout(live_agent):
 # ---------------- runtime preflight integration ----------------
 
 
-def test_router_build_refuses_when_sandbox_partially_configured(tmp_path):
+def test_router_build_disables_sandbox_when_partially_configured(capsys):
     """Half-filled environments.sandbox block (guest_os without
-    agent fields, or vice versa) is the most common config typo —
-    silently downgrading to "no sandbox" would leave the user
-    wondering why their plugin can't reach the env. Construction-
-    time refusal forces them to fix it on the spot."""
+    agent fields, or vice versa) is the most common config typo.
+    Startup must NOT be blocked by incomplete optional-feature
+    config: the sandbox env is left unregistered (feature off) and
+    a warning names the missing keys. Plugins allow-listed for the
+    absent sandbox just hit EnvironmentDenied at call time."""
     from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
     from krakey.models.config import SandboxEnvironmentConfig
 
@@ -116,11 +117,12 @@ def test_router_build_refuses_when_sandbox_partially_configured(tmp_path):
     runtime.config.environments.sandbox = SandboxEnvironmentConfig(
         guest_os="linux",
     )
-    with pytest.raises(RuntimeError) as ei:
-        runtime._build_environment_router()
-    msg = str(ei.value)
-    assert "sandbox" in msg.lower()
-    assert "agent" in msg
+    router = runtime._build_environment_router()
+    # Local is always present; sandbox is dropped, not registered.
+    assert router.env_names() == ["local"]
+    err = capsys.readouterr().err.lower()
+    assert "sandbox" in err
+    assert "agent" in err
 
 
 async def test_router_local_always_present_even_with_no_sandbox(tmp_path):

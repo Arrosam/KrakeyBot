@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <script>(function(){var t=localStorage.getItem('krakey-theme');if(t===null){t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';}if(t==='light'){document.documentElement.setAttribute('data-theme','light');}})();</script>
   <meta charset="utf-8">
@@ -15,20 +15,21 @@
            onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'brand-logo placeholder',textContent:'K'}))">
       <div class="brand-text">
         <div class="brand-name">KrakeyBot</div>
-        <div class="brand-tag">digital being</div>
+        <div class="brand-tag" data-i18n="brand_tag">digital being</div>
       </div>
     </div>
     <nav class="tabs">
-      <button class="tab-btn active" data-tab="thoughts"><i data-bi="chat-square-text"></i> Inner Thoughts</button>
-      <button class="tab-btn" data-tab="chat"><i data-bi="chat-dots"></i> Chat</button>
-      <button class="tab-btn" data-tab="memory"><i data-bi="cpu"></i> Memory</button>
-      <button class="tab-btn" data-tab="prompts"><i data-bi="journal-text"></i> Prompts</button>
-      <button class="tab-btn" data-tab="log"><i data-bi="terminal"></i> Log</button>
-      <button class="tab-btn" data-tab="settings"><i data-bi="gear"></i> Settings</button>
+      <button class="tab-btn active" data-tab="thoughts" data-i18n="tab_thoughts"><i data-bi="chat-square-text"></i> Inner Thoughts</button>
+      <button class="tab-btn" data-tab="chat" data-i18n="tab_chat"><i data-bi="chat-dots"></i> Chat</button>
+      <button class="tab-btn" data-tab="memory" data-i18n="tab_memory"><i data-bi="cpu"></i> Memory</button>
+      <button class="tab-btn" data-tab="prompts" data-i18n="tab_prompts"><i data-bi="journal-text"></i> Prompts</button>
+      <button class="tab-btn" data-tab="log" data-i18n="tab_log"><i data-bi="terminal"></i> Log</button>
+      <button class="tab-btn" data-tab="settings" data-i18n="tab_settings"><i data-bi="gear"></i> Settings</button>
     </nav>
     <div class="status-bar" id="status-bar">— connecting —</div>
-    <button id="runtime-toggle" class="runtime-toggle-btn" aria-label="Pause/resume heartbeat"></button>
-    <button id="theme-toggle" class="theme-toggle-btn" aria-label="Toggle light/dark mode"></button>
+    <button id="runtime-toggle" class="runtime-toggle-btn" aria-label="Pause/resume heartbeat" data-i18n-aria="aria_runtime_toggle"></button>
+    <button id="lang-toggle" class="lang-toggle-btn" aria-label="Switch language" data-i18n-aria="aria_lang_toggle"></button>
+    <button id="theme-toggle" class="theme-toggle-btn" aria-label="Toggle light/dark mode" data-i18n-aria="aria_theme_toggle"></button>
   </header>
 
   <!-- Runtime-state banner — shown when the SPA receives a
@@ -55,6 +56,8 @@
     <!-- @@view:settings@@ -->
   </main>
 
+  <script src="/static/shared/i18n.js"></script>
+  <script src="/static/shared/locale-zh.js"></script>
   <script src="/static/shared/bi.js"></script>
   <!-- Cytoscape powers the Memory tab's graph browser (pan/zoom/drag).
        Same CDN+version pinning the docs/ arch-graph tool uses, so the

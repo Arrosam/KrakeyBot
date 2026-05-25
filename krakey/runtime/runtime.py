@@ -619,8 +619,13 @@ class Runtime:
         ``environments.local.allowed_plugins`` (default empty).
 
         Sandbox is registered only when ``environments.sandbox`` is
-        set AND fully configured. Partial config raises so a typo
-        doesn't silently downgrade to "no sandbox available".
+        set AND fully configured. Partial config (missing guest_os /
+        agent.url / agent.token) is NOT fatal: the sandbox env is
+        left unregistered — treated as "feature not enabled" — and a
+        warning names the missing keys. Startup must never be blocked
+        by incomplete optional-feature config; plugins allow-listed
+        for the (now absent) sandbox simply get ``EnvironmentDenied``
+        at call time, same as if the section were omitted entirely.
         """
         envs: dict[str, Environment] = {"local": LocalEnvironment()}
         envs_cfg = self.config.environments
@@ -637,19 +642,20 @@ class Runtime:
             if not sb.agent.token:
                 missing.append("environments.sandbox.agent.token")
             if missing:
-                raise RuntimeError(
-                    "sandbox env config is partial. Missing: "
+                self.log.hb_warn(
+                    "sandbox env config is incomplete; missing "
                     + ", ".join(missing)
-                    + ". Either complete the `environments.sandbox:` "
-                    "block in config.yaml or remove the section "
-                    "entirely to disable the sandbox env."
+                    + ". Sandbox environment disabled. Complete the "
+                    "`environments.sandbox:` block in config.yaml to "
+                    "enable it, or remove the section to silence this."
                 )
-            envs["sandbox"] = SandboxEnvironment(SandboxConfig(
-                agent_url=sb.agent.url,
-                agent_token=sb.agent.token,
-                guest_os=sb.guest_os,
-            ))
-            allow_list["sandbox"] = list(sb.allowed_plugins)
+            else:
+                envs["sandbox"] = SandboxEnvironment(SandboxConfig(
+                    agent_url=sb.agent.url,
+                    agent_token=sb.agent.token,
+                    guest_os=sb.guest_os,
+                ))
+                allow_list["sandbox"] = list(sb.allowed_plugins)
         return EnvironmentRouter(envs=envs, allow_list=allow_list)
 
     def _record_prompt(self, heartbeat_id: int, prompt: str) -> None:
