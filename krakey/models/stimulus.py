@@ -13,4 +13,5 @@ class Stimulus:
     content: str
     timestamp: datetime
     adrenalin: bool = False
+    chat_message_id: str | None = None  # correlation key for web-chat read receipts; None for all other sources
     metadata: dict[str, Any] = field(default_factory=dict)
