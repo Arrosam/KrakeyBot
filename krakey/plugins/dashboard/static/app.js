@@ -121,32 +121,112 @@ const $$ = (sel) => document.querySelectorAll(sel);
   });
 })();
 
-// ============== LANG TOGGLE ==============
+// ============== LANG SWITCHER ==============
+// Globe-icon button in the header; clicking opens a dropdown of the
+// registered locales (the active one is marked). Selecting one swaps
+// the locale, updates <html lang>, and re-renders strings via
+// applyLocale(). The whole switcher hides while <2 locales exist.
 (function () {
   var btn = document.getElementById('lang-toggle');
   if (!btn) return;
-  function _syncLangToggle() {
-    var locales = window.availableLocales();
-    if (locales.length < 2) { btn.style.display = 'none'; return; }
-    btn.style.display = '';
-    btn.textContent = window.getLocale().toUpperCase();
+
+  // Wrap the button in a positioned container and hang the dropdown
+  // menu off it as a sibling so the menu can anchor under the button.
+  var wrap = document.createElement('div');
+  wrap.className = 'lang-switcher';
+  btn.parentNode.insertBefore(wrap, btn);
+  wrap.appendChild(btn);
+
+  var menu = document.createElement('div');
+  menu.className = 'lang-menu';
+  menu.setAttribute('role', 'menu');
+  wrap.appendChild(menu);
+
+  // Globe icon (glyph fallback if bi.js hasn't loaded).
+  btn.innerHTML = window.biIcon ? window.biIcon('globe', 16) : '🌐';
+  btn.setAttribute('aria-haspopup', 'true');
+  btn.setAttribute('aria-expanded', 'false');
+
+  function _checkMark() {
+    return window.biIcon ? window.biIcon('check-circle-fill', 14) : '✓';
   }
+
+  function _markActive() {
+    var cur = window.getLocale();
+    menu.querySelectorAll('.lang-option').forEach(function (opt) {
+      opt.setAttribute('aria-checked', String(opt.dataset.locale === cur));
+    });
+  }
+
+  function _buildMenu() {
+    menu.innerHTML = '';
+    window.availableLocales().forEach(function (code) {
+      var opt = document.createElement('button');
+      opt.type = 'button';
+      opt.className = 'lang-option';
+      opt.setAttribute('role', 'menuitemradio');
+      opt.dataset.locale = code;
+
+      var name = document.createElement('span');
+      name.className = 'lang-name';
+      name.textContent = window.localeName ? window.localeName(code) : code;
+
+      var chk = document.createElement('span');
+      chk.className = 'lang-check';
+      chk.innerHTML = _checkMark();
+
+      opt.appendChild(name);
+      opt.appendChild(chk);
+      opt.addEventListener('click', function () { _select(code); });
+      menu.appendChild(opt);
+    });
+    _markActive();
+  }
+
+  function _onDocClick(ev) { if (!wrap.contains(ev.target)) _close(); }
+  function _onKey(ev) { if (ev.key === 'Escape') { _close(); btn.focus(); } }
+
+  function _open() {
+    menu.classList.add('open');
+    btn.setAttribute('aria-expanded', 'true');
+    document.addEventListener('click', _onDocClick, true);
+    document.addEventListener('keydown', _onKey);
+  }
+  function _close() {
+    menu.classList.remove('open');
+    btn.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('click', _onDocClick, true);
+    document.removeEventListener('keydown', _onKey);
+  }
+
+  function _select(code) {
+    if (code !== window.getLocale()) {
+      window.setLocale(code);
+      document.documentElement.setAttribute('lang', code);
+      applyLocale();
+    }
+    _markActive();
+    _close();
+  }
+
   btn.addEventListener('click', function () {
-    var locales = window.availableLocales();
-    if (locales.length < 2) return;
-    var idx = locales.indexOf(window.getLocale());
-    var next = locales[(idx + 1) % locales.length];
-    window.setLocale(next);
-    document.documentElement.setAttribute('lang', next);
-    applyLocale();
-    _syncLangToggle();
+    if (menu.classList.contains('open')) { _close(); return; }
+    _markActive();
+    _open();
   });
+
+  function _syncVisibility() {
+    wrap.style.display = (window.availableLocales().length < 2) ? 'none' : '';
+  }
+
+  _buildMenu();
+  _syncVisibility();
+
   // If a non-default locale was previously selected (and is still
   // registered), apply it now so the initial English DOM is localised.
   if (window.getLocale() !== 'en' && window.LOCALES[window.getLocale()]) {
     applyLocale();
   }
-  _syncLangToggle();
 })();
 
 // Re-renders localised strings in place when the active locale changes.

@@ -106,11 +106,23 @@
     },
   };
 
+  // Native display names for the language picker — shown in each
+  // locale's own language regardless of the active UI locale. A locale
+  // without an entry here falls back to its raw code.
+  window.LOCALE_NAMES = {
+    en: "English",
+    "zh-CN": "简体中文",
+  };
+
   var _locale = localStorage.getItem('krakey-lang') || 'en';
 
   window.getLocale = function () { return _locale; };
 
   window.availableLocales = function () { return Object.keys(window.LOCALES); };
+
+  window.localeName = function (code) {
+    return (window.LOCALE_NAMES && window.LOCALE_NAMES[code]) || code;
+  };
 
   // Resolve a key in the active locale, falling back to en, then to the
   // raw key. Optional `params` substitutes {name} placeholders.
