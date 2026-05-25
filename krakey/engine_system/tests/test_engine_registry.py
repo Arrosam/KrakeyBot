@@ -175,24 +175,107 @@ def test_resolve_short_name_picks_from_catalog():
     assert isinstance(instance, HypothalamusDecisionEngine)
 
 
-def test_resolve_unknown_short_name_raises_with_available_list():
-    """Short name not in the catalog → ValueError listing the slot's
-    available short names so the user can fix the typo."""
+@pytest.mark.parametrize("slot,protocol_path,extra_kwargs", [
+    (
+        "decision",
+        "krakey.interfaces.engines.decision.DecisionEngine",
+        {"cfg": None, "factory": None},
+    ),
+    (
+        "reranker",
+        "krakey.interfaces.engines.reranker.RerankerEngine",
+        {},
+    ),
+])
+def test_resolve_unknown_short_name_falls_back_to_default_and_warns(
+    slot, protocol_path, extra_kwargs, capsys,
+):
+    """SELF-HEAL (positive): unknown catalog short-name must NOT raise.
+
+    When ``core_implementations.<slot>`` names a value that is neither
+    a built-in catalog entry nor a plugin catalog entry, ``resolve``
+    must:
+
+    1. Not raise any exception.
+    2. Return an object that satisfies the slot's Protocol
+       (``isinstance`` check — Protocol is runtime-checkable).
+    3. Write a warning to STDERR that contains all three of:
+       - the slot name,
+       - the bad value ("not_a_real_engine"),
+       - a substring indicating fallback (case-insensitive "fallback").
+
+    Parametrized over two slots to prove the behaviour is not
+    decision-specific wiring.
+
+    Technique: positive / equivalence-partition (unknown-name class).
+    """
+    import importlib
+
+    # Resolve the Protocol class dynamically from its dotted path so
+    # the parametrize table stays readable.
+    module_path, attr = protocol_path.rsplit(".", 1)
+    protocol_cls = getattr(importlib.import_module(module_path), attr)
+
+    cfg = Config(core_implementations=CoreImplementations(
+        **{slot: "not_a_real_engine"},
+    ))
+    reg = EngineRegistry(cfg)
+
+    # Must NOT raise — self-heal branch fires instead.
+    instance = reg.resolve(slot, expected_protocol=protocol_cls, **extra_kwargs)
+
+    # 1. Returned object satisfies the contract Protocol.
+    assert isinstance(instance, protocol_cls), (
+        f"resolve('{slot}') returned {instance!r} which does not satisfy "
+        f"{protocol_cls.__name__}; FALLBACK_ENGINES entry may point at a "
+        f"non-conforming class."
+    )
+
+    # 2. Warning on STDERR contains slot, bad value, and fallback hint.
+    err = capsys.readouterr().err.lower()
+    assert slot in err, (
+        f"STDERR warning must name the slot ('{slot}'); got: {err!r}"
+    )
+    assert "not_a_real_engine" in err, (
+        f"STDERR warning must name the bad value ('not_a_real_engine'); got: {err!r}"
+    )
+    assert ("falling back" in err) or ("fallback" in err), (
+        f"STDERR warning must contain 'falling back' or 'fallback' (case-insensitive); got: {err!r}"
+    )
+
+
+def test_resolve_unknown_short_name_dotted_path_still_raises(capsys):
+    """NEGATIVE / escape-hatch boundary: a dotted-path value
+    (containing ``:``) that cannot be imported must STILL raise
+    ``ImportError``.
+
+    Self-heal must NOT swallow errors on explicit dotted paths because
+    that branch is an intentional power-user override. Silently
+    substituting a fallback would hide serious misconfiguration.
+
+    Technique: negative / error-guessing (boundary between unknown
+    short-name path and explicit dotted-path path).
+    """
     from krakey.interfaces.engines.decision import DecisionEngine
 
     cfg = Config(core_implementations=CoreImplementations(
-        decision="not_a_real_engine",
+        decision="nonexistent.module.path:NoSuchClass",
     ))
     reg = EngineRegistry(cfg)
-    with pytest.raises(ValueError) as exc_info:
+
+    with pytest.raises(ImportError):
         reg.resolve(
             "decision", expected_protocol=DecisionEngine,
             cfg=cfg, factory=None,
         )
-    msg = str(exc_info.value)
-    assert "not_a_real_engine" in msg
-    assert "tool_call_parser" in msg
-    assert "hypothalamus" in msg
+
+    # Confirm no silent substitution occurred — no fallback warning
+    # should appear on stderr (the error propagated, not healed).
+    err = capsys.readouterr().err.lower()
+    assert "falling back" not in err and "fallback" not in err, (
+        "STDERR must not show a fallback warning for a failed dotted "
+        f"path; got: {err!r}"
+    )
 
 
 # --------------------------------------------------------------------
