@@ -2751,9 +2751,10 @@ _wireSectionToggle();
 let _settingsSpy = null;
 
 // Shortened display labels for rail links where the full title is too
-// long for the compact rail column.
+// long for the compact rail column. Values are i18n keys (resolved via
+// t() at render time) so the short label tracks the active locale.
 const _RAIL_SHORT_LABELS = {
-  "sliding_window": "Sliding Window",
+  "sliding_window": "section_sliding_window_short",
 };
 
 // Derive a CSS-id-safe slug from a section title.
@@ -2812,10 +2813,11 @@ function renderSettingsRail() {
     }
     a.appendChild(icSpan);
 
-    // Label span — use short label if available.
+    // Label span — use the (localised) short label if one is registered.
     const lblSpan = document.createElement("span");
     lblSpan.className = "rail-lbl";
-    lblSpan.textContent = _RAIL_SHORT_LABELS[key] || displayLabel;
+    const shortKey = _RAIL_SHORT_LABELS[key];
+    lblSpan.textContent = shortKey ? window.t(shortKey) : displayLabel;
     a.appendChild(lblSpan);
 
     // Click handler: expand section if collapsed, then smooth-scroll.

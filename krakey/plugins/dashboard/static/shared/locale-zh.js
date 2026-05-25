@@ -31,6 +31,7 @@ window.LOCALES['zh-CN'] = {
   section_idle: "空闲",
   section_fatigue: "疲劳度",
   section_sliding_window: "滑动窗口（工作记忆）",
+  section_sliding_window_short: "滑动窗口",
   section_graph_memory: "图记忆",
   section_knowledge_base: "知识库",
   section_sleep: "休眠",

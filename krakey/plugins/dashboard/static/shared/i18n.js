@@ -59,6 +59,9 @@
       section_idle: "Idle",
       section_fatigue: "Fatigue",
       section_sliding_window: "Sliding Window (Working Memory)",
+      // Shortened variant for the compact settings jump-rail (the full
+      // title is too wide for the rail column).
+      section_sliding_window_short: "Sliding Window",
       section_graph_memory: "Graph Memory",
       section_knowledge_base: "Knowledge Base",
       section_sleep: "Sleep",
