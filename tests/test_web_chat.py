@@ -260,8 +260,9 @@ def test_ws_chat_user_message_pushes_to_runtime_callback(tmp_path):
     h = WebChatHistory(tmp_path / "chat.jsonl")
     received_user_msgs = []
 
-    async def on_user_message(text, attachments=None):
+    async def on_user_message(text, attachments=None, message_id=None):
         received_user_msgs.append(text)
+        return True
 
     app = create_app(runtime=None, web_chat_history=h,
                        on_user_message=on_user_message)
