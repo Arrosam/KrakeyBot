@@ -449,8 +449,6 @@ class HeartbeatOrchestrator:
                         stimuli, recall_result, counts,
                     )
                     if stimuli is None:
-                        # KILL or SLEEP handled inside _reassemble; stop_requested
-                        # is set (KILL) or None return signals SLEEP to caller.
                         return None
                     http_attempt = 0
                     struct_attempt = 0
@@ -491,8 +489,6 @@ class HeartbeatOrchestrator:
                     stimuli, recall_result, counts,
                 )
                 if stimuli is None:
-                    # KILL or SLEEP handled inside _reassemble; stop_requested
-                    # is set (KILL) or None return signals SLEEP to caller.
                     return None
                 http_attempt = 0
                 struct_attempt = 0
@@ -572,7 +568,7 @@ class HeartbeatOrchestrator:
             layers={'full_prompt': prompt},
         ))
 
-        # i. Log the reassembly.
+        # h. Log the reassembly.
         rt.log.hb(
             'beat reassembled on adrenalin during retry; '
             'rebuilt prompt, retry counters reset'

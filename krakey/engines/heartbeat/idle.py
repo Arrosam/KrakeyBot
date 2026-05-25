@@ -63,15 +63,27 @@ async def wait_or_adrenalin(
         remaining = deadline - loop.time()
         if remaining <= 0:
             break
+        slice_dur = min(remaining, poll_slice)
+        t0 = loop.time()
+        timed_out = False
         try:
             await asyncio.wait_for(
-                buffer.wait_for_any(), timeout=min(remaining, poll_slice),
+                buffer.wait_for_any(), timeout=slice_dur,
             )
         except asyncio.TimeoutError:
-            pass
+            timed_out = True
 
         if buffer.has_adrenalin():
             return True
+
+        # Prevent busy-spin: wait_for_any() resolved but it wasn't
+        # adrenalin — the internal event stays set (we must not
+        # drain), so the next iteration would return instantly.
+        # Sleep the remainder of the poll slice to throttle.
+        if not timed_out:
+            leftover = slice_dur - (loop.time() - t0)
+            if leftover > 0:
+                await asyncio.sleep(leftover)
 
     return False
 
