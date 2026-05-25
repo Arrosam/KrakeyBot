@@ -221,7 +221,7 @@ def test_build_sandbox_env_tolerates_non_mapping_subblocks(bad_subblock, capsys)
     # Defaults survive — resources/agent fall back to their dataclass
     # defaults rather than crashing.
     assert sb.resources.cpu == 2
-    assert sb.agent.url == ""
+    assert sb.agent.url == "http://10.0.2.10:8765"  # dataclass default
     err = capsys.readouterr().err.lower()
     assert "mapping" in err
 
@@ -297,3 +297,38 @@ def test_old_top_level_sandbox_block_emits_deprecation(tmp_path, capsys):
     assert "deprecated" in err
     assert "sandbox" in err
     assert "environments.sandbox" in err
+
+
+# ---------------- sandbox config default values ----------------
+
+def test_sandbox_env_config_vm_name_default():
+    from krakey.models.config import SandboxEnvironmentConfig
+    assert SandboxEnvironmentConfig().vm_name == "krakey-vm"
+
+
+def test_sandbox_agent_section_defaults():
+    from krakey.models.config import SandboxAgentSection
+    a = SandboxAgentSection()
+    assert a.url == "http://10.0.2.10:8765"
+    # token MUST stay empty: it is a shared secret (no safe default) and an
+    # empty token is the gate that keeps the sandbox disabled-by-default.
+    assert a.token == ""
+
+
+def test_defaulted_agent_url_with_empty_token_keeps_sandbox_disabled(capsys):
+    """Security invariant: giving agent.url a non-empty default must NOT
+    enable the sandbox. With url defaulted but token still empty, the
+    Router gate (checks guest_os/url/token) still leaves the sandbox
+    unregistered and startup unblocked."""
+    from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
+    from krakey.models.config import SandboxEnvironmentConfig
+    runtime = build_runtime_with_fakes(
+        self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
+    )
+    # guest_os set; agent uses defaults (url non-empty, token empty).
+    runtime.config.environments.sandbox = SandboxEnvironmentConfig(
+        guest_os="linux",
+    )
+    router = runtime._build_environment_router()
+    assert router.env_names() == ["local"]
+    assert "token" in capsys.readouterr().err.lower()
