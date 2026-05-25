@@ -86,3 +86,27 @@ async def test_drain_resets_peek_index():
     buf.drain()
     await buf.push(_s("b", offset_seconds=2))
     assert [s.content for s in buf.peek_unrecalled()] == ["b"]
+
+
+def test_chat_message_id_defaults_to_none():
+    """stimulus-flow: the web-chat correlation key is optional and
+    defaults to None for every non-web-chat source."""
+    assert _s("plain").chat_message_id is None
+
+
+async def test_chat_message_id_round_trips_through_buffer():
+    """stimulus-flow: a server-assigned chat_message_id survives
+    push → drain unchanged, so the heartbeat can read it back off
+    each drained stimulus to emit a read receipt."""
+    buf = StimulusBuffer()
+    tagged = Stimulus(
+        type="user_message",
+        source="channel:web_chat",
+        content="hello",
+        timestamp=datetime(2026, 4, 18, 0, 0, 1),
+        chat_message_id="msg-abc123",
+    )
+    await buf.push(tagged)
+    drained = buf.drain()
+    assert len(drained) == 1
+    assert drained[0].chat_message_id == "msg-abc123"
