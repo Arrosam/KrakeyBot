@@ -450,6 +450,13 @@
   font-weight: bold;
 }
 
+/* Focus ring for cap-multi when the inner input (combobox or chip-input)
+   has keyboard focus — mirrors the border-color behaviour of the standard
+   #settings-form input:focus rule so all chip-strip widgets feel consistent. */
+.cap-multi:focus-within {
+  border-color: var(--accent);
+}
+
 /* ── Custom dropdown ─────────────────────────────────────────────────── */
 
 /* Native <select> popup can't be themed cross-browser — custom impl. */

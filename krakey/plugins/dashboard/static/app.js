@@ -1937,6 +1937,25 @@ const SECTION_DEFAULTS = {
   },
 };
 
+// Single source of truth for sandbox defaults on the JS side.
+// Mirrors SandboxSection / SandboxAgentSection / SandboxResourcesSection
+// dataclass defaults in krakey/models/config/environments.py + infra.py.
+// IMPORTANT: keep in sync with the Python models; diverging here causes
+// the dashboard to pre-populate values the backend will overwrite.
+// `agent.token` and `allowlist_domains` are intentionally absent —
+// they default to empty and must never be backfilled to a non-empty value.
+const SANDBOX_DEFAULTS = {
+  allowed_plugins: [],
+  guest_os: "",
+  provider: "qemu",
+  vm_name: "krakey-vm",
+  display: "headed",
+  resources: { cpu: 2, memory_mb: 4096, disk_gb: 40 },
+  agent: { url: "http://10.0.2.10:8765", token: "" },
+  network_mode: "nat_allowlist",
+  allowlist_domains: [],
+};
+
 // Hover tooltip text per "section.field" key.
 const HELP = {
   "idle.min_interval": "Minimum idle interval (seconds). Self uses [IDLE] N to control each beat, but it will never go below this value.",
@@ -3276,15 +3295,14 @@ function renderEnvironmentsSection(envs) {
   toggle.title = "register a sandbox execution environment";
   toggle.addEventListener("click", () => {
     if (envs.sandbox == null) {
+      // Deep-clone SANDBOX_DEFAULTS so each toggle-on creates
+      // independent sub-objects (resources/agent) rather than sharing
+      // the same reference.
       envs.sandbox = {
+        ...SANDBOX_DEFAULTS,
+        resources: { ...SANDBOX_DEFAULTS.resources },
+        agent: { ...SANDBOX_DEFAULTS.agent },
         allowed_plugins: [],
-        guest_os: "",
-        provider: "qemu",
-        vm_name: "",
-        display: "headed",
-        resources: { cpu: 2, memory_mb: 4096, disk_gb: 40 },
-        agent: { url: "", token: "" },
-        network_mode: "nat_allowlist",
         allowlist_domains: [],
       };
     } else {
@@ -3297,8 +3315,8 @@ function renderEnvironmentsSection(envs) {
 
   if (envs.sandbox != null) {
     const sb = envs.sandbox;
-    if (!sb.resources) sb.resources = { cpu: 2, memory_mb: 4096, disk_gb: 40 };
-    if (!sb.agent) sb.agent = { url: "", token: "" };
+    if (!sb.resources) sb.resources = { ...SANDBOX_DEFAULTS.resources };
+    if (!sb.agent) sb.agent = { ...SANDBOX_DEFAULTS.agent };
     if (!Array.isArray(sb.allowed_plugins)) sb.allowed_plugins = [];
     if (!Array.isArray(sb.allowlist_domains)) sb.allowlist_domains = [];
 
@@ -3478,14 +3496,25 @@ function renderComboRow(label, target, key, choices, helpPath) {
   lab.textContent = label;
   if (helpPath && tHelp(helpPath)) lab.title = tHelp(helpPath);
   row.appendChild(lab);
+
+  // Wrap the combobox input in a .cap-multi chip-strip container so it
+  // visually matches _renderStringList / renderCapabilitiesMulti.
+  // The <datalist> is appended to the row (not the container) — its
+  // position in the DOM is irrelevant for datalist association.
+  const container = document.createElement("div");
+  container.className = "cap-multi";
+
   const dlId = "dl-sandbox-" + key;
   const widget = document.createElement("input");
   widget.type = "text";
   widget.setAttribute("list", dlId);
   widget.value = target[key] == null ? "" : target[key];
+  widget.style.cssText = "border:none;background:transparent;flex:1;outline:none;color:var(--text);font-family:inherit;font-size:13px;min-width:80px;width:100%";
   if (helpPath && tHelp(helpPath)) widget.title = tHelp(helpPath);
   widget.addEventListener("input", () => { target[key] = widget.value; });
-  row.appendChild(widget);
+  container.appendChild(widget);
+  row.appendChild(container);
+
   const dl = document.createElement("datalist");
   dl.id = dlId;
   for (const c of choices) {
@@ -3493,6 +3522,8 @@ function renderComboRow(label, target, key, choices, helpPath) {
     opt.value = c;
     dl.appendChild(opt);
   }
+  // Append datalist to the row, not the container — datalist association
+  // is by id, so its DOM position does not affect the combobox behaviour.
   row.appendChild(dl);
   return row;
 }
@@ -4809,6 +4840,64 @@ const _TOAST_ICON = {
   pending: "arrow-clockwise",
 };
 
+// Generic pre-save backfill. Walks every top-level key of cfgState and
+// restores any empty / null / missing SCALAR field to its default from
+// SECTION_DEFAULTS (and SANDBOX_DEFAULTS for the environments.sandbox
+// sub-tree). Fields whose default is '' or [] are left as-is so security
+// and disabled-by-default invariants hold (agent.token, allowlist_domains).
+function backfillDefaults(state) {
+  if (!state || typeof state !== "object") return;
+
+  // Top-level sections from SECTION_DEFAULTS.
+  for (const [section, defaults] of Object.entries(SECTION_DEFAULTS)) {
+    if (defaults == null || typeof defaults !== "object") continue;
+    if (Array.isArray(defaults)) continue;
+    if (state[section] == null || typeof state[section] !== "object") continue;
+
+    for (const [field, dflt] of Object.entries(defaults)) {
+      // Skip complex / array defaults — only scalars are backfilled.
+      if (dflt === null || dflt === "" || Array.isArray(dflt) || typeof dflt === "object") continue;
+      const cur = state[section][field];
+      if (cur == null || cur === "") {
+        state[section][field] = dflt;
+      }
+    }
+  }
+
+  // Sandbox sub-tree: environments.sandbox scalar + nested resources/agent.
+  const sb = state.environments && state.environments.sandbox;
+  if (sb && typeof sb === "object") {
+    for (const [field, dflt] of Object.entries(SANDBOX_DEFAULTS)) {
+      if (dflt === null || dflt === "" || Array.isArray(dflt) || typeof dflt === "object") continue;
+      const cur = sb[field];
+      if (cur == null || cur === "") {
+        sb[field] = dflt;
+      }
+    }
+    // resources sub-object.
+    if (sb.resources && typeof sb.resources === "object") {
+      for (const [field, dflt] of Object.entries(SANDBOX_DEFAULTS.resources)) {
+        if (dflt === null || dflt === "") continue;
+        const cur = sb.resources[field];
+        if (cur == null || cur === "") {
+          sb.resources[field] = dflt;
+        }
+      }
+    }
+    // agent sub-object — token is intentionally skipped (default is "").
+    if (sb.agent && typeof sb.agent === "object") {
+      for (const [field, dflt] of Object.entries(SANDBOX_DEFAULTS.agent)) {
+        // token default is "" — leave it alone.
+        if (dflt === null || dflt === "") continue;
+        const cur = sb.agent[field];
+        if (cur == null || cur === "") {
+          sb.agent[field] = dflt;
+        }
+      }
+    }
+  }
+}
+
 function showToast(text, level = "ok") {
   const icon = window.biIcon(_TOAST_ICON[level] || _TOAST_ICON.info, 13);
   const t = document.createElement("span");
@@ -4827,6 +4916,13 @@ function showToast(text, level = "ok") {
 $("#settings-save").addEventListener("click", async () => {
   if (cfgState == null) { showToast("nothing to save", "err"); return; }
   try {
+    // Restore any empty / null scalar fields to their non-empty defaults
+    // before sending — prevents the backend from getting an incomplete
+    // config when the user never touched a field that the UI hydrated
+    // as "". Fields whose default is '' or [] (e.g. agent.token,
+    // allowlist_domains) are intentionally left as-is.
+    backfillDefaults(cfgState);
+
     // Central config.yaml carries the two enable lists
     // (cfgState.modifiers, cfgState.plugins); the unified panel's
     // checkboxes mutate them in-place during the session. Per-plugin
