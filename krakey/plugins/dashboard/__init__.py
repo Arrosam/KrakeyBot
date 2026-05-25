@@ -178,6 +178,7 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
     from krakey.plugins.dashboard.events import EventBroadcaster
     from krakey.plugins.dashboard.log_capture import LogCapture
     from krakey.plugins.dashboard.threaded_server import ThreadedDashboardServer
+    from krakey.plugins.dashboard.web_chat.read_receipts import make_stimulus_read_handler
 
     runtime = ctx.services.get("runtime")
     if runtime is None:
@@ -228,6 +229,7 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
 
     try:
         broadcaster = EventBroadcaster(runtime.events)
+        runtime.events.subscribe(make_stimulus_read_handler(history))
         app = create_dashboard_app(
             runtime=runtime,
             web_chat_history=history,

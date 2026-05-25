@@ -40,18 +40,28 @@ class WebChatHistory:
         return list(self._cache)
 
     async def append(self, sender: str, content: str,
-                       attachments: list[dict[str, Any]] | None = None
+                       attachments: list[dict[str, Any]] | None = None,
+                       message_id: str | None = None,
+                       status: str | None = None,
                        ) -> dict[str, Any]:
         """Persist + broadcast a message. Returns the persisted record.
 
         `attachments`: optional list of {name, url, type, size} dicts as
         returned by /api/chat/upload.
+        `message_id`: optional stable ID for this message (user messages
+        only; krakey replies are never keyed).
+        `status`: optional delivery status string ("delivered", "failed",
+        "read"); omitted when not provided.
         """
         msg: dict[str, Any] = {
             "sender": sender,
             "content": content,
             "ts": datetime.now().isoformat(),
         }
+        if message_id is not None:
+            msg["id"] = message_id
+        if status is not None:
+            msg["status"] = status
         if attachments:
             msg["attachments"] = attachments
         self._cache.append(msg)
@@ -60,6 +70,40 @@ class WebChatHistory:
             f.write(json.dumps(msg, ensure_ascii=False) + "\n")
         await self._broadcast(msg)
         return msg
+
+    def _rewrite_from_cache(self) -> None:
+        """Truncate the JSONL file and rewrite every cached record.
+
+        Used by update_status and delete to keep the on-disk file in
+        sync after in-place mutations.
+        """
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("w", encoding="utf-8") as f:
+            for record in self._cache:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    async def update_status(self, message_id: str, status: str) -> "dict[str, Any] | None":
+        """Find the cached record with ``id == message_id``, set its
+        status, rewrite the JSONL file, and return the updated record.
+        Returns None if no matching record is found.
+        """
+        for record in self._cache:
+            if record.get("id") == message_id:
+                record["status"] = status
+                self._rewrite_from_cache()
+                return record
+        return None
+
+    async def delete(self, message_id: str) -> bool:
+        """Remove the cached record with ``id == message_id`` (if any),
+        rewrite the JSONL file, and return True if removed else False.
+        """
+        for i, record in enumerate(self._cache):
+            if record.get("id") == message_id:
+                del self._cache[i]
+                self._rewrite_from_cache()
+                return True
+        return False
 
     async def _broadcast(self, msg: dict[str, Any]) -> None:
         for cb in list(self._subscribers):

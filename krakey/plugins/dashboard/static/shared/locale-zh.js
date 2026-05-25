@@ -67,6 +67,10 @@ window.LOCALES['zh-CN'] = {
   chat_placeholder: "和 Krakey 说点什么…（Enter 发送，Shift+Enter 换行）",
   chat_attach_title: "附加图片/文件",
   confirm_restart: "重启 Krakey？Web 界面将短暂断开连接。",
+  msg_status_delivered: "已送达",
+  msg_status_read: "已读",
+  msg_status_failed: "发送失败，对方不在线",
+  msg_resend: "重新发送",
   help: {
     "idle.min_interval": "最小空闲间隔（秒）。Self 使用 [IDLE] N 控制每次心跳，但不会低于此值。",
     "idle.max_interval": "最大空闲间隔（秒）。即使 Self 请求更长的空闲时间，也不会超过此值。",

@@ -92,14 +92,17 @@ class WebChatChannel(Channel):
     async def push_user_message(
         self, text: str,
         attachments: list[dict[str, Any]] | None = None,
-    ) -> None:
+        message_id: str | None = None,
+    ) -> bool:
         """Convert one inbound web-chat message to a Stimulus + push.
 
-        Safe to call from any asyncio loop; cross-loop calls are
-        scheduled on the runtime's loop via ``run_coroutine_threadsafe``.
+        Returns True on successful push, False when offline (pre-start
+        or post-stop). Safe to call from any asyncio loop; cross-loop
+        calls are scheduled on the runtime's loop via
+        ``run_coroutine_threadsafe``.
         """
         if self._push is None or self._runtime_loop is None:
-            return  # pre-start or post-stop: silently drop
+            return False  # pre-start or post-stop: offline
 
         content = text
         md: dict[str, Any] = {"channel": "web_chat"}
@@ -120,6 +123,7 @@ class WebChatChannel(Channel):
             timestamp=datetime.now(),
             adrenalin=True,
             metadata=md,
+            chat_message_id=message_id,
         )
 
         try:
@@ -133,3 +137,4 @@ class WebChatChannel(Channel):
                 self._push(stim), self._runtime_loop,
             )
             await asyncio.wrap_future(fut)
+        return True

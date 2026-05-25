@@ -63,7 +63,7 @@ def create_app(
     *,
     runtime: Any | None = None,
     web_chat_history: WebChatHistory | None = None,
-    on_user_message: Callable[..., Awaitable[None]] | None = None,
+    on_user_message: Callable[..., Awaitable[bool]] | None = None,
     event_broadcaster: EventBroadcasterService | None = None,
     config_path: Path | None = None,
     on_restart: Callable[[], None] | None = None,

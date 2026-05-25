@@ -461,6 +461,11 @@ function renderStatusPanel() {
   _setPair("events ws", eventsWS && eventsWS.readyState === 1 ? "connected" : "disconnected");
 }
 
+// ============== CHAT message id → bubble element lookup ==============
+// Declared here (before handleEvent) so the stimulus_read handler can
+// reference it. Populated by renderChatMessage (in the CHAT section).
+const _msgBubbleMap = new Map();
+
 // ============== INNER THOUGHTS — /ws/events ==============
 
 let eventsWS = null;
@@ -699,6 +704,19 @@ function handleEvent(e) {
       }
       setStatus();
       break;
+    case "stimulus_read":
+      // The heartbeat drained one or more stimuli. Upgrade the
+      // delivery badge on matching user bubbles to "read".
+      if (Array.isArray(e.chat_message_ids)) {
+        for (const mid of e.chat_message_ids) {
+          const bubble = _msgBubbleMap.get(mid);
+          if (bubble && bubble._msgData) {
+            bubble._msgData.status = "read";
+            _renderStatusBadge(bubble, bubble._msgData);
+          }
+        }
+      }
+      break;
   }
 }
 
@@ -742,6 +760,70 @@ function fmtTime(iso) {
   } catch { return iso; }
 }
 
+// Render or update the status badge (and resend button) on a user
+// bubble. Idempotent: re-calling with the same bubble replaces the old
+// badge in place.
+function _renderStatusBadge(bubble, msg) {
+  // Remove any existing badge + resend button before re-rendering.
+  const oldBadge = bubble.querySelector(".msg-status");
+  if (oldBadge) oldBadge.remove();
+  const oldResend = bubble.querySelector(".msg-resend-btn");
+  if (oldResend) oldResend.remove();
+
+  const status = msg.status;
+  if (!status) return;
+
+  const badge = document.createElement("span");
+  badge.className = "msg-status msg-status--" + status;
+
+  if (status === "delivered") {
+    badge.textContent = "✓ " + window.t("msg_status_delivered");
+  } else if (status === "read") {
+    badge.textContent = "✓✓ " + window.t("msg_status_read");
+  } else if (status === "failed") {
+    badge.textContent = "! " + window.t("msg_status_failed");
+    // Red resend button — rendered immediately after the badge.
+    const resendBtn = document.createElement("button");
+    resendBtn.type = "button";
+    resendBtn.className = "msg-resend-btn";
+    resendBtn.textContent = window.t("msg_resend");
+    const failedId = msg.id;
+    const failedText = msg.content || "";
+    const failedAttachments = msg.attachments || [];
+    resendBtn.addEventListener("click", () => {
+      if (!chatWS || chatWS.readyState !== 1) return;
+      // Remove the failed bubble and its map entry before sending so
+      // the UI doesn't show two copies when the echo arrives.
+      if (failedId) {
+        _msgBubbleMap.delete(failedId);
+        bubble.remove();
+      }
+      chatWS.send(JSON.stringify({
+        text: failedText,
+        attachments: failedAttachments,
+        resend_of: failedId,
+      }));
+    });
+    // Append badge to the ts row area, then resend button.
+    const ts = bubble.querySelector(".ts");
+    if (ts) {
+      ts.after(badge, resendBtn);
+    } else {
+      bubble.appendChild(badge);
+      bubble.appendChild(resendBtn);
+    }
+    return;
+  }
+
+  // For delivered / read: append the badge to the timestamp row area.
+  const ts = bubble.querySelector(".ts");
+  if (ts) {
+    ts.after(badge);
+  } else {
+    bubble.appendChild(badge);
+  }
+}
+
 function renderChatMessage(msg) {
   const div = document.createElement("div");
   div.className = "bubble " + (msg.sender === "user" ? "user" : "krakey");
@@ -771,6 +853,17 @@ function renderChatMessage(msg) {
   ts.className = "ts";
   ts.textContent = fmtTime(msg.ts);
   div.appendChild(ts);
+
+  // Register in the id map BEFORE rendering the badge so the resend
+  // click handler can find the element by id.
+  if (msg.id && msg.sender === "user") {
+    // Attach a _msgData property so status-update paths can access the
+    // full record without a separate cache structure.
+    div._msgData = msg;
+    _msgBubbleMap.set(msg.id, div);
+    _renderStatusBadge(div, msg);
+  }
+
   chatHistory.appendChild(div);
   chatHistory.scrollTop = chatHistory.scrollHeight;
 }
@@ -923,6 +1016,9 @@ function connectChat() {
   chatWS.onmessage = (msg) => {
     const data = JSON.parse(msg.data);
     if (data.kind === "history") {
+      // Clear the id map when the history is fully replaced on (re)connect
+      // so stale references from a previous session don't linger.
+      _msgBubbleMap.clear();
       chatHistory.innerHTML = "";
       for (const m of data.messages) renderChatMessage(m);
     } else if (data.kind === "message") {

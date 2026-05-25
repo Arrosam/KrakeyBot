@@ -103,6 +103,12 @@
 
       // ── Confirm dialogs ────────────────────────────────────────────
       confirm_restart: "Restart Krakey? The web UI will briefly disconnect.",
+
+      // ── Chat message delivery / read-receipt status ────────────────
+      msg_status_delivered: "delivered",
+      msg_status_read: "read",
+      msg_status_failed: "send failed — agent offline",
+      msg_resend: "Resend",
     },
   };
 
