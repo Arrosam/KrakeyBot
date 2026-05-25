@@ -295,6 +295,14 @@ class EngineRegistry:
         if name_or_path in plugin_entries:
             return self._import(plugin_entries[name_or_path]["path"])
         available = sorted(builtins) + sorted(plugin_entries)
+        fallback_path = FALLBACK_ENGINES.get(slot)
+        if fallback_path:
+            print(
+                f"warning: engine slot {slot!r}: unknown impl name "
+                f"{name_or_path!r}; falling back to {fallback_path!r}",
+                file=sys.stderr,
+            )
+            return self._import(fallback_path)
         raise ValueError(
             f"engine slot {slot!r}: unknown impl name "
             f"{name_or_path!r}. Available: {available!r}. Use "

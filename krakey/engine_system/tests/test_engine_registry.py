@@ -175,73 +175,78 @@ def test_resolve_short_name_picks_from_catalog():
     assert isinstance(instance, HypothalamusDecisionEngine)
 
 
-@pytest.mark.parametrize("slot,protocol_path,extra_kwargs", [
-    (
-        "decision",
-        "krakey.interfaces.engines.decision.DecisionEngine",
-        {"cfg": None, "factory": None},
-    ),
-    (
-        "reranker",
-        "krakey.interfaces.engines.reranker.RerankerEngine",
-        {},
-    ),
-])
-def test_resolve_unknown_short_name_falls_back_to_default_and_warns(
-    slot, protocol_path, extra_kwargs, capsys,
-):
-    """SELF-HEAL (positive): unknown catalog short-name must NOT raise.
+def test_resolve_unknown_short_name_falls_back_to_default_and_warns(capsys):
+    """SELF-HEAL (positive, end-to-end): an unknown catalog short-name
+    must NOT raise through the public ``resolve()`` pipeline.
 
-    When ``core_implementations.<slot>`` names a value that is neither
-    a built-in catalog entry nor a plugin catalog entry, ``resolve``
-    must:
+    When ``core_implementations.<slot>`` names a value that is neither a
+    built-in catalog entry nor a plugin catalog entry, ``resolve`` must:
 
-    1. Not raise any exception.
-    2. Return an object that satisfies the slot's Protocol
-       (``isinstance`` check — Protocol is runtime-checkable).
-    3. Write a warning to STDERR that contains all three of:
-       - the slot name,
-       - the bad value ("not_a_real_engine"),
-       - a substring indicating fallback (case-insensitive "fallback").
+    1. Not raise.
+    2. Return an object satisfying the slot's runtime-checkable Protocol.
+    3. Write a warning to STDERR naming the slot, the bad value, and the
+       fallback (case-insensitive "falling back"/"fallback").
 
-    Parametrized over two slots to prove the behaviour is not
-    decision-specific wiring.
+    Uses the ``decision`` slot because its default engine constructs from
+    the light ``cfg``/``factory`` kwargs, so the full instantiate-and-
+    return path can be exercised. The instantiation-free proof that the
+    self-heal is slot-generic lives in the ``_resolve_class`` test below.
 
     Technique: positive / equivalence-partition (unknown-name class).
     """
-    import importlib
-
-    # Resolve the Protocol class dynamically from its dotted path so
-    # the parametrize table stays readable.
-    module_path, attr = protocol_path.rsplit(".", 1)
-    protocol_cls = getattr(importlib.import_module(module_path), attr)
+    from krakey.interfaces.engines.decision import DecisionEngine
 
     cfg = Config(core_implementations=CoreImplementations(
-        **{slot: "not_a_real_engine"},
+        decision="not_a_real_engine",
     ))
     reg = EngineRegistry(cfg)
 
     # Must NOT raise — self-heal branch fires instead.
-    instance = reg.resolve(slot, expected_protocol=protocol_cls, **extra_kwargs)
-
-    # 1. Returned object satisfies the contract Protocol.
-    assert isinstance(instance, protocol_cls), (
-        f"resolve('{slot}') returned {instance!r} which does not satisfy "
-        f"{protocol_cls.__name__}; FALLBACK_ENGINES entry may point at a "
-        f"non-conforming class."
+    instance = reg.resolve(
+        "decision", expected_protocol=DecisionEngine, cfg=None, factory=None,
     )
 
-    # 2. Warning on STDERR contains slot, bad value, and fallback hint.
+    assert isinstance(instance, DecisionEngine), (
+        f"resolve('decision') returned {instance!r} which does not satisfy "
+        "DecisionEngine; the FALLBACK_ENGINES entry may point at a "
+        "non-conforming class."
+    )
+
     err = capsys.readouterr().err.lower()
-    assert slot in err, (
-        f"STDERR warning must name the slot ('{slot}'); got: {err!r}"
-    )
+    assert "decision" in err, f"warning must name the slot; got: {err!r}"
     assert "not_a_real_engine" in err, (
-        f"STDERR warning must name the bad value ('not_a_real_engine'); got: {err!r}"
+        f"warning must name the bad value; got: {err!r}"
     )
     assert ("falling back" in err) or ("fallback" in err), (
-        f"STDERR warning must contain 'falling back' or 'fallback' (case-insensitive); got: {err!r}"
+        f"warning must indicate fallback; got: {err!r}"
     )
+
+
+@pytest.mark.parametrize("slot", ["memory", "reranker", "embedder"])
+def test_resolve_class_unknown_short_name_falls_back_for_any_slot(slot, capsys):
+    """SELF-HEAL is slot-generic — verified at the ``_resolve_class``
+    level (returns the class, no instantiation) so it does not depend on
+    each engine default's construction kwargs.
+
+    For ANY slot, an unknown catalog short-name resolves to that slot's
+    ``FALLBACK_ENGINES`` default class and emits a fallback warning.
+    Mirrors the existing ``_resolve_class``-level fallback assertion used
+    for the broken-meta case.
+
+    Technique: positive / equivalence-partition across slots.
+    """
+    from krakey.engine_system.defaults import FALLBACK_ENGINES
+
+    reg = EngineRegistry(Config(core_implementations=CoreImplementations()))
+    cls = reg._resolve_class(slot, "not_a_real_engine")
+
+    assert cls is reg._import(FALLBACK_ENGINES[slot]), (
+        f"_resolve_class('{slot}', <bad name>) must return the slot's "
+        "FALLBACK_ENGINES default class."
+    )
+    err = capsys.readouterr().err.lower()
+    assert slot in err and "not_a_real_engine" in err
+    assert ("falling back" in err) or ("fallback" in err)
 
 
 def test_resolve_unknown_short_name_dotted_path_still_raises(capsys):
