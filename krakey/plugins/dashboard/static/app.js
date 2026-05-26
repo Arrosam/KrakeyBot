@@ -712,7 +712,7 @@ function handleEvent(e) {
           const bubble = _msgBubbleMap.get(mid);
           if (bubble && bubble._msgData) {
             bubble._msgData.status = "read";
-            _renderStatusBadge(bubble, bubble._msgData);
+            _renderChatStatusBadge(bubble, bubble._msgData);
           }
         }
       }
@@ -763,7 +763,7 @@ function fmtTime(iso) {
 // Render or update the status badge (and resend button) on a user
 // bubble. Idempotent: re-calling with the same bubble replaces the old
 // badge in place.
-function _renderStatusBadge(bubble, msg) {
+function _renderChatStatusBadge(bubble, msg) {
   // Remove any existing badge + resend button before re-rendering.
   const oldBadge = bubble.querySelector(".msg-status");
   if (oldBadge) oldBadge.remove();
@@ -861,7 +861,7 @@ function renderChatMessage(msg) {
     // full record without a separate cache structure.
     div._msgData = msg;
     _msgBubbleMap.set(msg.id, div);
-    _renderStatusBadge(div, msg);
+    _renderChatStatusBadge(div, msg);
   }
 
   chatHistory.appendChild(div);
