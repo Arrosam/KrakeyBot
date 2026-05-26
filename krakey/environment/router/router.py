@@ -92,16 +92,19 @@ class EnvironmentRouter:
         and call its ``preflight()``. Returns the list of non-None
         info payloads (one per env that returned readiness data).
 
-        One env's preflight failure does NOT abort the others — a
-        bad sandbox shouldn't prevent local-only operation. Each
-        failure is logged at warning level and the exception is
-        re-raised AFTER the loop if it was the only env attempted
-        (so the runtime still surfaces the misconfiguration). When
-        multiple envs were attempted, the first failure is raised
-        with the rest summarized in the message.
+        One env's preflight failure does NOT abort the others and
+        does NOT abort startup. An env whose ``preflight()`` raises
+        ``EnvironmentUnavailableError`` is de-registered: removed
+        from ``_envs`` and ``_allow`` after the loop completes. A
+        plugin that later targets the dropped env via ``for_plugin``
+        receives ``EnvironmentDenied`` ("no such environment") —
+        treated as not-configured. This lets the runtime start
+        normally when only a sandbox is unreachable (local env still
+        works). Both the failure and the de-registration are logged
+        at warning level.
         """
         infos: list[dict[str, Any]] = []
-        failures: list[tuple[str, BaseException]] = []
+        failed_names: list[str] = []
         for env_name, env in self._envs.items():
             if not self._allow.get(env_name):
                 continue  # no plugins use this env; skip preflight
@@ -111,17 +114,17 @@ class EnvironmentRouter:
                 _log.warning(
                     "environment %r preflight failed: %s", env_name, e,
                 )
-                failures.append((env_name, e))
+                _log.warning(
+                    "environment %r de-registered; plugins targeting it "
+                    "will receive EnvironmentDenied",
+                    env_name,
+                )
+                failed_names.append(env_name)
                 continue
             if info is not None:
                 infos.append({"env": env_name, **info})
-        if failures:
-            # Surface all failures in one error so config issues are
-            # debuggable in a single restart cycle.
-            summary = "; ".join(f"{n}: {e}" for n, e in failures)
-            raise EnvironmentUnavailableError(
-                f"preflight failed for {len(failures)} environment(s): "
-                f"{summary}. Fix config or stop those envs' guest "
-                f"backends, or remove their `allowed_plugins`."
-            )
+        # De-register after the loop — never mutate _envs while iterating.
+        for name in failed_names:
+            self._envs.pop(name)
+            self._allow.pop(name, None)
         return infos

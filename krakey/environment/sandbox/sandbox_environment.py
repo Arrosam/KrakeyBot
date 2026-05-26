@@ -32,6 +32,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import asyncio
+
 import aiohttp
 
 from krakey.interfaces.environment import EnvironmentUnavailableError
@@ -85,14 +87,23 @@ class SandboxEnvironment:
         headers = {"X-Krakey-Token": self._cfg.agent_token}
         url = self._cfg.agent_url.rstrip("/") + "/exec"
         timeout_obj = aiohttp.ClientTimeout(total=timeout + 10)
-        async with aiohttp.ClientSession(timeout=timeout_obj) as s:
-            async with s.post(url, json=body, headers=headers) as r:
-                if r.status != 200:
-                    text = await r.text()
-                    raise SandboxUnavailableError(
-                        f"agent returned {r.status}: {text[:200]}"
-                    )
-                data = await r.json()
+        try:
+            async with aiohttp.ClientSession(timeout=timeout_obj) as s:
+                async with s.post(url, json=body, headers=headers) as r:
+                    if r.status != 200:
+                        text = await r.text()
+                        raise SandboxUnavailableError(
+                            f"agent returned {r.status}: {text[:200]}"
+                        )
+                    data = await r.json()
+        except aiohttp.ClientError as e:
+            raise SandboxUnavailableError(
+                f"agent unreachable at {self._cfg.agent_url}: {e}"
+            ) from e
+        except asyncio.TimeoutError as e:
+            raise SandboxUnavailableError(
+                f"agent timeout at {self._cfg.agent_url} (exec/timeout)"
+            ) from e
         return (
             int(data["exit"]),
             str(data.get("stdout", "")),
