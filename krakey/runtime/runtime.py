@@ -30,7 +30,7 @@ from krakey.runtime.events.event_bus import EventBus
 from krakey.environment.local import LocalEnvironment
 from krakey.environment.router import EnvironmentRouter
 from krakey.environment.sandbox import SandboxConfig, SandboxEnvironment
-from krakey.interfaces.environment import Environment
+from krakey.interfaces.environment import Environment, EnvironmentUnavailableError
 from krakey.runtime.console.heartbeat_logger import HeartbeatLogger
 from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
@@ -677,13 +677,16 @@ class Runtime:
         success log line attached to the heartbeat log; the Router
         itself stays IO-pattern-agnostic.
         """
-        infos = await self.environment_router.preflight_all()
-        for info in infos:
-            env_name = info.get("env", "?")
-            details = " ".join(
-                f"{k}={v}" for k, v in info.items() if k != "env"
-            )
-            self.log.hb(f"{env_name} preflight ok: {details}")
+        try:
+            infos = await self.environment_router.preflight_all()
+            for info in infos:
+                env_name = info.get("env", "?")
+                details = " ".join(
+                    f"{k}={v}" for k, v in info.items() if k != "env"
+                )
+                self.log.hb(f"{env_name} preflight ok: {details}")
+        except EnvironmentUnavailableError as exc:
+            self.log.hb_warn(f"environment preflight raised unexpectedly: {exc}")
 
     async def close(self) -> None:
         """Shut down every Engine slot that exposes ``close()``.
