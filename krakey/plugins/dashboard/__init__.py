@@ -251,25 +251,26 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
         runtime.log.hb(
             f"dashboard listening on http://{host}:{server.port}"
         )
-        # Always log the one-click URL by default — this is a personal
-        # local daemon and the log file lives on the user's own disk
-        # next to the token file anyway. ``krakey start`` redirects
-        # stdout to that log, so without the URL in the log the user
-        # has no way to see what to open. Set
-        # ``KRAKEY_REDACT_TOKEN_LOG=1`` to opt into redaction (for
-        # shipping logs to a remote aggregator etc.).
-        url_full = f"http://{host}:{server.port}/?token={auth_token}"
-        if os.environ.get("KRAKEY_REDACT_TOKEN_LOG"):
-            url_redacted = (
-                f"http://{host}:{server.port}/?token=<see {token_path}>"
-            )
-            runtime.log.hb(f"dashboard URL: {url_redacted}")
-            runtime.log.hb(
-                "dashboard token redacted from logs (KRAKEY_REDACT_-"
-                "TOKEN_LOG=1); read the token file directly"
-            )
-        else:
-            runtime.log.hb(f"dashboard URL (one-click): {url_full}")
+        if not os.environ.get("KRAKEY_DAEMON_MODE"):
+            # Always log the one-click URL by default — this is a personal
+            # local daemon and the log file lives on the user's own disk
+            # next to the token file anyway. ``krakey start`` redirects
+            # stdout to that log, so without the URL in the log the user
+            # has no way to see what to open. Set
+            # ``KRAKEY_REDACT_TOKEN_LOG=1`` to opt into redaction (for
+            # shipping logs to a remote aggregator etc.).
+            url_full = f"http://{host}:{server.port}/?token={auth_token}"
+            if os.environ.get("KRAKEY_REDACT_TOKEN_LOG"):
+                url_redacted = (
+                    f"http://{host}:{server.port}/?token=<see {token_path}>"
+                )
+                runtime.log.hb(f"dashboard URL: {url_redacted}")
+                runtime.log.hb(
+                    "dashboard token redacted from logs (KRAKEY_REDACT_-"
+                    "TOKEN_LOG=1); read the token file directly"
+                )
+            else:
+                runtime.log.hb(f"dashboard URL (one-click): {url_full}")
     except OSError as e:
         runtime.log.runtime_error(
             f"dashboard failed to start (port {port} in use? {e}); "
