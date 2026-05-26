@@ -138,6 +138,52 @@ def _has_chat_llm_configured(repo: Path) -> bool:
     return bool(tag) and tag in cfg.llm.tags
 
 
+def _print_dashboard_url(repo: Path) -> None:
+    """Print the dashboard URL to the terminal after spawning the daemon.
+
+    Silent on any failure — must never raise or print a traceback.
+    """
+    try:
+        from krakey.models.config import load_config
+        cfg = load_config(repo / "config.yaml")
+
+        if not cfg.plugins or "dashboard" not in cfg.plugins:
+            return
+
+        from krakey.plugin_system.config import FilePluginConfigStore
+        store = FilePluginConfigStore(repo / "workspace" / "plugins")
+        dash_cfg = store.read("dashboard")
+
+        host = dash_cfg.get("host", "127.0.0.1")
+        port = dash_cfg.get("port", 8765)
+        history_path = dash_cfg.get("history_path", "workspace/data/web_chat.jsonl")
+
+        if port == 0:
+            return
+
+        token_file = repo / Path(history_path).parent / "dashboard.token"
+
+        token = ""
+        for _ in range(100):
+            time.sleep(0.05)
+            if token_file.exists():
+                try:
+                    t = token_file.read_text(encoding="utf-8").strip()
+                except OSError:
+                    pass
+                else:
+                    if t:
+                        token = t
+                        break
+
+        if token:
+            print(f"dashboard: http://{host}:{port}/?token={token}")
+        else:
+            print(f"dashboard: http://{host}:{port}/")
+    except Exception:
+        return
+
+
 def _exec_runtime(repo: Path) -> int:
     """Run the heartbeat loop in this process. Blocks until exit."""
     import asyncio
@@ -369,6 +415,7 @@ def _spawn_daemon_unix(
             child_pid = _read_pid(pidfile)
             if child_pid and _is_alive(child_pid):
                 print(f"krakey started (pid {child_pid}); log: {logfile}")
+                _print_dashboard_url(repo)
                 return 0
         print("krakey: daemon failed to start within 8s", file=sys.stderr)
         return 1
@@ -392,6 +439,7 @@ def _spawn_daemon_unix(
 
     _write_pidfile(pidfile, os.getpid())
     _install_pidfile_cleanup(pidfile)
+    os.environ["KRAKEY_DAEMON_MODE"] = "1"
     _exec_runtime(repo)
     os._exit(0)
 
@@ -407,21 +455,26 @@ def _spawn_daemon_windows(
         child_argv.append("--paused")
 
     log_fh = open(logfile, "ab", buffering=0)
-    proc = subprocess.Popen(
-        child_argv,
-        cwd=str(repo),
-        stdin=subprocess.DEVNULL,
-        stdout=log_fh,
-        stderr=subprocess.STDOUT,
-        creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
-        close_fds=True,
-    )
+    os.environ["KRAKEY_DAEMON_MODE"] = "1"
+    try:
+        proc = subprocess.Popen(
+            child_argv,
+            cwd=str(repo),
+            stdin=subprocess.DEVNULL,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+            close_fds=True,
+        )
+    finally:
+        os.environ.pop("KRAKEY_DAEMON_MODE", None)
     # Wait for child to write its pidfile (it will, before calling _exec_runtime).
     for _ in range(160):
         time.sleep(0.05)
         cpid = _read_pid(pidfile)
         if cpid == proc.pid and _is_alive(cpid):
             print(f"krakey started (pid {cpid}); log: {logfile}")
+            _print_dashboard_url(repo)
             return 0
     print("krakey: daemon failed to start within 8s", file=sys.stderr)
     return 1
