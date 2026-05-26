@@ -3483,10 +3483,11 @@ function renderEnumRow(label, target, key, choices, helpPath) {
   return row;
 }
 
-// Combobox row — free-text <input> backed by a <datalist> of valid
-// values. Unlike renderEnumRow's strict <select>, the user can type
-// ANY value AND pick a known-good one from the dropdown. Used for the
-// sandbox enum fields (guest_os / provider / display / network_mode).
+// Combobox row — free-text <input> with a CUSTOM themed typeahead
+// dropdown (not a native <datalist>). Unlike renderEnumRow's strict
+// <select>, the user can type ANY value AND pick a known-good one
+// from the themed suggestion menu. Used for the sandbox enum fields
+// (guest_os / provider / display / network_mode).
 // Empty input keeps the key as "" (does NOT delete) — guest_os is
 // required-when-enabled and the sandbox toggle hydrates it as "".
 function renderComboRow(label, target, key, choices, helpPath) {
@@ -3497,34 +3498,46 @@ function renderComboRow(label, target, key, choices, helpPath) {
   if (helpPath && tHelp(helpPath)) lab.title = tHelp(helpPath);
   row.appendChild(lab);
 
-  // Wrap the combobox input in a .cap-multi chip-strip container so it
-  // visually matches _renderStringList / renderCapabilitiesMulti.
-  // The <datalist> is appended to the row (not the container) — its
-  // position in the DOM is irrelevant for datalist association.
+  // .cap-multi — themed border + focus-within accent ring (same as
+  // _renderStringList / renderCapabilitiesMulti).
   const container = document.createElement("div");
   container.className = "cap-multi";
 
-  const dlId = "dl-sandbox-" + key;
+  // .string-list-input-host — position:relative anchor for the
+  // absolutely-positioned .dd-menu/.typeahead-menu built by
+  // _attachTypeaheadMenu.  min-width:100% so the menu spans the
+  // full .cap-multi width (via .string-list-input-host.has-typeahead
+  // .typeahead-menu { min-width:100% } in view.css).
+  const inputHost = document.createElement("span");
+  inputHost.className = "string-list-input-host";
+
   const widget = document.createElement("input");
   widget.type = "text";
-  widget.setAttribute("list", dlId);
+  widget.autocomplete = "off";
   widget.value = target[key] == null ? "" : target[key];
   widget.style.cssText = "border:none;background:transparent;flex:1;outline:none;color:var(--text);font-family:inherit;font-size:13px;min-width:80px;width:100%";
   if (helpPath && tHelp(helpPath)) widget.title = tHelp(helpPath);
+
+  // Free-text preservation: every keystroke (including clearing the
+  // field) writes through to target[key].  Empty string is written,
+  // not a deletion, so guest_os stays present in the object.
   widget.addEventListener("input", () => { target[key] = widget.value; });
-  container.appendChild(widget);
+
+  inputHost.appendChild(widget);
+  container.appendChild(inputHost);
   row.appendChild(container);
 
-  const dl = document.createElement("datalist");
-  dl.id = dlId;
-  for (const c of choices) {
-    const opt = document.createElement("option");
-    opt.value = c;
-    dl.appendChild(opt);
-  }
-  // Append datalist to the row, not the container — datalist association
-  // is by id, so its DOM position does not affect the combobox behaviour.
-  row.appendChild(dl);
+  // Wire themed typeahead.  getCurrent returns [] — no choice is ever
+  // excluded (single-select combobox, unlike the chip-list which
+  // excludes already-chosen values).  The commit callback sets both
+  // widget.value and target[key] in place; it does NOT clear the input
+  // or trigger a repaint (unlike the chip-list commit which pushes+clears).
+  _attachTypeaheadMenu(inputHost, widget, choices, () => [], (picked) => {
+    widget.value = picked;
+    target[key] = picked;
+    widget.blur();
+  });
+
   return row;
 }
 
