@@ -1,16 +1,22 @@
-"""Sliding window — dynamic token-bounded recent-heartbeat buffer
+﻿"""Sliding window — dynamic token-bounded recent-heartbeat buffer
 (DevSpec §10.1). Each round stores (stimulus_summary, decision, note).
 
-Window size (the threshold that triggers compaction) is no longer
-set by a standalone config key. It's derived at runtime from the
-Self role's LLMParams::
+Compaction is triggered by TWO independent conditions (both checked
+by ``needs_compact()``):
 
-    history_budget = max_input_tokens * history_token_fraction
+1. Token count: window total exceeds ``compact_threshold`` (default
+   2048 tokens, configurable via engine config).
+2. Round count: number of buffered rounds exceeds
+   ``max_history_rounds`` (default 20, configurable via engine config).
 
-The runtime owner (main.Runtime) computes that at startup and passes
-it into ``SlidingWindow(history_token_budget=...)``. Compaction code
-calls ``needs_compact()`` which compares live token count against
-that budget.
+Both thresholds are read from the engine's config dict at construction
+time and sanitised via ``_sanitize_positive_int``. Invalid, zero, or
+negative values fall back to the respective defaults.
+
+The ``history_token_budget`` constructor parameter is retained for
+Protocol compliance (declared by the ExplicitHistoryEngine Protocol)
+and for diagnostics/logging; it is no longer used by
+``needs_compact()``.
 
 Token estimation goes through ``src.utils.tokens.estimate_tokens``
 (tiktoken cl100k_base) — replaces the previous char/4 heuristic which
@@ -22,7 +28,7 @@ restart restores the working memory exactly. Without this, every
 restart wiped Self's most-recent context — only the rounds already
 compacted to GM survived, the last few in-flight rounds vanished.
 GM/KB/self_model already persist; the sliding window was the
-last in-memory hole. Pass ``state_path=None`` to opt out (tests).
+last in-memory hole. Pass ``state_path=None`` to opt out (unit specs).
 """
 from __future__ import annotations
 
@@ -44,15 +50,30 @@ _log = logging.getLogger(__name__)
 _STATE_SCHEMA_VERSION = 2
 
 
+def _sanitize_positive_int(value, default):
+    # bool is an int subclass — reject it explicitly. Only a genuine
+    # positive int is valid; everything else (None, float, str, bool,
+    # negative, 0) falls back to the default.
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int) and value > 0:
+        return value
+    return default
+
+
 class SlidingWindow:
     """Bounded buffer of recent heartbeat rounds.
 
-    ``history_token_budget`` is the threshold at which compaction
-    fires. When ``needs_compact()`` is True the compactor loop pops
-    the oldest round and asks the compact LLM to extract GM nodes.
+    ``history_token_budget`` is retained for Protocol compliance and
+    diagnostics; compaction is now governed by ``compact_threshold``
+    (token cap) and ``max_history_rounds`` (round cap), both read from
+    the engine config dict supplied at construction.
+
+    When ``needs_compact()`` is True the compactor loop pops the
+    oldest round and asks the compact LLM to extract GM nodes.
 
     ``state_path`` is the on-disk mirror. ``None`` opts out of
-    persistence (used by tests that build many ephemeral windows).
+    persistence (used by ephemeral-window integration specs).
     """
 
     def __init__(
@@ -60,10 +81,18 @@ class SlidingWindow:
         history_token_budget: int,
         *,
         state_path: str | Path | None = None,
+        config: dict | None = None,
     ):
         self.history_token_budget: int = int(history_token_budget)
         self._state_path: Path | None = (
             Path(state_path) if state_path is not None else None
+        )
+        _cfg = config or {}
+        self._compact_threshold = _sanitize_positive_int(
+            _cfg.get("compact_threshold"), 2048
+        )
+        self._max_history_rounds = _sanitize_positive_int(
+            _cfg.get("max_history_rounds"), 20
         )
         self.rounds: list[ExplicitHistoryRound] = []
         if self._state_path is not None:
@@ -98,13 +127,22 @@ class SlidingWindow:
         )
 
     def needs_compact(self) -> bool:
-        return self.total_tokens() > self.history_token_budget
+        total = self.total_tokens()
+        over_tokens = total > self._compact_threshold
+        over_rounds = len(self.rounds) > self._max_history_rounds
+        _log.debug(
+            "needs_compact: total_tokens=%d compact_threshold=%d rounds=%d "
+            "max_history_rounds=%d → compact=%s",
+            total, self._compact_threshold, len(self.rounds),
+            self._max_history_rounds, over_tokens or over_rounds,
+        )
+        return over_tokens or over_rounds
 
     # ---- persistence ---------------------------------------------------
 
     def _load_from_disk(self) -> None:
         """Read ``state_path`` if it exists. Missing file → empty
-        window (silent — first run). Corrupt file or wrong schema
+        window (silent -- first run). Corrupt file or wrong schema
         version → empty window + stderr warning (don't crash).
         """
         assert self._state_path is not None
@@ -166,7 +204,7 @@ class SlidingWindow:
     def _persist(self) -> None:
         """Atomic write: serialize the rounds list to a sibling
         ``.tmp`` file then ``os.replace`` onto the target path.
-        Failure is logged but never raised — a transient I/O hiccup
+        Failure is logged but never raised -- a transient I/O hiccup
         shouldn't crash the heartbeat loop. The next mutation will
         re-attempt.
         """
