@@ -208,8 +208,13 @@ class HeartbeatOrchestrator:
     """Runs one heartbeat per ``beat()`` call. Pure logic over Runtime
     state — owns no fields of its own."""
 
-    def __init__(self, runtime: "Runtime"):
+    def __init__(self, runtime: "Runtime", *, max_pops_per_beat: int = 5):
         self._rt = runtime
+        # Per-beat cap on compact pops — keeps beat latency bounded
+        # when draining a large window backlog. The engine layer may
+        # overwrite this attribute after construction to inject the
+        # configured value (see DefaultHeartbeatEngine._ensure_orchestrator).
+        self._max_pops_per_beat = max_pops_per_beat
 
     # ---- one full beat -------------------------------------------------
 
@@ -358,9 +363,14 @@ class HeartbeatOrchestrator:
                 f"force-sleep threshold reached (fatigue={pct}%); "
                 "entering sleep mode."
             )
+        # Surface the sliding-window live counts for the dashboard's
+        # "draining N → cap" indicator (see plugin-dashboard).
+        eh = rt.explicit_history
         rt.events.publish(GMStatsEvent(
             heartbeat_id=rt.heartbeat_count,
             node_count=node_count, edge_count=edge_count, fatigue_pct=pct,
+            rounds_count=len(eh.rounds),
+            max_history_rounds=getattr(eh, "_max_history_rounds", 0),
         ))
         return _GMCounts(node_count=node_count, edge_count=edge_count,
                           fatigue_pct=pct, fatigue_hint=hint)
@@ -373,6 +383,7 @@ class HeartbeatOrchestrator:
             rt.explicit_history, rt.memory, rt.compact_llm,
             recall_fn=_recall_fn,
             include_recall_context=rt.config.sliding_window.compact_include_recall,
+            max_pops=self._max_pops_per_beat,
         )
 
     async def _phase_finalize_recall_and_pushback(self):

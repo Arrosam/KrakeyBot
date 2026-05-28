@@ -14,5 +14,13 @@ builtin_engines:
       Canonical 13-phase pipeline: drain → fatigue → compact →
       recall → run-Self → save-round → log → auto-ingest →
       translate-decision → dispatch → schedule-classify → idle.
-
-config_schema: []
+    config_schema:
+      - field: max_pops_per_beat
+        type: number
+        default: 5
+        help: >
+          Maximum number of rounds the compact loop pops per heartbeat
+          to keep beat latency bounded — each pop triggers a compact
+          LLM call (a few seconds). A big backlog drains across many
+          beats instead of stalling one. Invalid / 0 / negative falls
+          back to 5.

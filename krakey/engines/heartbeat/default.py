@@ -28,12 +28,29 @@ if TYPE_CHECKING:
 _PAUSE_POLL_INTERVAL_S = 0.25
 
 
+def _sanitize_positive_int(value, default):
+    # bool is an int subclass — reject it explicitly. Only a genuine
+    # positive int is valid; everything else (None, float, str, bool,
+    # negative, 0) falls back to the default.
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int) and value > 0:
+        return value
+    return default
+
+
 class DefaultHeartbeatEngine:
     """Default HeartbeatEngine — drives the canonical 13-phase
     pipeline via HeartbeatOrchestrator, owns the iteration loop."""
 
-    def __init__(self, *, cfg=None):
-        del cfg  # accepted for contract uniformity, unused
+    def __init__(self, *, config=None):
+        # `config` arrives from EngineRegistry as the dict at
+        # cfg.engine_configs.heartbeat.phased (or {} if unset). We read
+        # the per-beat compact pop budget here.
+        _cfg = config or {}
+        self._max_pops_per_beat = _sanitize_positive_int(
+            _cfg.get("max_pops_per_beat"), 5,
+        )
         self._orchestrator: "HeartbeatOrchestrator | None" = None
 
     def _make_orchestrator(
@@ -45,7 +62,9 @@ class DefaultHeartbeatEngine:
         from krakey.engines.heartbeat.orchestrator import (
             HeartbeatOrchestrator,
         )
-        return HeartbeatOrchestrator(runtime)
+        return HeartbeatOrchestrator(
+            runtime, max_pops_per_beat=self._max_pops_per_beat,
+        )
 
     def _ensure_orchestrator(
         self, runtime: "Runtime",
@@ -60,6 +79,11 @@ class DefaultHeartbeatEngine:
         # heartbeat both observe consistent state.
         existing = getattr(runtime, "_orchestrator", None)
         if existing is not None:
+            # Runtime pre-built it with the orchestrator's default
+            # max_pops_per_beat — stamp the engine's configured value so
+            # cfg.engine_configs.heartbeat.phased.max_pops_per_beat
+            # actually takes effect on the shared instance.
+            existing._max_pops_per_beat = self._max_pops_per_beat
             self._orchestrator = existing
         else:
             self._orchestrator = self._make_orchestrator(runtime)

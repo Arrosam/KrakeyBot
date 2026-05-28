@@ -173,15 +173,24 @@ async def compact_if_needed(
     window: SlidingWindow, gm: "MemoryEngine", llm: ChatLike,
     *, recall_fn: RecallFn, split_chunk_tokens: int = 1000,
     include_recall_context: bool = False,
+    max_pops: int = 5,
 ) -> None:
     """Blocking compact loop. Evict oldest rounds via LLM summarization until
     the window fits, or a single oversized round remains (then split it).
+
+    `max_pops` caps the number of rounds popped per call so a large backlog
+    drains across multiple beats instead of stalling one. The remaining
+    rounds drain on subsequent calls (each beat invokes this once).
     """
+    pops = 0
     while window.needs_compact() and len(window.rounds) > 1:
+        if pops >= max_pops:
+            return
         oldest = window.pop_oldest()
         assert oldest is not None
         await _compact_round(oldest, gm, llm, recall_fn,
                              include_recall_context=include_recall_context)
+        pops += 1
 
     if window.needs_compact() and len(window.rounds) == 1:
         await _split_and_compact_single_round(

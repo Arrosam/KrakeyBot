@@ -177,3 +177,65 @@ async def test_single_oversized_round_is_split_into_chunks(tmp_path):
     nodes = await gm.list_nodes()
     assert len(nodes) >= 2
     await gm.close()
+
+
+# ---------------- max_pops_per_beat budget ----------------
+
+async def test_compact_respects_max_pops_budget(tmp_path):
+    """Default max_pops=5: with 10+ rounds backlog over the threshold,
+    one compact_if_needed call pops AT MOST 5 — the rest drains on
+    subsequent calls (subsequent beats)."""
+    gm = await _gm(tmp_path)
+    llm = ScriptedLLM([json.dumps({"nodes": [], "edges": []})] * 50)
+
+    w = SlidingWindow(
+        history_token_budget=10,
+        config={"compact_threshold": 10, "max_history_rounds": 1},
+    )
+    for i in range(10):
+        w.append(ExplicitHistoryRound(i, "x" * 200, "y" * 200, ""))
+    assert w.needs_compact()
+    assert len(w.rounds) == 10
+
+    await compact_if_needed(w, gm, llm, recall_fn=_recall_none())
+
+    # Default max_pops=5 → after one call, exactly 5 popped → 5 remain.
+    assert len(w.rounds) == 5
+    assert w.needs_compact() is True  # still over the cap
+
+
+async def test_compact_max_pops_drains_over_multiple_calls(tmp_path):
+    """Repeated compact_if_needed calls (modelling successive beats)
+    eventually drain a large backlog past the budget cap."""
+    gm = await _gm(tmp_path)
+    llm = ScriptedLLM([json.dumps({"nodes": [], "edges": []})] * 50)
+
+    w = SlidingWindow(
+        history_token_budget=10,
+        config={"compact_threshold": 10, "max_history_rounds": 1},
+    )
+    for i in range(8):
+        w.append(ExplicitHistoryRound(i, "x" * 200, "y" * 200, ""))
+
+    # First call: pops up to 5 → 3 left, but len > 1 still needs_compact.
+    await compact_if_needed(w, gm, llm, recall_fn=_recall_none())
+    # Second call: pops 2 more (down to 1 round → loop exits len>1 guard).
+    await compact_if_needed(w, gm, llm, recall_fn=_recall_none())
+    assert len(w.rounds) <= 1 or not w.needs_compact()
+
+
+async def test_compact_max_pops_explicit_override(tmp_path):
+    """max_pops=2 caps pops at 2 regardless of the default."""
+    gm = await _gm(tmp_path)
+    llm = ScriptedLLM([json.dumps({"nodes": [], "edges": []})] * 50)
+
+    w = SlidingWindow(
+        history_token_budget=10,
+        config={"compact_threshold": 10, "max_history_rounds": 1},
+    )
+    for i in range(6):
+        w.append(ExplicitHistoryRound(i, "x" * 200, "y" * 200, ""))
+
+    await compact_if_needed(w, gm, llm, recall_fn=_recall_none(),
+                             max_pops=2)
+    assert len(w.rounds) == 4  # 6 - 2 popped
