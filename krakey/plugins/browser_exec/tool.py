@@ -127,6 +127,26 @@ def _truncate(s: str, limit: int) -> str:
     return s[:limit] + f"\n...[truncated, total {len(s)} chars]"
 
 
+def _env_status_suffix(
+    env_status_fn: "Callable[[], dict[str, tuple[str, str]]] | None",
+    env_name: str,
+) -> str:
+    """Format the Router's diagnostic (status, reason) for ``env_name``
+    into a suffix appended to ``EnvironmentDenied`` feedback. Returns ``""``
+    when the status accessor is unavailable, raises, or has no entry."""
+    if env_status_fn is None:
+        return ""
+    try:
+        statuses = env_status_fn()
+    except Exception:  # noqa: BLE001 — defensive; never crash a tool
+        return ""
+    entry = statuses.get(env_name)
+    if not entry:
+        return ""
+    status, reason = entry
+    return f" (status: {status} — {reason})"
+
+
 def build_tool(ctx: "PluginContext") -> "BrowserExecTool":
     """Factory for the single ``tool`` component declared in
     ``meta.yaml``. Captures the per-plugin env resolver and reads
@@ -150,12 +170,15 @@ def build_tool(ctx: "PluginContext") -> "BrowserExecTool":
         else DEFAULT_TIMEOUT_S
     )
 
+    router = ctx.deps.environment_router
+    env_status_fn = router.env_status if router is not None else None
     return BrowserExecTool(
         env_resolver=ctx.environment,
         python_cmd=python_cmd,
         headless=headless,
         default_browser=default_browser,
         default_timeout_s=default_timeout_s,
+        env_status_fn=env_status_fn,
     )
 
 
@@ -171,12 +194,15 @@ class BrowserExecTool(Tool):
         headless: bool = DEFAULT_HEADLESS,
         default_browser: str = DEFAULT_BROWSER,
         default_timeout_s: float = DEFAULT_TIMEOUT_S,
+        *,
+        env_status_fn: "Callable[[], dict[str, tuple[str, str]]] | None" = None,
     ):
         self._env_resolver = env_resolver
         self._python_cmd = python_cmd
         self._headless = headless
         self._default_browser = default_browser
         self._default_timeout_s = default_timeout_s
+        self._env_status_fn = env_status_fn
 
     @property
     def name(self) -> str:
@@ -377,7 +403,8 @@ class BrowserExecTool(Tool):
             env = self._env_resolver(env_name)
         except EnvironmentDenied as e:
             return self._err(
-                f"environment {env_name!r} denied: {e}",
+                f"environment {env_name!r} denied: {e}"
+                f"{_env_status_suffix(self._env_status_fn, env_name)}",
             )
         except Exception as e:  # noqa: BLE001
             return self._err(
