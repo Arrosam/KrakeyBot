@@ -1095,3 +1095,72 @@ class TestLoadEnforcement:
 
         assert w.needs_compact() is False
         assert len(w.get_rounds()) <= 20
+
+
+class TestStartupFastDrop:
+    """When a persisted window exceeds 2 × max_history_rounds, __init__
+    silently slices it to 2 × cap immediately after load (no GM
+    extraction). The remaining rounds drain normally via the heartbeat
+    compact loop. Threshold is hardcoded `2 * max_history_rounds`."""
+
+    def test_load_over_2x_cap_fast_drops_to_2x_cap(self, tmp_path):
+        """41 loaded rounds with default cap=20 → fast-drop to 40."""
+        state = tmp_path / "sw.json"
+        _write_state(state, [_round_dict(i, stim=_SHORT) for i in range(41)])
+
+        w = SlidingWindow(history_token_budget=100_000, state_path=state)
+        assert len(w.get_rounds()) == 40
+        # The DROPPED rounds were the oldest (ids 0..0); the most-recent
+        # 40 (ids 1..40) survive in chronological order.
+        ids = [r.heartbeat_id for r in w.get_rounds()]
+        assert ids == list(range(1, 41))
+
+    def test_load_at_2x_cap_does_not_fast_drop(self, tmp_path):
+        """Boundary: 40 rounds with default cap=20 → strict `>` so no drop."""
+        state = tmp_path / "sw.json"
+        _write_state(state, [_round_dict(i, stim=_SHORT) for i in range(40)])
+
+        w = SlidingWindow(history_token_budget=100_000, state_path=state)
+        assert len(w.get_rounds()) == 40
+
+    def test_load_under_2x_cap_does_not_fast_drop(self, tmp_path):
+        """25 rounds with default cap=20 → preserved verbatim (handled
+        by normal compact loop)."""
+        state = tmp_path / "sw.json"
+        _write_state(state, [_round_dict(i, stim=_SHORT) for i in range(25)])
+
+        w = SlidingWindow(history_token_budget=100_000, state_path=state)
+        assert len(w.get_rounds()) == 25
+
+    def test_fast_drop_persists_immediately(self, tmp_path):
+        """After fast-drop, disk reflects the sliced state. A second
+        SlidingWindow constructed against the same path sees the already
+        sliced rounds (no double-drop)."""
+        state = tmp_path / "sw.json"
+        _write_state(state, [_round_dict(i, stim=_SHORT) for i in range(50)])
+
+        w1 = SlidingWindow(history_token_budget=100_000, state_path=state)
+        assert len(w1.get_rounds()) == 40
+
+        w2 = SlidingWindow(history_token_budget=100_000, state_path=state)
+        assert len(w2.get_rounds()) == 40
+
+    def test_fast_drop_with_small_custom_cap(self, tmp_path):
+        """Custom cap=5 → 2× cap = 10 → 30 loaded rounds drop to 10."""
+        state = tmp_path / "sw.json"
+        _write_state(state, [_round_dict(i, stim=_SHORT) for i in range(30)])
+
+        w = SlidingWindow(
+            history_token_budget=100_000,
+            config={"max_history_rounds": 5},
+            state_path=state,
+        )
+        assert len(w.get_rounds()) == 10
+        ids = [r.heartbeat_id for r in w.get_rounds()]
+        assert ids == list(range(20, 30))  # most-recent 10
+
+    def test_fast_drop_does_not_fire_without_state_path(self, tmp_path):
+        """state_path=None means no _load_from_disk → no fast-drop block."""
+        w = SlidingWindow(history_token_budget=100_000, state_path=None)
+        # No-op; just verify construction is clean and rounds is empty.
+        assert w.get_rounds() == []

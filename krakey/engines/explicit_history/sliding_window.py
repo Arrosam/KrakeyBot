@@ -97,6 +97,26 @@ class SlidingWindow:
         self.rounds: list[ExplicitHistoryRound] = []
         if self._state_path is not None:
             self._load_from_disk()
+            # Startup fast-drop: if a pre-cap session (or many crashed
+            # restarts) left a window far above max_history_rounds, the
+            # normal compact loop would take many beats (one LLM call per
+            # round) to drain. When the persisted count exceeds 2× the
+            # cap, silently slice to 2× cap NOW so the normal drain only
+            # has to handle a bounded overflow. The dropped rounds are
+            # LOST (no GM extraction) — accepted trade-off for startup
+            # latency on huge backlogs.
+            if self._max_history_rounds > 0:
+                cap2 = 2 * self._max_history_rounds
+                if len(self.rounds) > cap2:
+                    dropped = len(self.rounds) - cap2
+                    self.rounds = self.rounds[-cap2:]
+                    self._persist()
+                    _log.warning(
+                        "sliding_window: fast-drop %d rounds on startup "
+                        "(persisted count %d exceeded 2 × max_history_rounds=%d); "
+                        "those rounds were NOT compacted into GM",
+                        dropped, dropped + cap2, self._max_history_rounds,
+                    )
 
     def append(self, r: ExplicitHistoryRound) -> None:
         self.rounds.append(r)
