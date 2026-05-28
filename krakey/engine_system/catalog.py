@@ -21,6 +21,12 @@ Each Engine slot ships a ``meta.yaml`` next to its ``__init__.py``::
             type: number_float
             default: 0.7
             help: Sampling temperature for the translator LLM.
+        dependencies:
+          - "some-llm-client>=1.0"
+        post_install:
+          - args: ["{python}", "-m", "some_llm_client", "setup"]
+            description: "Run one-time client setup."
+            optional: false
 
 The user picks an impl by SHORT NAME in ``config.yaml``::
 
@@ -67,7 +73,21 @@ class EngineImpl:
     under the slot's dropdown when a schema-bearing impl is
     selected; the user's values flow through to the engine
     constructor's ``config`` kwarg.
+
+    ``dependencies`` is a list of pip-installable spec strings
+    (e.g. ``"some-package>=1.0"``) that must be present for this
+    engine impl to run. The ``krakey install`` CLI is expected to
+    collect and install these. Defaults to empty list.
+
+    ``post_install`` is a list of secondary install commands run
+    AFTER pip — for things pip can't drive (e.g. downloading binary
+    assets). Each entry is
+    ``{args: list[str], description: str, optional: bool}``.
+    The token ``{python}`` inside ``args`` is replaced with
+    ``sys.executable`` at run-time. Defaults to empty list.
     """
     cls: type
     description: str
     config_schema: list[dict[str, Any]] = field(default_factory=list)
+    dependencies: list[str] = field(default_factory=list)
+    post_install: list[dict[str, Any]] = field(default_factory=list)

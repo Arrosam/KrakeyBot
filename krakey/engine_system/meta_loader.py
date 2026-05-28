@@ -5,13 +5,21 @@ its own ``meta.yaml`` declaring:
 
   - ``slot``: the slot name (must match the folder name)
   - ``description``: free-form
-  - ``builtin_engines``: list of ``{name, factory_module, factory_attr,
-                         description, default, config_schema}`` entries;
-                         ``config_schema`` is optional and per-entry —
-                         each engine declares its own dashboard /
-                         config-form descriptors alongside its other
-                         fields (slot-level ``config_schema`` keys are
-                         ignored)
+  - ``builtin_engines``: list of entries; per-entry keys:
+      ``name``, ``factory_module``, ``factory_attr`` (required);
+      ``description``, ``default``, ``config_schema``,
+      ``dependencies``, ``post_install`` (optional)
+
+Per-entry optional keys:
+
+  - ``config_schema``: list of dashboard / config-form field
+    descriptors (same shape plugins use)
+  - ``dependencies``: list[str] of pip-installable spec strings
+    (e.g. ``"some-package>=1.0"``) collected by ``krakey install``
+  - ``post_install``: list of secondary install steps run after pip;
+    each step is ``{args: list[str], description: str,
+    optional: bool}`` — entries with missing/malformed ``args`` are
+    warn-and-skipped at load time (tolerant, never raises)
 
 This module is the **only** part of ``engine_system`` that knows the
 on-disk layout of ``krakey/engines/``. It returns plain dataclass
@@ -140,6 +148,8 @@ def load_slot_meta(
             config_schema=list(
                 _coerce_config_schema(entry.get("config_schema"))
             ),
+            dependencies=_coerce_dependencies(entry.get("dependencies")),
+            post_install=_coerce_post_install(entry.get("post_install")),
         )
 
     if default_name is None:
@@ -167,6 +177,68 @@ def _coerce_config_schema(raw: Any) -> list[dict[str, Any]]:
     for item in raw:
         if isinstance(item, dict):
             out.append(dict(item))
+    return out
+
+
+def _coerce_dependencies(raw: Any) -> list[str]:
+    """Pass dependencies through verbatim if it's a list of non-empty
+    strings; coerce/filter otherwise so a typo doesn't crash startup.
+
+    - Not a list -> [].
+    - Per item: must be a str; .strip() must be non-empty; otherwise dropped.
+    - Returns the stripped strings in input order.
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for item in raw:
+        if isinstance(item, str):
+            s = item.strip()
+            if s:
+                out.append(s)
+    return out
+
+
+def _coerce_post_install(raw: Any) -> list[dict[str, Any]]:
+    """Pass post_install through verbatim if each entry is a well-formed
+    dict; warn-and-skip otherwise (do NOT raise — same tolerance as
+    _coerce_config_schema). Entry shape:
+
+      {args: list[non-empty str] (REQUIRED, non-empty),
+       description: str (optional, default ""),
+       optional: bool (optional, default False)}
+
+    Entries with a missing/empty/non-list ``args``, OR any non-string /
+    empty-string element in ``args``, OR that aren't a dict at all, are
+    dropped with a _log.warning. Other unknown keys in the entry are
+    ignored.
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            _log.warning(
+                "post_install: skipping non-dict entry %r", entry,
+            )
+            continue
+        args = entry.get("args")
+        if not isinstance(args, list) or not args:
+            _log.warning(
+                "post_install: entry missing or empty 'args': %r", entry,
+            )
+            continue
+        if any(not isinstance(a, str) or not a for a in args):
+            _log.warning(
+                "post_install: entry has non-string or empty arg in "
+                "args=%r; skipping", args,
+            )
+            continue
+        out.append({
+            "args": list(args),
+            "description": str(entry.get("description", "") or ""),
+            "optional": bool(entry.get("optional", False)),
+        })
     return out
 
 
