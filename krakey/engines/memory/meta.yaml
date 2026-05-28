@@ -1,4 +1,4 @@
-slot: memory
+﻿slot: memory
 description: |
   Unified GM CRUD + KB management + sleep cycle. Default impl
   extends a bundled GraphMemory class (at
@@ -18,4 +18,33 @@ builtin_engines:
       SQLite-backed graph memory + per-topic KB SQLite files +
       enter_sleep_mode consolidation pipeline.
 
-config_schema: []
+  - name: memos
+    factory_module: krakey.engines.memory.memos
+    factory_attr: MemOSMemoryEngine
+    description: |
+      MemOS (MOS) adapter. Ingest -> MOS.add; text retrieval -> MOS.search;
+      KB fleet -> per-topic MemCubes. Graph edges, raw-vector search, sleep,
+      and category counts are stubbed (MemOS consolidates internally and
+      retrieves by text). Pair with core_implementations.recall: memos.
+      Requires the external 'memos' package + a MemOS config file.
+    config_schema:
+      - field: mos_config_path
+        type: string
+        default: ""
+        help: >
+          Filesystem path to a MemOS config JSON/YAML (MOSConfig.from_json_file).
+          REQUIRED when this engine is selected.
+      - field: user_id
+        type: string
+        default: "krakey"
+        help: MemOS user id namespacing all memory operations.
+      - field: mem_cube_id
+        type: string
+        default: "krakey_main"
+        help: Id of the primary MemCube used for working-memory ingest/recall.
+      - field: mem_cube_path
+        type: string
+        default: ""
+        help: >
+          Optional filesystem path to register the primary MemCube from.
+          When empty, the cube is registered by mem_cube_id alone.
