@@ -2338,23 +2338,31 @@ async function refreshInstallBanner() {
     if (!data || !data.pending) {
       banner.classList.add("success");
       text.innerHTML =
-        "<strong>All plugin dependencies are installed.</strong> " +
+        "<strong>All plugin and engine dependencies are installed.</strong> " +
         "Click <em>Install</em> to refresh the venv (e.g. after a " +
         "manual <code>pip uninstall</code> or to pull " +
         "<code>--upgrade</code>'d wheels).";
       return;
     }
-    const unsatisfied = Object.entries(data.plugins || {})
+    const pluginUnsat = Object.entries(data.plugins || {})
       .filter(([_, info]) => !info.satisfied)
       .map(([name, _]) => name);
+    // Engine keys are `engine:<slot>:<short_name>`; strip the prefix
+    // for display so users see `memory/memos` not `engine:memory:memos`.
+    const engineUnsat = Object.entries(data.engines || {})
+      .filter(([_, info]) => !info.satisfied)
+      .map(([key, _]) => key.startsWith("engine:")
+        ? key.slice("engine:".length).replace(":", "/")
+        : key);
+    const unsatisfied = [...pluginUnsat, ...engineUnsat];
     const list = unsatisfied.length
       ? unsatisfied.join(", ")
       : "(state changed; click Install to refresh)";
     text.innerHTML =
-      `<strong>Plugin dependencies pending install:</strong> ` +
+      `<strong>Plugin + engine dependencies pending install:</strong> ` +
       `${escapeHtml(list)}. ` +
       `Click <em>Install</em> to run <code>pip install</code> + each ` +
-      `plugin's <code>post_install</code> hook (e.g. ` +
+      `plugin's/engine's <code>post_install</code> hook (e.g. ` +
       `<code>playwright install chromium</code>) inside the ` +
       `runtime's venv.`;
   } catch (_) {

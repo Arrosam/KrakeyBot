@@ -79,7 +79,7 @@ class _NoopPluginsService:
         return {"project": project, "path": "", "config": {}}
 
     def deps_status(self):
-        return {"pending": False, "plugins": {}, "state": {}}
+        return {"pending": False, "plugins": {}, "engines": {}, "state": {}}
 
     def install(self, body):
         return {"rc": 0, "stdout": "", "stderr": ""}

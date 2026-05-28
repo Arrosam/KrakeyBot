@@ -29,10 +29,11 @@
            after a manual ``pip uninstall`` etc.). -->
       <div id="install-banner" class="install-banner">
         <span class="install-banner-text" id="install-banner-text">
-          <strong>Install plugin dependencies.</strong>
+          <strong>Install plugin + engine dependencies.</strong>
           Runs <code>pip install</code> for every enabled plugin's
-          declared <code>dependencies</code> +
-          each plugin's <code>post_install</code> hook (e.g.
+          declared <code>dependencies</code> AND the currently SELECTED
+          engine in each <code>core_implementations.&lt;slot&gt;</code>,
+          plus every <code>post_install</code> hook (e.g.
           <code>playwright install chromium</code> for browser_exec)
           inside the runtime's venv.
         </span>
