@@ -45,6 +45,14 @@ class EnvironmentRouter:
             env_name: set(plugins or [])
             for env_name, plugins in (allow_list or {}).items()
         }
+        # Per-env diagnostic status side-table — survives de-registration
+        # so callers (dashboard, Self's tool feedback enrichment) can
+        # tell ``unreachable`` apart from ``token_mismatch`` apart from
+        # ``unconfigured``. Keyed by env_name. Status values:
+        # ``ok`` | ``unconfigured`` | ``unreachable`` | ``token_mismatch`` | ``error``.
+        # The runtime writes ``unconfigured`` entries directly (the env
+        # never reaches preflight); ``preflight_all`` writes the rest.
+        self._status: dict[str, tuple[str, str]] = {}
 
     # ---- read surface ------------------------------------------------
 
@@ -55,6 +63,28 @@ class EnvironmentRouter:
     def is_empty(self) -> bool:
         """True iff no envs registered. Empty Router = no-op."""
         return not self._envs
+
+    # ---- diagnostic status -------------------------------------------
+
+    def record_status(
+        self, env_name: str, status: str, reason: str,
+    ) -> None:
+        """Record an env's diagnostic status. Used by Runtime to mark
+        ``unconfigured`` (config-incomplete) envs, by ``preflight_all``
+        to mark ``ok`` / ``unreachable`` / ``token_mismatch`` / ``error``
+        outcomes, and by external callers (e.g. lifecycle managers in
+        future phases) to update status on demand. Survives
+        de-registration so the diagnostic surface stays informative
+        after a failed env is dropped from the registry.
+        """
+        self._status[env_name] = (status, reason)
+
+    def env_status(self) -> dict[str, tuple[str, str]]:
+        """Snapshot of per-env (status, reason) recorded so far.
+        Includes de-registered envs. Status values:
+        ``ok`` | ``unconfigured`` | ``unreachable`` | ``token_mismatch`` | ``error``.
+        """
+        return dict(self._status)
 
     # ---- per-plugin dispatch -----------------------------------------
 
@@ -111,8 +141,14 @@ class EnvironmentRouter:
             try:
                 info = await env.preflight()
             except EnvironmentUnavailableError as e:
+                # SandboxUnavailableError carries a machine-readable
+                # ``reason`` (token_mismatch / unreachable / error);
+                # generic EnvironmentUnavailableError defaults to "error".
+                sub_reason = getattr(e, "reason", "error")
+                self.record_status(env_name, sub_reason, str(e))
                 _log.warning(
-                    "environment %r preflight failed: %s", env_name, e,
+                    "environment %r preflight failed (%s): %s",
+                    env_name, sub_reason, e,
                 )
                 _log.warning(
                     "environment %r de-registered; plugins targeting it "
@@ -121,6 +157,7 @@ class EnvironmentRouter:
                 )
                 failed_names.append(env_name)
                 continue
+            self.record_status(env_name, "ok", "preflight passed")
             if info is not None:
                 infos.append({"env": env_name, **info})
         # De-register after the loop — never mutate _envs while iterating.

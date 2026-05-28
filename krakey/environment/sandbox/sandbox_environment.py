@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import asyncio
 
@@ -53,7 +53,22 @@ class SandboxUnavailableError(EnvironmentUnavailableError):
     generic ``EnvironmentUnavailableError`` so callers that want to
     catch ANY env failure get this one too, while sandbox-specific
     handlers can still discriminate.
+
+    ``reason`` is a machine-readable failure-mode classifier the Router
+    records into its ``_status`` side-table so the dashboard / Self's
+    tool feedback can distinguish "guest down" from "wrong token" from
+    "other agent error". The ``message`` argument stays the
+    human-readable detail string.
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: Literal["unreachable", "token_mismatch", "error"] = "error",
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 class SandboxEnvironment:

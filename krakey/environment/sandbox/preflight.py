@@ -43,18 +43,22 @@ async def preflight(cfg: SandboxConfig) -> dict[str, Any]:
                 if r.status == 401:
                     raise SandboxUnavailableError(
                         "agent rejected the token; check "
-                        "sandbox.agent.token"
+                        "sandbox.agent.token",
+                        reason="token_mismatch",
                     )
                 if r.status != 200:
                     raise SandboxUnavailableError(
-                        f"agent /health returned {r.status}"
+                        f"agent /health returned {r.status}",
+                        reason="error",
                     )
                 return await r.json()
     except aiohttp.ClientError as e:
         raise SandboxUnavailableError(
-            f"agent unreachable at {cfg.agent_url}: {e}"
+            f"agent unreachable at {cfg.agent_url}: {e}",
+            reason="unreachable",
         ) from e
     except asyncio.TimeoutError as e:
         raise SandboxUnavailableError(
-            f"agent timeout at {cfg.agent_url} (>1.5s no response)"
+            f"agent timeout at {cfg.agent_url} (>1.5s no response)",
+            reason="unreachable",
         ) from e
