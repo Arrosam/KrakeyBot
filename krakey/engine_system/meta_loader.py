@@ -6,8 +6,12 @@ its own ``meta.yaml`` declaring:
   - ``slot``: the slot name (must match the folder name)
   - ``description``: free-form
   - ``builtin_engines``: list of ``{name, factory_module, factory_attr,
-                         description, default}`` entries
-  - ``config_schema``: optional dashboard / config-form descriptors
+                         description, default, config_schema}`` entries;
+                         ``config_schema`` is optional and per-entry —
+                         each engine declares its own dashboard /
+                         config-form descriptors alongside its other
+                         fields (slot-level ``config_schema`` keys are
+                         ignored)
 
 This module is the **only** part of ``engine_system`` that knows the
 on-disk layout of ``krakey/engines/``. It returns plain dataclass
@@ -134,7 +138,7 @@ def load_slot_meta(
             cls=_LazyImpl(module, attr),  # type: ignore[arg-type]
             description=str(entry.get("description", "") or ""),
             config_schema=list(
-                _coerce_config_schema(raw.get("config_schema"))
+                _coerce_config_schema(entry.get("config_schema"))
             ),
         )
 

@@ -16,11 +16,11 @@ Each Engine slot ships a ``meta.yaml`` next to its ``__init__.py``::
         factory_module: krakey.engines.decision.hypothalamus
         factory_attr: HypothalamusDecisionEngine
         description: LLM translator. Bind core_purposes.hypothalamus.
-    config_schema:
-      - field: temperature
-        type: number_float
-        default: 0.7
-        help: Sampling temperature for the translator LLM.
+        config_schema:
+          - field: temperature
+            type: number_float
+            default: 0.7
+            help: Sampling temperature for the translator LLM.
 
 The user picks an impl by SHORT NAME in ``config.yaml``::
 
