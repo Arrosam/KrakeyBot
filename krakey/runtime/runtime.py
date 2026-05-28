@@ -11,11 +11,14 @@ algorithm lives in
 from __future__ import annotations
 
 import asyncio
+import secrets
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from krakey.models.self_model import (
     SelfModelStore, load_self_model_or_default,
@@ -640,7 +643,33 @@ class Runtime:
             if not sb.agent.url:
                 missing.append("environments.sandbox.agent.url")
             if not sb.agent.token:
-                missing.append("environments.sandbox.agent.token")
+                if not missing and self._config_path:
+                    # guest_os + agent.url are present (missing still empty) and we
+                    # have a writable config file -> auto-generate a shared-secret
+                    # token, persist it, and enable the sandbox. Opt-in is preserved
+                    # because we only reach here when an environments.sandbox block
+                    # exists with the other required fields set.
+                    try:
+                        token = secrets.token_hex(32)
+                        self._write_sandbox_token(token)
+                        sb.agent.token = token
+                        self.log.hb_warn(
+                            "sandbox: generated agent.token and saved it to config.yaml. "
+                            "Provision the guest VM with the SAME token before the next run."
+                        )
+                    except Exception as e:  # noqa: BLE001 - write must never crash startup
+                        self.log.hb_warn(
+                            f"sandbox: failed to persist generated agent.token "
+                            f"({e}); sandbox disabled. Set environments.sandbox.agent.token manually."
+                        )
+                        missing.append("environments.sandbox.agent.token")
+                else:
+                    if self._config_path is None and not missing:
+                        self.log.hb_warn(
+                            "sandbox: agent.token is empty and no config_path is available; "
+                            "cannot auto-generate. Set environments.sandbox.agent.token manually."
+                        )
+                    missing.append("environments.sandbox.agent.token")
             if missing:
                 self.log.hb_warn(
                     "sandbox env config is incomplete; missing "
@@ -657,6 +686,22 @@ class Runtime:
                 ))
                 allow_list["sandbox"] = list(sb.allowed_plugins)
         return EnvironmentRouter(envs=envs, allow_list=allow_list)
+
+    def _write_sandbox_token(self, token: str) -> None:
+        """Persist a generated sandbox agent token into config.yaml under
+        environments.sandbox.agent.token via a PyYAML round-trip. Raises on
+        a missing/odd structure or any I/O error (the caller treats failure
+        as non-fatal and leaves the sandbox disabled). NOTE: PyYAML safe_dump
+        does not preserve comments — consistent with the dashboard's existing
+        config-save path."""
+        from pathlib import Path
+        path = Path(self._config_path)
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        data["environments"]["sandbox"]["agent"]["token"] = token
+        path.write_text(
+            yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
 
     def _record_prompt(self, heartbeat_id: int, prompt: str) -> None:
         # Facade — heartbeat algorithm lives in HeartbeatOrchestrator.
