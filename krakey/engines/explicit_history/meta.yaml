@@ -15,19 +15,18 @@ builtin_engines:
       Token-bounded ring of recent heartbeat rounds; oldest rounds
       compact into GM when either the token budget or the round-count
       cap is exceeded.
-
-config_schema:
-  - field: compact_threshold
-    type: number
-    default: 2048
-    help: >
-      Absolute token-count cap for the working-memory window. When the
-      window exceeds this, the oldest rounds are compacted into graph
-      memory. Invalid, zero, or negative values fall back to 2048.
-  - field: max_history_rounds
-    type: number
-    default: 20
-    help: >
-      Maximum number of heartbeat rounds kept in the working-memory
-      window. When exceeded, the oldest rounds are compacted into graph
-      memory. Invalid, zero, or negative values fall back to 20.
+    config_schema:
+      - field: compact_threshold
+        type: number
+        default: 2048
+        help: >
+          Absolute token-count cap for the working-memory window. When the
+          window exceeds this, the oldest rounds are compacted into graph
+          memory. Invalid, zero, or negative values fall back to 2048.
+      - field: max_history_rounds
+        type: number
+        default: 20
+        help: >
+          Maximum number of heartbeat rounds kept in the working-memory
+          window. When exceeded, the oldest rounds are compacted into graph
+          memory. Invalid, zero, or negative values fall back to 20.
