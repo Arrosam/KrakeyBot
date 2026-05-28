@@ -29,6 +29,7 @@ from krakey.plugins.dashboard.events.ws_route import register as _register_event
 from krakey.plugins.dashboard.log_capture import LogCapture
 from krakey.plugins.dashboard.middleware import attach_no_cache
 from krakey.plugins.dashboard.routes import (
+    environments as _environments_routes,
     health as _health,
     logs_ws as _logs_ws,
     memory as _memory,
@@ -122,6 +123,7 @@ def create_app(
     _plugins.register(app, plugins=plugins)
     _settings_route.register(app, config=config)
     runtime_routes.register(app, runtime=runtime)
+    _environments_routes.register(app, runtime=runtime)
 
     # --- WS endpoints (only when their backing is available) ---
     if web_chat_service is None and web_chat_history is not None:

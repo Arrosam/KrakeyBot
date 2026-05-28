@@ -472,6 +472,16 @@ function renderStatusPanel() {
   } else {
     _setPair("window", "—");
   }
+  // Sandbox env diagnostic: surface status + reason. Hidden when the
+  // status snapshot hasn't arrived yet (cold-load + first WS event).
+  const sbSt = lastStats.env_status && lastStats.env_status.sandbox;
+  if (sbSt && sbSt.status) {
+    _setPair("sandbox", sbSt.status, _envStatusClass(sbSt.status));
+    const dd = statusPanel.querySelector('dd[data-key="sandbox"]');
+    if (dd) dd.title = sbSt.reason || "";
+  } else {
+    _setPair("sandbox", "—");
+  }
   _setPair("events ws", eventsWS && eventsWS.readyState === 1 ? "connected" : "disconnected");
 }
 
@@ -740,7 +750,28 @@ function handleEvent(e) {
         }
       }
       break;
+    case "environment_status":
+      // Per-env (status, reason) snapshot from runtime. Drives the
+      // Sandbox VM badge in Settings AND the sandbox row in the
+      // Inner Thoughts Status panel.
+      lastStats.env_status = e.statuses || {};
+      setStatus();
+      // If the settings tab is currently rendered, re-render so the
+      // Sandbox VM badge reflects the new status.
+      if (settingsForm && settingsForm.querySelector(".cfg-section")) {
+        renderSettingsForm();
+      }
+      break;
   }
+}
+
+// Map an env status token → CSS modifier class on .cfg-badge / dd.
+function _envStatusClass(status) {
+  if (status === "ok")             return "env-ok";
+  if (status === "unconfigured")   return "env-unconfigured";
+  if (status === "unreachable")    return "env-unreachable";
+  if (status === "token_mismatch") return "env-error";
+  return "env-error";  // covers "error" and any unknown token
 }
 
 function connectEvents() {
@@ -2153,12 +2184,21 @@ async function loadSettings() {
   settingsToast.textContent = "";
   settingsForm.innerHTML = window.t("loading");
   try {
-    // Load config + plugin discovery + schema in parallel
-    const [cfgRes, pluginRes, schemaRes] = await Promise.all([
+    // Load config + plugin discovery + schema + env status in parallel.
+    // The env status seeds the Sandbox VM badge + Inner Thoughts Status
+    // panel sandbox row before any WS event arrives.
+    const [cfgRes, pluginRes, schemaRes, envStatusRes] = await Promise.all([
       fetch("/api/settings"),
       fetch("/api/plugins").catch(() => null),
       fetch("/api/config/schema").catch(() => null),
+      fetch("/api/environments/status").catch(() => null),
     ]);
+    if (envStatusRes && envStatusRes.ok) {
+      try {
+        lastStats.env_status = await envStatusRes.json();
+        if (typeof setStatus === "function") setStatus();
+      } catch {/* ignore non-JSON */}
+    }
     if (cfgRes.status === 503) {
       settingsForm.innerHTML = "<i>(config_path not provided to dashboard)</i>";
       return;
@@ -3327,6 +3367,17 @@ function renderEnvironmentsSection(envs) {
   sbHead.style.alignItems = "center";
   sbHead.style.gap = "8px";
   sbHead.appendChild(document.createTextNode("Sandbox VM"));
+  // Live diagnostic badge — surfaces "ok / unconfigured / unreachable
+  // / token_mismatch / error" once a status payload has been received
+  // (either via the cold-load fetch in loadSettings or the WS event).
+  const _sbStatus = lastStats.env_status && lastStats.env_status.sandbox;
+  if (_sbStatus && _sbStatus.status) {
+    const badge = document.createElement("span");
+    badge.className = "cfg-badge " + _envStatusClass(_sbStatus.status);
+    badge.title = _sbStatus.reason || "";
+    badge.textContent = _sbStatus.status;
+    sbHead.appendChild(badge);
+  }
   const enabled = envs.sandbox != null;
   const toggle = document.createElement("span");
   toggle.className = "toggle" + (enabled ? " on" : "");

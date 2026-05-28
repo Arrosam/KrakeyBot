@@ -377,6 +377,23 @@
   background: color-mix(in srgb, var(--green) 14%, transparent);
   color: var(--green);
 }
+/* Environment diagnostic status badges (Sandbox VM section header). */
+.cfg-badge.env-ok {
+  background: color-mix(in srgb, var(--green) 14%, transparent);
+  color: var(--green);
+}
+.cfg-badge.env-unconfigured {
+  background: var(--raise);
+  color: var(--text-2);
+}
+.cfg-badge.env-unreachable {
+  background: color-mix(in srgb, var(--yellow) 14%, transparent);
+  color: var(--yellow);
+}
+.cfg-badge.env-error {
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+  color: var(--red);
+}
 
 /* Legacy kind-badge — keep working + modernise visuals. */
 .kind-badge {
