@@ -1,4 +1,4 @@
-// Krakey i18n core — mirrors the theme-toggle localStorage pattern.
+﻿// Krakey i18n core — mirrors the theme-toggle localStorage pattern.
 // A locale key is stored in 'krakey-lang'; on load the stored value
 // (or 'en') becomes the active locale. setLocale() swaps the active
 // locale and persists the choice; the app.js IIFE is responsible for
@@ -58,10 +58,10 @@
       section_plugins: "Plugins",
       section_idle: "Idle",
       section_fatigue: "Fatigue",
-      section_sliding_window: "Sliding Window (Working Memory)",
+      section_sliding_window: "Working Memory",
       // Shortened variant for the compact settings jump-rail (the full
       // title is too wide for the rail column).
-      section_sliding_window_short: "Sliding Window",
+      section_sliding_window_short: "Working Memory",
       section_graph_memory: "Graph Memory",
       section_knowledge_base: "Knowledge Base",
       section_sleep: "Sleep",
