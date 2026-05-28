@@ -336,7 +336,8 @@ class TestBoundaryValues:
     def test_many_fields_in_per_entry_config_schema(self, tmp_path):
         """Large per-entry config_schema list (10 fields) passes verbatim."""
         fields_yaml = "\n".join(
-            f"  - field: f{i}\n    type: text" for i in range(10)
+            f"                  - field: f{i}\n                    type: text"
+            for i in range(10)
         )
         _write_meta(tmp_path, "demo", f"""
             builtin_engines:
