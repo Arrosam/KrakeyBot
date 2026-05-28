@@ -14,25 +14,33 @@ builtin_engines:
     description: |
       Per-stimulus vec_search → rerank → token-budget cut +
       covered/uncovered partition for the next beat.
-
-config_schema:
-  - field: semantic_association_enabled
-    type: boolean
-    default: false
-    help: >
-      When enabled, each stimulus is sent to a bound LLM that derives
-      key persons, dated events (relative dates resolved to absolute
-      ISO YYYY-MM-DD), places, and relations — each as its own recall
-      query through the existing vec_search → rerank → weighted-merge
-      loop. OFF = raw text queries only (byte-identical to baseline
-      behavior). Auto-falls back to raw text if the bound LLM is
-      unavailable or returns an error.
-  - field: semantic_association_purpose
-    type: core_purpose
-    default: "compact"
-    help: >
-      Must match a key in ``llm.core_purposes`` (e.g. ``compact`` = the
-      sliding-window / GM compaction LLM). Binding a tag to that purpose
-      in LLM settings selects the model used to derive extra recall
-      queries. When the purpose is unbound (no tag assigned) the
-      enrichment layer is inert and raw text queries are used instead.
+    config_schema:
+      - field: semantic_association_enabled
+        type: bool
+        default: false
+        help: >
+          When enabled, each stimulus is sent to a bound LLM that derives
+          key persons, dated events (relative dates resolved to absolute
+          ISO YYYY-MM-DD), places, and relations — each as its own recall
+          query through the existing vec_search → rerank → weighted-merge
+          loop. OFF = raw text queries only (byte-identical to baseline
+          behavior). Auto-falls back to raw text if the bound LLM is
+          unavailable or returns an error.
+      - field: semantic_association_purpose
+        type: core_purpose
+        default: "compact"
+        help: >
+          Must match a key in ``llm.core_purposes`` (e.g. ``compact`` = the
+          sliding-window / GM compaction LLM). Binding a tag to that purpose
+          in LLM settings selects the model used to derive extra recall
+          queries. When the purpose is unbound (no tag assigned) the
+          enrichment layer is inert and raw text queries are used instead.
+  - name: memos
+    factory_module: krakey.engines.recall.memos
+    factory_attr: MemOSRecallEngine
+    description: |
+      MemOS recall — per-stimulus text retrieval via MOS.search
+      (through the memory engine's fts_search). Token-budget cut,
+      covered/uncovered partition, no edges (MemOS does not expose
+      graph edges), no embedder, no reranker. Pair with
+      core_implementations.memory: memos.
