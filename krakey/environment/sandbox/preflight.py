@@ -36,7 +36,7 @@ async def preflight(cfg: SandboxConfig) -> dict[str, Any]:
     """
     url = cfg.agent_url.rstrip("/") + "/health"
     headers = {"X-Krakey-Token": cfg.agent_token}
-    timeout = aiohttp.ClientTimeout(total=5.0)
+    timeout = aiohttp.ClientTimeout(total=1.5)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as s:
             async with s.get(url, headers=headers) as r:
@@ -56,5 +56,5 @@ async def preflight(cfg: SandboxConfig) -> dict[str, Any]:
         ) from e
     except asyncio.TimeoutError as e:
         raise SandboxUnavailableError(
-            f"agent timeout at {cfg.agent_url} (>5s no response)"
+            f"agent timeout at {cfg.agent_url} (>1.5s no response)"
         ) from e
