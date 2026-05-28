@@ -9,11 +9,14 @@ Layer order (most-stable cacheable prefix first → most-volatile last):
                               role is registered (plugins delete this
                               key when they own the dispatch path)
     5. in_mind_instructions — standing instruction (added by in_mind plugin)
-    6. stimulus             — often empty / repeated tool feedback
-    7. recall               — derived from stimulus
-    8. in_mind_round        — virtual "Heartbeat #now (in mind)" round
+    6. recall               — derived from stimulus
+    7. in_mind_round        — virtual "Heartbeat #now (in mind)" round
                               (filled by in_mind plugin; empty otherwise)
-    9. history              — appends every beat but stable prefix
+    8. history              — appends every beat but stable prefix
+    9. stimulus             — volatile per-beat content placed AFTER the
+                              stable history prefix; accepted prompt
+                              prefix-cache trade-off (history cacheable,
+                              stimulus invalidates only trailing tokens)
     10. status              — every beat changes; near the end so it
                               doesn't invalidate the cacheable prefix
     11. heartbeat_question  — end anchor
@@ -63,10 +66,10 @@ DEFAULT_ELEMENT_KEYS: tuple[str, ...] = (
     "capabilities",
     "action_format",
     "in_mind_instructions",
-    "stimulus",
     "recall",
     "in_mind_round",
     "history",
+    "stimulus",
     "status",
     "heartbeat_question",
 )
@@ -139,10 +142,10 @@ class PromptBuilder:
             # pins the position in the rendered prompt order.
             ("action_format", ""),
             ("in_mind_instructions", ""),
-            ("stimulus", self.render_stimulus(stimuli, current_time)),
             ("recall", self.render_recall(recall)),
             ("in_mind_round", ""),
             ("history", self.render_history(window)),
+            ("stimulus", self.render_stimulus(stimuli, current_time)),
             ("status", self.render_status(status)),
             ("heartbeat_question", HEARTBEAT_QUESTION),
         ])
@@ -260,7 +263,19 @@ class PromptBuilder:
         lines = ["# [HISTORY]"]
         if not window:
             return "# [HISTORY]\n(empty)"
-        for r in window:
+        # Locate the LAST heartbeat_id reset within the window.
+        # heartbeat_id resets to 1 each process start (never persisted),
+        # so a non-monotonic step signals a session boundary.
+        boundary_idx = None
+        for i in range(1, len(window)):
+            if window[i].heartbeat_id <= window[i - 1].heartbeat_id:
+                boundary_idx = i   # keep updating → ends on the LAST reset
+        for idx, r in enumerate(window):
+            if boundary_idx is not None and idx == boundary_idx:
+                lines.append(
+                    "--- SESSION BOUNDARY"
+                    " (above: previous session | below: current session) ---"
+                )
             lines.append(f"--- Heartbeat #{r.heartbeat_id} ---")
             lines.append(f"Stimulus: {r.stimulus_summary}")
             if r.recall_summary:
