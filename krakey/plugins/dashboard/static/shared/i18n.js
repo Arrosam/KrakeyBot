@@ -46,7 +46,7 @@
       error_loading_prefix: "error loading: ",
 
       // ── Prompts view ───────────────────────────────────────────────
-      prompts_empty: "(no prompts yet — wait one heartbeat)",
+      prompts_empty: "No prompts yet — the first will appear in ~{secs}s at the next heartbeat.",
       prompts_paused: "paused — toggle live to resume",
       prompts_pending: "{count} new prompt{plural} since paused",
 

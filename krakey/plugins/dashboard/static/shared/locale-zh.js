@@ -22,7 +22,7 @@ window.LOCALES['zh-CN'] = {
   loading: "加载中...",
   error_prefix: "错误：",
   error_loading_prefix: "加载错误：",
-  prompts_empty: "（暂无提示词——等待一次心跳）",
+  prompts_empty: "暂无提示词——下次心跳约 {secs} 秒后会出现第一条。",
   prompts_paused: "已暂停——切换实时更新以恢复",
   prompts_pending: "暂停后有 {count} 条新提示",
   memory_graph_hint: "拖动平移 · 滚动缩放 · 拖动节点移动",

@@ -458,6 +458,20 @@ function renderStatusPanel() {
     ? _fmtSince(lastStats.last_sleep) : "never",
     lastStats.last_sleep ? "" : "stale");
   _setPair("mode", lastStats.mode || "normal");
+  // Working-memory window: show "N rounds" normally, "draining N → cap"
+  // while a startup backlog drains. Hidden if we haven't received a
+  // gm_stats event yet (e.g. before the first heartbeat).
+  const rc = lastStats.rounds_count;
+  const cap = lastStats.max_history_rounds;
+  if (typeof rc === "number" && rc > 0) {
+    if (typeof cap === "number" && cap > 0 && rc > cap) {
+      _setPair("window", `draining ${rc} → ${cap}`, "fatigue-mid");
+    } else {
+      _setPair("window", `${rc} rounds`);
+    }
+  } else {
+    _setPair("window", "—");
+  }
   _setPair("events ws", eventsWS && eventsWS.readyState === 1 ? "connected" : "disconnected");
 }
 
@@ -614,6 +628,15 @@ function handleEvent(e) {
       lastStats.node_count = e.node_count;
       lastStats.edge_count = e.edge_count;
       lastStats.fatigue_pct = e.fatigue_pct;
+      // Sliding-window observability: surface live count + cap so the
+      // Status panel can render "draining N → cap" while a large
+      // backlog drains.
+      if (typeof e.rounds_count === "number") {
+        lastStats.rounds_count = e.rounds_count;
+      }
+      if (typeof e.max_history_rounds === "number") {
+        lastStats.max_history_rounds = e.max_history_rounds;
+      }
       setStatus();
       break;
     case "stimuli_queued":
@@ -1776,7 +1799,14 @@ function fmtTs(iso) {
 function renderPromptsList() {
   promptsList.innerHTML = "";
   if (!promptsCache.length) {
-    promptsList.textContent = window.t("prompts_empty");
+    // Surface the expected wait so a freshly-restarted user knows the
+    // panel will populate. `cfgState` is null until Settings is opened
+    // at least once, so fall back to the module-scope SECTION_DEFAULTS.
+    const interval =
+      (cfgState && cfgState.idle && cfgState.idle.default_interval) ||
+      (SECTION_DEFAULTS && SECTION_DEFAULTS.idle && SECTION_DEFAULTS.idle.default_interval) ||
+      10;
+    promptsList.textContent = window.t("prompts_empty", { secs: Math.round(interval) });
     return;
   }
   for (const p of promptsCache) {
