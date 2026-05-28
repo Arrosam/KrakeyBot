@@ -607,20 +607,18 @@ class TestPartE_RenderHistoryDivider:
         window = [_make_round(10), _make_round(10), _make_round(10)]
         rendered = PromptBuilder().render_history(window)
         assert rendered.count(_DIVIDER) == 1
-        # The divider must fall after the content from the middle round
-        # (index 1) and before the content from the last round (index 2).
-        # All three rounds emit the same text since id=10 and same helper.
-        # Positional ordering: the second occurrence of the round content
-        # block appears before the divider; the third is after it.
-        # We can at minimum assert exactly one divider and that its
-        # position is past the midpoint of the content.
-        mid = len(rendered) // 2
+        # All three rounds emit identical text (same id=10). The divider
+        # at the LAST reset must sit before the 3rd round block: exactly
+        # two heartbeat headers precede it and exactly one follows.
+        # (A midpoint/position heuristic is unreliable here — the divider
+        # line itself is long relative to the tiny identical blocks — so
+        # count headers on each side of the divider instead.)
         divider_pos = rendered.index(_DIVIDER)
-        # The last reset is at index 2 (the 3rd round). If the divider
-        # is drawn ONLY at the last reset, it must appear in the latter
-        # portion of the rendered string (after 2 of 3 rounds are shown).
-        assert divider_pos > mid, \
-            "Divider at last reset should appear after the majority of content"
+        header = "--- Heartbeat #10 ---"
+        assert rendered[:divider_pos].count(header) == 2, \
+            "Two rounds must precede the divider (drawn at the LAST reset)"
+        assert rendered[divider_pos:].count(header) == 1, \
+            "Exactly one round must follow the divider (the current session)"
 
     def test_at_most_one_divider_invariant(self):
         """Negative: no matter how many resets exist, count is always <= 1."""
@@ -633,6 +631,9 @@ class TestPartE_RenderHistoryDivider:
     def test_divider_exact_string_no_variant(self):
         """Negative: any variant of the divider string (different dashes, extra
         spaces, different wording) must NOT be treated as the real divider."""
+        # NOTE: variants must be compared as whole LINES. A substring check
+        # is wrong because e.g. "-- SESSION BOUNDARY ... --" is contained
+        # inside the real "--- SESSION BOUNDARY ... ---" line.
         wrong_variants = [
             "--- Session Boundary ---",
             "--- SESSION BOUNDARY ---",
@@ -641,9 +642,15 @@ class TestPartE_RenderHistoryDivider:
         ]
         window = [_make_round(5), _make_round(1)]
         rendered = PromptBuilder().render_history(window)
-        # The real divider is present
-        assert _DIVIDER in rendered
-        # None of the wrong variants should appear (the impl uses the exact string)
+        lines = rendered.splitlines()
+        # The real divider appears as its own exact line.
+        assert _DIVIDER in lines
+        # The ONLY line carrying the marker is the exact divider — no typo'd
+        # variant line slips through.
+        boundary_lines = [ln for ln in lines if "SESSION BOUNDARY" in ln.upper()]
+        assert boundary_lines == [_DIVIDER], \
+            f"Only the exact divider line is allowed, got: {boundary_lines!r}"
+        # And none of the explicit wrong variants appear as a full line.
         for variant in wrong_variants:
-            assert variant not in rendered, \
-                f"Unexpected variant divider found: {variant!r}"
+            assert variant not in lines, \
+                f"Unexpected variant divider line found: {variant!r}"
