@@ -168,3 +168,18 @@ class StimulusReadEvent(_BaseEvent):
     all stimuli drained this beat that carry one, so the dashboard can flip
     the matching web-chat bubbles to 'read'."""
     chat_message_ids: list[str]
+
+
+@dataclass
+class EnvironmentStatusEvent(_BaseEvent):
+    """Per-environment diagnostic snapshot. Published after preflight at
+    startup and whenever the Router's status side-table changes (future
+    lifecycle managers may publish on VM start/stop). The dashboard
+    consumes this to render the Sandbox VM badge + the Inner Thoughts
+    Status panel sandbox row.
+
+    ``statuses`` mirrors ``EnvironmentRouter.env_status()`` output —
+    each value is ``{"status": <token>, "reason": <human text>}``. Status
+    tokens: ``ok`` | ``unconfigured`` | ``unreachable`` | ``token_mismatch`` | ``error``.
+    """
+    statuses: dict[str, dict[str, str]]

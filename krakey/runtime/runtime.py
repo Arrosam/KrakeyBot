@@ -690,7 +690,21 @@ class Runtime:
                     guest_os=sb.guest_os,
                 ))
                 allow_list["sandbox"] = list(sb.allowed_plugins)
-        return EnvironmentRouter(envs=envs, allow_list=allow_list)
+        router = EnvironmentRouter(envs=envs, allow_list=allow_list)
+        # Seed the diagnostic side-table BEFORE preflight runs so the
+        # dashboard / Self's tool feedback can distinguish "unconfigured"
+        # (we never built the env) from "unreachable"/"token_mismatch"
+        # (preflight failed) when the dropped env later gets queried.
+        # Local has no preflight semantics — mark it ok up front. If
+        # preflight_all later runs against it, it overwrites with the
+        # post-preflight status.
+        router.record_status("local", "ok", "no preflight needed")
+        if sb is not None and missing:
+            router.record_status(
+                "sandbox", "unconfigured",
+                "missing fields: " + ", ".join(missing),
+            )
+        return router
 
     def _write_sandbox_token(self, token: str) -> None:
         """Persist a generated sandbox agent token into config.yaml under
@@ -727,6 +741,7 @@ class Runtime:
         success log line attached to the heartbeat log; the Router
         itself stays IO-pattern-agnostic.
         """
+        from krakey.runtime.events.event_types import EnvironmentStatusEvent
         try:
             infos = await self.environment_router.preflight_all()
             for info in infos:
@@ -737,6 +752,14 @@ class Runtime:
                 self.log.hb(f"{env_name} preflight ok: {details}")
         except EnvironmentUnavailableError as exc:
             self.log.hb_warn(f"environment preflight raised unexpectedly: {exc}")
+        # Publish the post-preflight status snapshot — covers unconfigured
+        # (seeded by _build_environment_router) + ok / unreachable /
+        # token_mismatch / error (recorded by preflight_all). Dashboard
+        # picks this up over /ws/events to refresh the Sandbox VM badge.
+        raw = self.environment_router.env_status()
+        self.events.publish(EnvironmentStatusEvent(
+            statuses={n: {"status": s, "reason": r} for n, (s, r) in raw.items()},
+        ))
 
     async def close(self) -> None:
         """Shut down every Engine slot that exposes ``close()``.

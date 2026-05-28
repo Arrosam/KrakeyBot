@@ -29,12 +29,21 @@ class _RaisingRouter:
     async def preflight_all(self):
         raise self._exc
 
+    def env_status(self):
+        # Real Router exposes this; runtime now reads it post-preflight to
+        # publish an EnvironmentStatusEvent. Empty dict keeps the stub
+        # non-crashing without inventing status data.
+        return {}
+
 
 class _SucceedingRouter:
     """Fake environment_router whose preflight_all returns one info dict."""
 
     async def preflight_all(self):
         return [{"env": "local"}]
+
+    def env_status(self):
+        return {"local": ("ok", "preflight passed")}
 
 
 # ---------------------------------------------------------------------------
