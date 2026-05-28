@@ -655,8 +655,13 @@ class Runtime:
                         sb.agent.token = token
                         self.log.hb_warn(
                             "sandbox: generated agent.token and saved it to config.yaml. "
-                            "Provision the guest VM with the SAME token before the next run."
+                            "Provision the guest VM with the SAME token, then restart krakey to enable the sandbox."
                         )
+                        # Don't register sandbox THIS run: the guest cannot yet have
+                        # the freshly-generated token, so preflight would waste time
+                        # timing out. Next startup, the token is on disk → normal
+                        # register-and-preflight path runs.
+                        missing.append("environments.sandbox.agent.token")
                     except Exception as e:  # noqa: BLE001 - write must never crash startup
                         self.log.hb_warn(
                             f"sandbox: failed to persist generated agent.token "

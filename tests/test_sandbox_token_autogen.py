@@ -11,8 +11,12 @@ set but agent.token is EMPTY:
     - Set it on the in-memory sb.agent.token.
     - Write it back into config.yaml under
       environments.sandbox.agent.token via PyYAML round-trip.
-    - Register the sandbox env (router.env_names() includes "sandbox").
-    - Emit a stderr notice mentioning "token".
+    - Do NOT register the sandbox env this startup: the guest cannot
+      yet hold the freshly-generated token, so preflight would only
+      waste a timeout. Next startup, the token is on disk → normal
+      register-and-preflight path runs. (env_names == ["local"])
+    - Emit a stderr notice mentioning "token" instructing the user to
+      provision the guest then restart.
 
   Graceful-skip path  (runtime._config_path is None, or write fails):
     - No crash.
@@ -74,9 +78,11 @@ def _write_minimal_sandbox_yaml(path):
 class TestPositiveSuccessPath:
     """Full auto-gen: guest_os + url set, token empty, real writable file."""
 
-    def test_sandbox_registered_after_autogen(self, tmp_path):
+    def test_sandbox_disabled_this_run_after_autogen(self, tmp_path):
         """After _build_environment_router() with an empty token and a
-        real config_path, env_names must include 'sandbox'."""
+        real config_path, the sandbox is NOT registered this startup
+        (token saved; restart required after the user provisions the
+        guest VM)."""
         cfg_path = tmp_path / "config.yaml"
         _write_minimal_sandbox_yaml(cfg_path)
 
@@ -89,8 +95,7 @@ class TestPositiveSuccessPath:
 
         router = rt._build_environment_router()
 
-        assert "sandbox" in router.env_names()
-        assert "local" in router.env_names()
+        assert router.env_names() == ["local"]
 
     def test_inmemory_token_is_non_empty_after_autogen(self, tmp_path):
         """The in-memory sb.agent.token must be non-empty after a

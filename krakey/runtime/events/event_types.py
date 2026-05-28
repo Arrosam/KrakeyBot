@@ -56,6 +56,12 @@ class GMStatsEvent(_BaseEvent):
     node_count: int
     edge_count: int
     fatigue_pct: int
+    # Sliding-window observability (populated by heartbeat emit-site). The
+    # dashboard reads these to render a "draining N → cap" indicator when
+    # the window exceeds the cap. Defaulted so older constructors don't
+    # need updating immediately; emit-site populates them with real values.
+    rounds_count: int = 0
+    max_history_rounds: int = 0
 
 
 @dataclass
