@@ -24,8 +24,9 @@ def _new_mos(*, mos_config_path: str):
         from memos.configs.mem_os import MOSConfig
     except ImportError as e:
         raise ImportError(
-            "The 'memos' package is required for core_implementations.memory='memos'. "
-            "Install MemOS (https://github.com/MemTensor/MemOS) to use this engine."
+            "MemOS is required for the 'memos' memory engine. "
+            "Select core_implementations.memory: memos in config.yaml and "
+            "run `krakey install` (or manually: pip install MemoryOS)."
         ) from e
     return MOS(MOSConfig.from_json_file(mos_config_path))
 

@@ -26,7 +26,10 @@ builtin_engines:
       KB fleet -> per-topic MemCubes. Graph edges, raw-vector search, sleep,
       and category counts are stubbed (MemOS consolidates internally and
       retrieves by text). Pair with core_implementations.recall: memos.
-      Requires the external 'memos' package + a MemOS config file.
+      Requires the external 'MemoryOS' PyPI package + a MemOS config file —
+      auto-installed by `krakey install` when this engine is selected.
+    dependencies:
+      - "MemoryOS>=2.0.17,<3.0"
     config_schema:
       - field: mos_config_path
         type: string
