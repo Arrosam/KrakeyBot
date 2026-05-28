@@ -678,12 +678,14 @@ class TestCoveredUncoveredPartition:
         await session.add_stimuli([stim_cov, stim_unc])
         result = await session.finalize()
 
-        all_stims = set(result.covered_stimuli) | set(result.uncovered_stimuli)
-        assert stim_cov in all_stims
-        assert stim_unc in all_stims
+        # Stimulus is a non-frozen dataclass (unhashable) — compare by identity.
+        covered_ids = {id(s) for s in result.covered_stimuli}
+        uncovered_ids = {id(s) for s in result.uncovered_stimuli}
+        all_ids = covered_ids | uncovered_ids
+        assert id(stim_cov) in all_ids
+        assert id(stim_unc) in all_ids
         # No overlap.
-        overlap = set(result.covered_stimuli) & set(result.uncovered_stimuli)
-        assert len(overlap) == 0
+        assert covered_ids.isdisjoint(uncovered_ids)
 
     async def test_stimulus_with_results_goes_to_covered(self):
         mem = FakeMemory(per_query={"found": [_make_node(1)]})
