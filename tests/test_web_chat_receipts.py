@@ -44,7 +44,8 @@ async def test_push_returns_true_and_does_not_stamp_chat_message_id():
     assert ok is True
     assert pushed[0].type == "user_message"
     assert pushed[0].content == "hi"
-    assert pushed[0].chat_message_id is None
+    # the Stimulus dataclass no longer carries a web-chat field at all
+    assert not hasattr(pushed[0], "chat_message_id")
 
 
 async def test_push_offline_returns_false_and_pushes_nothing():

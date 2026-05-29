@@ -111,10 +111,10 @@ def test_event_kind_property_for_serialization():
 
 
 def test_stimulus_read_event_carries_ids_and_kind():
-    """event-bus: heartbeat publishes StimulusReadEvent at drain time so
-    the dashboard can flip web-chat bubbles to 'read'. The kind string
-    must auto-derive to 'stimulus_read', and the payload carries the list
-    of drained chat_message_ids."""
+    """event-bus: plugin-dashboard's web_chat_mark_read tool publishes
+    StimulusReadEvent when Self confirms reading, so the dashboard can flip
+    web-chat bubbles to 'read'. The kind string must auto-derive to
+    'stimulus_read', and the payload carries the list of read message ids."""
     from krakey.runtime.events.event_types import StimulusReadEvent
     e = StimulusReadEvent(chat_message_ids=["m1", "m2"])
     assert e.chat_message_ids == ["m1", "m2"]
