@@ -35,7 +35,7 @@ from krakey.engines.heartbeat.compact import compact_if_needed
 from krakey.runtime.events.event_types import (
     DecisionEvent, GMStatsEvent, HeartbeatStartEvent, IdleEvent,
     SelfOutputEvent, NoteEvent, PromptBuiltEvent, SleepDoneEvent,
-    SleepFailedEvent, SleepStartEvent, StimuliQueuedEvent, StimulusReadEvent,
+    SleepFailedEvent, SleepStartEvent, StimuliQueuedEvent,
     ThinkingEvent
 )
 from krakey.engines.heartbeat.fatigue import calculate_fatigue
@@ -326,9 +326,6 @@ class HeartbeatOrchestrator:
         rt.events.publish(HeartbeatStartEvent(
             heartbeat_id=rt.heartbeat_count, stimulus_count=len(stimuli),
         ))
-        read_ids = [s.chat_message_id for s in stimuli if s.chat_message_id is not None]
-        if read_ids:
-            rt.events.publish(StimulusReadEvent(chat_message_ids=read_ids))
         rt.events.publish(StimuliQueuedEvent(stimuli=[
             {"type": s.type, "source": s.source, "content": s.content,
              "adrenalin": s.adrenalin, "ts": s.timestamp.isoformat()}
@@ -542,9 +539,6 @@ class HeartbeatOrchestrator:
 
         # b. Handle any slash-commands in the new batch.
         filtered_new, cmd_action = await self._phase_handle_commands(new)
-        _adrenalin_read_ids = [s.chat_message_id for s in filtered_new if s.chat_message_id is not None]
-        if _adrenalin_read_ids:
-            rt.events.publish(StimulusReadEvent(chat_message_ids=_adrenalin_read_ids))
         if cmd_action is CommandAction.KILL:
             # rt.request_stop() already called by _phase_handle_commands.
             return None, None, None
