@@ -108,6 +108,7 @@ def test_router_build_disables_sandbox_when_partially_configured(capsys):
     a warning names the missing keys. Plugins allow-listed for the
     absent sandbox just hit EnvironmentDenied at call time."""
     from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
+    from krakey.environment import build_environment_router
     from krakey.models.config import SandboxEnvironmentConfig
 
     runtime = build_runtime_with_fakes(
@@ -117,7 +118,10 @@ def test_router_build_disables_sandbox_when_partially_configured(capsys):
     runtime.config.environments.sandbox = SandboxEnvironmentConfig(
         guest_os="linux",
     )
-    router = runtime._build_environment_router()
+    router = build_environment_router(
+        runtime.config, config_path=runtime._config_path,
+        log_warn=runtime.log.hb_warn,
+    )
     # Local is always present; sandbox is dropped, not registered.
     assert router.env_names() == ["local"]
     err = capsys.readouterr().err.lower()
@@ -143,6 +147,7 @@ async def test_router_registers_sandbox_env_when_config_complete(tmp_path):
     and 'sandbox', and the allow-list reflects the configured
     plugin assignments."""
     from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
+    from krakey.environment import build_environment_router
     from krakey.models.config import SandboxAgentSection, SandboxEnvironmentConfig
 
     runtime = build_runtime_with_fakes(
@@ -155,7 +160,10 @@ async def test_router_registers_sandbox_env_when_config_complete(tmp_path):
             url="http://10.0.2.10:8765", token="tok",
         ),
     )
-    rebuilt = runtime._build_environment_router()
+    rebuilt = build_environment_router(
+        runtime.config, config_path=runtime._config_path,
+        log_warn=runtime.log.hb_warn,
+    )
     assert set(rebuilt.env_names()) == {"local", "sandbox"}
     # Allow-list flows through from config.environments.
     assert rebuilt.for_plugin("coding", "sandbox") is rebuilt._envs["sandbox"]
@@ -411,6 +419,7 @@ def test_defaulted_agent_url_with_empty_token_keeps_sandbox_disabled(capsys):
     Router gate (checks guest_os/url/token) still leaves the sandbox
     unregistered and startup unblocked."""
     from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
+    from krakey.environment import build_environment_router
     from krakey.models.config import SandboxEnvironmentConfig
     runtime = build_runtime_with_fakes(
         self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
@@ -419,6 +428,9 @@ def test_defaulted_agent_url_with_empty_token_keeps_sandbox_disabled(capsys):
     runtime.config.environments.sandbox = SandboxEnvironmentConfig(
         guest_os="linux",
     )
-    router = runtime._build_environment_router()
+    router = build_environment_router(
+        runtime.config, config_path=runtime._config_path,
+        log_warn=runtime.log.hb_warn,
+    )
     assert router.env_names() == ["local"]
     assert "token" in capsys.readouterr().err.lower()

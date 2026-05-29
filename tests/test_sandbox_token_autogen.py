@@ -1,4 +1,4 @@
-"""Edge tests for Runtime._build_environment_router() Part B:
+"""Edge tests for build_environment_router(Runtime.config, config_path=Runtime._config_path, log_warn=Runtime.log.hb_warn) Part B:
 sandbox agent.token auto-generation.
 
 Spec under test
@@ -43,6 +43,7 @@ import yaml
 import pytest
 
 from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
+from krakey.environment import build_environment_router
 from krakey.models.config import (
     SandboxEnvironmentConfig,
     SandboxAgentSection,
@@ -79,7 +80,7 @@ class TestPositiveSuccessPath:
     """Full auto-gen: guest_os + url set, token empty, real writable file."""
 
     def test_sandbox_disabled_this_run_after_autogen(self, tmp_path):
-        """After _build_environment_router() with an empty token and a
+        """After build_environment_router() with an empty token and a
         real config_path, the sandbox is NOT registered this startup
         (token saved; restart required after the user provisions the
         guest VM)."""
@@ -93,7 +94,7 @@ class TestPositiveSuccessPath:
         )
         rt._config_path = str(cfg_path)
 
-        router = rt._build_environment_router()
+        router = build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         assert router.env_names() == ["local"]
 
@@ -110,7 +111,7 @@ class TestPositiveSuccessPath:
         )
         rt._config_path = str(cfg_path)
 
-        rt._build_environment_router()
+        build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         assert rt.config.environments.sandbox.agent.token != ""
 
@@ -127,7 +128,7 @@ class TestPositiveSuccessPath:
         )
         rt._config_path = str(cfg_path)
 
-        rt._build_environment_router()
+        build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         in_memory_token = rt.config.environments.sandbox.agent.token
         on_disk = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
@@ -149,7 +150,7 @@ class TestPositiveSuccessPath:
         )
         rt._config_path = str(cfg_path)
 
-        rt._build_environment_router()
+        build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         token = rt.config.environments.sandbox.agent.token
         assert len(token) == 64
@@ -169,14 +170,14 @@ class TestPositiveSuccessPath:
         )
         rt._config_path = str(cfg_path)
 
-        rt._build_environment_router()
+        build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         err = capsys.readouterr().err.lower()
         assert "token" in err
 
     def test_idempotent_existing_token_unchanged(self, tmp_path):
         """If agent.token is already 'preexisting', calling
-        _build_environment_router() must NOT replace it with a new
+        build_environment_router() must NOT replace it with a new
         token — idempotency invariant."""
         cfg_path = tmp_path / "config.yaml"
         cfg_path.write_text(
@@ -197,7 +198,7 @@ class TestPositiveSuccessPath:
         )
         rt._config_path = str(cfg_path)
 
-        rt._build_environment_router()
+        build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         assert rt.config.environments.sandbox.agent.token == "preexisting"
 
@@ -223,7 +224,7 @@ class TestPositiveSuccessPath:
         )
         rt._config_path = str(cfg_path)
 
-        router = rt._build_environment_router()
+        router = build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         assert "sandbox" in router.env_names()
 
@@ -248,7 +249,7 @@ class TestPositiveSuccessPath:
         )
         rt._config_path = str(cfg_path)
 
-        rt._build_environment_router()
+        build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         # On-disk token must still be "preexisting"
         on_disk = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
@@ -270,7 +271,7 @@ class TestBoundaryAndNegative:
         # Confirm no sandbox block is present (default)
         assert rt.config.environments.sandbox is None
 
-        router = rt._build_environment_router()
+        router = build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         assert router.env_names() == ["local"]
 
@@ -278,7 +279,7 @@ class TestBoundaryAndNegative:
         """Without an environments.sandbox block, config.environments.sandbox
         must remain None after the router is built — nothing is injected."""
         rt = _make_runtime()
-        rt._build_environment_router()
+        build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
         assert rt.config.environments.sandbox is None
 
     def test_partial_block_guest_os_only_sandbox_disabled(self, capsys):
@@ -291,7 +292,7 @@ class TestBoundaryAndNegative:
             # agent defaults: url="http://10.0.2.10:8765", token=""
         )
         # No config_path → graceful-skip path (also tests partial independently)
-        router = rt._build_environment_router()
+        router = build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         assert router.env_names() == ["local"]
 
@@ -308,7 +309,7 @@ class TestBoundaryAndNegative:
         )
         rt._config_path = str(cfg_path)
 
-        router = rt._build_environment_router()
+        router = build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         assert router.env_names() == ["local"]
         # In-memory token stays empty — was not generated
@@ -327,7 +328,7 @@ class TestBoundaryAndNegative:
         )
         rt._config_path = str(cfg_path)
 
-        rt._build_environment_router()
+        build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         err = capsys.readouterr().err.lower()
         # The warning must reference either "agent", "url", or "sandbox"
@@ -343,7 +344,7 @@ class TestBoundaryAndNegative:
         )
         # _config_path is already None from build_runtime_with_fakes
 
-        router = rt._build_environment_router()
+        router = build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         assert router.env_names() == ["local"]
 
@@ -357,7 +358,7 @@ class TestBoundaryAndNegative:
         )
 
         # Must not raise
-        rt._build_environment_router()
+        build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
     def test_config_path_none_warning_mentions_token(self, capsys):
         """The graceful-skip stderr warning must contain 'token' so that
@@ -369,7 +370,7 @@ class TestBoundaryAndNegative:
             agent=SandboxAgentSection(url="http://10.0.2.10:8765", token=""),
         )
 
-        rt._build_environment_router()
+        build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         err = capsys.readouterr().err.lower()
         assert "token" in err
@@ -383,7 +384,7 @@ class TestBoundaryAndNegative:
             agent=SandboxAgentSection(url="http://10.0.2.10:8765", token=""),
         )
 
-        rt._build_environment_router()
+        build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         assert rt.config.environments.sandbox.agent.token == ""
 
@@ -400,7 +401,7 @@ class TestBoundaryAndNegative:
         )
         rt._config_path = str(cfg_path)
 
-        router = rt._build_environment_router()
+        router = build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         assert router.env_names() == ["local"]
 
@@ -417,7 +418,7 @@ class TestStatePersistence:
         """After a successful auto-gen+write, simulate a next startup:
         1. Read the written config.yaml to obtain the persisted token.
         2. Build a fresh runtime with that token already set.
-        3. Call _build_environment_router() — sandbox must be registered
+        3. Call build_environment_router() — sandbox must be registered
            and the token must be UNCHANGED (no second generation)."""
         cfg_path = tmp_path / "config.yaml"
         _write_minimal_sandbox_yaml(cfg_path)
@@ -429,7 +430,7 @@ class TestStatePersistence:
             agent=SandboxAgentSection(url="http://10.0.2.10:8765", token=""),
         )
         rt1._config_path = str(cfg_path)
-        rt1._build_environment_router()
+        build_environment_router(rt1.config, config_path=rt1._config_path, log_warn=rt1.log.hb_warn)
         written_token = rt1.config.environments.sandbox.agent.token
 
         # --- Second startup (read written token) ---
@@ -446,7 +447,7 @@ class TestStatePersistence:
         )
         rt2._config_path = str(cfg_path)
 
-        router2 = rt2._build_environment_router()
+        router2 = build_environment_router(rt2.config, config_path=rt2._config_path, log_warn=rt2.log.hb_warn)
 
         assert "sandbox" in router2.env_names()
         assert rt2.config.environments.sandbox.agent.token == persisted_token
@@ -466,7 +467,7 @@ class TestStatePersistence:
             agent=SandboxAgentSection(url="http://10.0.2.10:8765", token=""),
         )
         rt1._config_path = str(cfg_path)
-        rt1._build_environment_router()
+        build_environment_router(rt1.config, config_path=rt1._config_path, log_warn=rt1.log.hb_warn)
         first_token = rt1.config.environments.sandbox.agent.token
 
         # Second startup
@@ -478,7 +479,7 @@ class TestStatePersistence:
             ),
         )
         rt2._config_path = str(cfg_path)
-        rt2._build_environment_router()
+        build_environment_router(rt2.config, config_path=rt2._config_path, log_warn=rt2.log.hb_warn)
 
         on_disk_after = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
         on_disk_token = on_disk_after["environments"]["sandbox"]["agent"]["token"]
@@ -497,7 +498,7 @@ class TestStatePersistence:
             agent=SandboxAgentSection(url="http://10.0.2.10:8765", token=""),
         )
         rt._config_path = str(cfg_path)
-        rt._build_environment_router()
+        build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         on_disk = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
         token = on_disk["environments"]["sandbox"]["agent"]["token"]
@@ -515,7 +516,7 @@ class TestWriteFailureGracefulSkip:
 
     def test_nonexistent_dir_no_crash(self, tmp_path, capsys):
         """Writing to a path inside a non-existent directory raises
-        FileNotFoundError. _build_environment_router() must catch it and
+        FileNotFoundError. build_environment_router() must catch it and
         return normally — no exception propagates to the caller."""
         bad_path = tmp_path / "nope" / "config.yaml"
         # Intentionally do NOT create tmp_path/nope/
@@ -528,7 +529,7 @@ class TestWriteFailureGracefulSkip:
         rt._config_path = str(bad_path)
 
         # Must not raise
-        rt._build_environment_router()
+        build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
     def test_nonexistent_dir_sandbox_disabled(self, tmp_path):
         """When the write fails because the parent directory does not
@@ -542,12 +543,12 @@ class TestWriteFailureGracefulSkip:
         )
         rt._config_path = str(bad_path)
 
-        router = rt._build_environment_router()
+        router = build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         assert router.env_names() == ["local"]
 
     def test_nonexistent_dir_returns_router(self, tmp_path):
-        """_build_environment_router() must return a router object even
+        """build_environment_router() must return a router object even
         when the token write fails — callers must not receive None."""
         bad_path = tmp_path / "nope" / "config.yaml"
 
@@ -558,7 +559,7 @@ class TestWriteFailureGracefulSkip:
         )
         rt._config_path = str(bad_path)
 
-        router = rt._build_environment_router()
+        router = build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         assert router is not None
 
@@ -581,7 +582,7 @@ class TestWriteFailureGracefulSkip:
         )
         rt._config_path = str(cfg_path)
 
-        router = rt._build_environment_router()
+        router = build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         assert router.env_names() == ["local"]
 
@@ -597,7 +598,7 @@ class TestWriteFailureGracefulSkip:
         )
         rt._config_path = str(bad_path)
 
-        rt._build_environment_router()
+        build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
         err = capsys.readouterr().err.lower()
         assert "token" in err
@@ -619,7 +620,7 @@ class TestWriteFailureGracefulSkip:
             agent=SandboxAgentSection(url="http://10.0.2.10:8765", token=""),
         )
         rt_a._config_path = str(cfg_path_a)
-        rt_a._build_environment_router()
+        build_environment_router(rt_a.config, config_path=rt_a._config_path, log_warn=rt_a.log.hb_warn)
         token_a = rt_a.config.environments.sandbox.agent.token
 
         rt_b = _make_runtime()
@@ -628,7 +629,7 @@ class TestWriteFailureGracefulSkip:
             agent=SandboxAgentSection(url="http://10.0.2.10:8765", token=""),
         )
         rt_b._config_path = str(cfg_path_b)
-        rt_b._build_environment_router()
+        build_environment_router(rt_b.config, config_path=rt_b._config_path, log_warn=rt_b.log.hb_warn)
         token_b = rt_b.config.environments.sandbox.agent.token
 
         assert token_a != token_b
