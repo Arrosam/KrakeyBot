@@ -142,18 +142,22 @@ def build_channel(ctx: "PluginContext"):
 
 
 def build_tool(ctx: "PluginContext"):
-    """Reply tool — shares the ``WebChatHistory`` the sibling channel
-    factory built. If the channel didn't run (disabled in central
-    config, or load order shuffled), build a fresh ``WebChatHistory``
-    pointed at the same JSONL: the file is the single source of
-    truth, so a second instance reading it stays consistent. Cache
-    it so a later channel-factory call sees the same instance.
+    """Reply tool + mark-read tool — share the ``WebChatHistory`` the
+    sibling channel factory built. If the channel didn't run (disabled
+    in central config, or load order shuffled), build a fresh
+    ``WebChatHistory`` pointed at the same JSONL: the file is the
+    single source of truth, so a second instance reading it stays
+    consistent. Cache it so a later channel-factory call sees the same
+    instance.
+
+    Returns a list of tools; the runtime loader registers each element
+    independently.
 
     Per CLAUDE.md the runtime must keep working with any plugin /
     component disabled — this branch is the additive-fallback for
     "channel disabled but tool enabled".
     """
-    from krakey.plugins.dashboard.tool import WebChatReplyTool
+    from krakey.plugins.dashboard.tool import WebChatReplyTool, WebChatMarkReadTool
     from krakey.plugins.dashboard.web_chat.history import WebChatHistory
 
     history = ctx.plugin_cache.get(_HISTORY_CACHE_KEY)
@@ -164,7 +168,14 @@ def build_tool(ctx: "PluginContext"):
         )
         history = WebChatHistory(history_path)
         ctx.plugin_cache[_HISTORY_CACHE_KEY] = history
-    return WebChatReplyTool(history=history)
+
+    runtime = ctx.services.get("runtime")
+    events = runtime.events if runtime is not None else ctx.services.get("events")
+
+    return [
+        WebChatReplyTool(history=history),
+        WebChatMarkReadTool(history=history, events=events),
+    ]
 
 
 def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None:
@@ -230,6 +241,8 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
     try:
         broadcaster = EventBroadcaster(runtime.events)
         runtime.events.subscribe(make_stimulus_read_handler(history))
+        from krakey.plugins.dashboard.web_chat.reminders import make_heartbeat_reminder_handler
+        runtime.events.subscribe(make_heartbeat_reminder_handler(history, channel.push_reminder))
         app = create_dashboard_app(
             runtime=runtime,
             web_chat_history=history,

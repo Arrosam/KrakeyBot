@@ -123,7 +123,6 @@ class WebChatChannel(Channel):
             timestamp=datetime.now(),
             adrenalin=True,
             metadata=md,
-            chat_message_id=message_id,
         )
 
         try:
@@ -138,3 +137,20 @@ class WebChatChannel(Channel):
             )
             await asyncio.wrap_future(fut)
         return True
+
+    async def push_reminder(self, stim) -> None:
+        """Push a pre-built Stimulus directly (used by the unread-reminder subscription). No-op if offline."""
+        if self._push is None or self._runtime_loop is None:
+            return
+
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
+        if current is self._runtime_loop:
+            await self._push(stim)
+        else:
+            fut = asyncio.run_coroutine_threadsafe(
+                self._push(stim), self._runtime_loop,
+            )
+            await asyncio.wrap_future(fut)
