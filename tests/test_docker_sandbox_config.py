@@ -11,11 +11,13 @@ code degrades).
 """
 from __future__ import annotations
 
+import yaml
 import pytest
 
 from krakey.models.config import (
     SandboxEnvironmentConfig,
     DockerSandboxSection,
+    load_config,
 )
 from krakey.models.config.environments import _build_sandbox_env
 
@@ -149,3 +151,46 @@ class TestNegative:
         assert isinstance(sb.docker, DockerSandboxSection)
         assert sb.docker.image == ""
         assert sb.docker.host_port == 18765
+
+
+# ---------------------------------------------------------------------------
+# 6. End-to-end — a docker-provider config.yaml (the shape the dashboard
+#    produces) round-trips through load_config into a Docker sandbox env.
+# ---------------------------------------------------------------------------
+
+class TestEndToEnd:
+    def test_docker_config_yaml_round_trips_through_load_config(self, tmp_path):
+        from krakey.environment import build_environment_router
+        from krakey.environment.sandbox import DockerSandboxEnvironment
+
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text(yaml.safe_dump({
+            "environments": {
+                "sandbox": {
+                    "allowed_plugins": ["coding"],
+                    "guest_os": "linux",
+                    "provider": "docker",
+                    "agent": {
+                        "url": "http://127.0.0.1:18765",
+                        "token": "tok",
+                    },
+                    "docker": {
+                        "image": "krakey/sandbox:latest",
+                        "container_name": "box",
+                        "host_port": 18765,
+                        "host_bind_dirs": ["/host:/guest"],
+                        "auto_start": False,
+                        "wait_seconds": 15.0,
+                    },
+                },
+            },
+        }), encoding="utf-8")
+
+        cfg = load_config(cfg_path)
+        sb = cfg.environments.sandbox
+        assert sb.provider == "docker"
+        assert sb.docker.image == "krakey/sandbox:latest"
+        assert sb.docker.host_bind_dirs == ["/host:/guest"]
+
+        router = build_environment_router(cfg, config_path=str(cfg_path))
+        assert isinstance(router._envs["sandbox"], DockerSandboxEnvironment)
