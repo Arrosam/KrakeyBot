@@ -235,3 +235,69 @@ class TestNegative:
         with caplog.at_level(logging.WARNING):
             router = build_environment_router(cfg)  # no log_warn, no config_path
         assert router.env_names() == ["local"]
+
+
+# ---------------------------------------------------------------------------
+# 5. Phase D — provider dispatch
+# ---------------------------------------------------------------------------
+
+class TestProviderDispatch:
+    def _complete_sandbox(self, provider, **docker_kw):
+        from krakey.models.config import DockerSandboxSection
+        cfg = _cfg()
+        cfg.environments.sandbox = SandboxEnvironmentConfig(
+            allowed_plugins=["coding"],
+            guest_os="linux",
+            provider=provider,
+            agent=SandboxAgentSection(url="http://10.0.2.10:8765", token="tok"),
+            docker=DockerSandboxSection(**docker_kw) if docker_kw else DockerSandboxSection(),
+        )
+        return cfg
+
+    def test_default_provider_builds_qemu_sandbox(self):
+        from krakey.environment.sandbox import SandboxEnvironment
+        cfg = self._complete_sandbox("qemu")
+        router = build_environment_router(cfg)
+        assert isinstance(router._envs["sandbox"], SandboxEnvironment)
+
+    def test_docker_provider_builds_docker_sandbox(self):
+        from krakey.environment.sandbox import DockerSandboxEnvironment
+        cfg = self._complete_sandbox("docker", image="ubuntu:22.04")
+        router = build_environment_router(cfg)
+        assert isinstance(router._envs["sandbox"], DockerSandboxEnvironment)
+
+    def test_docker_fields_flow_into_env(self):
+        cfg = self._complete_sandbox(
+            "docker", image="ubuntu:22.04", container_name="box",
+            host_port=9000,
+        )
+        router = build_environment_router(cfg)
+        env = router._envs["sandbox"]
+        assert env._cfg.image == "ubuntu:22.04"
+        assert env._cfg.container_name == "box"
+        assert env._cfg.host_port == 9000
+
+    def test_docker_allow_list_flows_through(self):
+        cfg = self._complete_sandbox("docker", image="ubuntu:22.04")
+        router = build_environment_router(cfg)
+        assert router.for_plugin("coding", "sandbox") is router._envs["sandbox"]
+
+    def test_provider_case_insensitive(self):
+        from krakey.environment.sandbox import DockerSandboxEnvironment
+        cfg = self._complete_sandbox("Docker", image="ubuntu:22.04")
+        router = build_environment_router(cfg)
+        assert isinstance(router._envs["sandbox"], DockerSandboxEnvironment)
+
+    def test_unknown_provider_disables_sandbox(self):
+        cfg = self._complete_sandbox("banana")
+        router = build_environment_router(cfg)
+        assert "sandbox" not in router.env_names()
+        assert router.env_status()["sandbox"][0] == "unconfigured"
+        assert "banana" in router.env_status()["sandbox"][1]
+
+    def test_virtualbox_utm_still_use_qemu_sandbox(self):
+        from krakey.environment.sandbox import SandboxEnvironment
+        for prov in ("virtualbox", "utm"):
+            cfg = self._complete_sandbox(prov)
+            router = build_environment_router(cfg)
+            assert isinstance(router._envs["sandbox"], SandboxEnvironment), prov
