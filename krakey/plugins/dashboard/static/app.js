@@ -2013,6 +2013,14 @@ const SANDBOX_DEFAULTS = {
   display: "headed",
   resources: { cpu: 2, memory_mb: 4096, disk_gb: 40 },
   agent: { url: "http://10.0.2.10:8765", token: "" },
+  docker: {
+    image: "",
+    container_name: "krakey-sandbox",
+    host_port: 18765,
+    host_bind_dirs: [],
+    auto_start: false,
+    wait_seconds: 30.0,
+  },
   network_mode: "nat_allowlist",
   allowlist_domains: [],
 };
@@ -2060,8 +2068,14 @@ const HELP = {
   "environments.local.allowed_plugins": "Plugins permitted to use the always-on Local execution env (host-process access). Empty = no plugin can run on the host.",
   "environments.sandbox.allowed_plugins": "Plugins permitted to use the Sandbox VM env. Empty = sandbox VM is registered but no plugin can drive it.",
   "environments.sandbox.guest_os": "Sandbox guest OS: linux / macos / windows. Required when the sandbox env is enabled.",
-  "environments.sandbox.provider": "VM manager: qemu (recommended) / virtualbox / utm.",
+  "environments.sandbox.provider": "Sandbox backend: qemu / virtualbox / utm (VM) or docker (container). Switches the field set below.",
   "environments.sandbox.vm_name": "VM instance name (must be pre-provisioned).",
+  "environments.sandbox.docker.image": "Docker image for the sandbox container (e.g. krakey/sandbox:latest). The image must run the guest agent on port 8765.",
+  "environments.sandbox.docker.container_name": "Pinned container name — re-runs reuse it instead of launching duplicates.",
+  "environments.sandbox.docker.host_port": "Host port mapped to the container's agent port 8765 (docker run -p <host_port>:8765).",
+  "environments.sandbox.docker.host_bind_dirs": "Bind mounts, verbatim docker -v strings, e.g. /host/path:/guest/path or /host:/guest:ro. One per line.",
+  "environments.sandbox.docker.auto_start": "When on, Krakey runs the container at startup if the agent port isn't already up (best-effort; needs Docker running).",
+  "environments.sandbox.docker.wait_seconds": "After docker run, how long to wait for the agent port before giving up (sandbox then disables gracefully).",
   "environments.sandbox.display": "headed = VM desktop shown in a window so you can watch / intervene; headless = VM hidden, only the agent interacts. Choose by your usage preference.",
   "environments.sandbox.resources.cpu": "vCPU count assigned to the VM.",
   "environments.sandbox.resources.memory_mb": "RAM (MB) assigned to the VM.",
@@ -2147,12 +2161,23 @@ const SCHEMAS = {
   // Schemas under `environments.sandbox.*`. The top-level sandbox
   // section is gone in the runtime (rewrites to environments.sandbox),
   // so the dashboard's sandbox UI is now a sub-block of Environments.
-  env_sandbox_scalars: [
+  // guest_os + agent apply to BOTH providers; provider itself is
+  // rendered explicitly (strict <select> with re-render on change).
+  // The remaining scalars are QEMU-only and hidden when provider=docker.
+  env_sandbox_common_scalars: [
     ["guest_os",     "combo", ["linux", "macos", "windows"]],
-    ["provider",     "combo", ["qemu", "virtualbox", "utm"]],
+  ],
+  env_sandbox_qemu_scalars: [
     ["vm_name",      "text"],
     ["display",      "combo", ["headed", "headless"]],
     ["network_mode", "combo", ["nat_allowlist", "host_only", "isolated"]],
+  ],
+  env_sandbox_docker: [
+    ["image",          "text"],
+    ["container_name", "text"],
+    ["host_port",      "number"],
+    ["auto_start",     "bool"],
+    ["wait_seconds",   "number"],
   ],
   env_sandbox_resources: [
     ["cpu", "number"],
@@ -3391,6 +3416,7 @@ function renderEnvironmentsSection(envs) {
         ...SANDBOX_DEFAULTS,
         resources: { ...SANDBOX_DEFAULTS.resources },
         agent: { ...SANDBOX_DEFAULTS.agent },
+        docker: { ...SANDBOX_DEFAULTS.docker, host_bind_dirs: [] },
         allowed_plugins: [],
         allowlist_domains: [],
       };
@@ -3406,6 +3432,10 @@ function renderEnvironmentsSection(envs) {
     const sb = envs.sandbox;
     if (!sb.resources) sb.resources = { ...SANDBOX_DEFAULTS.resources };
     if (!sb.agent) sb.agent = { ...SANDBOX_DEFAULTS.agent };
+    if (!sb.docker || typeof sb.docker !== "object") {
+      sb.docker = { ...SANDBOX_DEFAULTS.docker, host_bind_dirs: [] };
+    }
+    if (!Array.isArray(sb.docker.host_bind_dirs)) sb.docker.host_bind_dirs = [];
     if (!Array.isArray(sb.allowed_plugins)) sb.allowed_plugins = [];
     if (!Array.isArray(sb.allowlist_domains)) sb.allowlist_domains = [];
 
@@ -3417,35 +3447,94 @@ function renderEnvironmentsSection(envs) {
         suggestions: pluginSuggestions,
       },
     ));
-    for (const [f, t, choices] of SCHEMAS.env_sandbox_scalars) {
-      if (t === "combo") {
-        sbBlock.appendChild(renderComboRow(
-          f, sb, f, choices, `environments.sandbox.${f}`,
-        ));
-      } else {
-        sbBlock.appendChild(renderRow(
-          f, sb, f, t, `environments.sandbox.${f}`,
-        ));
-      }
-    }
-    sbBlock.appendChild(_renderListRow(
-      "allowlist_domains", sb.allowlist_domains,
-      "environments.sandbox.allowlist_domains",
-      { placeholder: "domain + Enter" },
-    ));
 
-    const resBlock = document.createElement("div");
-    resBlock.className = "subblock";
-    const resH = document.createElement("h4");
-    resH.textContent = "resources";
-    resBlock.appendChild(resH);
-    for (const [f, t] of SCHEMAS.env_sandbox_resources) {
-      resBlock.appendChild(renderRow(
-        f, sb.resources, f, t, `environments.sandbox.resources.${f}`,
+    // Fields shared by every provider (guest_os).
+    for (const [f, t, choices] of SCHEMAS.env_sandbox_common_scalars) {
+      sbBlock.appendChild(renderComboRow(
+        f, sb, f, choices, `environments.sandbox.${f}`,
       ));
     }
-    sbBlock.appendChild(resBlock);
 
+    // Provider selector — strict <select> so we can re-render the
+    // field set on change (docker vs VM fields are mutually exclusive).
+    const provChoices = ["qemu", "virtualbox", "utm", "docker"];
+    const provRow = document.createElement("div");
+    provRow.className = "cfg-row";
+    const provLab = document.createElement("label");
+    provLab.textContent = "provider";
+    if (tHelp("environments.sandbox.provider")) {
+      provLab.title = tHelp("environments.sandbox.provider");
+    }
+    provRow.appendChild(provLab);
+    const provSel = document.createElement("select");
+    for (const c of provChoices) {
+      const opt = document.createElement("option");
+      opt.value = c;
+      opt.textContent = c;
+      provSel.appendChild(opt);
+    }
+    provSel.value = provChoices.includes(sb.provider) ? sb.provider : "qemu";
+    provSel.addEventListener("change", () => {
+      sb.provider = provSel.value;
+      renderSettingsForm();   // swap the field set
+    });
+    provRow.appendChild(provSel);
+    sbBlock.appendChild(provRow);
+
+    const isDocker = (sb.provider || "").toLowerCase() === "docker";
+
+    if (isDocker) {
+      // Docker field set. agent (url/token) still applies — the guest
+      // agent runs in the container, reached at the host-mapped port.
+      const dockerBlock = document.createElement("div");
+      dockerBlock.className = "subblock";
+      const dH = document.createElement("h4");
+      dH.textContent = "docker";
+      dockerBlock.appendChild(dH);
+      for (const [f, t] of SCHEMAS.env_sandbox_docker) {
+        dockerBlock.appendChild(renderRow(
+          f, sb.docker, f, t, `environments.sandbox.docker.${f}`,
+        ));
+      }
+      dockerBlock.appendChild(_renderListRow(
+        "host_bind_dirs", sb.docker.host_bind_dirs,
+        "environments.sandbox.docker.host_bind_dirs",
+        { placeholder: "/host/path:/guest/path + Enter" },
+      ));
+      sbBlock.appendChild(dockerBlock);
+    } else {
+      // QEMU / virtualbox / utm field set.
+      for (const [f, t, choices] of SCHEMAS.env_sandbox_qemu_scalars) {
+        if (t === "combo") {
+          sbBlock.appendChild(renderComboRow(
+            f, sb, f, choices, `environments.sandbox.${f}`,
+          ));
+        } else {
+          sbBlock.appendChild(renderRow(
+            f, sb, f, t, `environments.sandbox.${f}`,
+          ));
+        }
+      }
+      sbBlock.appendChild(_renderListRow(
+        "allowlist_domains", sb.allowlist_domains,
+        "environments.sandbox.allowlist_domains",
+        { placeholder: "domain + Enter" },
+      ));
+
+      const resBlock = document.createElement("div");
+      resBlock.className = "subblock";
+      const resH = document.createElement("h4");
+      resH.textContent = "resources";
+      resBlock.appendChild(resH);
+      for (const [f, t] of SCHEMAS.env_sandbox_resources) {
+        resBlock.appendChild(renderRow(
+          f, sb.resources, f, t, `environments.sandbox.resources.${f}`,
+        ));
+      }
+      sbBlock.appendChild(resBlock);
+    }
+
+    // agent sub-block — shared by both providers, rendered last.
     const agentBlock = document.createElement("div");
     agentBlock.className = "subblock";
     const agH = document.createElement("h4");
@@ -4994,6 +5083,18 @@ function backfillDefaults(state) {
         const cur = sb.agent[field];
         if (cur == null || cur === "") {
           sb.agent[field] = dflt;
+        }
+      }
+    }
+    // docker sub-object — scalar fields only (image default is ""; the
+    // host_bind_dirs list + auto_start=false are left as-is so an
+    // explicit false is never stomped).
+    if (sb.docker && typeof sb.docker === "object") {
+      for (const [field, dflt] of Object.entries(SANDBOX_DEFAULTS.docker)) {
+        if (dflt === null || dflt === "" || Array.isArray(dflt) || typeof dflt === "object") continue;
+        const cur = sb.docker[field];
+        if (cur == null || cur === "") {
+          sb.docker[field] = dflt;
         }
       }
     }
