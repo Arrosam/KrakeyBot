@@ -24,7 +24,10 @@ import yaml
 
 from krakey.environment.local import LocalEnvironment
 from krakey.environment.router import EnvironmentRouter
-from krakey.environment.sandbox import SandboxConfig, SandboxEnvironment
+from krakey.environment.sandbox import (
+    SandboxConfig, SandboxEnvironment,
+    DockerSandboxConfig, DockerSandboxEnvironment,
+)
 from krakey.interfaces.environment import Environment
 from krakey.models.config import Config
 
@@ -66,6 +69,7 @@ def build_environment_router(
         "local": list(envs_cfg.local.allowed_plugins),
     }
     sb = envs_cfg.sandbox
+    unknown_provider: str | None = None
     if sb is not None:
         missing: list[str] = []
         if not sb.guest_os:
@@ -114,12 +118,38 @@ def build_environment_router(
                 "enable it, or remove the section to silence this."
             )
         else:
-            envs["sandbox"] = SandboxEnvironment(SandboxConfig(
-                agent_url=sb.agent.url,
-                agent_token=sb.agent.token,
-                guest_os=sb.guest_os,
-            ))
-            allow_list["sandbox"] = list(sb.allowed_plugins)
+            # Provider dispatch (Phase D). The agent wire protocol is
+            # provider-agnostic; only the host transport differs.
+            provider = (sb.provider or "qemu").lower().strip()
+            if provider == "docker":
+                envs["sandbox"] = DockerSandboxEnvironment(DockerSandboxConfig(
+                    agent_url=sb.agent.url,
+                    agent_token=sb.agent.token,
+                    guest_os=sb.guest_os,
+                    image=sb.docker.image,
+                    container_name=sb.docker.container_name,
+                    host_port=sb.docker.host_port,
+                    host_bind_dirs=list(sb.docker.host_bind_dirs),
+                    auto_start=sb.docker.auto_start,
+                    wait_seconds=sb.docker.wait_seconds,
+                ))
+                allow_list["sandbox"] = list(sb.allowed_plugins)
+            elif provider in ("qemu", "virtualbox", "utm", ""):
+                envs["sandbox"] = SandboxEnvironment(SandboxConfig(
+                    agent_url=sb.agent.url,
+                    agent_token=sb.agent.token,
+                    guest_os=sb.guest_os,
+                ))
+                allow_list["sandbox"] = list(sb.allowed_plugins)
+            else:
+                # Unknown provider: leave the sandbox unregistered and
+                # mark it after the Router is built (record_status needs
+                # the Router). Never raise — startup must not block.
+                unknown_provider = provider
+                _warn(
+                    f"sandbox: unknown provider={provider!r}; expected "
+                    "'qemu' or 'docker'. Sandbox environment disabled."
+                )
     router = EnvironmentRouter(envs=envs, allow_list=allow_list)
     # Seed the diagnostic side-table BEFORE preflight runs so the
     # dashboard / Self's tool feedback can distinguish "unconfigured"
@@ -133,6 +163,11 @@ def build_environment_router(
         router.record_status(
             "sandbox", "unconfigured",
             "missing fields: " + ", ".join(missing),
+        )
+    elif unknown_provider is not None:
+        router.record_status(
+            "sandbox", "unconfigured",
+            f"unknown provider: {unknown_provider!r}",
         )
     return router
 
