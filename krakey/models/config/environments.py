@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from krakey.models.config.infra import (
-    SandboxAgentSection, SandboxResourcesSection,
+    SandboxAgentSection, SandboxResourcesSection, DockerSandboxSection,
 )
 
 
@@ -57,6 +57,9 @@ class SandboxEnvironmentConfig:
         default_factory=SandboxResourcesSection
     )
     agent: SandboxAgentSection = field(default_factory=SandboxAgentSection)
+    # Docker-provider-specific fields (Phase D). Always present on the
+    # dataclass; only authoritative when ``provider == "docker"``.
+    docker: DockerSandboxSection = field(default_factory=DockerSandboxSection)
     # Network model documentation only; enforced in the VM
     # provisioning, not by this config.
     network_mode: str = "nat_allowlist"
@@ -142,6 +145,9 @@ def _build_sandbox_env(raw: dict[str, Any]) -> SandboxEnvironmentConfig:
     agent_raw = _coerce_mapping(
         raw.get("agent"), "environments.sandbox.agent",
     )
+    docker_raw = _coerce_mapping(
+        raw.get("docker"), "environments.sandbox.docker",
+    )
     display = str(raw.get("display", d.display)).lower()
     if display not in ("headed", "headless"):
         print(
@@ -167,6 +173,20 @@ def _build_sandbox_env(raw: dict[str, Any]) -> SandboxEnvironmentConfig:
         agent=SandboxAgentSection(
             url=str(agent_raw.get("url", d.agent.url)),
             token=str(agent_raw.get("token", d.agent.token)),
+        ),
+        docker=DockerSandboxSection(
+            image=str(docker_raw.get("image", d.docker.image)),
+            container_name=str(
+                docker_raw.get("container_name", d.docker.container_name)
+            ),
+            host_port=int(docker_raw.get("host_port", d.docker.host_port)),
+            host_bind_dirs=list(
+                docker_raw.get("host_bind_dirs") or d.docker.host_bind_dirs
+            ),
+            auto_start=bool(docker_raw.get("auto_start", d.docker.auto_start)),
+            wait_seconds=float(
+                docker_raw.get("wait_seconds", d.docker.wait_seconds)
+            ),
         ),
         network_mode=str(raw.get("network_mode", d.network_mode)),
         allowlist_domains=list(

@@ -51,6 +51,7 @@ from krakey.models.config.environments import (  # noqa: F401
 from krakey.models.config.infra import (  # noqa: F401
     SandboxAgentSection,
     SandboxResourcesSection,
+    DockerSandboxSection,
 )
 from krakey.models.config.llm import (  # noqa: F401
     LLMParams,
