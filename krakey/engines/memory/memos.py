@@ -505,6 +505,85 @@ class MemOSMemoryEngine:
     async def close_all_kbs(self) -> None:
         self._kb_registry.clear()
 
+    # ---- MemoryEngine Protocol methods (new minimal-surface API) ----------
+
+    async def ingest(
+        self,
+        content: str,
+        *,
+        source_heartbeat: int | None = None,
+    ) -> dict[str, Any]:
+        """Passive, low-cost store. Delegates to ``auto_ingest``."""
+        return await self.auto_ingest(content, source_heartbeat=source_heartbeat)
+
+    async def remember(
+        self,
+        content: str,
+        *,
+        importance: str = "normal",
+        recall_context: list[dict[str, Any]] | None = None,
+        source_heartbeat: int | None = None,
+    ) -> dict[str, Any]:
+        """Deliberate store. Delegates to ``explicit_write``."""
+        return await self.explicit_write(
+            content,
+            importance=importance,
+            recall_context=recall_context,
+            source_heartbeat=source_heartbeat,
+        )
+
+    async def remember_extraction(
+        self,
+        nodes: list[dict[str, Any]],
+        edges: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Bulk store of already-distilled structure. MemOS has no edge
+        concept — nodes are stored via ``auto_ingest``; edges are ignored.
+        Returns ``{"nodes_written": <int>, "edges_written": 0}``."""
+        nodes_written = 0
+        for node in nodes:
+            try:
+                text = node.get("description") or node.get("name", "")
+                if not text:
+                    continue
+                await self.auto_ingest(text)
+                nodes_written += 1
+            except Exception:
+                continue
+        return {"nodes_written": nodes_written, "edges_written": 0}
+
+    async def search(
+        self,
+        query: str,
+        *,
+        top_k: int = 8,
+        min_similarity: float = 0.3,
+    ) -> list[tuple[dict[str, Any], float]]:
+        """Text-retrieval search via ``fts_search``. MemOS has no vector
+        cosine; all scores are ``0.0``. ``top_k=0`` returns ``[]``."""
+        if top_k == 0:
+            return []
+        hits = await self.fts_search(query, top_k=top_k)
+        return [(n, 0.0) for n in hits]
+
+    async def recall_context(
+        self,
+        node_ids: list[int],
+    ) -> dict[str, Any]:
+        """MemOS has no graph — returns empty enrichment."""
+        return {"neighbor_keywords": {}, "edges": []}
+
+    async def recall_kb(
+        self,
+        kb_id: str,
+        query: str,
+        *,
+        top_k: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Recall from a named KB. Raises ``KeyError`` for unknown KBs."""
+        kb = await self.open_kb(kb_id)
+        return await kb.search(query, top_k=top_k)
+
     async def sleep_cycle(
         self,
         *,

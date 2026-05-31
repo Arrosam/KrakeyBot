@@ -131,6 +131,155 @@ class GraphMemoryEngine(GraphMemory):
         if self._kb_registry is not None:
             await self._kb_registry.close_all()
 
+    # ---- MemoryEngine Protocol methods (new minimal-surface API) ----------
+
+    async def ingest(
+        self,
+        content: str,
+        *,
+        source_heartbeat: int | None = None,
+    ) -> dict:
+        """Passive, low-cost store. Delegates to ``auto_ingest``."""
+        return await self.auto_ingest(content, source_heartbeat=source_heartbeat)
+
+    async def remember(
+        self,
+        content: str,
+        *,
+        importance: str = "normal",
+        recall_context: list[dict] | None = None,
+        source_heartbeat: int | None = None,
+    ) -> dict:
+        """Deliberate store with optional LLM extraction. Delegates to
+        ``explicit_write``."""
+        return await self.explicit_write(
+            content,
+            importance=importance,
+            recall_context=recall_context,
+            source_heartbeat=source_heartbeat,
+        )
+
+    async def remember_extraction(
+        self,
+        nodes: list[dict],
+        edges: list[dict],
+    ) -> dict:
+        """Bulk store of already-distilled structure (nodes + edges).
+
+        For each node dict ``{name, category, description, source_type?}``:
+        upserts via ``upsert_node``, building a name→id map. Malformed nodes
+        (missing name or category) are skipped silently.
+
+        For each edge dict ``{source_name, target_name, predicate}``:
+        resolves names through the map (fallback: ``find_by_name``); skips
+        if either endpoint is None or src == tgt; inserts via
+        ``insert_edge_with_cycle_check``.
+
+        Returns ``{"nodes_written": <int>, "edges_written": <int>}``.
+        """
+        name_to_id: dict[str, int] = {}
+        nodes_written = 0
+        for node in nodes:
+            try:
+                name = node.get("name")
+                category = node.get("category")
+                if not name or not category:
+                    continue
+                nid = await self.upsert_node({
+                    "name": name,
+                    "category": category,
+                    "description": node.get("description", ""),
+                    "source_type": node.get("source_type", "compact"),
+                })
+                name_to_id[name] = nid
+                nodes_written += 1
+            except Exception:
+                continue
+
+        edges_written = 0
+        for edge in edges:
+            try:
+                src_name = edge.get("source_name")
+                tgt_name = edge.get("target_name")
+                predicate = edge.get("predicate", "")
+                if not src_name or not tgt_name:
+                    continue
+
+                src = name_to_id.get(src_name)
+                if src is None:
+                    src = await self.find_by_name(src_name)
+                tgt = name_to_id.get(tgt_name)
+                if tgt is None:
+                    tgt = await self.find_by_name(tgt_name)
+
+                if src is None or tgt is None or src == tgt:
+                    continue
+                await self.insert_edge_with_cycle_check(src, tgt, predicate)
+                edges_written += 1
+            except Exception:
+                continue
+
+        return {"nodes_written": nodes_written, "edges_written": edges_written}
+
+    async def search(
+        self,
+        query: str,
+        *,
+        top_k: int = 8,
+        min_similarity: float = 0.3,
+    ) -> list[tuple[dict, float]]:
+        """Embed → vec_search with FTS fallback on embed failure or empty
+        result. If no embedder is configured, goes straight to FTS.
+        FTS hits receive score ``0.0``. ``top_k=0`` returns ``[]``."""
+        if top_k == 0:
+            return []
+
+        if self._embedder is None:
+            fts_hits = await self.fts_search(query, top_k=top_k)
+            return [(n, 0.0) for n in fts_hits]
+
+        candidates: list[tuple[dict, float]] = []
+        try:
+            vec = await self._embedder(query)
+            candidates = await self.vec_search(
+                vec, top_k=top_k, min_similarity=min_similarity,
+            )
+        except Exception:  # noqa: BLE001
+            candidates = []
+
+        if not candidates:
+            fts_hits = await self.fts_search(query, top_k=top_k)
+            candidates = [(n, 0.0) for n in fts_hits]
+
+        return candidates
+
+    async def recall_context(
+        self,
+        node_ids: list[int],
+    ) -> dict:
+        """Return recall-time enrichment for a set of node ids.
+
+        Returns ``{"neighbor_keywords": {…}, "edges": […]}``. Empty inputs
+        return empty enrichment without touching the DB."""
+        if not node_ids:
+            return {"neighbor_keywords": {}, "edges": []}
+        return {
+            "neighbor_keywords": await self.get_neighbor_keywords(node_ids),
+            "edges": await self.get_edges_among(node_ids),
+        }
+
+    async def recall_kb(
+        self,
+        kb_id: str,
+        query: str,
+        *,
+        top_k: int = 5,
+    ) -> list[dict]:
+        """Recall entries from a named knowledge base. Raises ``KeyError``
+        if the KB does not exist."""
+        kb = await self.open_kb(kb_id)
+        return await kb.search(query, top_k=top_k)
+
     # ---- sleep cycle ---------------------------------------------------
 
     async def sleep_cycle(
