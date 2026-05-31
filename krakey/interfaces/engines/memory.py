@@ -98,6 +98,13 @@ class MemoryEngine(Protocol):
     Engine that never sleeps), return empty data structures from the
     relevant calls — never raise NotImplementedError, since the
     heartbeat invokes them unconditionally.
+
+    **Forward-looking minimal surface** — the 6 methods below
+    (``ingest`` / ``remember`` / ``remember_extraction`` for storage;
+    ``search`` / ``recall_context`` / ``recall_kb`` for recall) are the
+    target interface that all external components should depend on going
+    forward. The legacy graph/KB/search/sleep methods above will become
+    engine-internal in a later change once consumers have migrated.
     """
 
     # ---- lifecycle ----
@@ -235,5 +242,105 @@ class MemoryEngine(Protocol):
         A custom Engine that doesn't implement consolidation should
         return ``{}`` rather than raise — the runtime treats absent
         keys as zero counts.
+        """
+        ...
+
+    # ---- forward-looking minimal surface: storage ----
+
+    async def ingest(
+        self,
+        content: str,
+        *,
+        source_heartbeat: int | None = None,
+    ) -> dict[str, Any]:
+        """Passive, low-cost store of incidental content (e.g. tool
+        feedback). The engine decides internally whether/how to dedup,
+        classify, and link — the caller has no control over that
+        pipeline. Returns a stats dict (keys are engine-defined; callers
+        must not branch logic on its contents beyond logging).
+        """
+        ...
+
+    async def remember(
+        self,
+        content: str,
+        *,
+        importance: str = "normal",
+        recall_context: list[dict[str, Any]] | None = None,
+        source_heartbeat: int | None = None,
+    ) -> dict[str, Any]:
+        """Deliberate store of content the agent explicitly chose to
+        remember. The engine may invoke an LLM internally to extract
+        structure. ``recall_context`` is optional surrounding context
+        (e.g. records from a prior ``search`` call) the engine may use
+        for dedup and linking — passing it is never required. Returns a
+        stats dict.
+        """
+        ...
+
+    async def remember_extraction(
+        self,
+        nodes: list[dict[str, Any]],
+        edges: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Bulk store of already-distilled structure, used by history
+        compaction. ``nodes`` is a list of dicts with keys
+        ``{name, category, description, source_type?}``; ``edges`` is a
+        list of dicts with keys ``{source_name, target_name, predicate}``.
+        The engine resolves names to internal ids and enforces its own
+        integrity rules (cycle checks, dedup) INTERNALLY — callers never
+        see node ids or edge primitives. Returns a stats dict such as
+        ``{"nodes_written": int, "edges_written": int}``.
+        """
+        ...
+
+    # ---- forward-looking minimal surface: recall ----
+
+    async def search(
+        self,
+        query: str,
+        *,
+        top_k: int = 8,
+        min_similarity: float = 0.3,
+    ) -> list[tuple[dict[str, Any], float]]:
+        """Return scored candidate memory records for a free-text query,
+        best first. The engine internally chooses its retrieval strategy
+        (vector search, full-text fallback, hybrid, …). Each element is
+        ``(record_dict, relevance_score)`` where the score is opaque and
+        higher means more relevant; an engine with no scoring notion
+        returns ``0.0`` for every record. An empty list is a valid result.
+        ``top_k=0`` always returns ``[]``.
+        """
+        ...
+
+    async def recall_context(
+        self,
+        node_ids: list[int],
+    ) -> dict[str, Any]:
+        """Given a list of record ids obtained from ``search``, return
+        recall-time enrichment:
+        ``{"neighbor_keywords": dict[int, list[str]], "edges": list[dict]}``.
+        ``neighbor_keywords`` maps each id to a list of related keyword
+        hints; ``edges`` lists relationships among the given set as dicts
+        ``{source, predicate, target}`` with resolved names. A non-graph
+        backend returns ``{"neighbor_keywords": {}, "edges": []}`` and
+        callers must tolerate empty enrichment. ``recall_context([])``
+        returns empty enrichment without error.
+        """
+        ...
+
+    async def recall_kb(
+        self,
+        kb_id: str,
+        query: str,
+        *,
+        top_k: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Recall entries from a specific named knowledge base, ranked by
+        relevance to ``query``. Returns a list of record dicts (engine-
+        defined shape). Raises ``KeyError`` if no KB with ``kb_id``
+        exists. An engine without a KB tier may always raise ``KeyError``
+        (because no KB is ever named); callers must handle the miss
+        gracefully.
         """
         ...
