@@ -1603,7 +1603,7 @@ let cfgState = null;
 // "unset" and mislead the user into thinking the runtime is off.
 const SECTION_DEFAULTS = {
   idle: { min_interval: 2, max_interval: 300, default_interval: 10 },
-  fatigue: { gm_node_soft_limit: 1000, force_sleep_threshold: 1200, thresholds: {} },
+  fatigue: { force_sleep_threshold: 1200, thresholds: {} },
   // `sliding_window` is back as a section (2026-05-07) carrying
   // persistence config — `state_path` + `compact_include_recall`;
   // the SIZE budget is still derived from Self role's
@@ -1694,7 +1694,6 @@ const HELP = {
   "idle.min_interval": "Minimum idle interval (seconds). Self uses [IDLE] N to control each beat, but it will never go below this value.",
   "idle.max_interval": "Maximum idle interval (seconds). Even if Self requests a longer idle, it will not exceed this value.",
   "idle.default_interval": "Default idle interval (seconds) when Self does not specify one.",
-  "fatigue.gm_node_soft_limit": "Soft upper bound on GM nodes. fatigue% = nodes / soft_limit * 100. Self uses fatigue% to decide whether to sleep proactively.",
   "fatigue.force_sleep_threshold": "Force-sleep threshold (fatigue%). Above this, runtime enters sleep without waiting for Self's consent.",
   "sliding_window.state_path": "JSON file mirroring the in-memory rounds buffer so working memory survives a restart. Default: workspace/data/sliding_window.json. Set to empty string to opt out (in-memory only — every restart loses the most recent uncompacted beats).",
   "sliding_window.compact_include_recall": "When ON, the per-beat recall summary (which GM/KB nodes were active) is included in the compact prompt so the compactor LLM knows what context surrounded each decision. Costs ~30 tokens/round. Default OFF.",
@@ -1789,7 +1788,6 @@ const SCHEMAS = {
     ["default_interval", "number"],
   ],
   fatigue_scalars: [
-    ["gm_node_soft_limit", "number"],
     ["force_sleep_threshold", "number"],
   ],
   sliding_window: [

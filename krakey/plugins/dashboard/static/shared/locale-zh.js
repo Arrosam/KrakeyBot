@@ -72,7 +72,6 @@ window.LOCALES['zh-CN'] = {
     "idle.min_interval": "最小空闲间隔（秒）。Self 使用 [IDLE] N 控制每次心跳，但不会低于此值。",
     "idle.max_interval": "最大空闲间隔（秒）。即使 Self 请求更长的空闲时间，也不会超过此值。",
     "idle.default_interval": "当 Self 未指定间隔时的默认空闲间隔（秒）。",
-    "fatigue.gm_node_soft_limit": "图记忆 (GM) 节点的软上限。疲劳度 % = 节点数 / 软上限 × 100。Self 根据疲劳度 % 决定是否主动进入休眠。",
     "fatigue.force_sleep_threshold": "强制休眠阈值（疲劳度 %）。超过此值，运行时将直接进入休眠，无需等待 Self 确认。",
     "sliding_window.state_path": "镜像内存轮次缓冲区的 JSON 文件，确保工作记忆在重启后能够保留。默认：workspace/data/sliding_window.json。设为空字符串则不持久化（仅内存——重启后最近未压缩的心跳将丢失）。",
     "sliding_window.compact_include_recall": "开启后，每次心跳的召回摘要（哪些 GM/KB 节点被激活）将包含在压缩提示词中，以便压缩 LLM 了解每次决策的上下文。每轮额外消耗约 30 个 token。默认关闭。",
