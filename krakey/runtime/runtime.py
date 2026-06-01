@@ -192,6 +192,7 @@ class Runtime:
             reranker=self.reranker,
             sleep_config=self.config.sleep,
             sleep_log_dir=self.sleep_log_dir,
+            web_config=self.config.memory_web,
         )
         # Recall resolve is placed AFTER memory because the default
         # IncrementalRecallEngine takes the resolved memory instance
