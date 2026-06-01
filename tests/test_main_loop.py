@@ -461,7 +461,7 @@ async def test_force_sleep_when_fatigue_exceeds_threshold(tmp_path):
     )
     runtime.sleep_log_dir = str(tmp_path / "logs")
     # Crank fatigue dial: tiny soft_limit, low force threshold
-    runtime.config.fatigue.gm_node_soft_limit = 5
+    runtime.memory.gm_node_soft_limit = 5
     runtime.config.fatigue.force_sleep_threshold = 100
     # Pre-seed enough nodes to push fatigue ≥ 100%
     await runtime.memory.initialize()

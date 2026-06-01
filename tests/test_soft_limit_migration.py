@@ -494,6 +494,7 @@ class TestHeartbeatFatigueUsesHook:
         )
         from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
         rt = build_runtime_with_fakes(self_llm=ScriptedLLM())
+        await rt.memory.initialize()
 
         # Set the memory engine's soft limit to 200
         rt.memory.gm_node_soft_limit = 200
@@ -535,6 +536,7 @@ class TestHeartbeatFatigueUsesHook:
         )
         from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
         rt = build_runtime_with_fakes(self_llm=ScriptedLLM())
+        await rt.memory.initialize()
 
         # Precondition: the field must indeed be gone from config.fatigue
         if hasattr(rt.config.fatigue, "gm_node_soft_limit"):
@@ -585,6 +587,7 @@ class TestCliStatusUsesHook:
                 "field removal (part A) not yet done; skip CLI test"
             )
 
+        await rt.memory.initialize()
         try:
             result = await handle_command("status", rt)
         except AttributeError as exc:
@@ -617,6 +620,7 @@ class TestCliStatusUsesHook:
 
         rt.memory.gm_node_soft_limit = 500
         # Zero nodes → 0 %
+        await rt.memory.initialize()
         result = await handle_command("status", rt)
         assert "fatigue=0%" in result.output, (
             f"Expected fatigue=0% (0 nodes / 500 soft_limit) in status output, "
@@ -642,6 +646,7 @@ class TestCliStatusUsesHook:
                 "config.fatigue still has gm_node_soft_limit — skip CLI test"
             )
 
+        await rt.memory.initialize()
         result = await handle_command("status", rt)
         assert "fatigue=" in result.output, (
             f"'fatigue=' token must still appear in /status output; "
