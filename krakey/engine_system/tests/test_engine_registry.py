@@ -337,11 +337,14 @@ def test_resolve_plugin_engine_short_name(monkeypatch):
     assert instance.hello() == "from-plugin"
 
 
-def test_resolve_passes_per_engine_config_kwarg(monkeypatch):
-    """``cfg.engine_configs.<slot>.<short_name>`` is threaded into the
-    resolved engine's constructor as ``config=``. Impls that don't
-    declare a ``config`` parameter ignore it via ``_filter_kwargs``
-    — pinned here separately."""
+def test_resolve_passes_per_engine_config_kwarg(monkeypatch, tmp_path):
+    """The resolved impl's OWN settings file (declared via the impl's
+    ``config_path`` in its meta) is read from ``<workspace_root>/<config_path>``
+    and threaded into the constructor as ``config=``. There is no global
+    ``engine_configs`` block anymore — config lives in the engine's own file.
+    Impls that don't declare a ``config`` parameter ignore it via
+    ``_filter_kwargs`` — pinned here separately."""
+    import yaml
     from krakey.engine_system.catalog import EngineImpl
     import krakey.engine_system.registry as reg_mod
 
@@ -354,22 +357,27 @@ def test_resolve_passes_per_engine_config_kwarg(monkeypatch):
         def hello(self):
             return "ok"
 
-    cfg = Config(
-        core_implementations=CoreImplementations(memory="custom"),
-        engine_configs={
-            "memory": {
-                "custom": {"cache_size_mb": 200},
-            },
-        },
+    # Write the engine's own settings file under the tmp workspace at the
+    # impl-declared config_path.
+    settings_rel = "data/memory/settings.yaml"
+    settings_abs = tmp_path / settings_rel
+    settings_abs.parent.mkdir(parents=True, exist_ok=True)
+    settings_abs.write_text(
+        yaml.safe_dump({"cache_size_mb": 200}), encoding="utf-8",
     )
+
+    cfg = Config(core_implementations=CoreImplementations(memory="custom"))
     monkeypatch.setattr(
         reg_mod, "_load_slot_catalog",
         lambda slot: (
-            {"custom": EngineImpl(cls=_ConfigAwareImpl, description="x")},
+            {"custom": EngineImpl(
+                cls=_ConfigAwareImpl, description="x",
+                config_path=settings_rel,
+            )},
             "custom",
         ),
     )
-    reg = EngineRegistry(cfg)
+    reg = EngineRegistry(cfg, workspace_root=tmp_path)
     instance = reg.resolve("memory", expected_protocol=_DummyProto)
     assert instance.hello() == "ok"
     assert captured["config"] == {"cache_size_mb": 200}

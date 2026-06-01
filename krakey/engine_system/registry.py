@@ -233,10 +233,13 @@ class EngineRegistry:
         cfg: Config,
         *,
         importer: Importer | None = None,
+        workspace_root: "Path | str" = "workspace",
     ):
         self._cfg = cfg
         self._import = importer or _default_importer
         self._plugin_engine_catalog: dict[str, dict[str, str]] | None = None
+        from pathlib import Path as _Path
+        self._workspace_root = _Path(workspace_root)
 
     def _plugin_catalog(self) -> dict[str, dict[str, dict[str, Any]]]:
         if self._plugin_engine_catalog is None:
@@ -312,13 +315,24 @@ class EngineRegistry:
 
     def _engine_config(self, slot: str, short_name: str) -> dict[str, Any]:
         """Return the user's persisted config dict for the given
-        ``(slot, short_name)`` pair, or an empty dict when nothing is
-        configured. Engines that don't take a ``config`` kwarg ignore
+        ``(slot, short_name)`` pair by reading the impl's own settings
+        file, or ``{}`` when no settings file is declared or the file is
+        absent. Engines that don't take a ``config`` kwarg ignore
         whatever this returns via ``_filter_kwargs``."""
-        slot_cfg = self._cfg.engine_configs.get(slot, {}) if hasattr(
-            self._cfg, "engine_configs",
-        ) else {}
-        return dict(slot_cfg.get(short_name, {}))
+        from krakey.engine_system.config_store import FileEngineConfigStore
+        catalog, _ = _load_slot_catalog(slot)
+        impl = catalog.get(short_name)
+        if impl is None:
+            # Unknown short-name; resolve's self-heal handles the real
+            # fallback — return empty dict defensively here.
+            return {}
+        try:
+            return FileEngineConfigStore(self._workspace_root).read(
+                impl.config_path
+            )
+        except Exception:
+            # Never crash resolve over a bad settings file.
+            return {}
 
     def resolve(
         self,
@@ -331,10 +345,10 @@ class EngineRegistry:
 
         ``kwargs`` are forwarded to the constructor — ``_filter_kwargs``
         drops ones the impl's ``__init__`` doesn't accept so user
-        overrides with narrower signatures still work. The user's
-        per-engine config dict (from ``cfg.engine_configs.<slot>.
-        <short_name>``) is added as a ``config`` kwarg automatically;
-        impls that don't declare it ignore it.
+        overrides with narrower signatures still work. The selected
+        impl's per-engine config dict (loaded from its own settings
+        file via ``FileEngineConfigStore``) is added as a ``config``
+        kwarg automatically; impls that don't declare it ignore it.
         """
         override = self._cfg.core_implementations.get(slot)
         if override:

@@ -20,6 +20,9 @@ Per-entry optional keys:
     each step is ``{args: list[str], description: str,
     optional: bool}`` — entries with missing/malformed ``args`` are
     warn-and-skipped at load time (tolerant, never raises)
+  - ``config_path`` (optional): workspace-relative path to this
+    impl's own settings YAML file (e.g. ``data/memory/settings.yaml``);
+    absent or empty string means no settings file
 
 This module is the **only** part of ``engine_system`` that knows the
 on-disk layout of ``krakey/engines/``. It returns plain dataclass
@@ -145,6 +148,7 @@ def load_slot_meta(
         catalog[name] = EngineImpl(
             cls=_LazyImpl(module, attr),  # type: ignore[arg-type]
             description=str(entry.get("description", "") or ""),
+            config_path=str(entry.get("config_path", "") or ""),
             config_schema=list(
                 _coerce_config_schema(entry.get("config_schema"))
             ),

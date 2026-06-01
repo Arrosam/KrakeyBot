@@ -32,10 +32,10 @@ The user picks an impl by SHORT NAME in ``config.yaml``::
 
     core_implementations:
       decision: hypothalamus
-    engine_configs:
-      decision:
-        hypothalamus:
-          temperature: 0.5
+
+Per-engine settings live in the impl's own settings file declared via
+``config_path`` in the ``builtin_engines`` entry; the global
+``engine_configs`` block is no longer used.
 
 Plugin-supplied engines extend the same catalog through their own
 ``meta.yaml`` (``kind: engine``, ``slot: decision``); the plugin's
@@ -85,9 +85,14 @@ class EngineImpl:
     ``{args: list[str], description: str, optional: bool}``.
     The token ``{python}`` inside ``args`` is replaced with
     ``sys.executable`` at run-time. Defaults to empty list.
+
+    ``config_path`` is a workspace-relative path to this impl's own
+    settings YAML file (e.g. ``data/memory/settings.yaml``). Empty
+    string means no settings file — the engine uses its own defaults.
     """
     cls: type
     description: str
+    config_path: str = ""
     config_schema: list[dict[str, Any]] = field(default_factory=list)
     dependencies: list[str] = field(default_factory=list)
     post_install: list[dict[str, Any]] = field(default_factory=list)
