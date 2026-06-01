@@ -548,6 +548,17 @@ class Runtime:
         dashboard. Resets across restarts (not persisted)."""
         return self._sleep_cycles
 
+    def memory_soft_limit(self) -> int:
+        """The GM node soft-limit used for fatigue calculation.
+
+        Ownership of this threshold moved OUT of ``config.fatigue`` into
+        the memory engine (its own settings file). This thin hook
+        duck-types to the engine's ``gm_node_soft_limit`` attribute so
+        the heartbeat + CLI read it without going through the swappable
+        12-method MemoryEngine Protocol. Defaults to 1000 only when the
+        engine exposes no such attribute (a present 0 is returned as 0)."""
+        return int(getattr(self.memory, "gm_node_soft_limit", 1000))
+
     async def trigger_memory_sleep(self, reason: str = "") -> dict:
         """Ask the memory engine to run a consolidation/sleep cycle.
 

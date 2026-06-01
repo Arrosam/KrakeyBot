@@ -73,8 +73,8 @@ async def handle_command(cmd: str, runtime: "Runtime") -> CommandResult:
 async def _format_status(runtime: "Runtime") -> str:
     nodes = await runtime.memory.count_nodes()
     edges = await runtime.memory.count_edges()
-    pct = int(nodes / runtime.config.fatigue.gm_node_soft_limit * 100) \
-        if runtime.config.fatigue.gm_node_soft_limit else 0
+    soft_limit = runtime.memory_soft_limit()
+    pct = int(nodes / soft_limit * 100) if soft_limit else 0
     name = runtime.self_model.get("identity", {}).get("name", "(unnamed)")
     return (
         f"name={name} "
