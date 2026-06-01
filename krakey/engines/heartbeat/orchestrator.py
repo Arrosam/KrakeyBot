@@ -343,7 +343,7 @@ class HeartbeatOrchestrator:
         edge_count = await rt.memory.count_edges()
         pct, hint = calculate_fatigue(
             node_count=node_count,
-            soft_limit=rt.config.fatigue.gm_node_soft_limit,
+            soft_limit=rt.memory_soft_limit(),
             thresholds=rt.config.fatigue.thresholds,
         )
         node_delta = node_count - rt._last_node_count
