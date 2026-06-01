@@ -315,6 +315,10 @@ function _wsUrl(path) {
 // ============== TAB SWITCHING ==============
 
 $$(".tab-btn").forEach((btn) => {
+  // External links (e.g. the Memory browser) carry .tab-btn for styling
+  // but have no data-tab + their own onclick — they must NOT run the SPA
+  // tab-switch handler (which would blank all panels via tab-undefined).
+  if (btn.classList.contains("tab-btn-external") || !btn.dataset.tab) return;
   btn.addEventListener("click", () => {
     $$(".tab-btn").forEach((b) => b.classList.toggle("active", b === btn));
     const id = "tab-" + btn.dataset.tab;
@@ -2543,23 +2547,6 @@ function _renderEngineSchemaForm(slot, shortName, schema) {
   const target = engineConfigEdits[slot][shortName] || {};
   engineConfigEdits[slot][shortName] = target;
 
-  // Lazy-load persisted values once per (slot, impl); merge under any
-  // unsaved edits so re-rendering doesn't clobber in-progress changes.
-  if (!target.__loaded) {
-    target.__loaded = true;
-    fetch(`/api/engines/${encodeURIComponent(slot)}/${encodeURIComponent(shortName)}/config`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((body) => {
-        if (!body || !body.config) return;
-        for (const [k, v] of Object.entries(body.config)) {
-          if (target[k] == null) target[k] = v;
-        }
-        // Re-render so loaded values populate the inputs.
-        if (typeof renderSettingsForm === "function") renderSettingsForm();
-      })
-      .catch(() => {/* no persisted file yet — defaults apply */});
-  }
-
   const cfgBlock = document.createElement("div");
   cfgBlock.className = "engine-schema-block";
   cfgBlock.style.cssText = "margin: 4px 0 12px 1.5em;";
@@ -2568,6 +2555,36 @@ function _renderEngineSchemaForm(slot, shortName, schema) {
     "font-size:11px;color:var(--muted);margin-bottom:4px";
   head.textContent = `Config — ${shortName}`;
   cfgBlock.appendChild(head);
+
+  // Lazy-load persisted values once per (slot, impl) BEFORE rendering the
+  // inputs. CRITICAL ordering: we must NOT write schema defaults into
+  // ``target`` until the GET resolves — otherwise the merge below (guarded
+  // by ``target[k] == null``) would see a default already sitting there and
+  // skip the SAVED value, clobbering it on the next save. So on the very
+  // first render we show a "loading" placeholder and re-render once the
+  // persisted file is merged (or absent); only then are defaults hydrated.
+  if (!target.__loaded) {
+    target.__loaded = true;
+    const loading = document.createElement("div");
+    loading.style.cssText = "font-size:11px;color:var(--muted)";
+    loading.textContent = window.t ? window.t("loading") : "Loading…";
+    cfgBlock.appendChild(loading);
+    fetch(`/api/engines/${encodeURIComponent(slot)}/${encodeURIComponent(shortName)}/config`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (body && body.config) {
+          for (const [k, v] of Object.entries(body.config)) {
+            if (target[k] == null) target[k] = v;
+          }
+        }
+      })
+      .catch(() => {/* no persisted file yet — defaults apply on render */})
+      .finally(() => {
+        if (typeof renderSettingsForm === "function") renderSettingsForm();
+      });
+    return cfgBlock;
+  }
+
   for (const fdef of schema) {
     const fname = fdef.field;
     // Normalize `boolean` → `bool` so engine schema fields declared
