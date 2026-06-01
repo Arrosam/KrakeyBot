@@ -8,7 +8,7 @@ keeps working — only the call-site pattern changes (Engine slot
 instead of an inline module-fn import).
 
 Scope: turns parsed-decision text into a ``DecisionResult`` containing
-``tool_calls`` + ``parse_failures``. ``memory_writes`` / ``memory_updates``
+``tool_calls`` + ``parse_failures``. ``memory_writes``
 / ``sleep`` are always empty in this impl — they're the responsibility
 of an LLM-based translator like ``HypothalamusDecisionEngine`` that can
 extract those signals from Self's free-form text. The default Engine
@@ -208,7 +208,6 @@ class ToolCallParserDecisionEngine:
         return DecisionResult(
             tool_calls=tool_calls,
             memory_writes=[],
-            memory_updates=[],
             sleep=False,
             parse_failures=parse_failures,
         )

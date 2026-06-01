@@ -40,7 +40,6 @@ flag.
 
 Triggers the hypothalamus reads:
 - "remember …" / "record …" / "important: …" → memory write.
-- "goal achieved" / "task done" / "completed" → memory update.
 - "quick" / "urgent" / "someone is waiting" → adrenalin = true.
 - "no action" / silence inside `[DECISION]` → empty dispatch.
 - "enter sleep mode" (exact phrasing) → triggers full Sleep. Softer
@@ -155,19 +154,15 @@ decisions into structured instructions.
   "memory_writes": [
     {{"content": "thing to remember", "importance": "high|normal"}}
   ],
-  "memory_updates": [
-    {{"node_name": "node name", "new_category": "FACT"}}
-  ],
   "sleep": false
 }}
 
 ## Translation rules
 1. Identify actions → tool_calls
 2. "remember" / "record" / "important" → memory_writes
-3. "goal achieved" / "task done" / "completed" → memory_updates (TARGET→FACT)
-4. Urgency ("quick", "urgent", "someone is waiting") → adrenalin: true
-5. "No action" → empty tool_calls
-6. **sleep vs. idle (important; do not confuse)**:
+3. Urgency ("quick", "urgent", "someone is waiting") → adrenalin: true
+4. "No action" → empty tool_calls
+5. **sleep vs. idle (important; do not confuse)**:
    - **sleep: true** only when Self explicitly asks to enter the
      "full sleep mode" / "7-phase sleep" / "enter sleep mode" — this is
      a **major action** that triggers clustering + KB migration + FOCUS
@@ -179,7 +174,7 @@ decisions into structured instructions.
      tag directly and does not go through translation.
    - When in doubt → sleep: false. Only set sleep: true on **explicit,
      complete** wording like "enter sleep" / "sleep mode".
-7. Multiple actions → multiple tool_calls (concurrent)
+6. Multiple actions → multiple tool_calls (concurrent)
 """
 
 
@@ -200,8 +195,10 @@ class HypothalamusDecisionEngine:
         # always supplies one in production so this Engine observes
         # the same per-tag client cache as the Embedder + core-purpose
         # lookups. ``cfg`` is accepted as a fallback for callers that
-        # construct the engine standalone (tests, ad-hoc scripts) and
-        # is only consulted when ``factory`` is None.
+        # construct the engine standalone (tests, ad-hoc scripts); the
+        # configured llm_factory engine is resolved via the registry so
+        # that cfg.core_implementations.llm_factory is honoured even
+        # for standalone-constructed instances.
         self._cfg = cfg
         if factory is None:
             if cfg is None:
@@ -209,10 +206,13 @@ class HypothalamusDecisionEngine:
                     "HypothalamusDecisionEngine needs either factory= "
                     "(preferred) or cfg= (to build a private factory)"
                 )
-            from krakey.engines.llm_factory.default import (
-                DefaultLLMClientFactoryEngine,
+            from krakey.engine_system.registry import EngineRegistry
+            from krakey.interfaces.engines import LLMClientFactoryEngine
+            factory = EngineRegistry(cfg).resolve(
+                "llm_factory",
+                expected_protocol=LLMClientFactoryEngine,
+                cfg=cfg,
             )
-            factory = DefaultLLMClientFactoryEngine(cfg)
         self._factory = factory
 
     def modify_prompt(self, elements) -> None:
@@ -326,7 +326,6 @@ def _to_result(data: dict[str, Any]) -> DecisionResult:
     return DecisionResult(
         tool_calls=calls,
         memory_writes=list(data.get("memory_writes") or []),
-        memory_updates=list(data.get("memory_updates") or []),
         sleep=bool(data.get("sleep", False)),
         parse_failures=[],
     )

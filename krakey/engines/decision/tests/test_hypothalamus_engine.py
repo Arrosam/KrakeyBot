@@ -74,7 +74,6 @@ async def test_translate_parses_llm_json_response():
             {"content": "the project is called krakey",
              "importance": "normal"},
         ],
-        "memory_updates": [],
         "sleep": False,
     })
     fake = _FakeChatClient(response)
@@ -128,7 +127,7 @@ async def test_translate_handles_markdown_fenced_json():
     response = (
         "```json\n"
         + json.dumps({"tool_calls": [], "memory_writes": [],
-                      "memory_updates": [], "sleep": False})
+                      "sleep": False})
         + "\n```"
     )
     eng = HypothalamusDecisionEngine(cfg=_make_cfg())
