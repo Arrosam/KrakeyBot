@@ -588,7 +588,6 @@ def test_meta_with_bad_factory_module_falls_back_to_defaults(
 
     cfg = SimpleNamespace(
         core_implementations=SimpleNamespace(get=lambda _slot: None),
-        engine_configs={},
     )
     registry = EngineRegistry(cfg)  # type: ignore[arg-type]
     # Picking "memory" — its FALLBACK_ENGINES entry points at the real

@@ -201,31 +201,6 @@ async def test_engines_available_lists_builtin_catalog(tmp_path):
     assert {"tool_call_parser", "hypothalamus"} <= set(decision_names)
 
 
-async def test_post_settings_round_trips_engine_configs(tmp_path):
-    """The dashboard's per-engine config form writes to
-    ``engine_configs.<slot>.<short_name>``. The settings POST must
-    round-trip the nested mapping so the runtime sees the user's
-    tunables on its next config load."""
-    p = tmp_path / "config.yaml"
-    p.write_text("a: 1\n", encoding="utf-8")
-    parsed = {
-        "engine_configs": {
-            "decision": {
-                "hypothalamus": {"temperature": 0.42, "retries": 3},
-            },
-        },
-    }
-    async with _client(config_path=p) as c:
-        r = await c.post(
-            "/api/settings",
-            json={"parsed": parsed,
-                  "backup_dir": str(tmp_path / "bk")},
-        )
-    assert r.status_code == 200
-    written = yaml.safe_load(p.read_text(encoding="utf-8"))
-    assert written == parsed
-
-
 async def test_post_settings_round_trips_core_implementations(tmp_path):
     """Engine slot overrides (the dashboard's "Engine Overrides"
     section) are written under ``core_implementations``. The settings
