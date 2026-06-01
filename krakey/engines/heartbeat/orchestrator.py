@@ -375,7 +375,8 @@ class HeartbeatOrchestrator:
     async def _phase_compact(self) -> None:
         rt = self._rt
         async def _recall_fn(text: str):
-            return await rt.memory.fts_search(text, top_k=10)
+            scored = await rt.memory.search(text, top_k=10)
+            return [n for (n, _score) in scored]
         await compact_if_needed(
             rt.explicit_history, rt.memory, rt.compact_llm,
             recall_fn=_recall_fn,
@@ -624,11 +625,11 @@ class HeartbeatOrchestrator:
             if s.type != "tool_feedback":
                 continue
             try:
-                await rt.memory.auto_ingest(
+                await rt.memory.ingest(
                     s.content, source_heartbeat=rt.heartbeat_count,
                 )
             except Exception as e:  # noqa: BLE001
-                rt.log.runtime_error(f"auto_ingest error: {e}")
+                rt.log.runtime_error(f"ingest error: {e}")
 
     async def _phase_apply_decision(self, parsed, recall_result,
                                      counts: "_GMCounts") -> bool:
@@ -851,7 +852,8 @@ class HeartbeatOrchestrator:
         budget = int(self_params.max_input_tokens or 128_000)
 
         async def _recall_fn(text: str):
-            return await rt.memory.fts_search(text, top_k=10)
+            scored = await rt.memory.search(text, top_k=10)
+            return [n for (n, _score) in scored]
 
         prompt = self.build_self_prompt(stimuli, recall_result, counts)
         max_iters = 10  # safety bound — should never need more than 2-3

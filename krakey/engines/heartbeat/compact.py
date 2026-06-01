@@ -88,32 +88,26 @@ def _format_existing(nodes: list[dict[str, Any]]) -> str:
 
 
 async def _apply_extraction(gm: "MemoryEngine", parsed: dict[str, Any]) -> None:
-    name_to_id: dict[str, int] = {}
+    nodes = []
     for n in parsed.get("nodes", []):
-        try:
-            nid = await gm.upsert_node({
-                "name": n["name"],
-                "category": n["category"],
-                "description": n.get("description", ""),
-                "source_type": "compact",
-            })
-            name_to_id[n["name"]] = nid
-        except Exception:  # noqa: BLE001
-            continue  # malformed node — skip
-
-    for e in parsed.get("edges", []):
-        src = name_to_id.get(e.get("source_name"))
-        if src is None:
-            src = await gm.find_by_name(e.get("source_name", ""))
-        tgt = name_to_id.get(e.get("target_name"))
-        if tgt is None:
-            tgt = await gm.find_by_name(e.get("target_name", ""))
-        if src is None or tgt is None or src == tgt:
+        if not n.get("name") or not n.get("category"):
             continue
-        try:
-            await gm.insert_edge_with_cycle_check(src, tgt, e["predicate"])
-        except Exception:  # noqa: BLE001
-            continue  # malformed edge — skip
+        nodes.append({
+            "name": n["name"],
+            "category": n["category"],
+            "description": n.get("description", ""),
+            "source_type": "compact",
+        })
+    edges = []
+    for e in parsed.get("edges", []):
+        if not e.get("source_name") or not e.get("target_name"):
+            continue
+        edges.append({
+            "source_name": e["source_name"],
+            "target_name": e["target_name"],
+            "predicate": e.get("predicate", ""),
+        })
+    await gm.remember_extraction(nodes, edges)
 
 
 async def _compact_round(round_: ExplicitHistoryRound, gm: "MemoryEngine",
