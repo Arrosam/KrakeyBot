@@ -40,6 +40,16 @@ class KnowledgeBaseSection:
 
 
 @dataclass
+class MemoryWebSection:
+    """The memory engine's self-hosted GM+KB browse/edit web service (distinct
+    from the dashboard, default port 8766)."""
+
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = 8766
+
+
+@dataclass
 class SleepSection:
     max_duration_seconds: int = 7200
     # Communities below this size stay in GM (don't get migrated to a KB).
@@ -61,6 +71,9 @@ class SleepSection:
     # archived KB and write the new entries into it instead. Models the
     # "forgot a topic, then re-encountered it" relearning shortcut.
     kb_revive_threshold: float = 0.80
+    # When GM node count reaches this, the memory engine self-triggers a sleep
+    # cycle; 0 disables (sleep then only fires on explicit request).
+    auto_sleep_node_threshold: int = 0
 
 
 @dataclass
@@ -108,6 +121,18 @@ def _build_sleep(raw: dict[str, Any]) -> SleepSection:
         kb_archive_pct=int(raw.get("kb_archive_pct", d.kb_archive_pct)),
         kb_revive_threshold=float(raw.get("kb_revive_threshold",
                                                d.kb_revive_threshold)),
+        auto_sleep_node_threshold=int(
+            raw.get("auto_sleep_node_threshold", d.auto_sleep_node_threshold)
+        ),
+    )
+
+
+def _build_memory_web(raw: dict[str, Any]) -> MemoryWebSection:
+    d = MemoryWebSection()
+    return MemoryWebSection(
+        enabled=bool(raw.get("enabled", d.enabled)),
+        host=str(raw.get("host", d.host)),
+        port=int(raw.get("port", d.port)),
     )
 
 

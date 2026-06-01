@@ -66,10 +66,12 @@ from krakey.models.config.llm import (  # noqa: F401
 from krakey.models.config.memory import (  # noqa: F401
     GraphMemorySection,
     KnowledgeBaseSection,
+    MemoryWebSection,
     SafetySection,
     SleepSection,
     _build_graph_memory,
     _build_kb,
+    _build_memory_web,
     _build_safety,
     _build_sleep,
 )
@@ -117,6 +119,7 @@ class Config:
     plugins: list[str] | None = None
     sleep: SleepSection = field(default_factory=SleepSection)
     safety: SafetySection = field(default_factory=SafetySection)
+    memory_web: MemoryWebSection = field(default_factory=MemoryWebSection)
     environments: EnvironmentsSection = field(
         default_factory=EnvironmentsSection
     )
@@ -241,6 +244,7 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         plugins=_build_plugins(raw),
         sleep=_build_sleep(raw.get("sleep") or {}),
         safety=_build_safety(raw.get("safety") or {}),
+        memory_web=_build_memory_web(raw.get("memory_web") or {}),
         environments=_build_environments(raw.get("environments")),
         core_implementations=_build_core_implementations(
             raw.get("core_implementations") or {}
