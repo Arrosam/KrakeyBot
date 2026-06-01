@@ -36,7 +36,10 @@ class IdleSection:
 
 @dataclass
 class FatigueSection:
-    gm_node_soft_limit: int = 1000
+    # NOTE: ``gm_node_soft_limit`` moved OUT of fatigue config — it is now
+    # a memory-engine setting (the memory engine's own settings file),
+    # read at runtime via ``Runtime.memory_soft_limit()``. A stray
+    # ``fatigue.gm_node_soft_limit:`` key in YAML is ignored.
     force_sleep_threshold: int = 1200
     thresholds: dict[int, str] = field(default_factory=lambda: {
         50: "(may sleep when not busy)",
@@ -105,8 +108,6 @@ def _build_fatigue(raw: dict[str, Any]) -> FatigueSection:
     else:
         thresholds = d.thresholds
     return FatigueSection(
-        gm_node_soft_limit=int(raw.get("gm_node_soft_limit",
-                                         d.gm_node_soft_limit)),
         force_sleep_threshold=int(raw.get("force_sleep_threshold",
                                              d.force_sleep_threshold)),
         thresholds=thresholds,
