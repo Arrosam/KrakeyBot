@@ -240,15 +240,14 @@ async def test_sleep_failure_surfaces_via_three_channels(tmp_path, monkeypatch, 
     received = []
     bus.subscribe(received.append)
 
-    # Force MemoryEngine.sleep_cycle to raise so we exercise the
-    # orchestrator's sleep-failure exception branch without needing
-    # a real misconfiguration. After the Engine refactor (step C
-    # in the post-review patch) sleep flows through
-    # ``rt.memory.sleep_cycle`` rather than the legacy
-    # enter_sleep_mode module fn.
+    # Force MemoryEngine.request_sleep to raise so we exercise the
+    # runtime sleep-failure exception branch without needing a real
+    # misconfiguration. Sleep is now engine-owned: the heartbeat's
+    # sleep decision flows through ``rt.trigger_memory_sleep`` which
+    # calls ``rt.memory.request_sleep`` (the only sleep entry point).
     async def _boom(*a, **k):
         raise RuntimeError("simulated sleep crash")
-    monkeypatch.setattr(runtime.memory, "sleep_cycle", _boom)
+    monkeypatch.setattr(runtime.memory, "request_sleep", _boom)
 
     await runtime.run(iterations=1)
     await runtime.close()

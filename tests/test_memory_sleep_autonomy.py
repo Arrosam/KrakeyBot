@@ -84,6 +84,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 from typing import Any
 
 import pytest
@@ -113,17 +114,40 @@ class FakeEmbedder:
 class FakeChatLike:
     """Minimal ChatLike stub.
 
-    Returns canned JSON strings suitable for both clustering-summary
-    and KB-dedup LLM calls. Tracks how many times chat() was called.
+    Returns canned JSON strings suitable for clustering-summary,
+    KB-dedup, AND extractor (explicit_write/remember) LLM calls.
+    The default response carries a ``nodes`` + ``edges`` shape so it
+    doubles as an ``extractor_llm`` — ``remember`` distills content
+    into one node whose name varies with the prompt so distinct
+    ``remember`` calls produce distinct GM nodes (needed for
+    node-count threshold tests). Tracks how many times chat() was
+    called.
     """
 
     def __init__(self, *, response: str = ""):
-        self._response = response or '{"edges": []}'
+        self._response = response
         self.calls: list[list[dict]] = []
 
     async def chat(self, messages, **kwargs) -> str:
         self.calls.append(messages)
-        return self._response
+        if self._response:
+            return self._response
+        # Derive a distinct node name from the prompt so repeated
+        # remember()/explicit_write() calls don't all dedup to one node.
+        import hashlib
+        try:
+            text = str(messages[-1].get("content", ""))
+        except Exception:  # noqa: BLE001
+            text = repr(messages)
+        tag = hashlib.sha1(text.encode("utf-8")).hexdigest()[:8]
+        return json.dumps({
+            "nodes": [{
+                "name": f"fact_{tag}",
+                "category": "FACT",
+                "description": text[:60],
+            }],
+            "edges": [],
+        })
 
 
 class FakeReranker:
@@ -174,6 +198,10 @@ async def _build_engine(
         db_path=":memory:",
         embedder=embedder,
         kb_dir=str(tmp_path / "kbs"),
+        # remember()/ingest() distill content through an extractor LLM;
+        # reuse a FakeChatLike (its default response is extraction-shaped)
+        # so storage ops work without a real LLM.
+        extractor_llm=FakeChatLike(),
         sleep_llm=sleep_llm,
         reranker=reranker,
         sleep_config=sleep_config,
@@ -613,16 +641,24 @@ class TestAutoSleepNodeThresholdBVA:
             db_path=":memory:",
             embedder=FakeEmbedder(),
             kb_dir=str(tmp_path / "kbs"),
+            extractor_llm=FakeChatLike(),
             sleep_llm=sleep_llm,
             reranker=FakeReranker(),
             sleep_config=_min_sleep_config(auto_sleep_node_threshold=2),
         )
         await engine.initialize()
 
-        await engine.ingest("node one — count=1")
+        # Use remember_extraction with distinct node names so each call
+        # adds a NEW node (ingest/auto_ingest dedups by embedding
+        # similarity and could collapse two short phrases into one).
+        await engine.remember_extraction(
+            [{"name": "NodeOne", "category": "FACT", "description": "first"}], [],
+        )
         before_second = engine.sleep_cycles_run
 
-        await engine.ingest("node two — count=2, at threshold")
+        await engine.remember_extraction(
+            [{"name": "NodeTwo", "category": "FACT", "description": "second"}], [],
+        )
         await asyncio.sleep(0)
 
         assert engine.sleep_cycles_run >= before_second + 1, (
@@ -642,6 +678,7 @@ class TestAutoSleepNodeThresholdBVA:
             db_path=":memory:",
             embedder=FakeEmbedder(),
             kb_dir=str(tmp_path / "kbs"),
+            extractor_llm=FakeChatLike(),
             sleep_llm=sleep_llm,
             reranker=FakeReranker(),
             sleep_config=_min_sleep_config(auto_sleep_node_threshold=1),
@@ -1130,20 +1167,30 @@ class TestRequestSleepStatsDictBVA:
             db_path=":memory:",
             embedder=FakeEmbedder(),
             kb_dir=str(tmp_path / "kbs"),
+            extractor_llm=FakeChatLike(),
             sleep_llm=sleep_llm,
             reranker=FakeReranker(),
             sleep_config=_min_sleep_config(auto_sleep_node_threshold=threshold),
         )
         await engine.initialize()
 
-        # Ingest threshold-1 nodes — should NOT trigger
+        # Add threshold-1 DISTINCT nodes — should NOT trigger.
+        # Use remember_extraction with explicit distinct names so node
+        # count increments deterministically (ingest/auto_ingest dedups
+        # by embedding similarity and could collapse near-identical text).
         for i in range(threshold - 1):
-            await engine.ingest(f"pre-threshold node {i}")
+            await engine.remember_extraction(
+                [{"name": f"PreNode{i}", "category": "FACT",
+                  "description": f"pre {i}"}], [],
+            )
         await asyncio.sleep(0)
         count_before_threshold = engine.sleep_cycles_run
 
-        # Ingest exactly the threshold-th node
-        await engine.ingest("the threshold node — this one should trigger")
+        # Add exactly the threshold-th node
+        await engine.remember_extraction(
+            [{"name": "ThresholdNode", "category": "FACT",
+              "description": "the trigger"}], [],
+        )
         await asyncio.sleep(0)
 
         # Count after should be >= count_before + 1

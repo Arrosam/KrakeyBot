@@ -14,7 +14,7 @@ import textwrap
 import pytest
 
 from krakey.engines.memory.default import GraphMemoryEngine
-from krakey.interfaces.engines import KnowledgeBaseLike, MemoryEngine
+from krakey.interfaces.engines import MemoryEngine
 from krakey.main import build_runtime_from_config
 from tests._fake_memory import InMemoryMemoryEngine
 
@@ -109,16 +109,16 @@ async def test_override_kb_create_open_round_trip(tmp_path):
     )
     runtime = build_runtime_from_config(str(p))
     kb = await runtime.memory.create_kb("test_kb", name="Test KB")
-    assert isinstance(kb, KnowledgeBaseLike)
+    # KB is an engine-internal value type (no longer a public Protocol).
+    assert hasattr(kb, "search") and hasattr(kb, "write_entry")
     reopened = await runtime.memory.open_kb("test_kb")
     assert reopened is kb
 
 
-async def test_override_sleep_cycle_invoked(tmp_path):
-    """The fake records every sleep_cycle call — proves the runtime
-    surfaces sleep through the engine's method. Calling
-    memory.sleep_cycle directly here (rather than driving a real
-    sleep transition) is enough to verify the surface."""
+async def test_override_request_sleep_invoked(tmp_path):
+    """The fake records every request_sleep call — proves sleep is the
+    engine's own concern, triggered via its request_sleep entry point
+    (not driven by the heartbeat with external channels/llm/config)."""
     p = _config(
         tmp_path,
         memory_override="tests._fake_memory:InMemoryMemoryEngine",
@@ -126,9 +126,6 @@ async def test_override_sleep_cycle_invoked(tmp_path):
     runtime = build_runtime_from_config(str(p))
     fake = runtime.memory
     assert isinstance(fake, InMemoryMemoryEngine)
-    stats = await fake.sleep_cycle(
-        channels=None, log_dir="/tmp", config={"min_community_size": 2},
-    )
+    stats = await fake.request_sleep("manual")
     assert stats == {}
-    assert len(fake.sleep_cycle_calls) == 1
-    assert fake.sleep_cycle_calls[0]["log_dir"] == "/tmp"
+    assert len(fake.request_sleep_calls) == 1

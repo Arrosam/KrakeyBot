@@ -18,7 +18,7 @@ import sys
 import pytest
 
 import krakey.engines.memory.memos as memos_mod
-from krakey.interfaces.engines import KnowledgeBaseLike, MemoryEngine
+from krakey.interfaces.engines import MemoryEngine
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +154,7 @@ class TestProtocolConformance:
         engine, _ = _make_engine(monkeypatch)
         await engine.initialize()
         kb = await engine.create_kb("proto_kb", name="Proto")
-        assert isinstance(kb, KnowledgeBaseLike)
+        assert hasattr(kb, "search") and hasattr(kb, "write_entry")
 
 
 # ===========================================================================
@@ -673,7 +673,7 @@ class TestKBFleet:
         engine, _ = _make_engine(monkeypatch)
         await engine.initialize()
         kb = await engine.create_kb("kb1", name="KB One")
-        assert isinstance(kb, KnowledgeBaseLike)
+        assert hasattr(kb, "search") and hasattr(kb, "write_entry")
 
     async def test_open_kb_returns_same_instance_as_create_kb(self, monkeypatch):
         """open_kb on a previously created kb_id returns the SAME wrapper object."""
@@ -1038,18 +1038,19 @@ class TestStubMethods:
         await engine.initialize()
         await engine.classify_and_link_pending()
 
-    async def test_sleep_cycle_returns_empty_dict(self, monkeypatch):
+    async def test_request_sleep_returns_empty_dict(self, monkeypatch):
         engine, _ = _make_engine(monkeypatch)
         await engine.initialize()
-        result = await engine.sleep_cycle(channels=None, log_dir="logs", config={})
+        # MemOS consolidates internally; request_sleep is a no-op returning {}.
+        result = await engine.request_sleep("manual")
         assert result == {}
 
-    async def test_sleep_cycle_does_not_raise_varied_args(self, monkeypatch):
+    async def test_request_sleep_does_not_raise_varied_args(self, monkeypatch):
         engine, _ = _make_engine(monkeypatch)
         await engine.initialize()
-        await engine.sleep_cycle(channels=None, log_dir="x", config={})
-        await engine.sleep_cycle(channels=None, log_dir="", config={"key": "val"})
-        await engine.sleep_cycle(channels=object(), log_dir="logs", config={})
+        await engine.request_sleep()
+        await engine.request_sleep("reason a")
+        await engine.request_sleep(reason="reason b")
 
 
 # ===========================================================================
