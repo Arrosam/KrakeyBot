@@ -1219,16 +1219,46 @@ chatForm.addEventListener("submit", (ev) => {
 // engine at its own web service (default http://127.0.0.1:8766/).
 // The dashboard nav "Memory" link opens that service in a new tab.
 
-// Default URL for the memory web service. The engine runs on port 8766
-// by default (config.memory_web.port). Override by setting
-// window.MEMORY_WEB_URL before app.js loads (e.g. via a server-injected
-// <script> block).
-var _MEMORY_WEB_URL = (typeof window.MEMORY_WEB_URL !== "undefined")
-  ? window.MEMORY_WEB_URL
-  : "http://127.0.0.1:8766/";
+// The memory web service URL is derived from the live config
+// (config.memory_web: enabled / host / port) rather than hard-coded, so
+// it tracks a custom host/port and we can warn when the service is
+// disabled (enabled=False is the default — the engine only starts the
+// server when the operator opts in). An explicit window.MEMORY_WEB_URL
+// override still wins for unusual deployments (reverse proxy, etc.).
+function _memoryWebUrlFrom(mw) {
+  // mw = config.memory_web block (may be undefined). Returns a URL string.
+  const host = (mw && mw.host) || "127.0.0.1";
+  const port = (mw && mw.port) || 8766;
+  // 0.0.0.0 binds all interfaces server-side but isn't browsable; point
+  // the operator at localhost in that case.
+  const browseHost = host === "0.0.0.0" ? "127.0.0.1" : host;
+  return `http://${browseHost}:${port}/`;
+}
 
-function openMemoryBrowser() {
-  window.open(_MEMORY_WEB_URL, "_blank", "noopener,noreferrer");
+async function openMemoryBrowser() {
+  if (typeof window.MEMORY_WEB_URL !== "undefined") {
+    window.open(window.MEMORY_WEB_URL, "_blank", "noopener,noreferrer");
+    return;
+  }
+  // Fetch the current config so the link reflects memory_web host/port +
+  // enabled state at click time (the nav is reachable before Settings
+  // has ever been opened, so we can't rely on cfgState).
+  let mw = null;
+  try {
+    const r = await fetch("/api/settings");
+    if (r.ok) {
+      const data = await r.json();
+      mw = (data.parsed || {}).memory_web || null;
+    }
+  } catch (e) { /* fall through to defaults + warning */ }
+  if (!mw || mw.enabled !== true) {
+    showToast(
+      "Memory web service is disabled. Enable it in config (memory_web.enabled) and restart to browse GM/KBs.",
+      "err",
+    );
+    return;
+  }
+  window.open(_memoryWebUrlFrom(mw), "_blank", "noopener,noreferrer");
 }
 
 function escapeHtml(s) {
@@ -2498,15 +2528,37 @@ function _engineSlotBlock(slot, cfg) {
   return card;
 }
 
+// Per-engine config edits, keyed ``engineConfigEdits[slot][shortName]``.
+// Each engine impl owns its OWN settings file now (config.yaml no longer
+// has an engine_configs block); these edits are flushed on save via
+// POST /api/engines/<slot>/<impl>/config — exactly like modifierConfigEdits.
+let engineConfigEdits = {};
+
 function _renderEngineSchemaForm(slot, shortName, schema) {
-  // Reads & writes ``cfgState.engine_configs[slot][shortName]`` so
-  // saving the settings page persists the engine's tunables to
-  // config.yaml's ``engine_configs:`` section.
-  cfgState.engine_configs = cfgState.engine_configs || {};
-  cfgState.engine_configs[slot] =
-    cfgState.engine_configs[slot] || {};
-  const target = cfgState.engine_configs[slot][shortName] || {};
-  cfgState.engine_configs[slot][shortName] = target;
+  // Reads & writes ``engineConfigEdits[slot][shortName]`` and lazily loads
+  // the impl's current persisted values from its own settings file via
+  // GET /api/engines/<slot>/<impl>/config. The save handler POSTs the
+  // edits back to the same per-engine endpoint.
+  engineConfigEdits[slot] = engineConfigEdits[slot] || {};
+  const target = engineConfigEdits[slot][shortName] || {};
+  engineConfigEdits[slot][shortName] = target;
+
+  // Lazy-load persisted values once per (slot, impl); merge under any
+  // unsaved edits so re-rendering doesn't clobber in-progress changes.
+  if (!target.__loaded) {
+    target.__loaded = true;
+    fetch(`/api/engines/${encodeURIComponent(slot)}/${encodeURIComponent(shortName)}/config`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (!body || !body.config) return;
+        for (const [k, v] of Object.entries(body.config)) {
+          if (target[k] == null) target[k] = v;
+        }
+        // Re-render so loaded values populate the inputs.
+        if (typeof renderSettingsForm === "function") renderSettingsForm();
+      })
+      .catch(() => {/* no persisted file yet — defaults apply */});
+  }
 
   const cfgBlock = document.createElement("div");
   cfgBlock.className = "engine-schema-block";
@@ -4827,8 +4879,40 @@ $("#settings-save").addEventListener("click", async () => {
       }
     }
 
-    if (pluginErrs.length) {
-      showToast(`plugin saves failed: ${pluginErrs.join(", ")}`, "err");
+    // Persist each engine impl's tunables to its OWN settings file via
+    // /api/engines/<slot>/<impl>/config. config.yaml no longer carries an
+    // engine_configs block, so these MUST be written separately (mirrors
+    // the per-plugin save above). Strip the internal __loaded marker.
+    const engineErrs = [];
+    for (const [slot, byImpl] of Object.entries(engineConfigEdits)) {
+      for (const [shortName, cfg] of Object.entries(byImpl)) {
+        const clean = {};
+        for (const [k, v] of Object.entries(cfg)) {
+          if (k !== "__loaded") clean[k] = v;
+        }
+        if (Object.keys(clean).length === 0) continue;
+        try {
+          const er = await fetch(
+            `/api/engines/${encodeURIComponent(slot)}/${encodeURIComponent(shortName)}/config`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ config: clean }),
+            },
+          );
+          if (!er.ok) {
+            const eb = await er.json().catch(() => ({}));
+            engineErrs.push(`${slot}/${shortName}: ${eb.detail || er.statusText}`);
+          }
+        } catch (e) {
+          engineErrs.push(`${slot}/${shortName}: ${e}`);
+        }
+      }
+    }
+
+    const allErrs = [...pluginErrs, ...engineErrs];
+    if (allErrs.length) {
+      showToast(`config saves failed: ${allErrs.join(", ")}`, "err");
     } else {
       showToast(`saved (backup: ${body.backup || "n/a"}). Restart for changes to take effect.`, "ok");
     }
