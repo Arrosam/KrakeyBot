@@ -21,7 +21,7 @@
     <nav class="tabs">
       <button class="tab-btn active" data-tab="thoughts" data-i18n="tab_thoughts"><i data-bi="chat-square-text"></i> Inner Thoughts</button>
       <button class="tab-btn" data-tab="chat" data-i18n="tab_chat"><i data-bi="chat-dots"></i> Chat</button>
-      <button class="tab-btn" data-tab="memory" data-i18n="tab_memory"><i data-bi="cpu"></i> Memory</button>
+      <a class="tab-btn tab-btn-external" data-i18n="tab_memory" onclick="openMemoryBrowser()" href="#" title="Open Memory browser in a new tab"><i data-bi="cpu"></i> Memory</a>
       <button class="tab-btn" data-tab="prompts" data-i18n="tab_prompts"><i data-bi="journal-text"></i> Prompts</button>
       <button class="tab-btn" data-tab="log" data-i18n="tab_log"><i data-bi="terminal"></i> Log</button>
       <button class="tab-btn" data-tab="settings" data-i18n="tab_settings"><i data-bi="gear"></i> Settings</button>
@@ -33,10 +33,7 @@
   </header>
 
   <!-- Runtime-state banner — shown when the SPA receives a
-       SleepStartEvent and hidden again on SleepDoneEvent. While
-       visible, GM-bound tabs (Memory) refuse to auto-fetch since
-       sleep is hammering the same aiosqlite connection and
-       dashboard reads would queue behind it indefinitely. -->
+       SleepStartEvent and hidden again on SleepDoneEvent. -->
   <div id="runtime-banner" class="runtime-banner hidden">
     <i data-bi="moon"></i>
     <span class="banner-text"></span>
@@ -49,8 +46,6 @@
 
     <!-- @@view:chat@@ -->
 
-    <!-- @@view:memory@@ -->
-
     <!-- @@view:log@@ -->
 
     <!-- @@view:settings@@ -->
@@ -59,12 +54,6 @@
   <script src="/static/shared/i18n.js"></script>
   <script src="/static/shared/locale-zh.js"></script>
   <script src="/static/shared/bi.js"></script>
-  <!-- Cytoscape powers the Memory tab's graph browser (pan/zoom/drag).
-       Same CDN+version pinning the docs/ arch-graph tool uses, so the
-       dependency story is consistent across the project. Load failure
-       is handled gracefully in app.js (the Graph view shows a hint
-       and the table views still work). -->
-  <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

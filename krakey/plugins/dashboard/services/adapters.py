@@ -14,84 +14,12 @@ from __future__ import annotations
 import re
 import shutil
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Callable
 
 import yaml as _yaml
 
 from krakey.models.config_backup import backup_config
 from krakey.plugin_system.catalogue import list_available_plugins
-
-
-# ---------------- memory ----------------
-
-
-class _MemoryRuntime(Protocol):
-    """Narrow shape this module needs from Runtime \u2014 declared here so
-    the adapter doesn't depend on the full Runtime class. Lets tests
-    substitute a stand-in with just ``memory``."""
-    memory: Any
-
-
-class RuntimeMemoryService:
-    """Adapts Runtime.memory to MemoryService.
-
-    After the Engine refactor (2026-05) the runtime exposes a single
-    MemoryEngine that fulfills both the GM + KB-registry surfaces, so
-    this adapter routes every call through ``rt.memory``.
-    """
-
-    def __init__(self, runtime: _MemoryRuntime | None):
-        self._rt = runtime
-
-    def _require(self) -> _MemoryRuntime:
-        if self._rt is None or not hasattr(self._rt, "memory"):
-            raise RuntimeError("runtime not available")
-        return self._rt
-
-    async def list_gm_nodes(
-        self, *, category: str | None, limit: int,
-    ) -> list[dict[str, Any]]:
-        rt = self._require()
-        nodes = await rt.memory.list_nodes(category=category, limit=limit)
-        return [_serialize_node(n) for n in nodes]
-
-    async def list_gm_edges(
-        self, *, limit: int,
-    ) -> list[dict[str, Any]]:
-        rt = self._require()
-        return await rt.memory.list_edges_named(limit=limit)
-
-    async def gm_stats(self) -> dict[str, Any]:
-        rt = self._require()
-        total_nodes = await rt.memory.count_nodes()
-        total_edges = await rt.memory.count_edges()
-        return {
-            "total_nodes": total_nodes,
-            "total_edges": total_edges,
-            "by_category": await rt.memory.counts_by_category(),
-            "by_source": await rt.memory.counts_by_source(),
-        }
-
-    async def list_kbs(self) -> list[dict[str, Any]]:
-        rt = self._require()
-        return await rt.memory.list_kbs()
-
-    async def kb_entries(
-        self, *, kb_id: str, limit: int,
-    ) -> list[dict[str, Any]]:
-        rt = self._require()
-        try:
-            kb = await rt.memory.open_kb(kb_id)
-        except KeyError:
-            raise LookupError(f"KB {kb_id!r} not found")
-        return await kb.list_active_entries(limit=limit)
-
-
-def _serialize_node(n: dict[str, Any]) -> dict[str, Any]:
-    """Trim raw embedding from API response; keep its presence as a flag."""
-    out = {k: v for k, v in n.items() if k != "embedding"}
-    out["has_embedding"] = n.get("embedding") is not None
-    return out
 
 
 # ---------------- prompts ----------------

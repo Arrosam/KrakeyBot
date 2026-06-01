@@ -50,9 +50,6 @@
       prompts_paused: "paused — toggle live to resume",
       prompts_pending: "{count} new prompt{plural} since paused",
 
-      // ── Memory view ────────────────────────────────────────────────
-      memory_graph_hint: "drag to pan · scroll to zoom · drag a node to move it",
-
       // ── Settings: section titles (keyed by stable section key) ─────
       section_llm: "LLM",
       section_plugins: "Plugins",
@@ -93,8 +90,6 @@
       panel_tool_usage: "Tool Usage",
       panel_stimulus: "Stimulus",
       panel_status: "Status (runtime state)",
-      mem_graph: "GM Graph",
-      mem_kbs: "KBs",
       log_autoscroll: "auto-scroll",
       prompts_hint: "The full prompt built for each heartbeat (last 50 beats, in-memory ring buffer; cleared on restart).",
       prompts_live: "Live updates",
