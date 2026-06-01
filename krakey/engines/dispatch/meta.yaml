@@ -10,6 +10,7 @@ builtin_engines:
   - name: local
     factory_module: krakey.engines.dispatch.default
     factory_attr: LocalDispatchEngine
+    config_path: data/engines/dispatch/local.yaml
     default: true
     description: |
       In-process dispatch — runs each ToolCall as an asyncio task,

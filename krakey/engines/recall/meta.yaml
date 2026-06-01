@@ -10,6 +10,7 @@ builtin_engines:
   - name: incremental
     factory_module: krakey.engines.recall.default
     factory_attr: IncrementalRecallEngine
+    config_path: data/engines/recall/incremental.yaml
     default: true
     description: |
       Per-stimulus vec_search → rerank → token-budget cut +
@@ -38,6 +39,7 @@ builtin_engines:
   - name: memos
     factory_module: krakey.engines.recall.memos
     factory_attr: MemOSRecallEngine
+    config_path: data/engines/recall/memos.yaml
     description: |
       MemOS recall — per-stimulus text retrieval via MOS.search
       (through the memory engine's fts_search). Token-budget cut,

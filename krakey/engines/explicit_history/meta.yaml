@@ -10,6 +10,7 @@ builtin_engines:
   - name: sliding_window
     factory_module: krakey.engines.explicit_history.default
     factory_attr: SlidingWindowExplicitHistoryEngine
+    config_path: data/engines/explicit_history/sliding_window.yaml
     default: true
     description: |
       Token-bounded ring of recent heartbeat rounds; oldest rounds

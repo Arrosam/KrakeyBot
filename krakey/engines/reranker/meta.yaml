@@ -13,6 +13,7 @@ builtin_engines:
   - name: passthrough
     factory_module: krakey.engines.reranker.default
     factory_attr: DefaultRerankerEngine
+    config_path: data/engines/reranker/passthrough.yaml
     default: true
     description: |
       Forwards to the rerank-tag client when bound; preserve-order

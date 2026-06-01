@@ -9,6 +9,7 @@ builtin_engines:
   - name: tool_call_parser
     factory_module: krakey.engines.decision._internal.tool_call_parser
     factory_attr: ToolCallParserDecisionEngine
+    config_path: data/engines/decision/tool_call_parser.yaml
     default: true
     description: |
       Scripted <tool_call>{...}</tool_call> parser. No LLM call.
@@ -16,6 +17,7 @@ builtin_engines:
   - name: hypothalamus
     factory_module: krakey.engines.decision._internal.hypothalamus
     factory_attr: HypothalamusDecisionEngine
+    config_path: data/engines/decision/hypothalamus.yaml
     description: |
       LLM-based natural-language translator. Bind
       core_purposes.hypothalamus to a tag before switching.

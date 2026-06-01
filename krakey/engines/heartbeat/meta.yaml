@@ -9,6 +9,7 @@ builtin_engines:
   - name: phased
     factory_module: krakey.engines.heartbeat.default
     factory_attr: DefaultHeartbeatEngine
+    config_path: data/engines/heartbeat/phased.yaml
     default: true
     description: |
       Canonical 13-phase pipeline: drain → fatigue → compact →

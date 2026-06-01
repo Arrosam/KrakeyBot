@@ -9,6 +9,7 @@ builtin_engines:
   - name: prompt_builder
     factory_module: krakey.engines.context.default
     factory_attr: DefaultContextEngine
+    config_path: data/engines/context/prompt_builder.yaml
     default: true
     description: |
       Standard PromptBuilder — assembles the canonical
