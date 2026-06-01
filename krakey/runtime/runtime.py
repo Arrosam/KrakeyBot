@@ -14,8 +14,11 @@ import asyncio
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from krakey.models.stimulus import Stimulus
 
 from krakey.models.self_model import (
     SelfModelStore, load_self_model_or_default,
@@ -167,6 +170,9 @@ class Runtime:
             cfg=self.config,
             factory=self.llm_factory,
         )
+        # Placed here (before memory resolve) so the resolve can pass it
+        # as sleep_log_dir, and the later code that references it also works.
+        self.sleep_log_dir = "workspace/logs"
         gm_path = self.config.graph_memory.db_path or ":memory:"
         self.memory = self._engine_registry.resolve(
             "memory",
@@ -182,6 +188,10 @@ class Runtime:
             ),
             extractor_llm=deps.classify_llm,
             classifier_llm=deps.classify_llm,
+            sleep_llm=deps.compact_llm,
+            reranker=self.reranker,
+            sleep_config=self.config.sleep,
+            sleep_log_dir=self.sleep_log_dir,
         )
         # Recall resolve is placed AFTER memory because the default
         # IncrementalRecallEngine takes the resolved memory instance
@@ -235,7 +245,6 @@ class Runtime:
         # ctx.services["runtime"]) sees a runtime with the fields it
         # needs at channel.start() time.
         self.log = logger or HeartbeatLogger()
-        self.sleep_log_dir = "workspace/logs"
         self.events = event_bus or EventBus()
         self._config_path = deps.config_path  # for dashboard settings page
         self._backup_dir = deps.backup_dir or "workspace/backups"
@@ -537,6 +546,79 @@ class Runtime:
         """Per-process sleep-cycle count, surfaced via /status + the
         dashboard. Resets across restarts (not persisted)."""
         return self._sleep_cycles
+
+    async def trigger_memory_sleep(self, reason: str = "") -> dict:
+        """Ask the memory engine to run a consolidation/sleep cycle.
+
+        Sleep is the memory engine's own concern; this is a thin convenience
+        hook (NOT part of the swappable MemoryEngine Protocol) that the
+        heartbeat / SleepTool / dashboard call to request one. Duck-typed so
+        a backend with no sleep notion (no request_sleep) is a safe no-op.
+        Publishes Sleep lifecycle events + a wake-up stimulus + resets the
+        recall session (GM changed underneath us), preserving the
+        observable behavior the old _perform_sleep had.
+        """
+        from krakey.runtime.events.event_types import (
+            SleepDoneEvent, SleepFailedEvent, SleepStartEvent,
+        )
+        req = getattr(self.memory, "request_sleep", None)
+        if req is None or not callable(req):
+            return {}
+
+        try:
+            self.events.publish(SleepStartEvent(reason=reason))
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            stats = await req(reason)
+        except Exception as exc:  # noqa: BLE001
+            err_str = f"{type(exc).__name__}: {exc}"
+            self.log.hb_warn(f"memory sleep failed: {err_str}")
+            try:
+                self.events.publish(SleepFailedEvent(reason=reason, error=err_str))
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                await self.buffer.push(Stimulus(
+                    type="system_event",
+                    source="system:sleep",
+                    content=(
+                        f"Sleep transition failed: {err_str}. "
+                        "Runtime is continuing without entering sleep "
+                        "state. The memory engine's consolidation did not "
+                        "complete; check the runtime stderr for details."
+                    ),
+                    timestamp=datetime.now(),
+                    adrenalin=True,
+                ))
+            except Exception:  # noqa: BLE001
+                pass
+            return {}
+
+        try:
+            self.events.publish(SleepDoneEvent(stats=stats))
+        except Exception:  # noqa: BLE001
+            pass
+        self._sleep_cycles += 1
+        try:
+            # Fold the trigger reason into the wake-up stimulus so Self
+            # (and tests) can see WHY the cycle ran (fatigue / voluntary /
+            # manual). ``reason`` originates from the caller (heartbeat
+            # force-sleep, voluntary decision, /sleep command, web/socket).
+            wake = "Completed a sleep cycle."
+            if reason:
+                wake = f"Completed a sleep cycle ({reason})."
+            await self.buffer.push(Stimulus(
+                type="system_event",
+                source="system:sleep",
+                content=wake,
+                timestamp=datetime.now(),
+            ))
+        except Exception:  # noqa: BLE001
+            pass
+        self._recall = self.recall.new_session()
+        return stats
 
     async def run(self, iterations: int | None = None) -> None:
         await self.memory.initialize()
