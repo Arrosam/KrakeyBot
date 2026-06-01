@@ -6,9 +6,9 @@ heartbeat. Implements the ``RecallSession`` Protocol declared in
 ``krakey.interfaces.engines.recall``.
 
 Per-beat algorithm:
-  1. ``add_stimuli(stims)`` — for each stimulus, vec_search top-K
-     candidates (via the shared ``gm_query`` helper, FTS fallback
-     included), rerank, accumulate into ``merged`` with weight
+  1. ``add_stimuli(stims)`` — for each stimulus, candidates come from
+     ``memory.search`` (the engine internally handles vector / FTS
+     retrieval), rerank, accumulate into ``merged`` with weight
      accumulation across stimuli (adrenalin ×10).
   2. ``finalize()`` — sort merged entries by weight, walk in order
      admitting nodes whose rendered token cost fits the budget,
@@ -28,7 +28,6 @@ from typing import Any, Callable, TYPE_CHECKING
 from krakey.engines.recall._internal.scoring import (
     ScoringWeights, doc_for_rerank, scripted_score,
 )
-from krakey.utils.gm_query import query_gm_with_fts_fallback
 from krakey.interfaces.engines.recall import RecallResult
 from krakey.utils.tokens import estimate_tokens
 
@@ -181,9 +180,8 @@ class IncrementalRecall:
             # sub-queries hit it.
             stimulus_best: dict[int, tuple[dict[str, Any], float]] = {}
             for q in queries:
-                candidates = await query_gm_with_fts_fallback(
-                    self._memory, self._embedder, q,
-                    top_k=self._screening_top_k(),
+                candidates = await self._memory.search(
+                    q, top_k=self._screening_top_k(),
                     min_similarity=self._vec_min_sim,
                 )
                 ranked = await self._rerank_or_fallback(q, candidates)
@@ -214,9 +212,8 @@ class IncrementalRecall:
         # in weight order and admit until the budget would be exceeded.
         all_ids = [e["node"]["id"] for e in sorted_entries]
         if all_ids:
-            neighbor_map_full = await self._memory.get_neighbor_keywords(
-                all_ids, depth=self._neighbor_depth,
-            )
+            _ctx = await self._memory.recall_context(all_ids)
+            neighbor_map_full = _ctx["neighbor_keywords"]
         else:
             neighbor_map_full = {}
 
@@ -246,7 +243,8 @@ class IncrementalRecall:
                 uncovered.append(s)
 
         if selected_ids:
-            edges = await self._memory.get_edges_among(list(selected_ids))
+            _ctx_sel = await self._memory.recall_context(list(selected_ids))
+            edges = _ctx_sel["edges"]
         else:
             edges = []
 

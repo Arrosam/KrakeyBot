@@ -2,8 +2,8 @@
 
 Pairs with ``core_implementations.memory: memos``. MemOS retrieves by
 TEXT (not raw vectors), so this session bypasses the embedder + raw
-``vec_search`` path entirely: each stimulus's content is forwarded to
-``memory.fts_search`` (which the MemOS memory adapter routes to
+vec_search path entirely: each stimulus's content is forwarded to
+``memory.search`` (which the MemOS memory adapter routes to
 ``MOS.search``); results are deduped by node id, token-budgeted, and
 partitioned into covered/uncovered. Edges always empty — MemOS does
 not expose its internal graph at the MOS API surface.
@@ -62,7 +62,7 @@ class MemOSRecallEngine:
 
 
 class MemOSRecallSession:
-    """Per-beat session: text retrieval via ``memory.fts_search``."""
+    """Per-beat session: text retrieval via ``memory.search``."""
 
     def __init__(
         self,
@@ -81,10 +81,11 @@ class MemOSRecallSession:
 
     async def add_stimuli(self, stimuli: list["Stimulus"]) -> None:
         for stim in stimuli:
-            results = await self._memory.fts_search(
+            scored = await self._memory.search(
                 stim.content, top_k=self._per_stimulus_k,
             )
-            self._per_query_results.append((stim, list(results or [])))
+            results = [n for (n, _score) in scored] if scored else []
+            self._per_query_results.append((stim, results))
             self.processed_stimuli.append(stim)
 
     async def finalize(self) -> RecallResult:
