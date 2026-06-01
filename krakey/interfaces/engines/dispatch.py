@@ -1,6 +1,6 @@
 """``DispatchEngine`` — execute a ``DecisionResult``'s side-effects.
 
-After the ``DecisionEngine`` produces a ``DecisionResult``, four side-
+After the ``DecisionEngine`` produces a ``DecisionResult``, three side-
 effects need to fire:
 
   1. Log + publish a ``DecisionExecutedEvent`` summary.
@@ -8,8 +8,6 @@ effects need to fire:
      batch with the ``BatchTracker`` so completion can wake Self.
   3. Apply ``memory_writes`` (LLM-extracted nodes/edges via
      ``MemoryEngine.explicit_write``).
-  4. Apply ``memory_updates`` (category flips like TARGET → FACT via
-     ``MemoryEngine.update_node_category``).
 
 The default impl ``LocalDispatchEngine`` runs everything in-process —
 ``tool.execute()`` is a Python coroutine call, memory writes go
@@ -59,7 +57,7 @@ class DispatchEngine(Protocol):
         *,
         recall_context: list[dict] | None = None,
     ) -> None:
-        """Run the 4 side-effects of a DecisionResult.
+        """Run the 3 side-effects of a DecisionResult.
 
         ``recall_context`` is the heartbeat's RecallResult.nodes
         list; ``apply_memory_writes`` forwards it to

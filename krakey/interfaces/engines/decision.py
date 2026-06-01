@@ -59,7 +59,7 @@ class DecisionResult:
     """Aggregate result of one decision-translation pass.
 
     Consumed by ``DispatchEngine`` (which fires the tool calls + memory
-    writes/updates) and the heartbeat (which checks ``sleep`` to gate
+    writes) and the heartbeat (which checks ``sleep`` to gate
     the sleep transition).
 
     ``parse_failures`` is non-empty only when the impl is the scripted
@@ -68,7 +68,6 @@ class DecisionResult:
     """
     tool_calls: list[ToolCall] = field(default_factory=list)
     memory_writes: list[dict[str, Any]] = field(default_factory=list)
-    memory_updates: list[dict[str, Any]] = field(default_factory=list)
     sleep: bool = False
     parse_failures: list[ParseFailure] = field(default_factory=list)
 
