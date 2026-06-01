@@ -755,15 +755,19 @@ class TestCfgMissingFields:
 
 
 class TestFtsSearchExceptionPropagates:
-    """Negative: memory.fts_search raising -> exception propagates from add_stimuli."""
+    """Negative: memory.search raising -> exception propagates from add_stimuli.
+
+    The recall session sources candidates through the memory contract's
+    ``search`` face now (not the raw ``fts_search`` primitive), so the
+    propagated error originates in ``search``."""
 
     async def test_exception_propagates_from_add_stimuli(self):  # propagation
-        """The adapter should NOT silently swallow fts_search errors.
+        """The adapter should NOT silently swallow memory.search errors.
         If this test fails because the implementation wraps the error,
         update the 'propagation' assumption in the module docstring."""
         mem = RaisingMemory()
         session = _engine(memory=mem).new_session()
-        with pytest.raises(RuntimeError, match="fts_search deliberately failing"):
+        with pytest.raises(RuntimeError, match="search deliberately failing"):
             await session.add_stimuli([_make_stim("query")])
 
 
