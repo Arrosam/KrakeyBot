@@ -34,8 +34,7 @@ from krakey.prompt.views import ExplicitHistoryRound
 from krakey.engines.heartbeat.compact import compact_if_needed
 from krakey.runtime.events.event_types import (
     DecisionEvent, GMStatsEvent, HeartbeatStartEvent, IdleEvent,
-    SelfOutputEvent, NoteEvent, PromptBuiltEvent, SleepDoneEvent,
-    SleepFailedEvent, SleepStartEvent, StimuliQueuedEvent,
+    SelfOutputEvent, NoteEvent, PromptBuiltEvent, StimuliQueuedEvent,
     ThinkingEvent
 )
 from krakey.engines.heartbeat.fatigue import calculate_fatigue
@@ -751,11 +750,10 @@ class HeartbeatOrchestrator:
         return bool(result.sleep)
 
     def _phase_schedule_classify(self) -> None:
-        """Background classify+link doesn't block the heartbeat."""
-        rt = self._rt
-        rt._classify_tasks.append(
-            asyncio.create_task(rt.memory.classify_and_link_pending()),
-        )
+        """No-op: pending-node classification is now internal to the memory
+        engine (it classifies during storage + sleep on its own schedule).
+        The heartbeat no longer schedules an external classify pass."""
+        return
 
     async def _phase_idle(self, parsed, recall_result) -> None:
         rt = self._rt
@@ -948,70 +946,13 @@ class HeartbeatOrchestrator:
     # ---- sleep ---------------------------------------------------------
 
     async def _perform_sleep(self, reason: str, *, wake_msg: str) -> None:
-        """Run 7-phase Sleep, persist self-model bookkeeping, push wake-up
-        stimulus, reset incremental recall (GM state changed)."""
+        """Delegate sleep to the runtime's memory-sleep hook.
+
+        Sleep is the memory engine's own concern now; the runtime hook
+        (``trigger_memory_sleep``) owns event publishing, the wake-up
+        stimulus, the recall-session reset, and the sleep-cycle counter.
+        The ``wake_msg`` is no longer used here (the hook emits its own
+        generic wake stimulus) but the parameter is kept so the call sites
+        don't all need editing."""
         rt = self._rt
-        rt.log.hb(f"sleep started — {reason}")
-        rt.events.publish(SleepStartEvent(reason=reason))
-        try:
-            sl = rt.config.sleep
-            # Sleep flows through the MemoryEngine — a custom
-            # MemoryEngine impl can override sleep_cycle to ship
-            # consolidation to a remote worker, skip migration
-            # entirely, etc. The default GraphMemoryEngine wraps
-            # the in-tree enter_sleep_mode pipeline.
-            stats = await rt.memory.sleep_cycle(
-                channels=rt.buffer,
-                log_dir=rt.sleep_log_dir,
-                config={
-                    "llm": rt.compact_llm,
-                    "reranker": rt.reranker,
-                    "min_community_size": sl.min_community_size,
-                    "kb_consolidation_threshold":
-                        sl.kb_consolidation_threshold,
-                    "kb_index_max":          sl.kb_index_max,
-                    "kb_archive_pct":        sl.kb_archive_pct,
-                    "kb_revive_threshold":   sl.kb_revive_threshold,
-                },
-            )
-        except Exception as e:  # noqa: BLE001
-            err = f"{type(e).__name__}: {e}"
-            # Three-way surfacing so a sleep failure isn't silent:
-            # (1) stderr via hb_warn, since `hb` previously went to
-            #     stdout where it could blend with normal beat lines
-            # (2) event bus → dashboard sees a SleepFailed card
-            # (3) system_event stimulus → Self sees on next beat
-            #     that its sleep request didn't take effect AND
-            #     gets the underlying error so it can react
-            rt.log.hb_warn(f"sleep failed: {err}")
-            rt.events.publish(SleepFailedEvent(reason=reason, error=err))
-            await rt.buffer.push(Stimulus(
-                type="system_event", source="system:sleep",
-                content=(
-                    f"Sleep transition failed: {err}. "
-                    "Runtime is continuing without entering sleep "
-                    "state. Likely causes: compact_llm not bound or "
-                    "unreachable, GM/KB I/O error during clustering "
-                    "or migration. Check the runtime stderr for the "
-                    "stack trace."
-                ),
-                timestamp=datetime.now(), adrenalin=True,
-            ))
-            return
-        rt.events.publish(SleepDoneEvent(stats=stats))
-        rt.log.hb(
-            f"sleep done: facts_migrated={stats['facts_migrated']}, "
-            f"focus_cleared={stats['focus_cleared']}, "
-            f"kbs={stats['kbs_created']}, index_nodes={stats['index_nodes']}"
-        )
-        # Sleep bookkeeping is a per-process runtime concern, not
-        # something Self needs to remember across restarts.
-        rt._sleep_cycles += 1
-        # Wake-up stimulus
-        await rt.buffer.push(Stimulus(
-            type="system_event", source="system:sleep",
-            content=wake_msg, timestamp=datetime.now(),
-            adrenalin=False,
-        ))
-        # GM changed underneath us — start a fresh recall
-        rt._recall = self._rt.recall.new_session()
+        await rt.trigger_memory_sleep(reason)
