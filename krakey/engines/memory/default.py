@@ -62,6 +62,8 @@ class GraphMemoryEngine(GraphMemory):
         reranker=None,
         sleep_config=None,
         sleep_log_dir: str = "workspace/logs",
+        # Web service config — optional; enabled=False by default
+        web_config=None,
     ):
         super().__init__(
             db_path,
@@ -91,6 +93,15 @@ class GraphMemoryEngine(GraphMemory):
         self.sleep_cycles_run: int = 0
         self._sleeping: bool = False
 
+        # Web service config — normalise to a plain dict (or None)
+        if web_config is None:
+            self._web_config: dict[str, Any] | None = None
+        elif dataclasses.is_dataclass(web_config) and not isinstance(web_config, type):
+            self._web_config = dataclasses.asdict(web_config)
+        else:
+            self._web_config = dict(web_config)
+        self._web_server = None
+
     # ---- lifecycle -----------------------------------------------------
 
     async def initialize(self) -> None:
@@ -103,8 +114,32 @@ class GraphMemoryEngine(GraphMemory):
                 self, kb_dir=self._kb_dir, embedder=self._embedder,
             )
 
+        # Start the self-hosted web service if enabled in web_config.
+        # A startup failure MUST NOT crash initialize() — log + continue.
+        cfg = self._web_config or {}
+        _enabled = cfg.get("enabled", False)
+        if _enabled:
+            try:
+                from krakey.engines.memory.web import create_memory_app
+                from krakey.engines.memory.web_server import ThreadedMemoryWebServer
+                _host = cfg.get("host", "127.0.0.1")
+                _port = int(cfg.get("port", 8766))
+                _app = create_memory_app(self)
+                self._web_server = ThreadedMemoryWebServer(_app, host=_host, port=_port)
+                self._web_server.start()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("memory web service failed to start: %s", e)
+                self._web_server = None
+
     async def close(self) -> None:
-        """Close every open KB first, then the GM connection."""
+        """Stop the web server first, then close every open KB, then
+        the GM connection."""
+        if self._web_server is not None:
+            try:
+                self._web_server.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            self._web_server = None
         if self._kb_registry is not None:
             await self._kb_registry.close_all()
         await super().close()
