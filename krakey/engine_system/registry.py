@@ -334,6 +334,18 @@ class EngineRegistry:
             # Never crash resolve over a bad settings file.
             return {}
 
+    def _engine_config_path(self, slot: str, short_name: str) -> str:
+        """Return the impl's declared ``config_path`` (workspace-relative
+        settings-file path), or ``""`` when unknown/undeclared. Surfaced
+        to the engine as a ``config_path`` kwarg so an engine that hosts
+        its own settings UI (e.g. memory's web service) can read/write the
+        SAME file the registry loaded its ``config`` from."""
+        catalog, _ = _load_slot_catalog(slot)
+        impl = catalog.get(short_name)
+        if impl is None:
+            return ""
+        return impl.config_path or ""
+
     def resolve(
         self,
         slot: str,
@@ -366,6 +378,12 @@ class EngineRegistry:
         if ":" not in name_or_path and "config" not in kwargs:
             kwargs = dict(kwargs)
             kwargs["config"] = self._engine_config(slot, name_or_path)
+            # Also surface the impl's own settings-file path so engines
+            # that host a settings UI can read/write the same file.
+            if "config_path" not in kwargs:
+                kwargs["config_path"] = self._engine_config_path(
+                    slot, name_or_path,
+                )
         accepted_kwargs = _filter_kwargs(cls, kwargs)
         try:
             instance = cls(**accepted_kwargs)
