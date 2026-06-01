@@ -90,13 +90,6 @@ async def _format_memory_stats(runtime: "Runtime") -> str:
     edges = await runtime.memory.count_edges()
     cat_counts = await runtime.memory.counts_by_category()
     src_counts = await runtime.memory.counts_by_source()
-    kbs = await runtime.memory.list_kbs()
-
     by_cat = ", ".join(f"{k}={v}" for k, v in cat_counts.items()) or "(none)"
     by_src = ", ".join(f"{k}={v}" for k, v in src_counts.items()) or "(none)"
-    kb_line = f"{len(kbs)} KB(s)" + (
-        ": " + ", ".join(f"{k['kb_id']}({k['entry_count']})" for k in kbs)
-        if kbs else ""
-    )
-    return (f"gm: {nodes} nodes, {edges} edges  |  by_cat: {by_cat}  |  "
-            f"by_src: {by_src}  |  {kb_line}")
+    return (f"gm: {nodes} nodes, {edges} edges  |  by_cat: {by_cat}  |  by_src: {by_src}")
