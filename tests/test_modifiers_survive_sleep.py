@@ -123,10 +123,8 @@ async def test_hypothalamus_modify_prompt_fires_post_sleep(tmp_path):
         '[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1',
     ])
     hypo_llm = _ScriptedLLM([
-        json.dumps({"tool_calls": [], "memory_writes": [],
-                    "memory_updates": [], "sleep": True}),
-        json.dumps({"tool_calls": [], "memory_writes": [],
-                    "memory_updates": [], "sleep": False}),
+        json.dumps({"tool_calls": [], "memory_writes": [], "sleep": True}),
+        json.dumps({"tool_calls": [], "memory_writes": [], "sleep": False}),
     ])
     sleep_llm = _ScriptedLLM(["summary"] * 5)
     runtime = build_runtime_with_fakes(

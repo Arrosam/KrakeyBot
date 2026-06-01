@@ -19,7 +19,7 @@ def test_event_dataclasses_carry_typed_fields():
     assert e.text == "thinking text"
 
     h = DecisionExecutedEvent(heartbeat_id=3, tool_calls_count=2,
-                            memory_writes_count=1, memory_updates_count=0,
+                            memory_writes_count=1,
                             sleep_requested=False)
     assert h.tool_calls_count == 2 and h.sleep_requested is False
 

@@ -37,7 +37,7 @@ async def test_single_iteration_user_message_triggers_tool_dispatch():
                             "intent": "Hi there!",
                             "params": {"text": "Hi there!"},
                             "adrenalin": False}],
-        "memory_writes": [], "memory_updates": [], "sleep": False,
+        "memory_writes": [], "sleep": False,
     })])
 
     runtime = build_runtime_with_fakes(self_llm=self_llm, decision_translator_llm=hypo_llm)
@@ -107,7 +107,7 @@ async def test_no_action_decision_runs_no_tool():
         "[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1"
     ])
     hypo_llm = ScriptedLLM([json.dumps({
-        "tool_calls": [], "memory_writes": [], "memory_updates": [],
+        "tool_calls": [], "memory_writes": [],
         "sleep": False,
     })])
 
@@ -347,7 +347,7 @@ async def test_tool_feedback_does_not_inherit_adrenalin_from_hypothalamus():
         "tool_calls": [{"tool": "web_chat_reply",
                             "intent": "go", "params": {"text": "go"},
                             "adrenalin": True}],
-        "memory_writes": [], "memory_updates": [], "sleep": False,
+        "memory_writes": [], "sleep": False,
     })])
 
     runtime = build_runtime_with_fakes(self_llm=self_llm, decision_translator_llm=hypo_llm)
@@ -410,8 +410,7 @@ async def test_voluntary_sleep_via_hypothalamus_runs_full_sleep(tmp_path):
         "[THINKING]\n(quiet beat)\n[DECISION]\nenter sleep mode\n[IDLE]\n1",
     ])
     hypo_llm = ScriptedLLM([
-        json.dumps({"tool_calls": [], "memory_writes": [],
-                     "memory_updates": [], "sleep": True}),
+        json.dumps({"tool_calls": [], "memory_writes": [], "sleep": True}),
     ])
     # Compact LLM doubles as the community-summary + KB-relations LLM
     sleep_llm = ScriptedLLM([
@@ -635,10 +634,9 @@ async def test_self_can_dispatch_memory_recall_and_see_feedback():
                                   "intent": "apple",
                                   "params": {"query": "apple"},
                                   "adrenalin": False}],
-            "memory_writes": [], "memory_updates": [], "sleep": False,
+            "memory_writes": [], "sleep": False,
         }),
-        json.dumps({"tool_calls": [], "memory_writes": [],
-                     "memory_updates": [], "sleep": False}),
+        json.dumps({"tool_calls": [], "memory_writes": [], "sleep": False}),
     ])
 
     class MapEmbed:
@@ -709,10 +707,9 @@ async def test_tool_feedback_auto_ingested_to_gm():
             "params": {"text": "Hello! Nice to meet you."},
             "adrenalin": False,
         }],
-                     "memory_writes": [], "memory_updates": [],
+                     "memory_writes": [],
                      "sleep": False}),
-        json.dumps({"tool_calls": [], "memory_writes": [],
-                     "memory_updates": [], "sleep": False}),
+        json.dumps({"tool_calls": [], "memory_writes": [], "sleep": False}),
     ])
 
     runtime = build_runtime_with_fakes(
@@ -742,10 +739,9 @@ async def test_batch_complete_stimulus_wakes_next_heartbeat():
                                          "intent": "x",
                                          "params": {"text": "x"},
                                          "adrenalin": False}],
-                     "memory_writes": [], "memory_updates": [],
+                     "memory_writes": [],
                      "sleep": False}),
-        json.dumps({"tool_calls": [], "memory_writes": [],
-                     "memory_updates": [], "sleep": False}),
+        json.dumps({"tool_calls": [], "memory_writes": [], "sleep": False}),
     ])
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, decision_translator_llm=hypo_llm,
@@ -772,8 +768,7 @@ async def test_explicit_write_from_hypothalamus_memory_writes():
         json.dumps({
             "tool_calls": [],
             "memory_writes": [{"content": "user prefers detailed answers",
-                                "importance": "high"}],
-            "memory_updates": [], "sleep": False,
+                                "importance": "high"}], "sleep": False,
         })
     ])
     # Classify/extractor LLM used by explicit_write
@@ -806,10 +801,8 @@ async def test_idle_interrupts_on_adrenalin_stimulus():
         "[THINKING]\n(quiet beat)\n[DECISION]\nNo action.\n[IDLE]\n1",
     ])
     hypo_llm = ScriptedLLM([
-        json.dumps({"tool_calls": [], "memory_writes": [],
-                    "memory_updates": [], "sleep": False}),
-        json.dumps({"tool_calls": [], "memory_writes": [],
-                    "memory_updates": [], "sleep": False}),
+        json.dumps({"tool_calls": [], "memory_writes": [], "sleep": False}),
+        json.dumps({"tool_calls": [], "memory_writes": [], "sleep": False}),
     ])
     runtime = build_runtime_with_fakes(
         self_llm=self_llm, decision_translator_llm=hypo_llm,
