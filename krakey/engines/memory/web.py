@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -73,6 +73,12 @@ class KBEntryCreateBody(BaseModel):
 
 class SleepBody(BaseModel):
     reason: str = ""
+
+
+class BenchmarkBody(BaseModel):
+    sizes: list[int] | None = None
+    dim: int = 384
+    repeats: int = 10
 
 
 # ---------------------------------------------------------------------------
@@ -395,5 +401,42 @@ def create_memory_app(engine) -> FastAPI:
     async def trigger_sleep(body: SleepBody):
         result = await engine.request_sleep(body.reason)
         return result
+
+    # ------------------------------------------------------------------
+    # GM-latency benchmark (engine-internal, throwaway GM)
+    # ------------------------------------------------------------------
+
+    @app.post("/api/benchmark")
+    async def run_benchmark(body: BenchmarkBody):
+        from krakey.engines.memory._internal.bench import (
+            measure_at,
+            recommend_soft_limit,
+        )
+        sizes = body.sizes if body.sizes is not None else [100, 500, 1000, 2000]
+        results = []
+        for n in sizes:
+            r = await measure_at(n, dim=body.dim, query_repeats=body.repeats)
+            results.append(r)
+        rec = recommend_soft_limit(results)
+        return {"results": results, "recommended_soft_limit": rec}
+
+    # ------------------------------------------------------------------
+    # Engine settings (read/write the engine's own settings file)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/settings")
+    async def get_settings():
+        if not engine._config_path:
+            return {}
+        from krakey.engine_system.config_store import FileEngineConfigStore
+        return FileEngineConfigStore("workspace").read(engine._config_path)
+
+    @app.put("/api/settings")
+    async def put_settings(payload: dict = Body(...)):
+        if not engine._config_path:
+            raise HTTPException(status_code=400, detail="engine has no config_path")
+        from krakey.engine_system.config_store import FileEngineConfigStore
+        FileEngineConfigStore("workspace").write(engine._config_path, payload)
+        return {"ok": True}
 
     return app

@@ -64,6 +64,9 @@ class GraphMemoryEngine(GraphMemory):
         sleep_log_dir: str = "workspace/logs",
         # Web service config — optional; enabled=False by default
         web_config=None,
+        # Engine-own settings — passed by the registry at construction
+        config=None,
+        config_path=None,
     ):
         super().__init__(
             db_path,
@@ -101,6 +104,17 @@ class GraphMemoryEngine(GraphMemory):
         else:
             self._web_config = dict(web_config)
         self._web_server = None
+
+        # Engine-own settings (from the engine's own settings file)
+        self._config: dict[str, Any] = dict(config) if config else {}
+        self._config_path: str | None = config_path
+
+        # gm_node_soft_limit — memory-engine-owned threshold (replaces
+        # the old config.fatigue.gm_node_soft_limit). Readable by the
+        # runtime via engine.gm_node_soft_limit; default 1000.
+        self.gm_node_soft_limit: int = int(
+            (self._config or {}).get("gm_node_soft_limit", 1000)
+        )
 
     # ---- lifecycle -----------------------------------------------------
 
