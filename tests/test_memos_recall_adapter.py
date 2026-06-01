@@ -104,9 +104,29 @@ class FakeMemory:
         results = self._per_query.get(query, self._default)
         return list(results[:top_k])
 
+    async def search(
+        self, query: str, *, top_k: int = 8, min_similarity: float = 0.3,
+    ) -> list[tuple[dict, float]]:
+        # The recall session now sources candidates via the memory
+        # contract's ``search`` face (scored tuples), not the raw
+        # ``fts_search`` primitive. Mirror the canned lookup and record
+        # the call so the (query, top_k) assertions still hold.
+        self.calls.append((query, top_k))
+        results = self._per_query.get(query, self._default)
+        return [(node, 0.0) for node in results[:top_k]]
+
 
 class RaisingMemory:
-    """FakeMemory variant that raises on every fts_search call."""
+    """FakeMemory variant that raises on every recall call.
+
+    The MemOS recall session now sources candidates via the memory
+    contract's ``search`` face (not the raw ``fts_search`` primitive),
+    so the deliberate failure lives on ``search``. ``fts_search`` is
+    kept raising too for any direct caller."""
+
+    async def search(self, query: str, *, top_k: int = 8,
+                     min_similarity: float = 0.3) -> list:
+        raise RuntimeError("search deliberately failing")
 
     async def fts_search(self, query: str, *, top_k: int) -> list[dict]:
         raise RuntimeError("fts_search deliberately failing")
