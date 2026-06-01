@@ -104,3 +104,40 @@ class GraphMemory(GMStorage, GMQueryMixin):
             batch_size=self._classify_batch_size,
             existing_context=self._classify_existing_context,
         )
+
+    # ---------- Read façade (search + recall_context) ----------
+
+    async def search(
+        self,
+        query: str,
+        *,
+        top_k: int = 8,
+        min_similarity: float = 0.3,
+    ) -> list[tuple[dict[str, Any], float]]:
+        """Scored free-text recall: embed -> vec_search, FTS fallback on
+        embed failure / empty result / no embedder. ``top_k <= 0`` -> []."""
+        if top_k <= 0:
+            return []
+        candidates: list[tuple[dict[str, Any], float]] = []
+        if self._embedder is not None:
+            try:
+                vec = await self._embedder(query)
+                candidates = await self.vec_search(
+                    vec, top_k=top_k, min_similarity=min_similarity,
+                )
+            except Exception:  # noqa: BLE001
+                candidates = []
+        if not candidates:
+            fts_hits = await self.fts_search(query, top_k=top_k)
+            candidates = [(n, 0.0) for n in fts_hits]
+        return candidates
+
+    async def recall_context(self, node_ids: list[int]) -> dict[str, Any]:
+        """Recall-time enrichment: neighbor keywords + edges among the set.
+        Empty ``node_ids`` -> empty enrichment."""
+        if not node_ids:
+            return {"neighbor_keywords": {}, "edges": []}
+        return {
+            "neighbor_keywords": await self.get_neighbor_keywords(node_ids),
+            "edges": await self.get_edges_among(node_ids),
+        }

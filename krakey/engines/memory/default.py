@@ -230,28 +230,8 @@ class GraphMemoryEngine(GraphMemory):
     ) -> list[tuple[dict, float]]:
         """Embed → vec_search with FTS fallback on embed failure or empty
         result. If no embedder is configured, goes straight to FTS.
-        FTS hits receive score ``0.0``. ``top_k=0`` returns ``[]``."""
-        if top_k == 0:
-            return []
-
-        if self._embedder is None:
-            fts_hits = await self.fts_search(query, top_k=top_k)
-            return [(n, 0.0) for n in fts_hits]
-
-        candidates: list[tuple[dict, float]] = []
-        try:
-            vec = await self._embedder(query)
-            candidates = await self.vec_search(
-                vec, top_k=top_k, min_similarity=min_similarity,
-            )
-        except Exception:  # noqa: BLE001
-            candidates = []
-
-        if not candidates:
-            fts_hits = await self.fts_search(query, top_k=top_k)
-            candidates = [(n, 0.0) for n in fts_hits]
-
-        return candidates
+        FTS hits receive score ``0.0``. ``top_k <= 0`` returns ``[]``."""
+        return await super().search(query, top_k=top_k, min_similarity=min_similarity)
 
     async def recall_context(
         self,
@@ -261,12 +241,7 @@ class GraphMemoryEngine(GraphMemory):
 
         Returns ``{"neighbor_keywords": {…}, "edges": […]}``. Empty inputs
         return empty enrichment without touching the DB."""
-        if not node_ids:
-            return {"neighbor_keywords": {}, "edges": []}
-        return {
-            "neighbor_keywords": await self.get_neighbor_keywords(node_ids),
-            "edges": await self.get_edges_among(node_ids),
-        }
+        return await super().recall_context(node_ids)
 
     async def recall_kb(
         self,
