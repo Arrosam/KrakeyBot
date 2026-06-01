@@ -7,10 +7,12 @@ directly reachable) plus three responsibilities layered on top:
     ``set_archived`` / ``set_index_embedding`` / ``delete_kb`` /
     ``close_all_kbs`` — delegating to an internal ``KBRegistry`` built
     lazily during ``initialize()``.
-  * **Sleep cycle** — ``sleep_cycle`` runs the full
+  * **Sleep cycle** — ``request_sleep`` runs the full
     ``enter_sleep_mode`` pipeline (clustering → migration → KB
-    consolidation/archival → index rebuild) without callers having to
-    know that subsystem exists.
+    consolidation/archival → index rebuild) using deps injected at
+    construction time. The engine self-triggers sleep when the GM node
+    count reaches ``sleep_config["auto_sleep_node_threshold"]``
+    (0 = disabled). Channels are never paused.
 
 Initialize ordering: ``initialize()`` calls ``GraphMemory.initialize()``
 first (opens the SQLite connection + applies schema), then constructs
@@ -20,14 +22,20 @@ raises a clear error rather than NoneType-attribute errors.
 """
 from __future__ import annotations
 
+import dataclasses
+import logging
 from typing import TYPE_CHECKING, Any
 
 from krakey.engines.memory._internal.graph_memory import GraphMemory
 from krakey.interfaces.duck import ChatLike
 from krakey.engines.memory._internal.knowledge_base import KBRegistry
 
-if TYPE_CHECKING:
-    from krakey.interfaces.engines.memory import KnowledgeBaseLike
+# ``KnowledgeBaseLike`` is no longer a public Protocol (KB browsing/editing
+# is served by the memory engine's own web service, not handed to callers).
+# The KB instance type is an engine-internal concern; annotate as Any.
+KnowledgeBaseLike = Any
+
+logger = logging.getLogger(__name__)
 
 
 class GraphMemoryEngine(GraphMemory):
@@ -49,6 +57,11 @@ class GraphMemoryEngine(GraphMemory):
         classifier_llm: ChatLike | None = None,
         classify_batch_size: int = 10,
         classify_existing_context: int = 30,
+        # Sleep deps — injected at construction, never per-call
+        sleep_llm: ChatLike | None = None,
+        reranker=None,
+        sleep_config=None,
+        sleep_log_dir: str = "workspace/logs",
     ):
         super().__init__(
             db_path,
@@ -61,6 +74,22 @@ class GraphMemoryEngine(GraphMemory):
         )
         self._kb_dir = kb_dir
         self._kb_registry: KBRegistry | None = None
+
+        # Sleep deps
+        self._sleep_llm = sleep_llm
+        self._reranker = reranker
+        # Normalise sleep_config into a plain dict
+        if sleep_config is None:
+            self._sleep_cfg: dict[str, Any] = {}
+        elif dataclasses.is_dataclass(sleep_config) and not isinstance(sleep_config, type):
+            self._sleep_cfg = dataclasses.asdict(sleep_config)
+        else:
+            self._sleep_cfg = dict(sleep_config)
+        self._sleep_log_dir = sleep_log_dir
+
+        # Public counter + in-flight guard
+        self.sleep_cycles_run: int = 0
+        self._sleeping: bool = False
 
     # ---- lifecycle -----------------------------------------------------
 
@@ -140,7 +169,9 @@ class GraphMemoryEngine(GraphMemory):
         source_heartbeat: int | None = None,
     ) -> dict:
         """Passive, low-cost store. Delegates to ``auto_ingest``."""
-        return await self.auto_ingest(content, source_heartbeat=source_heartbeat)
+        result = await self.auto_ingest(content, source_heartbeat=source_heartbeat)
+        await self._maybe_auto_sleep()
+        return result
 
     async def remember(
         self,
@@ -152,12 +183,14 @@ class GraphMemoryEngine(GraphMemory):
     ) -> dict:
         """Deliberate store with optional LLM extraction. Delegates to
         ``explicit_write``."""
-        return await self.explicit_write(
+        result = await self.explicit_write(
             content,
             importance=importance,
             recall_context=recall_context,
             source_heartbeat=source_heartbeat,
         )
+        await self._maybe_auto_sleep()
+        return result
 
     async def remember_extraction(
         self,
@@ -165,7 +198,9 @@ class GraphMemoryEngine(GraphMemory):
         edges: list[dict],
     ) -> dict:
         """Bulk store of already-distilled structure (nodes + edges)."""
-        return await super().remember_extraction(nodes, edges)
+        result = await super().remember_extraction(nodes, edges)
+        await self._maybe_auto_sleep()
+        return result
 
     async def search(
         self,
@@ -201,53 +236,64 @@ class GraphMemoryEngine(GraphMemory):
         kb = await self.open_kb(kb_id)
         return await kb.search(query, top_k=top_k)
 
-    # ---- sleep cycle ---------------------------------------------------
+    # ---- sleep (engine-owned) ------------------------------------------
 
-    async def sleep_cycle(
-        self,
-        *,
-        channels: Any,
-        log_dir: str,
-        config: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Run a full sleep cycle. ``config`` carries the user's sleep
-        tuning + the LLM/reranker the pipeline needs (since sleep
-        clustering + migration use those Engines).
-
-        Expected ``config`` keys (all optional, with sensible
-        defaults from ``cfg.sleep``):
-
-          * llm                          — chat client used by
-                                            clustering summaries +
-                                            sleep-time KB dedup judge
-          * reranker                     — RerankerEngine used during
-                                            sleep migration dedup
-          * min_community_size           — drop tiny clusters
-          * kb_consolidation_threshold   — pairwise KB merge threshold
-          * kb_index_max                 — soft cap on active KB count
-          * kb_archive_pct               — % of low-importance KBs to
-                                            archive when over the cap
-          * kb_revive_threshold          — revive an archived KB when
-                                            new community is this close
+    async def request_sleep(self, reason: str = "") -> dict[str, Any]:
+        """The ONLY sleep entry point. Runs one consolidation cycle using
+        the construction-injected sleep_llm / reranker / embedder /
+        sleep_config. Does NOT pause channels. Returns the stats dict (or
+        {} if no sleep_llm is configured or a cycle is already running).
         """
-        from krakey.engines.memory._internal.sleep.sleep_manager import (
-            enter_sleep_mode,
-        )
+        if self._sleep_llm is None:
+            return {}
+        if self._sleeping:
+            # Coalesce: a cycle is already in flight, do not stack
+            return {}
+        self._sleeping = True
+        try:
+            from krakey.engines.memory._internal.sleep.sleep_manager import (
+                enter_sleep_mode,
+            )
+            cfg = self._sleep_cfg
+            stats = await enter_sleep_mode(
+                self,
+                self._require_kb_registry(),
+                channels=None,  # no channel pausing
+                llm=self._sleep_llm,
+                embedder=self._embedder,
+                reranker=self._reranker,
+                log_dir=self._sleep_log_dir,
+                min_community_size=cfg.get("min_community_size", 1),
+                kb_consolidation_threshold=cfg.get(
+                    "kb_consolidation_threshold", 0.85,
+                ),
+                kb_index_max=cfg.get("kb_index_max", 30),
+                kb_archive_pct=cfg.get("kb_archive_pct", 10),
+                kb_revive_threshold=cfg.get("kb_revive_threshold", 0.80),
+            )
+            self.sleep_cycles_run += 1
+            if reason:
+                logger.debug(
+                    "sleep cycle completed (reason=%r, cycles_run=%d)",
+                    reason, self.sleep_cycles_run,
+                )
+            return stats
+        except Exception as exc:
+            logger.error(
+                "sleep cycle failed (reason=%r): %s", reason, exc, exc_info=True,
+            )
+            return {}
+        finally:
+            self._sleeping = False
 
-        registry = self._require_kb_registry()
-        return await enter_sleep_mode(
-            self,
-            registry,
-            channels,
-            llm=config.get("llm"),
-            embedder=self._embedder,
-            reranker=config.get("reranker"),
-            log_dir=log_dir,
-            min_community_size=config.get("min_community_size", 1),
-            kb_consolidation_threshold=config.get(
-                "kb_consolidation_threshold", 0.85,
-            ),
-            kb_index_max=config.get("kb_index_max", 30),
-            kb_archive_pct=config.get("kb_archive_pct", 10),
-            kb_revive_threshold=config.get("kb_revive_threshold", 0.80),
-        )
+    async def _maybe_auto_sleep(self) -> None:
+        """Trigger a sleep cycle when the GM node count reaches the
+        configured threshold. threshold=0 (default) disables auto-sleep.
+        """
+        threshold = int(self._sleep_cfg.get("auto_sleep_node_threshold", 0) or 0)
+        if threshold <= 0:
+            return
+        if self._sleeping or self._sleep_llm is None:
+            return
+        if await self.count_nodes() >= threshold:
+            await self.request_sleep(reason="auto: node threshold")

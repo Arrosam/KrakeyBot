@@ -30,7 +30,7 @@ class AsyncEmbedder(Protocol):
 
 
 async def enter_sleep_mode(
-    gm: GraphMemory, reg: KBRegistry, channels: "StimulusBuffer",
+    gm: GraphMemory, reg: KBRegistry, channels: "StimulusBuffer | None" = None,
     *, llm: ChatLike, embedder: AsyncEmbedder,
     reranker: "RerankerEngine | None" = None,
     log_dir: str | Path = "workspace/logs",
@@ -41,12 +41,19 @@ async def enter_sleep_mode(
     kb_revive_threshold: float = 0.80,
     kb_dedup_top_k: int = 5,
 ) -> dict[str, Any]:
-    """Run all 7 phases. Returns summary stats."""
+    """Run all 7 phases. Returns summary stats.
+
+    ``channels`` is optional. When ``None``, no channel pausing/resuming
+    occurs — sleep runs fully in the background without blocking input.
+    Pass a ``StimulusBuffer`` only if the legacy "pause channels during
+    sleep" behaviour is explicitly desired.
+    """
 
     started_at = datetime.now()
 
-    # Phase 1: pause non-urgent channels
-    await channels.pause_non_urgent()
+    # Phase 1: pause non-urgent channels (only if channels provided)
+    if channels is not None:
+        await channels.pause_non_urgent()
 
     try:
         # Phase 2: cluster + summarize
@@ -117,7 +124,8 @@ async def enter_sleep_mode(
         # needs no arg — it just hands each paused channel its push
         # callback again. The legacy ``active_buffer()`` workaround
         # disappeared with the ChannelRegistry merge.
-        await channels.resume_all()
+        if channels is not None:
+            await channels.resume_all()
 
 
 # ---------------- helpers ----------------

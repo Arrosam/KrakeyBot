@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from krakey.engines.memory.default import GraphMemoryEngine
-from krakey.interfaces.engines import KnowledgeBaseLike, MemoryEngine
+from krakey.interfaces.engines import MemoryEngine
 
 
 async def _no_embed(text: str) -> list[float]:
@@ -23,8 +23,9 @@ async def _no_embed(text: str) -> list[float]:
 
 
 def test_satisfies_memory_engine_protocol(tmp_path):
-    """The Engine must satisfy the new MemoryEngine Protocol — every
-    method (GM CRUD + KB management + sleep_cycle) is reachable."""
+    """The Engine must satisfy the 12-method MemoryEngine Protocol
+    (lifecycle + storage + recall + stats). KB management + sleep are
+    concrete-engine internals, not part of the Protocol."""
     eng = GraphMemoryEngine(
         db_path=":memory:", embedder=_no_embed,
         kb_dir=str(tmp_path),
@@ -47,9 +48,10 @@ async def test_initialize_builds_kb_registry(tmp_path):
         await eng.create_kb("x", name="X")
 
     await eng.initialize()
-    # Post-init: KB methods work.
+    # Post-init: KB methods work. The returned KB is an engine-internal
+    # value type (no longer a public Protocol); duck-type check its shape.
     kb = await eng.create_kb("kb1", name="One")
-    assert isinstance(kb, KnowledgeBaseLike)
+    assert hasattr(kb, "search") and hasattr(kb, "write_entry")
     await eng.close()
 
 

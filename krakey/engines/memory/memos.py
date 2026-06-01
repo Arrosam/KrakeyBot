@@ -12,8 +12,9 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-    from krakey.interfaces.engines.memory import KnowledgeBaseLike
+# ``KnowledgeBaseLike`` is no longer a public Protocol; the KB instance
+# type is engine-internal. Annotate as Any.
+KnowledgeBaseLike = Any
 
 
 def _new_mos(*, mos_config_path: str):
@@ -584,12 +585,9 @@ class MemOSMemoryEngine:
         kb = await self.open_kb(kb_id)
         return await kb.search(query, top_k=top_k)
 
-    async def sleep_cycle(
-        self,
-        *,
-        channels: Any,
-        log_dir: str,
-        config: dict[str, Any],
-    ) -> dict[str, Any]:
-        # MemOS consolidates internally; sleep cycle is a no-op here.
+    async def request_sleep(self, reason: str = "") -> dict[str, Any]:
+        """The only sleep entry point. MemOS consolidates internally, so
+        an explicit sleep request is a no-op here (returns empty stats).
+        No external channels/llm/config — sleep is the engine's own
+        concern."""
         return {}
