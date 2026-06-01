@@ -164,62 +164,8 @@ class GraphMemoryEngine(GraphMemory):
         nodes: list[dict],
         edges: list[dict],
     ) -> dict:
-        """Bulk store of already-distilled structure (nodes + edges).
-
-        For each node dict ``{name, category, description, source_type?}``:
-        upserts via ``upsert_node``, building a name→id map. Malformed nodes
-        (missing name or category) are skipped silently.
-
-        For each edge dict ``{source_name, target_name, predicate}``:
-        resolves names through the map (fallback: ``find_by_name``); skips
-        if either endpoint is None or src == tgt; inserts via
-        ``insert_edge_with_cycle_check``.
-
-        Returns ``{"nodes_written": <int>, "edges_written": <int>}``.
-        """
-        name_to_id: dict[str, int] = {}
-        nodes_written = 0
-        for node in nodes:
-            try:
-                name = node.get("name")
-                category = node.get("category")
-                if not name or not category:
-                    continue
-                nid = await self.upsert_node({
-                    "name": name,
-                    "category": category,
-                    "description": node.get("description", ""),
-                    "source_type": node.get("source_type", "compact"),
-                })
-                name_to_id[name] = nid
-                nodes_written += 1
-            except Exception:
-                continue
-
-        edges_written = 0
-        for edge in edges:
-            try:
-                src_name = edge.get("source_name")
-                tgt_name = edge.get("target_name")
-                predicate = edge.get("predicate", "")
-                if not src_name or not tgt_name:
-                    continue
-
-                src = name_to_id.get(src_name)
-                if src is None:
-                    src = await self.find_by_name(src_name)
-                tgt = name_to_id.get(tgt_name)
-                if tgt is None:
-                    tgt = await self.find_by_name(tgt_name)
-
-                if src is None or tgt is None or src == tgt:
-                    continue
-                await self.insert_edge_with_cycle_check(src, tgt, predicate)
-                edges_written += 1
-            except Exception:
-                continue
-
-        return {"nodes_written": nodes_written, "edges_written": edges_written}
+        """Bulk store of already-distilled structure (nodes + edges)."""
+        return await super().remember_extraction(nodes, edges)
 
     async def search(
         self,

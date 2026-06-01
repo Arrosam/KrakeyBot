@@ -141,3 +141,64 @@ class GraphMemory(GMStorage, GMQueryMixin):
             "neighbor_keywords": await self.get_neighbor_keywords(node_ids),
             "edges": await self.get_edges_among(node_ids),
         }
+
+    async def remember_extraction(
+        self,
+        nodes: list[dict[str, Any]],
+        edges: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Bulk store of already-distilled structure (nodes + edges).
+
+        Each node dict ``{name, category, description, source_type?}`` is
+        upserted (building a name→id map); malformed nodes (missing name or
+        category) are skipped. Each edge dict
+        ``{source_name, target_name, predicate}`` is resolved through the map
+        (fallback ``find_by_name``) and inserted with a cycle check; edges
+        with an unresolved endpoint or a self-loop are skipped. Integrity
+        (id resolution, cycle checks) is enforced here so callers never touch
+        raw node ids or edge primitives.
+
+        Returns ``{"nodes_written": int, "edges_written": int}``.
+        """
+        name_to_id: dict[str, int] = {}
+        nodes_written = 0
+        for node in nodes:
+            try:
+                name = node.get("name")
+                category = node.get("category")
+                if not name or not category:
+                    continue
+                nid = await self.upsert_node({
+                    "name": name,
+                    "category": category,
+                    "description": node.get("description", ""),
+                    "source_type": node.get("source_type", "compact"),
+                })
+                name_to_id[name] = nid
+                nodes_written += 1
+            except Exception:
+                continue
+
+        edges_written = 0
+        for edge in edges:
+            try:
+                src_name = edge.get("source_name")
+                tgt_name = edge.get("target_name")
+                if not src_name or not tgt_name:
+                    continue
+                src = name_to_id.get(src_name)
+                if src is None:
+                    src = await self.find_by_name(src_name)
+                tgt = name_to_id.get(tgt_name)
+                if tgt is None:
+                    tgt = await self.find_by_name(tgt_name)
+                if src is None or tgt is None or src == tgt:
+                    continue
+                await self.insert_edge_with_cycle_check(
+                    src, tgt, edge.get("predicate", ""),
+                )
+                edges_written += 1
+            except Exception:
+                continue
+
+        return {"nodes_written": nodes_written, "edges_written": edges_written}
