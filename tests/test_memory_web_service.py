@@ -220,19 +220,18 @@ class TestGetGMNodes:
         # NOTE: count may reflect total (3) or returned (1) — we only assert
         # the list is capped. Assertion intentionally lenient on count value.
 
-    async def test_limit_zero_returns_empty_or_all(self, tmp_path):
+    async def test_limit_zero_rejected_by_validation(self, tmp_path):
         """
-        ?limit=0 — behaviour is implementation-defined; must not 500.
-
-        Assumption: limit=0 either returns empty list or is treated as
-        "no limit". Assert status 200 and no exception, not the body shape.
+        ?limit=0 — the contract pins ``limit`` to ``Query(ge=1)``, so 0 is
+        below the boundary and FastAPI rejects it with 422 (it must not
+        500). This is the BVA just-below-boundary case.
         """
         engine = await _make_engine(tmp_path)
         await engine.insert_node(name="N0", category="FACT", description="d")
         app = create_memory_app(engine)
         async with _client(app) as c:
             r = await c.get("/api/gm/nodes?limit=0")
-        assert r.status_code == 200
+        assert r.status_code == 422
 
     async def test_limit_large_returns_all(self, tmp_path):
         """?limit=999 when only 2 nodes exist returns 2 (not 500)."""
@@ -903,7 +902,8 @@ class TestPostGMEdges:
                 "target_name": "B",
                 "predicate": "rel",
             })
-        assert r.status_code == 200
+        # POST-create returns 201 Created (FastAPI status_code=201 on the route).
+        assert r.status_code in (200, 201)
 
     async def test_insert_edge_body_has_inserted_or_skipped(self, tmp_path):
         """
