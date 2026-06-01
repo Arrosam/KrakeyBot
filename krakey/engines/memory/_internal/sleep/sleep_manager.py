@@ -56,6 +56,20 @@ async def enter_sleep_mode(
         await channels.pause_non_urgent()
 
     try:
+        # Phase 1b: classify + link any pending auto-ingested nodes BEFORE
+        # clustering, so freshly-ingested content carries a real category
+        # and edges when it's clustered/migrated. This is the engine-owned
+        # home for classification now that the heartbeat no longer schedules
+        # it every beat — it runs on the sleep cadence (node-count threshold
+        # or explicit trigger). Best-effort: a classifier failure must not
+        # abort the whole sleep cycle.
+        classify = getattr(gm, "classify_and_link_pending", None)
+        if classify is not None:
+            try:
+                await classify()
+            except Exception:  # noqa: BLE001
+                pass
+
         # Phase 2: cluster + summarize
         communities = await run_leiden_clustering(
             gm, llm=llm, embedder=embedder,

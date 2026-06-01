@@ -80,6 +80,5 @@ class IncrementalRecallEngine:
                 self._cfg.graph_memory.recall_screening_token_multiplier
             ),
             reranker=self._reranker,
-            neighbor_depth=self._cfg.graph_memory.neighbor_expand_depth,
             enricher=enricher,
         )

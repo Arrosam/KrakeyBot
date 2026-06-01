@@ -209,6 +209,38 @@ class GMStorage:
         )
         await db.commit()
 
+    async def set_node_fields(
+        self, node_id: int, *,
+        description: str | None = None,
+        importance: float | None = None,
+    ) -> bool:
+        """Directly SET a node's description / importance by id.
+
+        Distinct from ``upsert_node`` (which BUMPS importance by +0.5 for an
+        existing (name, category) — the "re-remembered, so more important"
+        semantic). This is the explicit-edit primitive the memory web UI
+        needs: it sets the exact value the operator typed. Returns False if
+        no node has that id; only the provided fields are written.
+        """
+        sets: list[str] = []
+        params: list[Any] = []
+        if description is not None:
+            sets.append("description = ?")
+            params.append(description)
+        if importance is not None:
+            sets.append("importance = ?")
+            params.append(float(importance))
+        if not sets:
+            return False
+        sets.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(node_id)
+        db = self._require()
+        cur = await db.execute(
+            f"UPDATE gm_nodes SET {', '.join(sets)} WHERE id = ?", params,
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
     # ---------- upsert ----------
 
     async def upsert_node(self, node: dict[str, Any]) -> int:

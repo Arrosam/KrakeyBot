@@ -48,7 +48,14 @@ class ThreadedMemoryWebServer:
         # Bind in the calling thread so port clash surfaces here
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind((self._host, self._port))
+        try:
+            sock.bind((self._host, self._port))
+        except OSError:
+            # Port in use (or otherwise unbindable): close the socket we
+            # just opened before re-raising so we don't leak the fd on the
+            # clash path (the caller catches + degrades to no web service).
+            sock.close()
+            raise
         sock.setblocking(False)
         self._sock = sock
 

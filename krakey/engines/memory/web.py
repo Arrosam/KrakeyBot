@@ -301,13 +301,14 @@ def create_memory_app(engine) -> FastAPI:
             current = await engine.get_node(node_id) or current
 
         if body.description is not None or body.importance is not None:
-            node_dict: dict[str, Any] = {
-                "name": current["name"],
-                "category": current["category"],
-                "description": body.description if body.description is not None else current["description"],
-                "importance": body.importance if body.importance is not None else current["importance"],
-            }
-            await engine.upsert_node(node_dict)
+            # Use the explicit-edit primitive (SET), NOT upsert_node — the
+            # latter BUMPS importance by +0.5 for an existing node, so it
+            # could never set the exact value the operator typed.
+            await engine.set_node_fields(
+                node_id,
+                description=body.description,
+                importance=body.importance,
+            )
 
         if body.metadata is not None:
             await engine.set_metadata(node_id, body.metadata)
@@ -361,12 +362,16 @@ def create_memory_app(engine) -> FastAPI:
 
     @app.post("/api/kbs", status_code=201)
     async def create_kb(body: KBCreateBody):
-        await engine.create_kb(
-            body.kb_id,
-            name=body.name,
-            description=body.description,
-            topics=body.topics,
-        )
+        try:
+            await engine.create_kb(
+                body.kb_id,
+                name=body.name,
+                description=body.description,
+                topics=body.topics,
+            )
+        except ValueError as e:
+            # Duplicate kb_id (or invalid id) — a client error, not a 500.
+            raise HTTPException(status_code=409, detail=str(e))
         return {"kb_id": body.kb_id}
 
     @app.post("/api/kb/{kb_id}/entries", status_code=201)

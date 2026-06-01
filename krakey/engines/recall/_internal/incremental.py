@@ -83,7 +83,6 @@ class IncrementalRecall:
                   screening_token_multiplier: float = 1.0,
                   weights: ScoringWeights | None = None,
                   reranker: "RerankerEngine | None" = None,
-                  neighbor_depth: int = 1,
                   vec_min_similarity: float = 0.3,
                   now: Callable[[], datetime] | None = None,
                   enricher: "SemanticAssociationEnricher | None" = None):
@@ -105,7 +104,9 @@ class IncrementalRecall:
         self._screening_multiplier = screening_token_multiplier
         self._weights = weights or ScoringWeights()
         self._reranker = reranker
-        self._neighbor_depth = neighbor_depth
+        # Neighbor-expansion DEPTH is a memory-engine internal now:
+        # ``memory.recall_context`` owns graph traversal, so recall no
+        # longer carries a depth knob (it was read-but-ignored before).
         self._vec_min_sim = vec_min_similarity
         self._now = now or datetime.now
         self._enricher = enricher

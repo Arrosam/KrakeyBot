@@ -290,8 +290,18 @@ class GraphMemoryEngine(GraphMemory):
     async def request_sleep(self, reason: str = "") -> dict[str, Any]:
         """The ONLY sleep entry point. Runs one consolidation cycle using
         the construction-injected sleep_llm / reranker / embedder /
-        sleep_config. Does NOT pause channels. Returns the stats dict (or
-        {} if no sleep_llm is configured or a cycle is already running).
+        sleep_config. Does NOT pause channels.
+
+        Return / raise contract (so callers can tell a real cycle from a
+        no-op from a failure):
+          * Returns a NON-EMPTY stats dict when a cycle actually ran.
+          * Returns ``{}`` for a genuine NO-OP — no ``sleep_llm`` configured,
+            or a cycle is already in flight (coalesced). Nothing happened.
+          * RAISES on a real pipeline failure (clustering/migration/IO).
+            The caller (``runtime.trigger_memory_sleep``) surfaces that as
+            a SleepFailed event + a corrective stimulus to Self. We do NOT
+            swallow it into ``{}`` — that would masquerade a crash as a
+            successful (or no-op) cycle and, under force-sleep, loop forever.
         """
         if self._sleep_llm is None:
             return {}
@@ -326,23 +336,34 @@ class GraphMemoryEngine(GraphMemory):
                     "sleep cycle completed (reason=%r, cycles_run=%d)",
                     reason, self.sleep_cycles_run,
                 )
-            return stats
+            # enter_sleep_mode always returns a stats dict; guarantee a
+            # truthy result so the caller sees "a cycle ran" even if the
+            # pipeline had nothing to migrate.
+            return stats or {"facts_migrated": 0, "completed": True}
         except Exception as exc:
             logger.error(
                 "sleep cycle failed (reason=%r): %s", reason, exc, exc_info=True,
             )
-            return {}
+            raise
         finally:
             self._sleeping = False
 
     async def _maybe_auto_sleep(self) -> None:
         """Trigger a sleep cycle when the GM node count reaches the
         configured threshold. threshold=0 (default) disables auto-sleep.
+
+        Fired from the storage path (ingest/remember/remember_extraction),
+        so a sleep failure must NEVER propagate up and break the write that
+        triggered it — ``request_sleep`` now raises on real failures, so we
+        catch + log here and let the storage op succeed regardless.
         """
         threshold = int(self._sleep_cfg.get("auto_sleep_node_threshold", 0) or 0)
         if threshold <= 0:
             return
         if self._sleeping or self._sleep_llm is None:
             return
-        if await self.count_nodes() >= threshold:
-            await self.request_sleep(reason="auto: node threshold")
+        try:
+            if await self.count_nodes() >= threshold:
+                await self.request_sleep(reason="auto: node threshold")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("auto-sleep failed (non-fatal): %s", exc)

@@ -750,9 +750,11 @@ class HeartbeatOrchestrator:
         return bool(result.sleep)
 
     def _phase_schedule_classify(self) -> None:
-        """No-op: pending-node classification is now internal to the memory
-        engine (it classifies during storage + sleep on its own schedule).
-        The heartbeat no longer schedules an external classify pass."""
+        """No-op: the heartbeat no longer schedules an external classify
+        pass. Pending-node classification (``classify_and_link_pending``)
+        is now owned by the memory engine and runs as the first phase of
+        its sleep cycle (see ``_internal/sleep/sleep_manager.enter_sleep_mode``),
+        on the sleep cadence (node-count threshold or explicit trigger)."""
         return
 
     async def _phase_idle(self, parsed, recall_result) -> None:
