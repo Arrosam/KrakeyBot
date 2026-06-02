@@ -181,7 +181,14 @@ def _persist_sandbox_token(config_path: str, token: str) -> None:
     config-save path."""
     path = Path(config_path)
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    data["environments"]["sandbox"]["agent"]["token"] = token
+    # Walk the path defensively: a hand-written minimal sandbox block
+    # (e.g. just guest_os + provider, no ``agent:`` sub-block) is the
+    # realistic shape that triggers auto-gen now that agent.url has a
+    # non-empty default. Direct nested indexing would KeyError on the
+    # missing ``agent`` key and leave the sandbox permanently inert.
+    data.setdefault("environments", {}).setdefault(
+        "sandbox", {}
+    ).setdefault("agent", {})["token"] = token
     path.write_text(
         yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
         encoding="utf-8",

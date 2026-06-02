@@ -563,13 +563,19 @@ class TestWriteFailureGracefulSkip:
 
         assert router is not None
 
-    def test_ondisk_file_missing_sandbox_agent_key_graceful_skip(self, tmp_path):
-        """If the on-disk config.yaml exists but lacks the
-        environments.sandbox.agent key, the write-back navigation
-        fails. Must be treated as a write-failure → graceful-skip
-        (sandbox disabled, no crash)."""
+    def test_ondisk_file_missing_sandbox_agent_key_autocreates_and_persists(
+        self, tmp_path
+    ):
+        """If the on-disk config.yaml lacks the environments.sandbox.agent
+        sub-block, the write-back must AUTO-CREATE the missing keys and
+        persist the generated token — NOT KeyError into a graceful skip.
+
+        (A missing sub-block is the realistic hand-written shape; the
+        write-back navigating it is the whole point of auto-gen. A genuine
+        write FAILURE — unwritable path — is still graceful-skipped; see
+        the test_nonexistent_dir_* cases.)"""
         cfg_path = tmp_path / "config.yaml"
-        # On-disk YAML has environments block but NOT the sandbox.agent key
+        # On-disk YAML has an environments block but NOT the sandbox.agent key.
         cfg_path.write_text(
             yaml.safe_dump({"environments": {}}),
             encoding="utf-8",
@@ -584,7 +590,45 @@ class TestWriteFailureGracefulSkip:
 
         router = build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
 
+        # Not registered THIS run (guest can't hold the new token yet)...
         assert router.env_names() == ["local"]
+        # ...but the token IS persisted to disk (so next startup enables it)
+        # and set in-memory — neither happened under the KeyError bug.
+        on_disk = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+        persisted = on_disk["environments"]["sandbox"]["agent"]["token"]
+        assert len(persisted) == 64
+        assert rt.config.environments.sandbox.agent.token == persisted
+
+    def test_realistic_minimal_sandbox_yaml_persists_token(self, tmp_path):
+        """Regression for the KeyError bug: a hand-written minimal sandbox
+        block (guest_os + provider only, NO agent:) is the exact shape that
+        now triggers auto-gen because agent.url defaults non-empty. The
+        token must persist without a 'KeyError: agent' warning."""
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text(
+            yaml.safe_dump(
+                {"environments": {"sandbox": {"guest_os": "linux",
+                                              "provider": "docker"}}}
+            ),
+            encoding="utf-8",
+        )
+
+        rt = _make_runtime()
+        rt.config.environments.sandbox = SandboxEnvironmentConfig(
+            guest_os="linux",
+            agent=SandboxAgentSection(url="http://10.0.2.10:8765", token=""),
+        )
+        rt._config_path = str(cfg_path)
+
+        build_environment_router(rt.config, config_path=rt._config_path, log_warn=rt.log.hb_warn)
+
+        on_disk = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+        # The pre-existing keys survive the round-trip...
+        assert on_disk["environments"]["sandbox"]["guest_os"] == "linux"
+        assert on_disk["environments"]["sandbox"]["provider"] == "docker"
+        # ...and the agent.token sub-block was created + filled.
+        assert len(on_disk["environments"]["sandbox"]["agent"]["token"]) == 64
+        assert rt.config.environments.sandbox.agent.token != ""
 
     def test_write_failure_warning_emitted(self, tmp_path, capsys):
         """A write failure (non-existent directory) must produce a
