@@ -32,9 +32,6 @@
       runtime_resume_title: "Resume heartbeat",
       runtime_pause_title: "Pause heartbeat",
 
-      // ── Sleep banners ──────────────────────────────────────────────
-      sleep_reason_default: "compacting memory",
-      sleep_banner: "Krakey is sleeping ({reason}) — Memory tab is paused until sleep finishes.",
       memory_sleeping: "Krakey is sleeping — Memory will load automatically when sleep finishes.",
 
       // ── WebSocket / async status ───────────────────────────────────

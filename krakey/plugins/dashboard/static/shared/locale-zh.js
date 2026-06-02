@@ -13,8 +13,6 @@ window.LOCALES['zh-CN'] = {
   runtime_pause: "暂停",
   runtime_resume_title: "恢复心跳",
   runtime_pause_title: "暂停心跳",
-  sleep_reason_default: "正在压缩记忆",
-  sleep_banner: "Krakey 正在休眠（{reason}）——记忆标签页已暂停，休眠结束后自动恢复。",
   memory_sleeping: "Krakey 正在休眠——休眠结束后将自动加载记忆。",
   ws_connected: "已连接",
   ws_disconnected: "已断开——正在重连...",

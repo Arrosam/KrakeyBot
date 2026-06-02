@@ -296,23 +296,6 @@ main {
 .scroll .entry.sleep-start .entry-icon { color: var(--magenta); }
 .scroll .entry.sleep-done  .entry-icon { color: var(--yellow); }
 
-/* Sleep banner — pinned under the header. Shown when the runtime is
-   consolidating memory during sleep. Surface the state here so the
-   user knows Krakey is busy in the background. */
-.runtime-banner {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 4px 12px 0;
-  padding: 6px 12px;
-  font-size: 11px;
-  color: var(--bg);
-  background: var(--magenta);
-  border-radius: 8px;
-  font-weight: bold;
-}
-.runtime-banner.hidden { display: none; }
-
 /* Shared hint paragraph (prompts + settings). */
 .hint {
   font-size: 12px;

@@ -566,9 +566,16 @@ class Runtime:
         hook (NOT part of the swappable MemoryEngine Protocol) that the
         heartbeat / SleepTool / dashboard call to request one. Duck-typed so
         a backend with no sleep notion (no request_sleep) is a safe no-op.
-        Publishes Sleep lifecycle events + a wake-up stimulus + resets the
-        recall session (GM changed underneath us), preserving the
-        observable behavior the old _perform_sleep had.
+
+        Honours the request_sleep return/raise contract:
+          * a TRUTHY stats dict means a real cycle ran → publish Sleep
+            lifecycle events, count it, push a wake-up stimulus, and reset
+            the recall session (GM changed underneath us);
+          * ``{}`` is a genuine NO-OP (no sleep_llm, a coalesced concurrent
+            cycle, or a backend like MemOS that consolidates internally) →
+            nothing happened, so emit no events and run no side-effects;
+          * a raise is a real failure → surface SleepFailed + a corrective
+            stimulus to Self (never reported as a completed cycle).
         """
         from krakey.runtime.events.event_types import (
             SleepDoneEvent, SleepFailedEvent, SleepStartEvent,
@@ -576,11 +583,6 @@ class Runtime:
         req = getattr(self.memory, "request_sleep", None)
         if req is None or not callable(req):
             return {}
-
-        try:
-            self.events.publish(SleepStartEvent(reason=reason))
-        except Exception:  # noqa: BLE001
-            pass
 
         try:
             stats = await req(reason)
@@ -608,6 +610,19 @@ class Runtime:
                 pass
             return {}
 
+        # A falsy result is a genuine no-op (see contract above): nothing was
+        # consolidated, so do NOT publish lifecycle events, count a cycle,
+        # stimulate Self, or throw away the recall session. Treating {} as a
+        # completed cycle would lie to /status + Self and, under force-sleep
+        # against a no-op backend (e.g. MemOS), spam a phantom cycle per beat.
+        if not stats:
+            return stats
+
+        # A real consolidation cycle ran.
+        try:
+            self.events.publish(SleepStartEvent(reason=reason))
+        except Exception:  # noqa: BLE001
+            pass
         try:
             self.events.publish(SleepDoneEvent(stats=stats))
         except Exception:  # noqa: BLE001

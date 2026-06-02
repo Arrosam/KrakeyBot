@@ -339,25 +339,6 @@ $$(".tab-btn").forEach((btn) => {
   });
 });
 
-// ============== RUNTIME-STATE BANNER ==============
-// Shown under the header when the runtime enters sleep (or other
-// known-busy states later). Toggled from the SleepStartEvent /
-// SleepDoneEvent handlers below; the rest of the SPA reads
-// `lastStats.mode` to decide whether to throttle GM-bound work.
-function _showSleepBanner(reason) {
-  const el = document.getElementById("runtime-banner");
-  if (!el) return;
-  const txt = el.querySelector(".banner-text");
-  if (txt) {
-    txt.textContent =
-      window.t("sleep_banner", { reason: reason || window.t("sleep_reason_default") });
-  }
-  el.classList.remove("hidden");
-}
-function _hideSleepBanner() {
-  const el = document.getElementById("runtime-banner");
-  if (el) el.classList.add("hidden");
-}
 
 // ============== STATUS BAR ==============
 
@@ -716,7 +697,6 @@ function handleEvent(e) {
       appendIconEntry(toolEl, "—", "moon",
         "sleep started: " + e.reason, "sleep-start");
       lastStats.mode = "sleeping";
-      _showSleepBanner(e.reason);
       setStatus();
       break;
     case "sleep_done":
@@ -724,7 +704,6 @@ function handleEvent(e) {
         "sleep done: " + JSON.stringify(e.stats), "sleep-done");
       lastStats.mode = "normal";
       lastStats.last_sleep = new Date().toISOString();
-      _hideSleepBanner();
       setStatus();
       break;
     case "stimulus_read":

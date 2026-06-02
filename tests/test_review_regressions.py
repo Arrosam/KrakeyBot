@@ -186,3 +186,63 @@ class TestSleepFailureNotReportedAsSuccess:
             "a failed sleep must not increment the completed-cycle counter"
         )
         await rt.close()
+
+    async def test_trigger_memory_sleep_noop_is_not_a_completed_cycle(
+        self, monkeypatch,
+    ):
+        """A genuine no-op ({} — no sleep_llm, a coalesced cycle, or a backend
+        like MemOS that consolidates internally) must NOT be reported as a
+        completed cycle: no SleepStart/SleepDone events, no _sleep_cycles bump,
+        no 'Completed a sleep cycle' stimulus, and the recall session is
+        preserved. This is what stops a no-op backend from spamming a phantom
+        cycle every beat under force-sleep."""
+        from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
+        from krakey.runtime.events.event_bus import EventBus
+
+        rt = build_runtime_with_fakes(self_llm=ScriptedLLM())
+        await rt.memory.initialize()
+        bus = EventBus()
+        rt.events = bus
+        received = []
+        bus.subscribe(received.append)
+
+        async def _noop(reason=""):
+            return {}
+
+        monkeypatch.setattr(rt.memory, "request_sleep", _noop)
+        # Spy on recall.new_session to prove the no-op doesn't discard it.
+        resets = {"n": 0}
+        orig_new_session = rt.recall.new_session
+
+        def _spy_new_session(*a, **k):
+            resets["n"] += 1
+            return orig_new_session(*a, **k)
+
+        monkeypatch.setattr(rt.recall, "new_session", _spy_new_session)
+
+        before = rt._sleep_cycles
+        rt.buffer.drain()  # clear any startup stimuli
+        result = await rt.trigger_memory_sleep("force-sleep at fatigue 130%")
+
+        assert result == {}
+        # No lifecycle events at all for a no-op...
+        kinds = [getattr(e, "kind", "") for e in received]
+        assert "sleep_done" not in kinds, "a no-op must not publish SleepDoneEvent"
+        assert "sleep_start" not in kinds, "a no-op must not publish SleepStartEvent"
+        # ...no completed-cycle counter bump...
+        assert rt._sleep_cycles == before, (
+            "a no-op must not increment the completed-cycle counter"
+        )
+        # ...no 'Completed a sleep cycle' stimulus to Self...
+        drained = rt.buffer.drain()
+        completed = [
+            s for s in drained
+            if s.type == "system_event" and s.source == "system:sleep"
+            and "completed a sleep cycle" in s.content.lower()
+        ]
+        assert not completed, (
+            "a no-op must not push a 'Completed a sleep cycle' stimulus"
+        )
+        # ...and the recall session is preserved (not thrown away).
+        assert resets["n"] == 0, "a no-op must not reset the recall session"
+        await rt.close()
