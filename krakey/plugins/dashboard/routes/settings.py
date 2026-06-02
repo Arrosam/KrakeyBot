@@ -213,6 +213,19 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
             )
 
         config_path = entry.config_path
+        if not config_path:
+            # The impl declares no settings file — there is nowhere to
+            # persist to. Mirror the memory web service's PUT /api/settings
+            # guard (a clean 400) instead of letting FileEngineConfigStore.
+            # write('') raise ValueError → 500. (GET tolerates this: read('')
+            # → {}, so opening the form is fine; only Save has nowhere to go.)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"engine impl {impl!r} for slot {slot!r} declares no "
+                    "config_path; cannot persist settings"
+                ),
+            )
 
         # Payload validation — after resolution so 404 wins over 400.
         new_cfg = payload.get("config")

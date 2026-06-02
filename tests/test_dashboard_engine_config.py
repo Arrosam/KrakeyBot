@@ -527,6 +527,63 @@ class TestPostEngineConfig:
             )
         assert r.status_code == 400
 
+    async def test_post_impl_without_config_path_returns_400_not_500(
+        self, tmp_path, monkeypatch,
+    ):
+        """An impl whose meta declares NO config_path has nowhere to persist
+        to. POST must return a clean 400 — not let FileEngineConfigStore.
+        write('') raise ValueError → 500. (No shipped engine omits
+        config_path, so we synthesise one via the slot loader.)"""
+        from krakey.engine_system.catalog import EngineImpl
+
+        def _fake_load_slot_meta(slot, **kwargs):
+            return (
+                {"noconfig": EngineImpl(
+                    cls=object, description="no settings file",
+                    config_path="",
+                )},
+                "noconfig",
+            )
+
+        monkeypatch.setattr(
+            "krakey.engine_system.meta_loader.load_slot_meta",
+            _fake_load_slot_meta,
+        )
+        monkeypatch.chdir(tmp_path)
+        async with _client(tmp_path) as c:
+            r = await c.post(
+                "/api/engines/memory/noconfig/config",
+                json={"config": {"a": 1}},
+            )
+        assert r.status_code == 400, r.text
+
+    async def test_get_impl_without_config_path_returns_200_empty(
+        self, tmp_path, monkeypatch,
+    ):
+        """The GET sibling tolerates an empty config_path (read('') → {}),
+        so opening the form is fine even when there's nowhere to save —
+        the asymmetry with POST's 400 is intentional."""
+        from krakey.engine_system.catalog import EngineImpl
+
+        def _fake_load_slot_meta(slot, **kwargs):
+            return (
+                {"noconfig": EngineImpl(
+                    cls=object, description="no settings file",
+                    config_path="",
+                )},
+                "noconfig",
+            )
+
+        monkeypatch.setattr(
+            "krakey.engine_system.meta_loader.load_slot_meta",
+            _fake_load_slot_meta,
+        )
+        monkeypatch.chdir(tmp_path)
+        async with _client(tmp_path) as c:
+            r = await c.get("/api/engines/memory/noconfig/config")
+        assert r.status_code == 200
+        assert r.json()["config"] == {}
+
     async def test_post_unknown_slot_returns_404(self, tmp_path, monkeypatch):
         """Slot that doesn't exist in any meta.yaml → 404."""
         monkeypatch.chdir(tmp_path)
