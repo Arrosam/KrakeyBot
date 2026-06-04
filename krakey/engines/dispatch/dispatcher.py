@@ -2,15 +2,13 @@
 ``LocalDispatchEngine``.
 
 After the DecisionEngine turns Self's natural-language [DECISION]
-into a structured ``DecisionResult``, four side-effects need to fire:
+into a structured ``DecisionResult``, three side-effects need to fire:
 
   1. **Log + publish** the summary (counts + sleep flag).
   2. **Dispatch** each ToolCall as an async task and register
      the batch with the BatchTracker so completion can wake Self.
   3. **Apply memory writes** (LLM-extracted nodes/edges via
-     ``MemoryEngine.explicit_write``).
-  4. **Apply memory updates** (category flips like TARGET → FACT
-     via ``MemoryEngine.update_node_category``).
+     ``MemoryEngine.remember``).
 
 Each entry method takes ``heartbeat_id`` as a parameter — the
 dispatcher doesn't track the beat counter; Runtime owns it.
@@ -37,7 +35,7 @@ if TYPE_CHECKING:
 
 
 class DecisionDispatcher:
-    """Executes the four side-effects of a DecisionResult."""
+    """Executes the three side-effects of a DecisionResult."""
 
     def __init__(
         self,
@@ -64,14 +62,12 @@ class DecisionDispatcher:
         self._log.hypo(
             f"tool_calls={len(result.tool_calls)} "
             f"memory_writes={len(result.memory_writes)} "
-            f"memory_updates={len(result.memory_updates)} "
             f"sleep={result.sleep}"
         )
         self._events.publish(DecisionExecutedEvent(
             heartbeat_id=heartbeat_id,
             tool_calls_count=len(result.tool_calls),
             memory_writes_count=len(result.memory_writes),
-            memory_updates_count=len(result.memory_updates),
             sleep_requested=result.sleep,
         ))
 
@@ -154,31 +150,17 @@ class DecisionDispatcher:
         recall_nodes: list[dict[str, Any]],
         heartbeat_id: int,
     ) -> None:
-        """Run gm.explicit_write per write entry; per-write failures log
+        """Run gm.remember per write entry; per-write failures log
         but don't abort the rest."""
         for w in writes:
             self._log.hypo(f"memory_write: {w.get('content', '')[:80]}")
             try:
-                await self._gm.explicit_write(
+                await self._gm.remember(
                     w["content"],
                     importance=w.get("importance", "normal"),
                     recall_context=recall_nodes,
                     source_heartbeat=heartbeat_id,
                 )
             except Exception as e:  # noqa: BLE001
-                self._log.runtime_error(f"explicit_write error: {e}")
+                self._log.runtime_error(f"remember error: {e}")
 
-    async def apply_memory_updates(
-        self, updates: list[dict[str, Any]],
-    ) -> None:
-        """Run gm.update_node_category per update; per-update failures
-        log but don't abort the rest."""
-        for u in updates:
-            self._log.hypo(f"memory_update: {u.get('node_name')} → "
-                              f"{u.get('new_category')}")
-            try:
-                await self._gm.update_node_category(
-                    u["node_name"], u["new_category"],
-                )
-            except Exception as e:  # noqa: BLE001
-                self._log.runtime_error(f"update_category error: {e}")

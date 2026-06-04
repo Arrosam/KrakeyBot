@@ -1,4 +1,4 @@
-// Krakey i18n core — mirrors the theme-toggle localStorage pattern.
+﻿// Krakey i18n core — mirrors the theme-toggle localStorage pattern.
 // A locale key is stored in 'krakey-lang'; on load the stored value
 // (or 'en') becomes the active locale. setLocale() swaps the active
 // locale and persists the choice; the app.js IIFE is responsible for
@@ -32,9 +32,6 @@
       runtime_resume_title: "Resume heartbeat",
       runtime_pause_title: "Pause heartbeat",
 
-      // ── Sleep banners ──────────────────────────────────────────────
-      sleep_reason_default: "compacting memory",
-      sleep_banner: "Krakey is sleeping ({reason}) — Memory tab is paused until sleep finishes.",
       memory_sleeping: "Krakey is sleeping — Memory will load automatically when sleep finishes.",
 
       // ── WebSocket / async status ───────────────────────────────────
@@ -46,22 +43,19 @@
       error_loading_prefix: "error loading: ",
 
       // ── Prompts view ───────────────────────────────────────────────
-      prompts_empty: "(no prompts yet — wait one heartbeat)",
+      prompts_empty: "No prompts yet — the first will appear in ~{secs}s at the next heartbeat.",
       prompts_paused: "paused — toggle live to resume",
       prompts_pending: "{count} new prompt{plural} since paused",
-
-      // ── Memory view ────────────────────────────────────────────────
-      memory_graph_hint: "drag to pan · scroll to zoom · drag a node to move it",
 
       // ── Settings: section titles (keyed by stable section key) ─────
       section_llm: "LLM",
       section_plugins: "Plugins",
       section_idle: "Idle",
       section_fatigue: "Fatigue",
-      section_sliding_window: "Sliding Window (Working Memory)",
+      section_sliding_window: "Working Memory",
       // Shortened variant for the compact settings jump-rail (the full
       // title is too wide for the rail column).
-      section_sliding_window_short: "Sliding Window",
+      section_sliding_window_short: "Working Memory",
       section_graph_memory: "Graph Memory",
       section_knowledge_base: "Knowledge Base",
       section_sleep: "Sleep",
@@ -93,8 +87,6 @@
       panel_tool_usage: "Tool Usage",
       panel_stimulus: "Stimulus",
       panel_status: "Status (runtime state)",
-      mem_graph: "GM Graph",
-      mem_kbs: "KBs",
       log_autoscroll: "auto-scroll",
       prompts_hint: "The full prompt built for each heartbeat (last 50 beats, in-memory ring buffer; cleared on restart).",
       prompts_live: "Live updates",
@@ -103,6 +95,12 @@
 
       // ── Confirm dialogs ────────────────────────────────────────────
       confirm_restart: "Restart Krakey? The web UI will briefly disconnect.",
+
+      // ── Chat message delivery / read-receipt status ────────────────
+      msg_status_delivered: "delivered",
+      msg_status_read: "read",
+      msg_status_failed: "send failed — agent offline",
+      msg_resend: "Resend",
     },
   };
 

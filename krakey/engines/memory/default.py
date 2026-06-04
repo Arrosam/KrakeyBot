@@ -7,10 +7,12 @@ directly reachable) plus three responsibilities layered on top:
     ``set_archived`` / ``set_index_embedding`` / ``delete_kb`` /
     ``close_all_kbs`` — delegating to an internal ``KBRegistry`` built
     lazily during ``initialize()``.
-  * **Sleep cycle** — ``sleep_cycle`` runs the full
+  * **Sleep cycle** — ``request_sleep`` runs the full
     ``enter_sleep_mode`` pipeline (clustering → migration → KB
-    consolidation/archival → index rebuild) without callers having to
-    know that subsystem exists.
+    consolidation/archival → index rebuild) using deps injected at
+    construction time. The engine self-triggers sleep when the GM node
+    count reaches ``sleep_config["auto_sleep_node_threshold"]``
+    (0 = disabled). Channels are never paused.
 
 Initialize ordering: ``initialize()`` calls ``GraphMemory.initialize()``
 first (opens the SQLite connection + applies schema), then constructs
@@ -20,14 +22,20 @@ raises a clear error rather than NoneType-attribute errors.
 """
 from __future__ import annotations
 
+import dataclasses
+import logging
 from typing import TYPE_CHECKING, Any
 
 from krakey.engines.memory._internal.graph_memory import GraphMemory
 from krakey.interfaces.duck import ChatLike
 from krakey.engines.memory._internal.knowledge_base import KBRegistry
 
-if TYPE_CHECKING:
-    from krakey.interfaces.engines.memory import KnowledgeBaseLike
+# ``KnowledgeBaseLike`` is no longer a public Protocol (KB browsing/editing
+# is served by the memory engine's own web service, not handed to callers).
+# The KB instance type is an engine-internal concern; annotate as Any.
+KnowledgeBaseLike = Any
+
+logger = logging.getLogger(__name__)
 
 
 class GraphMemoryEngine(GraphMemory):
@@ -49,6 +57,16 @@ class GraphMemoryEngine(GraphMemory):
         classifier_llm: ChatLike | None = None,
         classify_batch_size: int = 10,
         classify_existing_context: int = 30,
+        # Sleep deps — injected at construction, never per-call
+        sleep_llm: ChatLike | None = None,
+        reranker=None,
+        sleep_config=None,
+        sleep_log_dir: str = "workspace/logs",
+        # Web service config — optional; enabled=False by default
+        web_config=None,
+        # Engine-own settings — passed by the registry at construction
+        config=None,
+        config_path=None,
     ):
         super().__init__(
             db_path,
@@ -62,6 +80,42 @@ class GraphMemoryEngine(GraphMemory):
         self._kb_dir = kb_dir
         self._kb_registry: KBRegistry | None = None
 
+        # Sleep deps
+        self._sleep_llm = sleep_llm
+        self._reranker = reranker
+        # Normalise sleep_config into a plain dict
+        if sleep_config is None:
+            self._sleep_cfg: dict[str, Any] = {}
+        elif dataclasses.is_dataclass(sleep_config) and not isinstance(sleep_config, type):
+            self._sleep_cfg = dataclasses.asdict(sleep_config)
+        else:
+            self._sleep_cfg = dict(sleep_config)
+        self._sleep_log_dir = sleep_log_dir
+
+        # Public counter + in-flight guard
+        self.sleep_cycles_run: int = 0
+        self._sleeping: bool = False
+
+        # Web service config — normalise to a plain dict (or None)
+        if web_config is None:
+            self._web_config: dict[str, Any] | None = None
+        elif dataclasses.is_dataclass(web_config) and not isinstance(web_config, type):
+            self._web_config = dataclasses.asdict(web_config)
+        else:
+            self._web_config = dict(web_config)
+        self._web_server = None
+
+        # Engine-own settings (from the engine's own settings file)
+        self._config: dict[str, Any] = dict(config) if config else {}
+        self._config_path: str | None = config_path
+
+        # gm_node_soft_limit — memory-engine-owned threshold (replaces
+        # the old config.fatigue.gm_node_soft_limit). Readable by the
+        # runtime via engine.gm_node_soft_limit; default 1000.
+        self.gm_node_soft_limit: int = int(
+            (self._config or {}).get("gm_node_soft_limit", 1000)
+        )
+
     # ---- lifecycle -----------------------------------------------------
 
     async def initialize(self) -> None:
@@ -74,8 +128,32 @@ class GraphMemoryEngine(GraphMemory):
                 self, kb_dir=self._kb_dir, embedder=self._embedder,
             )
 
+        # Start the self-hosted web service if enabled in web_config.
+        # A startup failure MUST NOT crash initialize() — log + continue.
+        cfg = self._web_config or {}
+        _enabled = cfg.get("enabled", False)
+        if _enabled:
+            try:
+                from krakey.engines.memory.web import create_memory_app
+                from krakey.engines.memory.web_server import ThreadedMemoryWebServer
+                _host = cfg.get("host", "127.0.0.1")
+                _port = int(cfg.get("port", 8766))
+                _app = create_memory_app(self)
+                self._web_server = ThreadedMemoryWebServer(_app, host=_host, port=_port)
+                self._web_server.start()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("memory web service failed to start: %s", e)
+                self._web_server = None
+
     async def close(self) -> None:
-        """Close every open KB first, then the GM connection."""
+        """Stop the web server first, then close every open KB, then
+        the GM connection."""
+        if self._web_server is not None:
+            try:
+                self._web_server.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            self._web_server = None
         if self._kb_registry is not None:
             await self._kb_registry.close_all()
         await super().close()
@@ -131,53 +209,161 @@ class GraphMemoryEngine(GraphMemory):
         if self._kb_registry is not None:
             await self._kb_registry.close_all()
 
-    # ---- sleep cycle ---------------------------------------------------
+    # ---- MemoryEngine Protocol methods (new minimal-surface API) ----------
 
-    async def sleep_cycle(
+    async def ingest(
         self,
+        content: str,
         *,
-        channels: Any,
-        log_dir: str,
-        config: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Run a full sleep cycle. ``config`` carries the user's sleep
-        tuning + the LLM/reranker the pipeline needs (since sleep
-        clustering + migration use those Engines).
+        source_heartbeat: int | None = None,
+    ) -> dict:
+        """Passive, low-cost store. Delegates to ``auto_ingest``."""
+        result = await self.auto_ingest(content, source_heartbeat=source_heartbeat)
+        await self._maybe_auto_sleep()
+        return result
 
-        Expected ``config`` keys (all optional, with sensible
-        defaults from ``cfg.sleep``):
+    async def remember(
+        self,
+        content: str,
+        *,
+        importance: str = "normal",
+        recall_context: list[dict] | None = None,
+        source_heartbeat: int | None = None,
+    ) -> dict:
+        """Deliberate store with optional LLM extraction. Delegates to
+        ``explicit_write``."""
+        result = await self.explicit_write(
+            content,
+            importance=importance,
+            recall_context=recall_context,
+            source_heartbeat=source_heartbeat,
+        )
+        await self._maybe_auto_sleep()
+        return result
 
-          * llm                          — chat client used by
-                                            clustering summaries +
-                                            sleep-time KB dedup judge
-          * reranker                     — RerankerEngine used during
-                                            sleep migration dedup
-          * min_community_size           — drop tiny clusters
-          * kb_consolidation_threshold   — pairwise KB merge threshold
-          * kb_index_max                 — soft cap on active KB count
-          * kb_archive_pct               — % of low-importance KBs to
-                                            archive when over the cap
-          * kb_revive_threshold          — revive an archived KB when
-                                            new community is this close
+    async def remember_extraction(
+        self,
+        nodes: list[dict],
+        edges: list[dict],
+    ) -> dict:
+        """Bulk store of already-distilled structure (nodes + edges)."""
+        result = await super().remember_extraction(nodes, edges)
+        await self._maybe_auto_sleep()
+        return result
+
+    async def search(
+        self,
+        query: str,
+        *,
+        top_k: int = 8,
+        min_similarity: float = 0.3,
+    ) -> list[tuple[dict, float]]:
+        """Embed → vec_search with FTS fallback on embed failure or empty
+        result. If no embedder is configured, goes straight to FTS.
+        FTS hits receive score ``0.0``. ``top_k <= 0`` returns ``[]``."""
+        return await super().search(query, top_k=top_k, min_similarity=min_similarity)
+
+    async def recall_context(
+        self,
+        node_ids: list[int],
+    ) -> dict:
+        """Return recall-time enrichment for a set of node ids.
+
+        Returns ``{"neighbor_keywords": {…}, "edges": […]}``. Empty inputs
+        return empty enrichment without touching the DB."""
+        return await super().recall_context(node_ids)
+
+    async def recall_kb(
+        self,
+        kb_id: str,
+        query: str,
+        *,
+        top_k: int = 5,
+    ) -> list[dict]:
+        """Recall entries from a named knowledge base. Raises ``KeyError``
+        if the KB does not exist."""
+        kb = await self.open_kb(kb_id)
+        return await kb.search(query, top_k=top_k)
+
+    # ---- sleep (engine-owned) ------------------------------------------
+
+    async def request_sleep(self, reason: str = "") -> dict[str, Any]:
+        """The ONLY sleep entry point. Runs one consolidation cycle using
+        the construction-injected sleep_llm / reranker / embedder /
+        sleep_config. Does NOT pause channels.
+
+        Return / raise contract (so callers can tell a real cycle from a
+        no-op from a failure):
+          * Returns a NON-EMPTY stats dict when a cycle actually ran.
+          * Returns ``{}`` for a genuine NO-OP — no ``sleep_llm`` configured,
+            or a cycle is already in flight (coalesced). Nothing happened.
+          * RAISES on a real pipeline failure (clustering/migration/IO).
+            The caller (``runtime.trigger_memory_sleep``) surfaces that as
+            a SleepFailed event + a corrective stimulus to Self. We do NOT
+            swallow it into ``{}`` — that would masquerade a crash as a
+            successful (or no-op) cycle and, under force-sleep, loop forever.
         """
-        from krakey.engines.memory._internal.sleep.sleep_manager import (
-            enter_sleep_mode,
-        )
+        if self._sleep_llm is None:
+            return {}
+        if self._sleeping:
+            # Coalesce: a cycle is already in flight, do not stack
+            return {}
+        self._sleeping = True
+        try:
+            from krakey.engines.memory._internal.sleep.sleep_manager import (
+                enter_sleep_mode,
+            )
+            cfg = self._sleep_cfg
+            stats = await enter_sleep_mode(
+                self,
+                self._require_kb_registry(),
+                channels=None,  # no channel pausing
+                llm=self._sleep_llm,
+                embedder=self._embedder,
+                reranker=self._reranker,
+                log_dir=self._sleep_log_dir,
+                min_community_size=cfg.get("min_community_size", 1),
+                kb_consolidation_threshold=cfg.get(
+                    "kb_consolidation_threshold", 0.85,
+                ),
+                kb_index_max=cfg.get("kb_index_max", 30),
+                kb_archive_pct=cfg.get("kb_archive_pct", 10),
+                kb_revive_threshold=cfg.get("kb_revive_threshold", 0.80),
+            )
+            self.sleep_cycles_run += 1
+            if reason:
+                logger.debug(
+                    "sleep cycle completed (reason=%r, cycles_run=%d)",
+                    reason, self.sleep_cycles_run,
+                )
+            # enter_sleep_mode always returns a stats dict; guarantee a
+            # truthy result so the caller sees "a cycle ran" even if the
+            # pipeline had nothing to migrate.
+            return stats or {"facts_migrated": 0, "completed": True}
+        except Exception as exc:
+            logger.error(
+                "sleep cycle failed (reason=%r): %s", reason, exc, exc_info=True,
+            )
+            raise
+        finally:
+            self._sleeping = False
 
-        registry = self._require_kb_registry()
-        return await enter_sleep_mode(
-            self,
-            registry,
-            channels,
-            llm=config.get("llm"),
-            embedder=self._embedder,
-            reranker=config.get("reranker"),
-            log_dir=log_dir,
-            min_community_size=config.get("min_community_size", 1),
-            kb_consolidation_threshold=config.get(
-                "kb_consolidation_threshold", 0.85,
-            ),
-            kb_index_max=config.get("kb_index_max", 30),
-            kb_archive_pct=config.get("kb_archive_pct", 10),
-            kb_revive_threshold=config.get("kb_revive_threshold", 0.80),
-        )
+    async def _maybe_auto_sleep(self) -> None:
+        """Trigger a sleep cycle when the GM node count reaches the
+        configured threshold. threshold=0 (default) disables auto-sleep.
+
+        Fired from the storage path (ingest/remember/remember_extraction),
+        so a sleep failure must NEVER propagate up and break the write that
+        triggered it — ``request_sleep`` now raises on real failures, so we
+        catch + log here and let the storage op succeed regardless.
+        """
+        threshold = int(self._sleep_cfg.get("auto_sleep_node_threshold", 0) or 0)
+        if threshold <= 0:
+            return
+        if self._sleeping or self._sleep_llm is None:
+            return
+        try:
+            if await self.count_nodes() >= threshold:
+                await self.request_sleep(reason="auto: node threshold")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("auto-sleep failed (non-fatal): %s", exc)

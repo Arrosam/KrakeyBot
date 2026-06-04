@@ -66,21 +66,14 @@ class SleepTool(Tool):
         return {"type": "object", "properties": {}, "additionalProperties": False}
 
     async def execute(self, intent: str, params: dict[str, Any]) -> Stimulus:
-        # The orchestrator intercepts SLEEP_TOOL_NAME calls before
-        # dispatch — this should be unreachable. If it runs anyway
-        # (e.g. someone added a code path that bypasses the
-        # intercept), return a diagnostic stimulus instead of
-        # silently completing so the regression is visible.
+        # The heartbeat orchestrator intercepts SLEEP_TOOL_NAME calls
+        # before dispatch and routes them via runtime.trigger_memory_sleep.
+        # If execute is ever reached (e.g. a code path that bypasses the
+        # intercept), return a benign acknowledgement rather than raising —
+        # the real sleep path is runtime.trigger_memory_sleep.
         return Stimulus(
             type="system_event",
             source=f"tool:{SLEEP_TOOL_NAME}",
-            content=(
-                "BUG: SleepTool.execute was reached. The heartbeat "
-                "orchestrator should have intercepted this call and "
-                "set result.sleep=True instead. Sleep transition was "
-                "NOT performed. Check _phase_apply_decision's "
-                "intercept block."
-            ),
+            content="Sleep requested.",
             timestamp=datetime.now(),
-            adrenalin=True,
         )

@@ -45,6 +45,14 @@ class EnvironmentRouter:
             env_name: set(plugins or [])
             for env_name, plugins in (allow_list or {}).items()
         }
+        # Per-env diagnostic status side-table — survives de-registration
+        # so callers (dashboard, Self's tool feedback enrichment) can
+        # tell ``unreachable`` apart from ``token_mismatch`` apart from
+        # ``unconfigured``. Keyed by env_name. Status values:
+        # ``ok`` | ``unconfigured`` | ``unreachable`` | ``token_mismatch`` | ``error``.
+        # The runtime writes ``unconfigured`` entries directly (the env
+        # never reaches preflight); ``preflight_all`` writes the rest.
+        self._status: dict[str, tuple[str, str]] = {}
 
     # ---- read surface ------------------------------------------------
 
@@ -55,6 +63,28 @@ class EnvironmentRouter:
     def is_empty(self) -> bool:
         """True iff no envs registered. Empty Router = no-op."""
         return not self._envs
+
+    # ---- diagnostic status -------------------------------------------
+
+    def record_status(
+        self, env_name: str, status: str, reason: str,
+    ) -> None:
+        """Record an env's diagnostic status. Used by Runtime to mark
+        ``unconfigured`` (config-incomplete) envs, by ``preflight_all``
+        to mark ``ok`` / ``unreachable`` / ``token_mismatch`` / ``error``
+        outcomes, and by external callers (e.g. lifecycle managers in
+        future phases) to update status on demand. Survives
+        de-registration so the diagnostic surface stays informative
+        after a failed env is dropped from the registry.
+        """
+        self._status[env_name] = (status, reason)
+
+    def env_status(self) -> dict[str, tuple[str, str]]:
+        """Snapshot of per-env (status, reason) recorded so far.
+        Includes de-registered envs. Status values:
+        ``ok`` | ``unconfigured`` | ``unreachable`` | ``token_mismatch`` | ``error``.
+        """
+        return dict(self._status)
 
     # ---- per-plugin dispatch -----------------------------------------
 
@@ -92,36 +122,46 @@ class EnvironmentRouter:
         and call its ``preflight()``. Returns the list of non-None
         info payloads (one per env that returned readiness data).
 
-        One env's preflight failure does NOT abort the others — a
-        bad sandbox shouldn't prevent local-only operation. Each
-        failure is logged at warning level and the exception is
-        re-raised AFTER the loop if it was the only env attempted
-        (so the runtime still surfaces the misconfiguration). When
-        multiple envs were attempted, the first failure is raised
-        with the rest summarized in the message.
+        One env's preflight failure does NOT abort the others and
+        does NOT abort startup. An env whose ``preflight()`` raises
+        ``EnvironmentUnavailableError`` is de-registered: removed
+        from ``_envs`` and ``_allow`` after the loop completes. A
+        plugin that later targets the dropped env via ``for_plugin``
+        receives ``EnvironmentDenied`` ("no such environment") —
+        treated as not-configured. This lets the runtime start
+        normally when only a sandbox is unreachable (local env still
+        works). Both the failure and the de-registration are logged
+        at warning level.
         """
         infos: list[dict[str, Any]] = []
-        failures: list[tuple[str, BaseException]] = []
+        failed_names: list[str] = []
         for env_name, env in self._envs.items():
             if not self._allow.get(env_name):
                 continue  # no plugins use this env; skip preflight
             try:
                 info = await env.preflight()
             except EnvironmentUnavailableError as e:
+                # SandboxUnavailableError carries a machine-readable
+                # ``reason`` (token_mismatch / unreachable / error);
+                # generic EnvironmentUnavailableError defaults to "error".
+                sub_reason = getattr(e, "reason", "error")
+                self.record_status(env_name, sub_reason, str(e))
                 _log.warning(
-                    "environment %r preflight failed: %s", env_name, e,
+                    "environment %r preflight failed (%s): %s",
+                    env_name, sub_reason, e,
                 )
-                failures.append((env_name, e))
+                _log.warning(
+                    "environment %r de-registered; plugins targeting it "
+                    "will receive EnvironmentDenied",
+                    env_name,
+                )
+                failed_names.append(env_name)
                 continue
+            self.record_status(env_name, "ok", "preflight passed")
             if info is not None:
                 infos.append({"env": env_name, **info})
-        if failures:
-            # Surface all failures in one error so config issues are
-            # debuggable in a single restart cycle.
-            summary = "; ".join(f"{n}: {e}" for n, e in failures)
-            raise EnvironmentUnavailableError(
-                f"preflight failed for {len(failures)} environment(s): "
-                f"{summary}. Fix config or stop those envs' guest "
-                f"backends, or remove their `allowed_plugins`."
-            )
+        # De-register after the loop — never mutate _envs while iterating.
+        for name in failed_names:
+            self._envs.pop(name)
+            self._allow.pop(name, None)
         return infos

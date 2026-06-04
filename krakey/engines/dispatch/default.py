@@ -66,4 +66,3 @@ class LocalDispatchEngine:
             recall_context or [],
             heartbeat_id,
         )
-        await d.apply_memory_updates(decision_result.memory_updates)

@@ -112,7 +112,7 @@ _MIN_THRESHOLD = min(_THRESHOLDS)  # 50
 
 def _configure_fatigue(runtime) -> None:
     """Apply the shared fatigue config onto an already-built runtime."""
-    runtime.config.fatigue.gm_node_soft_limit = _SOFT_LIMIT
+    runtime.memory.gm_node_soft_limit = _SOFT_LIMIT
     runtime.config.fatigue.force_sleep_threshold = _FORCE_THRESHOLD
     runtime.config.fatigue.thresholds = dict(_THRESHOLDS)
 
@@ -271,7 +271,7 @@ async def test_voluntary_sleep_not_refused_when_thresholds_empty(tmp_path):
         modifiers=[],
     )
     # Empty thresholds — guard must be disabled.
-    runtime.config.fatigue.gm_node_soft_limit = _SOFT_LIMIT
+    runtime.memory.gm_node_soft_limit = _SOFT_LIMIT
     runtime.config.fatigue.force_sleep_threshold = _FORCE_THRESHOLD
     runtime.config.fatigue.thresholds = {}
 
@@ -316,7 +316,7 @@ async def test_forced_sleep_not_blocked_by_guard(tmp_path):
         modifiers=[],
     )
     # force_sleep_threshold == soft_limit so seeding 100 nodes gives pct==100
-    runtime.config.fatigue.gm_node_soft_limit = 100
+    runtime.memory.gm_node_soft_limit = 100
     runtime.config.fatigue.force_sleep_threshold = 100
     runtime.config.fatigue.thresholds = {50: "(may sleep)"}
 
@@ -562,7 +562,7 @@ async def test_voluntary_sleep_refused_with_single_threshold_entry(tmp_path):
         compact_llm=sleep_llm,
         modifiers=[],
     )
-    runtime.config.fatigue.gm_node_soft_limit = 100
+    runtime.memory.gm_node_soft_limit = 100
     runtime.config.fatigue.force_sleep_threshold = 120
     runtime.config.fatigue.thresholds = {40: "(single threshold)"}
 
@@ -776,7 +776,7 @@ async def test_boolean_sleep_allowed_when_thresholds_empty(tmp_path):
         compact_llm=sleep_llm,
         modifiers=[],
     )
-    runtime.config.fatigue.gm_node_soft_limit = _SOFT_LIMIT
+    runtime.memory.gm_node_soft_limit = _SOFT_LIMIT
     runtime.config.fatigue.force_sleep_threshold = _FORCE_THRESHOLD
     runtime.config.fatigue.thresholds = {}
     runtime.sleep_log_dir = str(tmp_path / "logs")

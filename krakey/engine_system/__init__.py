@@ -33,12 +33,17 @@ So:
                            short name to a concrete instance via
                            meta-first, defaults-second, loud-fail
                            otherwise.
+  * ``config_store.py``  — ``FileEngineConfigStore``. Reads/writes an
+                           engine impl's own settings YAML file at the
+                           workspace-relative path declared in its
+                           ``meta.yaml`` ``config_path`` entry.
 
 Nothing in this package imports ``krakey.engines`` at module level.
 The registry's ``importlib.import_module`` calls only fire on actual
 ``resolve(slot)`` requests, and they're driven by yaml content +
 the user's config — never by hard-coded references in the loader.
 """
+from krakey.engine_system.config_store import FileEngineConfigStore
 from krakey.engine_system.registry import EngineRegistry
 
-__all__ = ["EngineRegistry"]
+__all__ = ["EngineRegistry", "FileEngineConfigStore"]

@@ -163,6 +163,81 @@ def register(app: FastAPI, *, config: ConfigService) -> None:
             out[slot] = {"default": default, "options": options}
         return {"engines": out}
 
+    @app.get("/api/engines/{slot}/{impl}/config")
+    async def get_engine_config(slot: str, impl: str):  # noqa: ANN201
+        """Read the per-engine-impl config file declared in its meta.yaml.
+
+        Returns ``{}`` if the file doesn't exist yet — valid initial state.
+        """
+        from krakey.engine_system.meta_loader import MetaParseError, load_slot_meta
+        from krakey.engine_system.config_store import FileEngineConfigStore
+
+        try:
+            catalog, _default = load_slot_meta(slot)
+        except (FileNotFoundError, MetaParseError) as e:
+            raise HTTPException(status_code=404, detail=f"unknown engine slot {slot!r}: {e}")
+
+        entry = catalog.get(impl)
+        if entry is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"unknown engine impl {impl!r} for slot {slot!r}",
+            )
+
+        config_path = entry.config_path
+        cfg = FileEngineConfigStore("workspace").read(config_path)
+        return {"path": config_path, "config": cfg}
+
+    @app.post("/api/engines/{slot}/{impl}/config")
+    async def post_engine_config(slot: str, impl: str, payload: dict = Body(...)):  # noqa: ANN201
+        """Write the per-engine-impl config file.
+
+        Slot/impl resolution happens BEFORE payload validation so an unknown
+        slot or impl always returns 404 even with a malformed body, and a 404
+        never creates a file.
+        """
+        from krakey.engine_system.meta_loader import MetaParseError, load_slot_meta
+        from krakey.engine_system.config_store import FileEngineConfigStore
+
+        # Resolve slot/impl first — 404 before any payload inspection.
+        try:
+            catalog, _default = load_slot_meta(slot)
+        except (FileNotFoundError, MetaParseError) as e:
+            raise HTTPException(status_code=404, detail=f"unknown engine slot {slot!r}: {e}")
+
+        entry = catalog.get(impl)
+        if entry is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"unknown engine impl {impl!r} for slot {slot!r}",
+            )
+
+        config_path = entry.config_path
+        if not config_path:
+            # The impl declares no settings file — there is nowhere to
+            # persist to. Mirror the memory web service's PUT /api/settings
+            # guard (a clean 400) instead of letting FileEngineConfigStore.
+            # write('') raise ValueError → 500. (GET tolerates this: read('')
+            # → {}, so opening the form is fine; only Save has nowhere to go.)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"engine impl {impl!r} for slot {slot!r} declares no "
+                    "config_path; cannot persist settings"
+                ),
+            )
+
+        # Payload validation — after resolution so 404 wins over 400.
+        new_cfg = payload.get("config")
+        if not isinstance(new_cfg, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="payload must include 'config' (mapping)",
+            )
+
+        FileEngineConfigStore("workspace").write(config_path, new_cfg)
+        return {"status": "saved", "path": config_path, "restart_required": True}
+
     @app.get("/api/modifiers/available")
     async def get_available_modifiers():  # noqa: ANN201
         """List unified-format plugins discoverable on disk.

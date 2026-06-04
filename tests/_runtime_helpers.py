@@ -113,8 +113,7 @@ def build_runtime_with_fakes(*, self_llm: ChatLike,
         ),
         idle=IdleSection(min_interval=1, max_interval=60,
                                     default_interval=1),
-        fatigue=FatigueSection(gm_node_soft_limit=200,
-                                force_sleep_threshold=120,
+        fatigue=FatigueSection(force_sleep_threshold=120,
                                 thresholds={}),
         # Test convenience: opt into the historical default plugin set
         # when the caller didn't say otherwise. Tests on the zero-plugin
@@ -204,6 +203,10 @@ def build_runtime_with_fakes(*, self_llm: ChatLike,
     runtime = Runtime(
         deps, idle_min=idle_min, idle_max=idle_max,
     )
+    # gm_node_soft_limit moved out of config.fatigue into the memory
+    # engine; the default GraphMemoryEngine value is 1000. Tests that
+    # need a specific soft-limit set ``runtime.memory.gm_node_soft_limit``
+    # themselves (see test_sleep_refusal_when_energy_high).
     if skip_bootstrap:
         anchor = runtime.modifiers.by_role("bootstrap")
         if anchor is not None and hasattr(anchor, "force_active"):

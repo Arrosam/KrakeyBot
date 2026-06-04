@@ -22,7 +22,7 @@ workspace/plugins/*
 # modular-dev tracking artifacts — local-only bus-agent helpers,
 # regenerated from the codebase; never committed.
 /graph.json
-/overviews/
+/overviews
 /contracts/
 /shared/
 .claude/modular-dev-state.json

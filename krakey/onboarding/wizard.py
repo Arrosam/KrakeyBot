@@ -14,11 +14,11 @@ Walks the user through:
      dashboard is default-checked and starred — there is no other
      way to inspect Krakey's state without re-running the wizard
      or hand-editing YAML.
-  5. optional GM size benchmark — runs ``perf_bench.measure_at`` at
-     a handful of sizes, recommends ``fatigue.gm_node_soft_limit``
-     for the user's machine (target p95 ≤ 200ms), and writes it
-     into the resulting config. Skippable; the default soft-limit
-     of 1000 stays in place.
+
+(The former Step 5 GM-size benchmark was removed: GM-latency
+benchmarking now lives inside the memory engine's own web service,
+where the user runs it on demand and saves the recommended limit to
+the memory engine's own settings file.)
 
 Pure stdlib (``input`` / ``print``) — no TUI dependency, works
 anywhere Python runs. The runner is fully injectable
@@ -97,10 +97,6 @@ VerifyFn = Callable[[str, "Provider", str], tuple[bool, str]]
 # list_models_fn(provider) -> list[str] | None
 #   None on failure (network error, unsupported endpoint, etc.).
 ListModelsFn = Callable[["Provider"], "list[str] | None"]
-# bench_fn(input_fn, output_fn) -> int | None
-#   The wizard's GM-size benchmark step. Defaults to ``_ask_bench``;
-#   tests inject a stub that returns None instantly.
-BenchFn = Callable[[InputFn, OutputFn], "int | None"]
 
 
 def run_wizard(
@@ -113,7 +109,6 @@ def run_wizard(
     list_plugins_fn: ListPluginsFn = list_available_plugins,
     verify_fn: VerifyFn | None = None,
     list_models_fn: ListModelsFn | None = None,
-    bench_fn: BenchFn | None = None,
 ) -> Path:
     """Run the wizard and return the path of the (possibly) written config.
 
@@ -129,7 +124,6 @@ def run_wizard(
     cfg_path = Path(config_path)
     verify = verify_fn or _default_verify
     list_models = list_models_fn or _default_list_models
-    bench = bench_fn or _ask_bench
 
     _print_intro(output_fn)
 
@@ -161,9 +155,7 @@ def run_wizard(
         _section(output_fn, "Dashboard port")
         dashboard_port = _ask_dashboard_port(input_fn, output_fn)
 
-    gm_soft_limit = bench(input_fn, output_fn)
-
-    cfg = _build_config(chat, embed, rerank_cfg, plugins, gm_soft_limit)
+    cfg = _build_config(chat, embed, rerank_cfg, plugins)
 
     # No "preview + confirm" step — the user just walked through the
     # answers, the wizard already verified each endpoint, and a final
@@ -461,7 +453,7 @@ def _ask_plugins(
     input_fn: InputFn, output_fn: OutputFn,
     available: dict[str, PluginMetadata],
 ) -> list[str]:
-    _section(output_fn, "Step 4/5: plugins")
+    _section(output_fn, "Step 4/4: plugins")
     if not available:
         output_fn("(no plugins discovered)")
         return []
@@ -666,80 +658,6 @@ def _print_plugin_list(
 
 # ---- Build Config -----------------------------------------------
 
-# ---- Step 5: GM size benchmark (optional) -----------------------
-
-def _ask_bench(
-    input_fn: InputFn, output_fn: OutputFn,
-) -> int | None:
-    """Run ``perf_bench.measure_at`` at a few sizes, surface the
-    recommended ``fatigue.gm_node_soft_limit`` for this machine.
-
-    The bench is pure local: builds an in-memory GraphMemory with a
-    deterministic dummy embedder, inserts N nodes, times vec_search.
-    No network, no LLM. The recommendation is the largest measured N
-    whose vec_search p95 stays below the target latency
-    (200ms by default).
-
-    Returns the recommended limit (int) or ``None`` if the user
-    skipped or no measurement satisfies the target.
-    """
-    _section(output_fn, "Step 5/5: GM size benchmark (optional)")
-    output_fn(
-        _ui.dim(
-            "  Measures vec_search latency at increasing GM sizes "
-            "(in-memory, no network) and recommends "
-            "`fatigue.gm_node_soft_limit` for your machine. "
-            "Takes ~30s. Skip to keep the default of 1000."
-        )
-    )
-    if not _prompt_yes_no(
-        input_fn, output_fn, "Run the benchmark now?", default=True,
-    ):
-        output_fn(_ui.dim("  [skip] benchmark — keeping default soft-limit."))
-        return None
-
-    import asyncio
-    from krakey.tools.perf_bench import measure_at, recommend_soft_limit
-
-    sizes = [100, 500, 1000, 2000]
-    target_ms = 200.0
-    results: list[dict] = []
-
-    async def _run() -> None:
-        for n in sizes:
-            output_fn(_ui.dim(f"  measuring N={n}…"))
-            r = await measure_at(n, dim=384, query_repeats=8)
-            results.append(r)
-            output_fn(_ui.dim(
-                f"    insert {r['insert_per_node_ms']:.2f}ms/node, "
-                f"vec p95 {r['vec_search_ms_p95']:.2f}ms"
-            ))
-
-    try:
-        asyncio.run(_run())
-    except Exception as e:  # noqa: BLE001
-        output_fn(
-            f"  {_ui.yellow('[warn]')} benchmark failed "
-            f"({type(e).__name__}: {e}); keeping default soft-limit."
-        )
-        return None
-
-    rec = recommend_soft_limit(results, target_p95_ms=target_ms)
-    if rec is None:
-        output_fn(
-            f"  {_ui.yellow('[warn]')} even {sizes[0]} nodes exceeds "
-            f"{target_ms:.0f}ms p95 — keeping default soft-limit. "
-            "Consider a faster disk / fewer dimensions."
-        )
-        return None
-    output_fn(
-        _ui.green(
-            f"  [ok] recommended fatigue.gm_node_soft_limit = {rec}"
-        )
-    )
-    return rec
-
-
 def _ensure_model_entry(provider: Provider, model_name: str, capability: str) -> None:
     """Add a ``ModelEntry`` to ``provider.models`` for ``model_name``,
     or merge ``capability`` into an existing entry. Without this the
@@ -762,7 +680,6 @@ def _build_config(
     embed: tuple[str, Provider, str] | None,
     rerank_cfg: tuple[str, Provider, str] | None,
     plugin_names: list[str],
-    gm_soft_limit: int | None = None,
 ) -> Config:
     providers: dict[str, Provider] = {}
     tags: dict[str, TagBinding] = {}
@@ -808,8 +725,6 @@ def _build_config(
         embedding=embedding_tag, reranker=reranker_tag,
     )
     cfg = Config(llm=llm, plugins=(plugin_names or None))
-    if gm_soft_limit is not None:
-        cfg.fatigue.gm_node_soft_limit = int(gm_soft_limit)
     return cfg
 
 

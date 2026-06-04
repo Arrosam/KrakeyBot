@@ -16,20 +16,26 @@ Each Engine slot ships a ``meta.yaml`` next to its ``__init__.py``::
         factory_module: krakey.engines.decision.hypothalamus
         factory_attr: HypothalamusDecisionEngine
         description: LLM translator. Bind core_purposes.hypothalamus.
-    config_schema:
-      - field: temperature
-        type: number_float
-        default: 0.7
-        help: Sampling temperature for the translator LLM.
+        config_schema:
+          - field: temperature
+            type: number_float
+            default: 0.7
+            help: Sampling temperature for the translator LLM.
+        dependencies:
+          - "some-llm-client>=1.0"
+        post_install:
+          - args: ["{python}", "-m", "some_llm_client", "setup"]
+            description: "Run one-time client setup."
+            optional: false
 
 The user picks an impl by SHORT NAME in ``config.yaml``::
 
     core_implementations:
       decision: hypothalamus
-    engine_configs:
-      decision:
-        hypothalamus:
-          temperature: 0.5
+
+Per-engine settings live in the impl's own settings file declared via
+``config_path`` in the ``builtin_engines`` entry; the global
+``engine_configs`` block is no longer used.
 
 Plugin-supplied engines extend the same catalog through their own
 ``meta.yaml`` (``kind: engine``, ``slot: decision``); the plugin's
@@ -67,7 +73,26 @@ class EngineImpl:
     under the slot's dropdown when a schema-bearing impl is
     selected; the user's values flow through to the engine
     constructor's ``config`` kwarg.
+
+    ``dependencies`` is a list of pip-installable spec strings
+    (e.g. ``"some-package>=1.0"``) that must be present for this
+    engine impl to run. The ``krakey install`` CLI is expected to
+    collect and install these. Defaults to empty list.
+
+    ``post_install`` is a list of secondary install commands run
+    AFTER pip — for things pip can't drive (e.g. downloading binary
+    assets). Each entry is
+    ``{args: list[str], description: str, optional: bool}``.
+    The token ``{python}`` inside ``args`` is replaced with
+    ``sys.executable`` at run-time. Defaults to empty list.
+
+    ``config_path`` is a workspace-relative path to this impl's own
+    settings YAML file (e.g. ``data/memory/settings.yaml``). Empty
+    string means no settings file — the engine uses its own defaults.
     """
     cls: type
     description: str
+    config_path: str = ""
     config_schema: list[dict[str, Any]] = field(default_factory=list)
+    dependencies: list[str] = field(default_factory=list)
+    post_install: list[dict[str, Any]] = field(default_factory=list)

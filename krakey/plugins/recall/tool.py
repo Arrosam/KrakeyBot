@@ -3,29 +3,28 @@
 Read-side counterpart to ``memory.explicit_write`` (the LLM-extraction
 write path). Self emits ``[DECISION]`` like "recall what I know about
 X" → orchestrator dispatches a ``memory_recall`` tool call → this
-tool queries GM (via the shared ``gm_query`` helper from the recall
-Engine package) and returns the result as a ``tool_feedback`` Stimulus,
-surfaced under ``[STIMULUS]`` / ``YOUR RECENT ACTIONS`` on the next
-heartbeat.
+tool queries GM (via the memory engine's recall surface) and returns
+the result as a ``tool_feedback`` Stimulus, surfaced under
+``[STIMULUS]`` / ``YOUR RECENT ACTIONS`` on the next heartbeat.
 
 Two query paths, picked by the presence of ``kb_id`` in params:
   * ``kb_id`` given → bypass GM, query that KnowledgeBase directly.
     Used when Self has noticed a KB index node in ``[GRAPH MEMORY]``
     on a prior beat and wants to drill in.
-  * default → vec_search GM with FTS fallback, dedup to top-K, fetch
-    neighbors + edges. Plus: any recalled node that itself is a
-    ``kb_index`` (placed by Sleep when migrating GM content into a
-    KB) auto-expands its KB's matching entries into the result. That
-    auto-expansion is the very mechanism that *introduces* Self to
-    KB existence — surface a KB index node, and on the next active
-    recall Self can name the KB and drill in.
+  * default → memory.search (vec + FTS fallback, engine-internal),
+    dedup to top-K, fetch neighbors + edges via recall_context. Plus:
+    any recalled node that itself is a ``kb_index`` (placed by Sleep
+    when migrating GM content into a KB) auto-expands its KB's
+    matching entries into the result. That auto-expansion is the very
+    mechanism that *introduces* Self to KB existence — surface a KB
+    index node, and on the next active recall Self can name the KB
+    and drill in.
 """
 from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from krakey.utils.gm_query import query_gm_with_fts_fallback
 from krakey.interfaces.tool import Tool
 from krakey.models.stimulus import Stimulus
 
@@ -75,10 +74,9 @@ class MemoryRecallTool(Tool):
         # Direct KB browse — bypass GM entirely
         if explicit_kb:
             try:
-                kb = await self._memory.open_kb(explicit_kb)
+                entries = await self._memory.recall_kb(explicit_kb, query, top_k=top_k)
             except KeyError:
                 return self._stim(f"No KB registered with id {explicit_kb!r}.")
-            entries = await kb.search(query, top_k=top_k)
             if not entries:
                 return self._stim(
                     f"KB {explicit_kb!r} returned no matches for {query!r}."
@@ -93,8 +91,9 @@ class MemoryRecallTool(Tool):
             )
 
         node_ids = [n["id"] for n in nodes]
-        neighbor_map = await self._memory.get_neighbor_keywords(node_ids)
-        edges = await self._memory.get_edges_among(node_ids)
+        ctx = await self._memory.recall_context(node_ids)
+        neighbor_map = ctx["neighbor_keywords"]
+        edges = ctx["edges"]
 
         # KB index expansion: if any recalled node is a KB index, also
         # pull entries from that KB. This is how Self learns a KB
@@ -106,12 +105,10 @@ class MemoryRecallTool(Tool):
 
     async def _search_gm(self, query: str,
                           top_k: int) -> list[dict[str, Any]]:
-        candidates = await query_gm_with_fts_fallback(
-            self._memory, self._embedder, query, top_k=top_k,
-        )
-        # Dedup + cap to top_k. Defensive — vec_search and fts_search
-        # individually shouldn't repeat a node, but the cap layer here
-        # also limits the nodes Self sees regardless of search quirks.
+        candidates = await self._memory.search(query, top_k=top_k)
+        # Dedup + cap to top_k. Defensive — the engine shouldn't repeat
+        # a node, but the cap layer here also limits the nodes Self sees
+        # regardless of search quirks.
         seen: set[int] = set()
         out: list[dict[str, Any]] = []
         for node, _sim in candidates:
@@ -134,10 +131,9 @@ class MemoryRecallTool(Tool):
             if not kb_id:
                 continue
             try:
-                kb = await self._memory.open_kb(kb_id)
+                entries = await self._memory.recall_kb(kb_id, query, top_k=top_k)
             except KeyError:
                 continue
-            entries = await kb.search(query, top_k=top_k)
             if not entries:
                 continue
             sections.append("\n" + _format_kb(kb_id, entries, query))

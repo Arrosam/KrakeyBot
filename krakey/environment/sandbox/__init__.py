@@ -18,10 +18,16 @@ from krakey.environment.sandbox.sandbox_environment import (
     SandboxUnavailableError,
 )
 from krakey.environment.sandbox.preflight import preflight
+from krakey.environment.sandbox.docker_environment import (
+    DockerSandboxConfig,
+    DockerSandboxEnvironment,
+)
 
 __all__ = [
     "SandboxConfig",
     "SandboxEnvironment",
     "SandboxUnavailableError",
     "preflight",
+    "DockerSandboxConfig",
+    "DockerSandboxEnvironment",
 ]

@@ -14,8 +14,11 @@ import asyncio
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from krakey.models.stimulus import Stimulus
 
 from krakey.models.self_model import (
     SelfModelStore, load_self_model_or_default,
@@ -27,10 +30,9 @@ from krakey.models.config import Config, LLMParams
 from krakey.models.config_backup import backup_config
 from krakey.runtime.stimuli.batch_tracker import BatchTrackerChannel
 from krakey.runtime.events.event_bus import EventBus
-from krakey.environment.local import LocalEnvironment
+from krakey.environment import build_environment_router
 from krakey.environment.router import EnvironmentRouter
-from krakey.environment.sandbox import SandboxConfig, SandboxEnvironment
-from krakey.interfaces.environment import Environment
+from krakey.interfaces.environment import EnvironmentUnavailableError
 from krakey.runtime.console.heartbeat_logger import HeartbeatLogger
 from krakey.runtime.stimuli.stimulus_buffer import StimulusBuffer
 
@@ -168,6 +170,9 @@ class Runtime:
             cfg=self.config,
             factory=self.llm_factory,
         )
+        # Placed here (before memory resolve) so the resolve can pass it
+        # as sleep_log_dir, and the later code that references it also works.
+        self.sleep_log_dir = "workspace/logs"
         gm_path = self.config.graph_memory.db_path or ":memory:"
         self.memory = self._engine_registry.resolve(
             "memory",
@@ -183,6 +188,11 @@ class Runtime:
             ),
             extractor_llm=deps.classify_llm,
             classifier_llm=deps.classify_llm,
+            sleep_llm=deps.compact_llm,
+            reranker=self.reranker,
+            sleep_config=self.config.sleep,
+            sleep_log_dir=self.sleep_log_dir,
+            web_config=self.config.memory_web,
         )
         # Recall resolve is placed AFTER memory because the default
         # IncrementalRecallEngine takes the resolved memory instance
@@ -236,7 +246,6 @@ class Runtime:
         # ctx.services["runtime"]) sees a runtime with the fields it
         # needs at channel.start() time.
         self.log = logger or HeartbeatLogger()
-        self.sleep_log_dir = "workspace/logs"
         self.events = event_bus or EventBus()
         self._config_path = deps.config_path  # for dashboard settings page
         self._backup_dir = deps.backup_dir or "workspace/backups"
@@ -254,7 +263,11 @@ class Runtime:
         if deps.environment_router is not None:
             self.environment_router = deps.environment_router
         else:
-            self.environment_router = self._build_environment_router()
+            self.environment_router = build_environment_router(
+                self.config,
+                config_path=deps.config_path,
+                log_warn=self.log.hb_warn,
+            )
         # Re-bind onto deps so PluginContext can reach the Router via
         # ``ctx.deps.environment_router`` (ctx.environment(...) wrapper).
         deps.environment_router = self.environment_router
@@ -535,6 +548,105 @@ class Runtime:
         dashboard. Resets across restarts (not persisted)."""
         return self._sleep_cycles
 
+    def memory_soft_limit(self) -> int:
+        """The GM node soft-limit used for fatigue calculation.
+
+        Ownership of this threshold moved OUT of ``config.fatigue`` into
+        the memory engine (its own settings file). This thin hook
+        duck-types to the engine's ``gm_node_soft_limit`` attribute so
+        the heartbeat + CLI read it without going through the swappable
+        12-method MemoryEngine Protocol. Defaults to 1000 only when the
+        engine exposes no such attribute (a present 0 is returned as 0)."""
+        return int(getattr(self.memory, "gm_node_soft_limit", 1000))
+
+    async def trigger_memory_sleep(self, reason: str = "") -> dict:
+        """Ask the memory engine to run a consolidation/sleep cycle.
+
+        Sleep is the memory engine's own concern; this is a thin convenience
+        hook (NOT part of the swappable MemoryEngine Protocol) that the
+        heartbeat / SleepTool / dashboard call to request one. Duck-typed so
+        a backend with no sleep notion (no request_sleep) is a safe no-op.
+
+        Honours the request_sleep return/raise contract:
+          * a TRUTHY stats dict means a real cycle ran → publish Sleep
+            lifecycle events, count it, push a wake-up stimulus, and reset
+            the recall session (GM changed underneath us);
+          * ``{}`` is a genuine NO-OP (no sleep_llm, a coalesced concurrent
+            cycle, or a backend like MemOS that consolidates internally) →
+            nothing happened, so emit no events and run no side-effects;
+          * a raise is a real failure → surface SleepFailed + a corrective
+            stimulus to Self (never reported as a completed cycle).
+        """
+        from krakey.runtime.events.event_types import (
+            SleepDoneEvent, SleepFailedEvent, SleepStartEvent,
+        )
+        req = getattr(self.memory, "request_sleep", None)
+        if req is None or not callable(req):
+            return {}
+
+        try:
+            stats = await req(reason)
+        except Exception as exc:  # noqa: BLE001
+            err_str = f"{type(exc).__name__}: {exc}"
+            self.log.hb_warn(f"memory sleep failed: {err_str}")
+            try:
+                self.events.publish(SleepFailedEvent(reason=reason, error=err_str))
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                await self.buffer.push(Stimulus(
+                    type="system_event",
+                    source="system:sleep",
+                    content=(
+                        f"Sleep transition failed: {err_str}. "
+                        "Runtime is continuing without entering sleep "
+                        "state. The memory engine's consolidation did not "
+                        "complete; check the runtime stderr for details."
+                    ),
+                    timestamp=datetime.now(),
+                    adrenalin=True,
+                ))
+            except Exception:  # noqa: BLE001
+                pass
+            return {}
+
+        # A falsy result is a genuine no-op (see contract above): nothing was
+        # consolidated, so do NOT publish lifecycle events, count a cycle,
+        # stimulate Self, or throw away the recall session. Treating {} as a
+        # completed cycle would lie to /status + Self and, under force-sleep
+        # against a no-op backend (e.g. MemOS), spam a phantom cycle per beat.
+        if not stats:
+            return stats
+
+        # A real consolidation cycle ran.
+        try:
+            self.events.publish(SleepStartEvent(reason=reason))
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self.events.publish(SleepDoneEvent(stats=stats))
+        except Exception:  # noqa: BLE001
+            pass
+        self._sleep_cycles += 1
+        try:
+            # Fold the trigger reason into the wake-up stimulus so Self
+            # (and tests) can see WHY the cycle ran (fatigue / voluntary /
+            # manual). ``reason`` originates from the caller (heartbeat
+            # force-sleep, voluntary decision, /sleep command, web/socket).
+            wake = "Completed a sleep cycle."
+            if reason:
+                wake = f"Completed a sleep cycle ({reason})."
+            await self.buffer.push(Stimulus(
+                type="system_event",
+                source="system:sleep",
+                content=wake,
+                timestamp=datetime.now(),
+            ))
+        except Exception:  # noqa: BLE001
+            pass
+        self._recall = self.recall.new_session()
+        return stats
+
     async def run(self, iterations: int | None = None) -> None:
         await self.memory.initialize()
         await self._preflight_environments()
@@ -610,54 +722,6 @@ class Runtime:
             return {"tools": [], "channels": [], "modifiers": []}
         return obs.loaded_report()
 
-    def _build_environment_router(self) -> EnvironmentRouter:
-        """Compose Local + Sandbox-if-configured into a Router whose
-        allow-list comes straight from ``config.environments``.
-
-        Local is always registered — it's zero-config and never
-        fails to start. Its allow-list is whatever the user put in
-        ``environments.local.allowed_plugins`` (default empty).
-
-        Sandbox is registered only when ``environments.sandbox`` is
-        set AND fully configured. Partial config (missing guest_os /
-        agent.url / agent.token) is NOT fatal: the sandbox env is
-        left unregistered — treated as "feature not enabled" — and a
-        warning names the missing keys. Startup must never be blocked
-        by incomplete optional-feature config; plugins allow-listed
-        for the (now absent) sandbox simply get ``EnvironmentDenied``
-        at call time, same as if the section were omitted entirely.
-        """
-        envs: dict[str, Environment] = {"local": LocalEnvironment()}
-        envs_cfg = self.config.environments
-        allow_list: dict[str, list[str]] = {
-            "local": list(envs_cfg.local.allowed_plugins),
-        }
-        sb = envs_cfg.sandbox
-        if sb is not None:
-            missing: list[str] = []
-            if not sb.guest_os:
-                missing.append("environments.sandbox.guest_os")
-            if not sb.agent.url:
-                missing.append("environments.sandbox.agent.url")
-            if not sb.agent.token:
-                missing.append("environments.sandbox.agent.token")
-            if missing:
-                self.log.hb_warn(
-                    "sandbox env config is incomplete; missing "
-                    + ", ".join(missing)
-                    + ". Sandbox environment disabled. Complete the "
-                    "`environments.sandbox:` block in config.yaml to "
-                    "enable it, or remove the section to silence this."
-                )
-            else:
-                envs["sandbox"] = SandboxEnvironment(SandboxConfig(
-                    agent_url=sb.agent.url,
-                    agent_token=sb.agent.token,
-                    guest_os=sb.guest_os,
-                ))
-                allow_list["sandbox"] = list(sb.allowed_plugins)
-        return EnvironmentRouter(envs=envs, allow_list=allow_list)
-
     def _record_prompt(self, heartbeat_id: int, prompt: str) -> None:
         # Facade — heartbeat algorithm lives in HeartbeatOrchestrator.
         self._orchestrator.record_prompt(heartbeat_id, prompt)
@@ -677,13 +741,25 @@ class Runtime:
         success log line attached to the heartbeat log; the Router
         itself stays IO-pattern-agnostic.
         """
-        infos = await self.environment_router.preflight_all()
-        for info in infos:
-            env_name = info.get("env", "?")
-            details = " ".join(
-                f"{k}={v}" for k, v in info.items() if k != "env"
-            )
-            self.log.hb(f"{env_name} preflight ok: {details}")
+        from krakey.runtime.events.event_types import EnvironmentStatusEvent
+        try:
+            infos = await self.environment_router.preflight_all()
+            for info in infos:
+                env_name = info.get("env", "?")
+                details = " ".join(
+                    f"{k}={v}" for k, v in info.items() if k != "env"
+                )
+                self.log.hb(f"{env_name} preflight ok: {details}")
+        except EnvironmentUnavailableError as exc:
+            self.log.hb_warn(f"environment preflight raised unexpectedly: {exc}")
+        # Publish the post-preflight status snapshot — covers unconfigured
+        # (seeded by build_environment_router) + ok / unreachable /
+        # token_mismatch / error (recorded by preflight_all). Dashboard
+        # picks this up over /ws/events to refresh the Sandbox VM badge.
+        raw = self.environment_router.env_status()
+        self.events.publish(EnvironmentStatusEvent(
+            statuses={n: {"status": s, "reason": r} for n, (s, r) in raw.items()},
+        ))
 
     async def close(self) -> None:
         """Shut down every Engine slot that exposes ``close()``.

@@ -29,9 +29,9 @@ from krakey.plugins.dashboard.events.ws_route import register as _register_event
 from krakey.plugins.dashboard.log_capture import LogCapture
 from krakey.plugins.dashboard.middleware import attach_no_cache
 from krakey.plugins.dashboard.routes import (
+    environments as _environments_routes,
     health as _health,
     logs_ws as _logs_ws,
-    memory as _memory,
     plugins as _plugins,
     prompts as _prompts,
     runtime as runtime_routes,
@@ -42,11 +42,9 @@ from krakey.plugins.dashboard.services.events import EventBroadcasterService
 from krakey.plugins.dashboard.services.web_chat import WebChatService
 from krakey.plugins.dashboard.services.adapters import (
     FileConfigService,
-    RuntimeMemoryService,
     RuntimePluginsService,
     RuntimePromptsService,
 )
-from krakey.plugins.dashboard.services.memory import MemoryService
 from krakey.plugins.dashboard.services.plugins import PluginsService
 from krakey.plugins.dashboard.services.prompts import PromptsService
 from krakey.plugins.dashboard.services.config import ConfigService
@@ -63,7 +61,7 @@ def create_app(
     *,
     runtime: Any | None = None,
     web_chat_history: WebChatHistory | None = None,
-    on_user_message: Callable[..., Awaitable[None]] | None = None,
+    on_user_message: Callable[..., Awaitable[bool]] | None = None,
     event_broadcaster: EventBroadcasterService | None = None,
     config_path: Path | None = None,
     on_restart: Callable[[], None] | None = None,
@@ -71,7 +69,6 @@ def create_app(
     auth_token: str | None = None,
     log_capture: LogCapture | None = None,
     # --- overrides for unit tests (pass a fake instead of a real service) ---
-    memory_service: MemoryService | None = None,
     prompts_service: PromptsService | None = None,
     plugins_service: PluginsService | None = None,
     config_service: ConfigService | None = None,
@@ -110,18 +107,17 @@ def create_app(
     _uploads.register(app)
 
     # --- services + routes that need them ---
-    memory = memory_service or RuntimeMemoryService(runtime)
     prompts = prompts_service or RuntimePromptsService(runtime)
     plugins = plugins_service or RuntimePluginsService(
         runtime, plugin_configs_root=plugin_configs_root,
     )
     config = config_service or FileConfigService(config_path, on_restart)
 
-    _memory.register(app, memory=memory)
     _prompts.register(app, prompts=prompts)
     _plugins.register(app, plugins=plugins)
     _settings_route.register(app, config=config)
     runtime_routes.register(app, runtime=runtime)
+    _environments_routes.register(app, runtime=runtime)
 
     # --- WS endpoints (only when their backing is available) ---
     if web_chat_service is None and web_chat_history is not None:

@@ -30,7 +30,6 @@ async def test_empty_decision_yields_empty_result():
     assert result.tool_calls == []
     assert result.parse_failures == []
     assert result.memory_writes == []
-    assert result.memory_updates == []
     assert result.sleep is False
 
 

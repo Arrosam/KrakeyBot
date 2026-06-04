@@ -142,18 +142,22 @@ def build_channel(ctx: "PluginContext"):
 
 
 def build_tool(ctx: "PluginContext"):
-    """Reply tool — shares the ``WebChatHistory`` the sibling channel
-    factory built. If the channel didn't run (disabled in central
-    config, or load order shuffled), build a fresh ``WebChatHistory``
-    pointed at the same JSONL: the file is the single source of
-    truth, so a second instance reading it stays consistent. Cache
-    it so a later channel-factory call sees the same instance.
+    """Reply tool + mark-read tool — share the ``WebChatHistory`` the
+    sibling channel factory built. If the channel didn't run (disabled
+    in central config, or load order shuffled), build a fresh
+    ``WebChatHistory`` pointed at the same JSONL: the file is the
+    single source of truth, so a second instance reading it stays
+    consistent. Cache it so a later channel-factory call sees the same
+    instance.
+
+    Returns a list of tools; the runtime loader registers each element
+    independently.
 
     Per CLAUDE.md the runtime must keep working with any plugin /
     component disabled — this branch is the additive-fallback for
     "channel disabled but tool enabled".
     """
-    from krakey.plugins.dashboard.tool import WebChatReplyTool
+    from krakey.plugins.dashboard.tool import WebChatReplyTool, WebChatMarkReadTool
     from krakey.plugins.dashboard.web_chat.history import WebChatHistory
 
     history = ctx.plugin_cache.get(_HISTORY_CACHE_KEY)
@@ -164,7 +168,14 @@ def build_tool(ctx: "PluginContext"):
         )
         history = WebChatHistory(history_path)
         ctx.plugin_cache[_HISTORY_CACHE_KEY] = history
-    return WebChatReplyTool(history=history)
+
+    runtime = ctx.services.get("runtime")
+    events = runtime.events if runtime is not None else ctx.services.get("events")
+
+    return [
+        WebChatReplyTool(history=history),
+        WebChatMarkReadTool(history=history, events=events),
+    ]
 
 
 def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None:
@@ -178,6 +189,7 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
     from krakey.plugins.dashboard.events import EventBroadcaster
     from krakey.plugins.dashboard.log_capture import LogCapture
     from krakey.plugins.dashboard.threaded_server import ThreadedDashboardServer
+    from krakey.plugins.dashboard.web_chat.read_receipts import make_stimulus_read_handler
 
     runtime = ctx.services.get("runtime")
     if runtime is None:
@@ -228,6 +240,9 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
 
     try:
         broadcaster = EventBroadcaster(runtime.events)
+        runtime.events.subscribe(make_stimulus_read_handler(history))
+        from krakey.plugins.dashboard.web_chat.reminders import make_heartbeat_reminder_handler
+        runtime.events.subscribe(make_heartbeat_reminder_handler(history, channel.push_reminder))
         app = create_dashboard_app(
             runtime=runtime,
             web_chat_history=history,
@@ -249,25 +264,26 @@ def _start_dashboard_server(ctx, channel, history, host: str, port: int) -> None
         runtime.log.hb(
             f"dashboard listening on http://{host}:{server.port}"
         )
-        # Always log the one-click URL by default — this is a personal
-        # local daemon and the log file lives on the user's own disk
-        # next to the token file anyway. ``krakey start`` redirects
-        # stdout to that log, so without the URL in the log the user
-        # has no way to see what to open. Set
-        # ``KRAKEY_REDACT_TOKEN_LOG=1`` to opt into redaction (for
-        # shipping logs to a remote aggregator etc.).
-        url_full = f"http://{host}:{server.port}/?token={auth_token}"
-        if os.environ.get("KRAKEY_REDACT_TOKEN_LOG"):
-            url_redacted = (
-                f"http://{host}:{server.port}/?token=<see {token_path}>"
-            )
-            runtime.log.hb(f"dashboard URL: {url_redacted}")
-            runtime.log.hb(
-                "dashboard token redacted from logs (KRAKEY_REDACT_-"
-                "TOKEN_LOG=1); read the token file directly"
-            )
-        else:
-            runtime.log.hb(f"dashboard URL (one-click): {url_full}")
+        if not os.environ.get("KRAKEY_DAEMON_MODE"):
+            # Always log the one-click URL by default — this is a personal
+            # local daemon and the log file lives on the user's own disk
+            # next to the token file anyway. ``krakey start`` redirects
+            # stdout to that log, so without the URL in the log the user
+            # has no way to see what to open. Set
+            # ``KRAKEY_REDACT_TOKEN_LOG=1`` to opt into redaction (for
+            # shipping logs to a remote aggregator etc.).
+            url_full = f"http://{host}:{server.port}/?token={auth_token}"
+            if os.environ.get("KRAKEY_REDACT_TOKEN_LOG"):
+                url_redacted = (
+                    f"http://{host}:{server.port}/?token=<see {token_path}>"
+                )
+                runtime.log.hb(f"dashboard URL: {url_redacted}")
+                runtime.log.hb(
+                    "dashboard token redacted from logs (KRAKEY_REDACT_-"
+                    "TOKEN_LOG=1); read the token file directly"
+                )
+            else:
+                runtime.log.hb(f"dashboard URL (one-click): {url_full}")
     except OSError as e:
         runtime.log.runtime_error(
             f"dashboard failed to start (port {port} in use? {e}); "

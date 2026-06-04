@@ -108,6 +108,7 @@ def test_router_build_disables_sandbox_when_partially_configured(capsys):
     a warning names the missing keys. Plugins allow-listed for the
     absent sandbox just hit EnvironmentDenied at call time."""
     from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
+    from krakey.environment import build_environment_router
     from krakey.models.config import SandboxEnvironmentConfig
 
     runtime = build_runtime_with_fakes(
@@ -117,7 +118,10 @@ def test_router_build_disables_sandbox_when_partially_configured(capsys):
     runtime.config.environments.sandbox = SandboxEnvironmentConfig(
         guest_os="linux",
     )
-    router = runtime._build_environment_router()
+    router = build_environment_router(
+        runtime.config, config_path=runtime._config_path,
+        log_warn=runtime.log.hb_warn,
+    )
     # Local is always present; sandbox is dropped, not registered.
     assert router.env_names() == ["local"]
     err = capsys.readouterr().err.lower()
@@ -143,6 +147,7 @@ async def test_router_registers_sandbox_env_when_config_complete(tmp_path):
     and 'sandbox', and the allow-list reflects the configured
     plugin assignments."""
     from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
+    from krakey.environment import build_environment_router
     from krakey.models.config import SandboxAgentSection, SandboxEnvironmentConfig
 
     runtime = build_runtime_with_fakes(
@@ -155,7 +160,10 @@ async def test_router_registers_sandbox_env_when_config_complete(tmp_path):
             url="http://10.0.2.10:8765", token="tok",
         ),
     )
-    rebuilt = runtime._build_environment_router()
+    rebuilt = build_environment_router(
+        runtime.config, config_path=runtime._config_path,
+        log_warn=runtime.log.hb_warn,
+    )
     assert set(rebuilt.env_names()) == {"local", "sandbox"}
     # Allow-list flows through from config.environments.
     assert rebuilt.for_plugin("coding", "sandbox") is rebuilt._envs["sandbox"]
@@ -221,7 +229,7 @@ def test_build_sandbox_env_tolerates_non_mapping_subblocks(bad_subblock, capsys)
     # Defaults survive — resources/agent fall back to their dataclass
     # defaults rather than crashing.
     assert sb.resources.cpu == 2
-    assert sb.agent.url == ""
+    assert sb.agent.url == "http://10.0.2.10:8765"  # dataclass default
     err = capsys.readouterr().err.lower()
     assert "mapping" in err
 
@@ -273,6 +281,96 @@ async def test_preflight_wraps_aiohttp_timeout_as_sandbox_error(tmp_path):
         srv.server_close()
 
 
+# ---------------- run() error-wrapping (startup-resilience) ----------------
+
+
+async def test_run_against_unreachable_agent_raises_sandbox_unavailable(tmp_path):
+    """SandboxEnvironment.run() against a dead URL must raise
+    SandboxUnavailableError, NOT a raw aiohttp.ClientError or
+    asyncio.TimeoutError. This mirrors the existing preflight() wrapping
+    and ensures the Router's EnvironmentUnavailableError catcher sees it.
+
+    Port 1 is privileged/closed on all platforms — connection fails
+    immediately without waiting for a timeout, keeping the test fast."""
+    from krakey.environment.sandbox import (
+        SandboxConfig, SandboxEnvironment, SandboxUnavailableError,
+    )
+    from krakey.interfaces.environment import EnvironmentUnavailableError
+
+    cfg = SandboxConfig(
+        agent_url="http://127.0.0.1:1",
+        agent_token="x",
+        guest_os="linux",
+    )
+    runner = SandboxEnvironment(cfg)
+    with pytest.raises(SandboxUnavailableError) as ei:
+        await runner.run(
+            ["echo", "hello"],
+            cwd=tmp_path,
+            timeout=5.0,
+        )
+    # Must be a subclass of EnvironmentUnavailableError so router-level
+    # catchers (which catch EnvironmentUnavailableError) are covered.
+    assert isinstance(ei.value, EnvironmentUnavailableError)
+
+
+async def test_run_against_timing_out_agent_raises_sandbox_unavailable(tmp_path):
+    """SandboxEnvironment.run() against a slow-but-alive agent that
+    exceeds the aiohttp ClientTimeout must raise SandboxUnavailableError,
+    not a bare asyncio.TimeoutError.
+
+    Uses the same slow-HTTP-server pattern as
+    test_preflight_wraps_aiohttp_timeout_as_sandbox_error — a real
+    loopback server that sleeps 20 s, guaranteeing the 5 s aiohttp
+    ClientTimeout fires first."""
+    import threading
+    import time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from krakey.environment.sandbox import (
+        SandboxConfig, SandboxEnvironment, SandboxUnavailableError,
+    )
+    from krakey.interfaces.environment import EnvironmentUnavailableError
+
+    class _SlowHandler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802  — run() POSTs to /exec
+            time.sleep(20)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def do_GET(self):  # noqa: N802  — needed for any health-check
+            time.sleep(20)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *a, **k):  # silence test output
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _SlowHandler)
+    port = srv.server_address[1]
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        cfg = SandboxConfig(
+            agent_url=f"http://127.0.0.1:{port}",
+            agent_token="x",
+            guest_os="linux",
+        )
+        runner = SandboxEnvironment(cfg)
+        with pytest.raises(SandboxUnavailableError) as ei:
+            await runner.run(
+                ["echo", "hi"],
+                cwd=tmp_path,
+                timeout=5.0,
+            )
+        assert isinstance(ei.value, EnvironmentUnavailableError)
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 # ---------------- old top-level sandbox: deprecation ----------------
 
 def test_old_top_level_sandbox_block_emits_deprecation(tmp_path, capsys):
@@ -297,3 +395,42 @@ def test_old_top_level_sandbox_block_emits_deprecation(tmp_path, capsys):
     assert "deprecated" in err
     assert "sandbox" in err
     assert "environments.sandbox" in err
+
+
+# ---------------- sandbox config default values ----------------
+
+def test_sandbox_env_config_vm_name_default():
+    from krakey.models.config import SandboxEnvironmentConfig
+    assert SandboxEnvironmentConfig().vm_name == "krakey-vm"
+
+
+def test_sandbox_agent_section_defaults():
+    from krakey.models.config import SandboxAgentSection
+    a = SandboxAgentSection()
+    assert a.url == "http://10.0.2.10:8765"
+    # token MUST stay empty: it is a shared secret (no safe default) and an
+    # empty token is the gate that keeps the sandbox disabled-by-default.
+    assert a.token == ""
+
+
+def test_defaulted_agent_url_with_empty_token_keeps_sandbox_disabled(capsys):
+    """Security invariant: giving agent.url a non-empty default must NOT
+    enable the sandbox. With url defaulted but token still empty, the
+    Router gate (checks guest_os/url/token) still leaves the sandbox
+    unregistered and startup unblocked."""
+    from tests._runtime_helpers import ScriptedLLM, build_runtime_with_fakes
+    from krakey.environment import build_environment_router
+    from krakey.models.config import SandboxEnvironmentConfig
+    runtime = build_runtime_with_fakes(
+        self_llm=ScriptedLLM(), hypo_llm=ScriptedLLM(),
+    )
+    # guest_os set; agent uses defaults (url non-empty, token empty).
+    runtime.config.environments.sandbox = SandboxEnvironmentConfig(
+        guest_os="linux",
+    )
+    router = build_environment_router(
+        runtime.config, config_path=runtime._config_path,
+        log_warn=runtime.log.hb_warn,
+    )
+    assert router.env_names() == ["local"]
+    assert "token" in capsys.readouterr().err.lower()

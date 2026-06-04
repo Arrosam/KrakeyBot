@@ -50,6 +50,11 @@ def register(
         try:
             while True:
                 data = await ws.receive_json()
+                # Resend: delete the old failed entry before creating a
+                # fresh one so the history doesn't accumulate duplicates.
+                resend_of = data.get("resend_of")
+                if resend_of:
+                    await service.history.delete(resend_of)
                 text = (data.get("text") or "").strip()
                 attachments = data.get("attachments") or []
                 if not text and not attachments:

@@ -73,8 +73,8 @@ async def handle_command(cmd: str, runtime: "Runtime") -> CommandResult:
 async def _format_status(runtime: "Runtime") -> str:
     nodes = await runtime.memory.count_nodes()
     edges = await runtime.memory.count_edges()
-    pct = int(nodes / runtime.config.fatigue.gm_node_soft_limit * 100) \
-        if runtime.config.fatigue.gm_node_soft_limit else 0
+    soft_limit = runtime.memory_soft_limit()
+    pct = int(nodes / soft_limit * 100) if soft_limit else 0
     name = runtime.self_model.get("identity", {}).get("name", "(unnamed)")
     return (
         f"name={name} "
@@ -90,13 +90,6 @@ async def _format_memory_stats(runtime: "Runtime") -> str:
     edges = await runtime.memory.count_edges()
     cat_counts = await runtime.memory.counts_by_category()
     src_counts = await runtime.memory.counts_by_source()
-    kbs = await runtime.memory.list_kbs()
-
     by_cat = ", ".join(f"{k}={v}" for k, v in cat_counts.items()) or "(none)"
     by_src = ", ".join(f"{k}={v}" for k, v in src_counts.items()) or "(none)"
-    kb_line = f"{len(kbs)} KB(s)" + (
-        ": " + ", ".join(f"{k['kb_id']}({k['entry_count']})" for k in kbs)
-        if kbs else ""
-    )
-    return (f"gm: {nodes} nodes, {edges} edges  |  by_cat: {by_cat}  |  "
-            f"by_src: {by_src}  |  {kb_line}")
+    return (f"gm: {nodes} nodes, {edges} edges  |  by_cat: {by_cat}  |  by_src: {by_src}")

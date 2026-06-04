@@ -118,6 +118,47 @@
 .bubble .attachments a { color: var(--cyan); font-size: 11px; text-decoration: none; }
 .bubble .attachments a:hover { text-decoration: underline; }
 
+/* ── Delivery / read-receipt status badge ─────────────────────────── */
+/* Shown inside user bubbles only. Krakey bubbles have no badge.       */
+.msg-status {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  margin-left: 6px;
+  vertical-align: middle;
+  letter-spacing: 0.01em;
+}
+.msg-status--delivered {
+  color: var(--muted);
+}
+.msg-status--read {
+  color: var(--accent);
+}
+.msg-status--failed {
+  color: var(--red, #e05c5c);
+}
+
+/* Resend button — small inline button visible only on failed messages. */
+.msg-resend-btn {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 5px;
+  border: 1px solid var(--red, #e05c5c);
+  color: var(--red, #e05c5c);
+  background: transparent;
+  vertical-align: middle;
+  line-height: 1.4;
+}
+.msg-resend-btn:hover {
+  background: var(--red, #e05c5c);
+  color: #fff;
+}
+
 /* Drag-and-drop overlay: only rendered while a file is being dragged
    over the Chat tab. The pseudo-element keeps the DOM untouched at
    rest — the panel stays exactly as it was when nothing is being

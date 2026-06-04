@@ -44,7 +44,7 @@ from krakey.interfaces.engines.explicit_history import (
 )
 from krakey.interfaces.engines.heartbeat import HeartbeatEngine
 from krakey.interfaces.engines.llm_factory import LLMClientFactoryEngine
-from krakey.interfaces.engines.memory import KnowledgeBaseLike, MemoryEngine
+from krakey.interfaces.engines.memory import MemoryEngine
 from krakey.interfaces.engines.recall import (
     RecallEngine,
     RecallResult,
@@ -61,7 +61,6 @@ __all__ = [
     "ExplicitHistoryEngine",
     "ExplicitHistoryRound",
     "HeartbeatEngine",
-    "KnowledgeBaseLike",
     "LLMClientFactoryEngine",
     "MemoryEngine",
     "ParseFailure",

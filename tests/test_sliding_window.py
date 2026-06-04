@@ -23,8 +23,10 @@ def test_needs_compact_false_when_under_limit():
 
 
 def test_needs_compact_true_when_over_limit():
-    # tight max_tokens + long content
-    w = SlidingWindow(history_token_budget=10)
+    # Config-driven compact_threshold=10 + long content → over limit.
+    # (history_token_budget is no longer consulted by needs_compact; the
+    # threshold must now come from config.)
+    w = SlidingWindow(history_token_budget=10, config={"compact_threshold": 10})
     w.append(_round(1, stim="a" * 200, decision="b" * 200))
     assert w.needs_compact() is True
 
@@ -44,11 +46,10 @@ def test_pop_oldest_on_empty_returns_none():
 
 
 def test_needs_compact_clears_after_popping():
-    # Use content long enough to blow past the 50-token cap under the
-    # real (tiktoken cl100k_base) estimator. Previously-relied-upon
-    # char/4 heuristic undercounted dramatically, so the small round
-    # needed bigger payloads than expected.
-    w = SlidingWindow(history_token_budget=50)
+    # Config-driven compact_threshold=50 drives the token trigger.
+    # (history_token_budget is no longer consulted by needs_compact; the
+    # threshold must now come from config.)
+    w = SlidingWindow(history_token_budget=50, config={"compact_threshold": 50})
     w.append(_round(1, stim="hello world " * 60,
                       decision="goodbye world " * 60))
     w.append(_round(2, stim="c"))

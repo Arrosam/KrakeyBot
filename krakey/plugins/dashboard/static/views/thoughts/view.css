@@ -80,3 +80,9 @@
 #status-panel dd.fatigue-mid  { color: var(--yellow); }
 #status-panel dd.fatigue-high { color: var(--red); }
 #status-panel dd.stale        { color: var(--muted); font-style: italic; }
+/* Environment diagnostic status — same colour vocabulary as the
+ * settings .cfg-badge.env-* family. */
+#status-panel dd.env-ok           { color: var(--green); }
+#status-panel dd.env-unconfigured { color: var(--muted); font-style: italic; }
+#status-panel dd.env-unreachable  { color: var(--yellow); }
+#status-panel dd.env-error        { color: var(--red); }

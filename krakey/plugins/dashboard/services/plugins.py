@@ -35,12 +35,12 @@ class PluginsService(Protocol):
         """
 
     def deps_status(self) -> dict[str, Any]:
-        """Snapshot of plugin-dependency install state.
+        """Snapshot of plugin- AND engine-dependency install state.
 
         Returns::
 
             {
-              "pending":  bool,            # any plugin needs install?
+              "pending":  bool,            # any plugin or engine needs install?
               "plugins": {
                 "<name>": {
                   "dependencies": [...pip-spec strings],
@@ -52,14 +52,27 @@ class PluginsService(Protocol):
                 },
                 ...
               },
+              "engines": {
+                "engine:<slot>:<short_name>": {
+                  "dependencies": [...pip-spec strings],
+                  "post_install": [{args, description, optional}],
+                  "installed":    bool,    # in install_state.json's
+                                            # engine_installed list
+                  "satisfied":    bool,    # installed AND hash matches
+                },
+                ...
+              },
               "state": {
                   "installed_at": "iso-ts" | null,
                   "deps_hash":    "..."   | null,
               },
             }
 
-        Used by the dashboard's plugin list to show ⚠ next to
-        plugins whose deps haven't been installed in this venv.
+        Used by the dashboard's install banner to show ⚠ next to
+        plugins/engines whose deps haven't been installed in this venv.
+        Engine entries are keyed `engine:<slot>:<short_name>` (e.g.
+        `engine:memory:memos`) and reflect the engine currently selected
+        in `core_implementations.<slot>` (default-fallback when blank).
         """
 
     async def hot_reload(self) -> dict[str, Any]:

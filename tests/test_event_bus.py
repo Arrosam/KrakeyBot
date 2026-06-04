@@ -19,7 +19,7 @@ def test_event_dataclasses_carry_typed_fields():
     assert e.text == "thinking text"
 
     h = DecisionExecutedEvent(heartbeat_id=3, tool_calls_count=2,
-                            memory_writes_count=1, memory_updates_count=0,
+                            memory_writes_count=1,
                             sleep_requested=False)
     assert h.tool_calls_count == 2 and h.sleep_requested is False
 
@@ -108,3 +108,25 @@ def test_event_kind_property_for_serialization():
     assert ToolResultEvent("action", "x").kind == "tool_result"
     # Acronym run preserved as one token
     assert GMStatsEvent(1, 0, 0, 0).kind == "gm_stats"
+
+
+def test_stimulus_read_event_carries_ids_and_kind():
+    """event-bus: plugin-dashboard's web_chat_mark_read tool publishes
+    StimulusReadEvent when Self confirms reading, so the dashboard can flip
+    web-chat bubbles to 'read'. The kind string must auto-derive to
+    'stimulus_read', and the payload carries the list of read message ids."""
+    from krakey.runtime.events.event_types import StimulusReadEvent
+    e = StimulusReadEvent(chat_message_ids=["m1", "m2"])
+    assert e.chat_message_ids == ["m1", "m2"]
+    assert e.kind == "stimulus_read"
+
+
+def test_stimulus_read_event_routes_through_bus():
+    """event-bus: the new event fans out to subscribers like any other."""
+    from krakey.runtime.events.event_types import StimulusReadEvent
+    bus = EventBus()
+    seen: list = []
+    bus.subscribe(seen.append)
+    e = StimulusReadEvent(chat_message_ids=["only"])
+    bus.publish(e)
+    assert seen == [e]

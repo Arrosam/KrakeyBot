@@ -38,20 +38,53 @@ Self the output was cut so it can re-run with redirection if it
 needs the full body."""
 
 
+def _env_status_suffix(
+    env_status_fn: "Callable[[], dict[str, tuple[str, str]]] | None",
+    env_name: str,
+) -> str:
+    """Format the Router's diagnostic (status, reason) for ``env_name``
+    into a suffix appended to ``EnvironmentDenied`` feedback. Returns ``""``
+    when the status accessor is unavailable, raises, or has no entry —
+    keeps the original error message intact in those cases."""
+    if env_status_fn is None:
+        return ""
+    try:
+        statuses = env_status_fn()
+    except Exception:  # noqa: BLE001 — defensive; never crash a tool
+        return ""
+    entry = statuses.get(env_name)
+    if not entry:
+        return ""
+    status, reason = entry
+    return f" (status: {status} — {reason})"
+
+
 def build_tool(ctx: "PluginContext") -> "CliExecTool":
     """Factory for the single ``tool`` component declared in
-    ``meta.yaml``. Captures the per-plugin env resolver so the tool
-    can dispatch by env name at call time."""
-    return CliExecTool(env_resolver=ctx.environment)
+    ``meta.yaml``. Captures the per-plugin env resolver + the Router's
+    diagnostic status accessor so the tool can dispatch by env name at
+    call time AND, when an env is denied, surface the underlying reason
+    (unreachable / token_mismatch / unconfigured) into Self's feedback
+    instead of a bare 'environment denied'."""
+    router = ctx.deps.environment_router
+    env_status_fn = router.env_status if router is not None else None
+    return CliExecTool(
+        env_resolver=ctx.environment,
+        env_status_fn=env_status_fn,
+    )
 
 
 class CliExecTool(Tool):
     """Self-facing tool that runs argv in the requested Environment."""
 
     def __init__(
-        self, env_resolver: Callable[[str], "Environment"],
+        self,
+        env_resolver: Callable[[str], "Environment"],
+        *,
+        env_status_fn: "Callable[[], dict[str, tuple[str, str]]] | None" = None,
     ):
         self._env_resolver = env_resolver
+        self._env_status_fn = env_status_fn
 
     @property
     def name(self) -> str:
@@ -160,7 +193,8 @@ class CliExecTool(Tool):
             env = self._env_resolver(env_name)
         except EnvironmentDenied as e:
             return self._err(
-                f"environment {env_name!r} denied: {e}",
+                f"environment {env_name!r} denied: {e}"
+                f"{_env_status_suffix(self._env_status_fn, env_name)}",
             )
         except Exception as e:  # noqa: BLE001
             return self._err(

@@ -30,7 +30,7 @@ class AsyncEmbedder(Protocol):
 
 
 async def enter_sleep_mode(
-    gm: GraphMemory, reg: KBRegistry, channels: "StimulusBuffer",
+    gm: GraphMemory, reg: KBRegistry, channels: "StimulusBuffer | None" = None,
     *, llm: ChatLike, embedder: AsyncEmbedder,
     reranker: "RerankerEngine | None" = None,
     log_dir: str | Path = "workspace/logs",
@@ -41,14 +41,35 @@ async def enter_sleep_mode(
     kb_revive_threshold: float = 0.80,
     kb_dedup_top_k: int = 5,
 ) -> dict[str, Any]:
-    """Run all 7 phases. Returns summary stats."""
+    """Run all 7 phases. Returns summary stats.
+
+    ``channels`` is optional. When ``None``, no channel pausing/resuming
+    occurs — sleep runs fully in the background without blocking input.
+    Pass a ``StimulusBuffer`` only if the legacy "pause channels during
+    sleep" behaviour is explicitly desired.
+    """
 
     started_at = datetime.now()
 
-    # Phase 1: pause non-urgent channels
-    await channels.pause_non_urgent()
+    # Phase 1: pause non-urgent channels (only if channels provided)
+    if channels is not None:
+        await channels.pause_non_urgent()
 
     try:
+        # Phase 1b: classify + link any pending auto-ingested nodes BEFORE
+        # clustering, so freshly-ingested content carries a real category
+        # and edges when it's clustered/migrated. This is the engine-owned
+        # home for classification now that the heartbeat no longer schedules
+        # it every beat — it runs on the sleep cadence (node-count threshold
+        # or explicit trigger). Best-effort: a classifier failure must not
+        # abort the whole sleep cycle.
+        classify = getattr(gm, "classify_and_link_pending", None)
+        if classify is not None:
+            try:
+                await classify()
+            except Exception:  # noqa: BLE001
+                pass
+
         # Phase 2: cluster + summarize
         communities = await run_leiden_clustering(
             gm, llm=llm, embedder=embedder,
@@ -117,7 +138,8 @@ async def enter_sleep_mode(
         # needs no arg — it just hands each paused channel its push
         # callback again. The legacy ``active_buffer()`` workaround
         # disappeared with the ChannelRegistry merge.
-        await channels.resume_all()
+        if channels is not None:
+            await channels.resume_all()
 
 
 # ---------------- helpers ----------------

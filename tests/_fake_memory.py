@@ -428,21 +428,22 @@ class InMemoryKBRegistryService:
 class InMemoryMemoryEngine(InMemoryMemoryService):
     """Combined ``MemoryEngine`` test fake.
 
-    The Engine refactor (2026-05) collapsed the ``memory`` and
-    ``kb_registry`` slots into one ``memory`` slot whose Protocol
-    surface includes KB management + sleep_cycle. This class extends
+    The Engine refactor collapsed the ``memory`` and ``kb_registry``
+    slots into one ``memory`` slot. This class extends
     ``InMemoryMemoryService`` (the GM-only fake) with KB delegation
-    methods backed by an internal ``InMemoryKBRegistryService`` plus
-    a no-op ``sleep_cycle`` stub. Result: ``InMemoryMemoryEngine``
-    satisfies ``MemoryEngine`` end-to-end.
+    methods backed by an internal ``InMemoryKBRegistryService`` plus a
+    no-op ``request_sleep`` stub. KB management + sleep are concrete-
+    engine internals (NOT part of the 12-method ``MemoryEngine``
+    Protocol); the engine satisfies the Protocol via the minimal-surface
+    façade defined below.
 
     Used by ``test_memory_swap_e2e.py`` to drive the engine slot
     override path.
 
-    The ``sleep_cycle`` stub records its invocation in
-    ``self.sleep_cycle_calls`` so tests can assert it ran without
-    actually invoking clustering / migration / index-rebuild
-    pipelines (those need a real LLM). Returns an empty stats dict.
+    The ``request_sleep`` stub records its invocation in
+    ``self.request_sleep_calls`` and bumps ``self.sleep_cycles_run`` so
+    tests can assert it ran without actually invoking clustering /
+    migration / index-rebuild pipelines. Returns an empty stats dict.
     """
 
     def __init__(
@@ -465,7 +466,8 @@ class InMemoryMemoryEngine(InMemoryMemoryService):
         self._kb = InMemoryKBRegistryService(
             gm=self, kb_dir=kb_dir, embedder=embedder,
         )
-        self.sleep_cycle_calls: list[dict[str, Any]] = []
+        self.request_sleep_calls: list[str] = []
+        self.sleep_cycles_run: int = 0
 
     # ---- KB management — delegate to the internal registry ----------
 
@@ -492,10 +494,82 @@ class InMemoryMemoryEngine(InMemoryMemoryService):
     async def close_all_kbs(self):
         return await self._kb.close_all()
 
-    # ---- sleep — record + return empty stats ------------------------
+    # ---- sleep — engine-owned, records + returns empty stats --------
 
-    async def sleep_cycle(self, *, channels, log_dir, config):
-        self.sleep_cycle_calls.append({
-            "channels": channels, "log_dir": log_dir, "config": config,
-        })
+    async def request_sleep(self, reason: str = "") -> dict[str, Any]:
+        """The only sleep entry point. No external channels/llm/config —
+        the engine owns sleep. Records the call + returns empty stats."""
+        self.request_sleep_calls.append(reason)
+        self.sleep_cycles_run += 1
         return {}
+
+    # ---- minimal-surface façade (storage + recall + stats) ----------
+    # The MemoryEngine Protocol's forward-looking surface; implemented
+    # here by delegating to the legacy primitives this fake already has,
+    # so a swapped-in backend satisfies the shrunk Protocol.
+
+    async def ingest(self, content, *, source_heartbeat=None):
+        return await self.auto_ingest(content, source_heartbeat=source_heartbeat)
+
+    async def remember(self, content, *, importance="normal",
+                       recall_context=None, source_heartbeat=None):
+        return await self.explicit_write(
+            content, importance=importance,
+            recall_context=recall_context, source_heartbeat=source_heartbeat,
+        )
+
+    async def remember_extraction(self, nodes, edges):
+        name_to_id = {}
+        nodes_written = 0
+        for n in nodes:
+            if not n.get("name") or not n.get("category"):
+                continue
+            nid = await self.upsert_node({
+                "name": n["name"], "category": n["category"],
+                "description": n.get("description", ""),
+                "source_type": n.get("source_type", "compact"),
+            })
+            name_to_id[n["name"]] = nid
+            nodes_written += 1
+        edges_written = 0
+        for e in edges:
+            src = name_to_id.get(e.get("source_name"))
+            if src is None:
+                src = await self.find_by_name(e.get("source_name", ""))
+            tgt = name_to_id.get(e.get("target_name"))
+            if tgt is None:
+                tgt = await self.find_by_name(e.get("target_name", ""))
+            if src is None or tgt is None or src == tgt:
+                continue
+            await self.insert_edge_with_cycle_check(
+                src, tgt, e.get("predicate", ""))
+            edges_written += 1
+        return {"nodes_written": nodes_written, "edges_written": edges_written}
+
+    async def search(self, query, *, top_k=8, min_similarity=0.3):
+        if top_k <= 0:
+            return []
+        candidates = []
+        if self._embedder is not None:
+            try:
+                vec = await self._embedder(query)
+                candidates = await self.vec_search(
+                    vec, top_k=top_k, min_similarity=min_similarity)
+            except Exception:  # noqa: BLE001
+                candidates = []
+        if not candidates:
+            candidates = [(n, 0.0)
+                          for n in await self.fts_search(query, top_k=top_k)]
+        return candidates
+
+    async def recall_context(self, node_ids):
+        if not node_ids:
+            return {"neighbor_keywords": {}, "edges": []}
+        return {
+            "neighbor_keywords": await self.get_neighbor_keywords(node_ids),
+            "edges": await self.get_edges_among(node_ids),
+        }
+
+    async def recall_kb(self, kb_id, query, *, top_k=5):
+        kb = await self.open_kb(kb_id)
+        return await kb.search(query, top_k=top_k)

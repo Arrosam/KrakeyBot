@@ -56,6 +56,12 @@ class GMStatsEvent(_BaseEvent):
     node_count: int
     edge_count: int
     fatigue_pct: int
+    # Sliding-window observability (populated by heartbeat emit-site). The
+    # dashboard reads these to render a "draining N → cap" indicator when
+    # the window exceeds the cap. Defaulted so older constructors don't
+    # need updating immediately; emit-site populates them with real values.
+    rounds_count: int = 0
+    max_history_rounds: int = 0
 
 
 @dataclass
@@ -108,7 +114,6 @@ class DecisionExecutedEvent(_BaseEvent):
     heartbeat_id: int
     tool_calls_count: int
     memory_writes_count: int
-    memory_updates_count: int
     sleep_requested: bool
 
 
@@ -154,3 +159,26 @@ class SleepFailedEvent(_BaseEvent):
     Self both need to know so the failure isn't silent."""
     reason: str    # the reason _perform_sleep was called
     error: str     # ``"<ExceptionType>: <message>"``
+
+
+@dataclass
+class StimulusReadEvent(_BaseEvent):
+    """Published at the start of each beat listing the chat_message_ids of
+    all stimuli drained this beat that carry one, so the dashboard can flip
+    the matching web-chat bubbles to 'read'."""
+    chat_message_ids: list[str]
+
+
+@dataclass
+class EnvironmentStatusEvent(_BaseEvent):
+    """Per-environment diagnostic snapshot. Published after preflight at
+    startup and whenever the Router's status side-table changes (future
+    lifecycle managers may publish on VM start/stop). The dashboard
+    consumes this to render the Sandbox VM badge + the Inner Thoughts
+    Status panel sandbox row.
+
+    ``statuses`` mirrors ``EnvironmentRouter.env_status()`` output —
+    each value is ``{"status": <token>, "reason": <human text>}``. Status
+    tokens: ``ok`` | ``unconfigured`` | ``unreachable`` | ``token_mismatch`` | ``error``.
+    """
+    statuses: dict[str, dict[str, str]]

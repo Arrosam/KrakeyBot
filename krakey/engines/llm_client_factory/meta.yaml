@@ -17,6 +17,7 @@ builtin_engines:
   - name: standard
     factory_module: krakey.engines.llm_client_factory._client
     factory_attr: LLMClient
+    config_path: data/engines/llm_client_factory/standard.yaml
     default: true
     description: |
       Standard LLMClient — speaks OpenAI-compatible and Anthropic

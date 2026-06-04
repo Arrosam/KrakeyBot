@@ -315,11 +315,14 @@ function _wsUrl(path) {
 // ============== TAB SWITCHING ==============
 
 $$(".tab-btn").forEach((btn) => {
+  // External links (e.g. the Memory browser) carry .tab-btn for styling
+  // but have no data-tab + their own onclick — they must NOT run the SPA
+  // tab-switch handler (which would blank all panels via tab-undefined).
+  if (btn.classList.contains("tab-btn-external") || !btn.dataset.tab) return;
   btn.addEventListener("click", () => {
     $$(".tab-btn").forEach((b) => b.classList.toggle("active", b === btn));
     const id = "tab-" + btn.dataset.tab;
     $$(".tab-panel").forEach((p) => p.classList.toggle("active", p.id === id));
-    if (btn.dataset.tab === "memory") loadMemory(currentMemView);
     if (btn.dataset.tab === "settings") loadSettings();
     if (btn.dataset.tab === "prompts") loadPrompts();
     if (btn.dataset.tab === "chat") {
@@ -336,25 +339,6 @@ $$(".tab-btn").forEach((btn) => {
   });
 });
 
-// ============== RUNTIME-STATE BANNER ==============
-// Shown under the header when the runtime enters sleep (or other
-// known-busy states later). Toggled from the SleepStartEvent /
-// SleepDoneEvent handlers below; the rest of the SPA reads
-// `lastStats.mode` to decide whether to throttle GM-bound work.
-function _showSleepBanner(reason) {
-  const el = document.getElementById("runtime-banner");
-  if (!el) return;
-  const txt = el.querySelector(".banner-text");
-  if (txt) {
-    txt.textContent =
-      window.t("sleep_banner", { reason: reason || window.t("sleep_reason_default") });
-  }
-  el.classList.remove("hidden");
-}
-function _hideSleepBanner() {
-  const el = document.getElementById("runtime-banner");
-  if (el) el.classList.add("hidden");
-}
 
 // ============== STATUS BAR ==============
 
@@ -458,8 +442,37 @@ function renderStatusPanel() {
     ? _fmtSince(lastStats.last_sleep) : "never",
     lastStats.last_sleep ? "" : "stale");
   _setPair("mode", lastStats.mode || "normal");
+  // Working-memory window: show "N rounds" normally, "draining N → cap"
+  // while a startup backlog drains. Hidden if we haven't received a
+  // gm_stats event yet (e.g. before the first heartbeat).
+  const rc = lastStats.rounds_count;
+  const cap = lastStats.max_history_rounds;
+  if (typeof rc === "number" && rc > 0) {
+    if (typeof cap === "number" && cap > 0 && rc > cap) {
+      _setPair("window", `draining ${rc} → ${cap}`, "fatigue-mid");
+    } else {
+      _setPair("window", `${rc} rounds`);
+    }
+  } else {
+    _setPair("window", "—");
+  }
+  // Sandbox env diagnostic: surface status + reason. Hidden when the
+  // status snapshot hasn't arrived yet (cold-load + first WS event).
+  const sbSt = lastStats.env_status && lastStats.env_status.sandbox;
+  if (sbSt && sbSt.status) {
+    _setPair("sandbox", sbSt.status, _envStatusClass(sbSt.status));
+    const dd = statusPanel.querySelector('dd[data-key="sandbox"]');
+    if (dd) dd.title = sbSt.reason || "";
+  } else {
+    _setPair("sandbox", "—");
+  }
   _setPair("events ws", eventsWS && eventsWS.readyState === 1 ? "connected" : "disconnected");
 }
+
+// ============== CHAT message id → bubble element lookup ==============
+// Declared here (before handleEvent) so the stimulus_read handler can
+// reference it. Populated by renderChatMessage (in the CHAT section).
+const _msgBubbleMap = new Map();
 
 // ============== INNER THOUGHTS — /ws/events ==============
 
@@ -609,6 +622,15 @@ function handleEvent(e) {
       lastStats.node_count = e.node_count;
       lastStats.edge_count = e.edge_count;
       lastStats.fatigue_pct = e.fatigue_pct;
+      // Sliding-window observability: surface live count + cap so the
+      // Status panel can render "draining N → cap" while a large
+      // backlog drains.
+      if (typeof e.rounds_count === "number") {
+        lastStats.rounds_count = e.rounds_count;
+      }
+      if (typeof e.max_history_rounds === "number") {
+        lastStats.max_history_rounds = e.max_history_rounds;
+      }
       setStatus();
       break;
     case "stimuli_queued":
@@ -675,14 +697,6 @@ function handleEvent(e) {
       appendIconEntry(toolEl, "—", "moon",
         "sleep started: " + e.reason, "sleep-start");
       lastStats.mode = "sleeping";
-      _showSleepBanner(e.reason);
-      // Memory tab is GM-bound and would queue behind sleep on
-      // the shared aiosqlite worker thread; if it's currently
-      // showing data, swap to the placeholder.
-      _lastRenderedMemView = null;
-      if ($("#tab-memory").classList.contains("active")) {
-        loadMemory(currentMemView);
-      }
       setStatus();
       break;
     case "sleep_done":
@@ -690,16 +704,43 @@ function handleEvent(e) {
         "sleep done: " + JSON.stringify(e.stats), "sleep-done");
       lastStats.mode = "normal";
       lastStats.last_sleep = new Date().toISOString();
-      _hideSleepBanner();
-      // Auto-reload Memory if the user is sitting on it — gives
-      // them an immediate refresh once GM is free again.
-      _lastRenderedMemView = null;
-      if ($("#tab-memory").classList.contains("active")) {
-        loadMemory(currentMemView);
-      }
       setStatus();
       break;
+    case "stimulus_read":
+      // The heartbeat drained one or more stimuli. Upgrade the
+      // delivery badge on matching user bubbles to "read".
+      if (Array.isArray(e.chat_message_ids)) {
+        for (const mid of e.chat_message_ids) {
+          const bubble = _msgBubbleMap.get(mid);
+          if (bubble && bubble._msgData) {
+            bubble._msgData.status = "read";
+            _renderChatStatusBadge(bubble, bubble._msgData);
+          }
+        }
+      }
+      break;
+    case "environment_status":
+      // Per-env (status, reason) snapshot from runtime. Drives the
+      // Sandbox VM badge in Settings AND the sandbox row in the
+      // Inner Thoughts Status panel.
+      lastStats.env_status = e.statuses || {};
+      setStatus();
+      // If the settings tab is currently rendered, re-render so the
+      // Sandbox VM badge reflects the new status.
+      if (settingsForm && settingsForm.querySelector(".cfg-section")) {
+        renderSettingsForm();
+      }
+      break;
   }
+}
+
+// Map an env status token → CSS modifier class on .cfg-badge / dd.
+function _envStatusClass(status) {
+  if (status === "ok")             return "env-ok";
+  if (status === "unconfigured")   return "env-unconfigured";
+  if (status === "unreachable")    return "env-unreachable";
+  if (status === "token_mismatch") return "env-error";
+  return "env-error";  // covers "error" and any unknown token
 }
 
 function connectEvents() {
@@ -742,6 +783,70 @@ function fmtTime(iso) {
   } catch { return iso; }
 }
 
+// Render or update the status badge (and resend button) on a user
+// bubble. Idempotent: re-calling with the same bubble replaces the old
+// badge in place.
+function _renderChatStatusBadge(bubble, msg) {
+  // Remove any existing badge + resend button before re-rendering.
+  const oldBadge = bubble.querySelector(".msg-status");
+  if (oldBadge) oldBadge.remove();
+  const oldResend = bubble.querySelector(".msg-resend-btn");
+  if (oldResend) oldResend.remove();
+
+  const status = msg.status;
+  if (!status) return;
+
+  const badge = document.createElement("span");
+  badge.className = "msg-status msg-status--" + status;
+
+  if (status === "delivered") {
+    badge.textContent = "✓ " + window.t("msg_status_delivered");
+  } else if (status === "read") {
+    badge.textContent = "✓✓ " + window.t("msg_status_read");
+  } else if (status === "failed") {
+    badge.textContent = "! " + window.t("msg_status_failed");
+    // Red resend button — rendered immediately after the badge.
+    const resendBtn = document.createElement("button");
+    resendBtn.type = "button";
+    resendBtn.className = "msg-resend-btn";
+    resendBtn.textContent = window.t("msg_resend");
+    const failedId = msg.id;
+    const failedText = msg.content || "";
+    const failedAttachments = msg.attachments || [];
+    resendBtn.addEventListener("click", () => {
+      if (!chatWS || chatWS.readyState !== 1) return;
+      // Remove the failed bubble and its map entry before sending so
+      // the UI doesn't show two copies when the echo arrives.
+      if (failedId) {
+        _msgBubbleMap.delete(failedId);
+        bubble.remove();
+      }
+      chatWS.send(JSON.stringify({
+        text: failedText,
+        attachments: failedAttachments,
+        resend_of: failedId,
+      }));
+    });
+    // Append badge to the ts row area, then resend button.
+    const ts = bubble.querySelector(".ts");
+    if (ts) {
+      ts.after(badge, resendBtn);
+    } else {
+      bubble.appendChild(badge);
+      bubble.appendChild(resendBtn);
+    }
+    return;
+  }
+
+  // For delivered / read: append the badge to the timestamp row area.
+  const ts = bubble.querySelector(".ts");
+  if (ts) {
+    ts.after(badge);
+  } else {
+    bubble.appendChild(badge);
+  }
+}
+
 function renderChatMessage(msg) {
   const div = document.createElement("div");
   div.className = "bubble " + (msg.sender === "user" ? "user" : "krakey");
@@ -771,6 +876,17 @@ function renderChatMessage(msg) {
   ts.className = "ts";
   ts.textContent = fmtTime(msg.ts);
   div.appendChild(ts);
+
+  // Register in the id map BEFORE rendering the badge so the resend
+  // click handler can find the element by id.
+  if (msg.id && msg.sender === "user") {
+    // Attach a _msgData property so status-update paths can access the
+    // full record without a separate cache structure.
+    div._msgData = msg;
+    _msgBubbleMap.set(msg.id, div);
+    _renderChatStatusBadge(div, msg);
+  }
+
   chatHistory.appendChild(div);
   chatHistory.scrollTop = chatHistory.scrollHeight;
 }
@@ -923,6 +1039,9 @@ function connectChat() {
   chatWS.onmessage = (msg) => {
     const data = JSON.parse(msg.data);
     if (data.kind === "history") {
+      // Clear the id map when the history is fully replaced on (re)connect
+      // so stale references from a previous session don't linger.
+      _msgBubbleMap.clear();
       chatHistory.innerHTML = "";
       for (const m of data.messages) renderChatMessage(m);
     } else if (data.kind === "message") {
@@ -1078,70 +1197,51 @@ chatForm.addEventListener("submit", (ev) => {
   renderAttachStrip();
 });
 
-// ============== MEMORY ==============
+// ============== MEMORY (external link) ==============
+// The memory browser (GM graph + KBs) is now self-hosted by the memory
+// engine at its own web service (default http://127.0.0.1:8766/).
+// The dashboard nav "Memory" link opens that service in a new tab.
 
-let currentMemView = "graph";
-// Hold onto the active cytoscape instance so we can destroy it cleanly
-// when the user switches sub-views (otherwise its event listeners +
-// internal canvas leak across re-renders).
-let _gmCy = null;
-// Last view that was actually rendered into #mem-content. Switching
-// to the memory tab while we're already showing this view is a no-op
-// — fetches + cytoscape rebuild are both expensive (especially with
-// the no-truncation node count).
-let _lastRenderedMemView = null;
-
-$$(".mem-btn").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    $$(".mem-btn").forEach((b) => b.classList.toggle("active", b === btn));
-    currentMemView = btn.dataset.mem;
-    loadMemory(currentMemView);
-  });
-});
-
-function _disposeMemView() {
-  if (_gmCy) {
-    try { _gmCy.destroy(); } catch (e) { /* already gone */ }
-    _gmCy = null;
-  }
+// The memory web service URL is derived from the live config
+// (config.memory_web: enabled / host / port) rather than hard-coded, so
+// it tracks a custom host/port and we can warn when the service is
+// disabled (enabled=False is the default — the engine only starts the
+// server when the operator opts in). An explicit window.MEMORY_WEB_URL
+// override still wins for unusual deployments (reverse proxy, etc.).
+function _memoryWebUrlFrom(mw) {
+  // mw = config.memory_web block (may be undefined). Returns a URL string.
+  const host = (mw && mw.host) || "127.0.0.1";
+  const port = (mw && mw.port) || 8766;
+  // 0.0.0.0 binds all interfaces server-side but isn't browsable; point
+  // the operator at localhost in that case.
+  const browseHost = host === "0.0.0.0" ? "127.0.0.1" : host;
+  return `http://${browseHost}:${port}/`;
 }
 
-async function loadMemory(view, opts) {
-  const force = !!(opts && opts.force);
-  const target = $("#mem-content");
-  if (!force && view === _lastRenderedMemView) return;
-  _disposeMemView();
-  // Hard gate while the runtime is sleeping — sleep keeps the
-  // shared aiosqlite worker thread continuously busy with GM
-  // writes, and any /api/gm/* read would queue behind it for the
-  // entire sleep duration, leaving the dashboard appearing to
-  // hang. Render a placeholder instead; the sleep_done handler
-  // re-runs loadMemory automatically.
-  if (lastStats.mode === "sleeping") {
-    target.classList.remove("graph-mode");
-    target.innerHTML =
-      `<p style="padding:20px;color:var(--muted);text-align:center">` +
-      `${escapeHtml(window.t("memory_sleeping"))}</p>`;
-    _lastRenderedMemView = null;  // force a real render once awake
+async function openMemoryBrowser() {
+  if (typeof window.MEMORY_WEB_URL !== "undefined") {
+    window.open(window.MEMORY_WEB_URL, "_blank", "noopener,noreferrer");
     return;
   }
-  target.classList.toggle("graph-mode", view === "graph");
-  target.textContent = window.t("loading");
+  // Fetch the current config so the link reflects memory_web host/port +
+  // enabled state at click time (the nav is reachable before Settings
+  // has ever been opened, so we can't rely on cfgState).
+  let mw = null;
   try {
-    if (view === "graph") {
-      await renderGraph(target);
-    } else if (view === "kbs") {
-      const r = await fetch("/api/kbs").then((r) => r.json());
-      target.innerHTML = renderKBs(r);
-      $$(".kb-card button").forEach((btn) => {
-        btn.addEventListener("click", () => loadKBEntries(btn.dataset.kbid));
-      });
+    const r = await fetch("/api/settings");
+    if (r.ok) {
+      const data = await r.json();
+      mw = (data.parsed || {}).memory_web || null;
     }
-    _lastRenderedMemView = view;
-  } catch (e) {
-    target.textContent = window.t("error_prefix") + e;
-    _lastRenderedMemView = null;
+  } catch (e) { /* fall through to defaults + warning */ }
+  if (!mw || mw.enabled !== true) {
+    showToast(
+      "Memory web service is disabled. Enable it in config (memory_web.enabled) and restart to browse GM/KBs.",
+      "err",
+    );
+    return;
   }
+  window.open(_memoryWebUrlFrom(mw), "_blank", "noopener,noreferrer");
 }
 
 function escapeHtml(s) {
@@ -1149,279 +1249,6 @@ function escapeHtml(s) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   }[c]));
 }
-
-// ----- GM Graph view (cytoscape) -----
-
-// Map gm category → fill colour, mirroring the cat-* classes in
-// memory/view.css. Pre-resolved hex so we don't have to read computed
-// CSS vars per-node.
-const _CAT_COLORS = {
-  FACT: "#7ec77e",
-  RELATION: "#c585c5",
-  KNOWLEDGE: "#6cd5d5",
-  TARGET: "#e8c060",
-  FOCUS: "#d27575",
-};
-const _CAT_DEFAULT = "#6b7280";
-
-async function renderGraph(target) {
-  // Build the shell first so the canvas + inspector + stats overlay
-  // exist before cytoscape mounts. _disposeMemView() above already
-  // tore down any previous cytoscape instance.
-  target.innerHTML = "";
-  const wrap = document.createElement("div");
-  wrap.className = "gm-graph-wrap";
-  const canvas = document.createElement("div");
-  canvas.id = "gm-graph";
-  const hint = document.createElement("div");
-  hint.className = "gm-graph-hint";
-  hint.textContent = window.t("memory_graph_hint");
-  const stats = document.createElement("div");
-  stats.className = "gm-graph-stats";
-  stats.innerHTML = "<i>loading stats…</i>";
-  canvas.appendChild(hint);
-  canvas.appendChild(stats);
-  const inspect = document.createElement("div");
-  inspect.className = "gm-graph-inspect";
-  inspect.innerHTML = "<h4>Inspector</h4><p style='color:var(--muted)'>Click a node or edge.</p>";
-  wrap.appendChild(canvas);
-  wrap.appendChild(inspect);
-  target.appendChild(wrap);
-
-  // Render the full GM — no truncation. The server's auth gate keeps
-  // these big queries off the open Internet; a million is a generous
-  // ceiling that's still finite enough that a runaway integer
-  // overflow in the route can't happen.
-  const [nodesRes, edgesRes, statsRes] = await Promise.all([
-    fetch("/api/gm/nodes?limit=1000000").then((r) => r.json()),
-    fetch("/api/gm/edges?limit=1000000").then((r) => r.json()),
-    fetch("/api/gm/stats").then((r) => r.json()),
-  ]);
-  _renderGraphStats(stats, statsRes);
-
-  if (typeof cytoscape === "undefined") {
-    canvas.removeChild(hint);
-    canvas.removeChild(stats);
-    canvas.innerHTML =
-      "<p style='padding:12px;color:var(--muted)'>" +
-      "graph library failed to load (CDN blocked?). Refresh the " +
-      "page when you have connectivity, or switch to KBs." +
-      "</p>";
-    return;
-  }
-  if (!nodesRes.nodes.length) {
-    canvas.removeChild(hint);
-    canvas.removeChild(stats);
-    canvas.innerHTML =
-      "<p style='padding:12px;color:var(--muted)'>(no nodes — GM is empty)</p>";
-    return;
-  }
-
-  // Cytoscape needs name-based ids since edges are name triples (see
-  // gm.list_edges_named). Drop edges whose endpoints we didn't fetch
-  // (limit cap can leave dangling references).
-  const cyNodes = nodesRes.nodes.map((n) => ({
-    data: {
-      id: n.name,
-      label: n.name,
-      raw: n,
-      color: _CAT_COLORS[n.category] || _CAT_DEFAULT,
-      size: 16 + Math.min(20, Math.max(0, (n.importance || 0)) * 2),
-    },
-  }));
-  const known = new Set(cyNodes.map((n) => n.data.id));
-  const cyEdges = edgesRes.edges
-    .filter((e) => known.has(e.source) && known.has(e.target))
-    .map((e, i) => ({
-      data: {
-        id: `e${i}`,
-        source: e.source,
-        target: e.target,
-        label: e.predicate || "",
-        raw: e,
-      },
-    }));
-
-  _gmCy = cytoscape({
-    container: canvas,
-    elements: { nodes: cyNodes, edges: cyEdges },
-    minZoom: 0.1,
-    maxZoom: 4,
-    wheelSensitivity: 0.3,
-    style: [
-      {
-        selector: "node",
-        style: {
-          "background-color": "data(color)",
-          label: "data(label)",
-          color: "#d8dee9",
-          "font-size": 9,
-          "text-valign": "center",
-          "text-halign": "center",
-          "text-wrap": "ellipsis",
-          "text-max-width": 80,
-          "text-outline-color": "#0d0f12",
-          "text-outline-width": 2,
-          width: "data(size)",
-          height: "data(size)",
-          "border-width": 1,
-          "border-color": "#262c34",
-        },
-      },
-      {
-        selector: "node:selected",
-        style: { "border-color": "#6cd5d5", "border-width": 2 },
-      },
-      {
-        selector: "edge",
-        style: {
-          width: 1,
-          "line-color": "#3a4250",
-          "target-arrow-color": "#3a4250",
-          "target-arrow-shape": "triangle",
-          "curve-style": "bezier",
-          label: "data(label)",
-          "font-size": 8,
-          color: "#6b7280",
-          "text-rotation": "autorotate",
-          "text-background-color": "#0d0f12",
-          "text-background-opacity": 0.6,
-          "text-background-padding": 1,
-        },
-      },
-      {
-        selector: "edge:selected",
-        style: { "line-color": "#6cd5d5", "target-arrow-color": "#6cd5d5" },
-      },
-    ],
-    layout: {
-      name: "cose",
-      animate: false,
-      idealEdgeLength: 80,
-      nodeRepulsion: 8000,
-      gravity: 0.25,
-      numIter: 1500,
-    },
-  });
-
-  _gmCy.on("tap", "node", (ev) => _showNodeInspect(inspect, ev.target.data("raw")));
-  _gmCy.on("tap", "edge", (ev) => _showEdgeInspect(inspect, ev.target.data("raw")));
-  _gmCy.on("tap", (ev) => {
-    if (ev.target === _gmCy) _showInspectEmpty(inspect);
-  });
-}
-
-function _renderGraphStats(host, s) {
-  host.innerHTML = "";
-  const total = document.createElement("div");
-  total.className = "row";
-  total.innerHTML =
-    `<span class="label">total</span>` +
-    `<span><b>${s.total_nodes ?? 0}</b> nodes · ` +
-    `<b>${s.total_edges ?? 0}</b> edges</span>`;
-  host.appendChild(total);
-  const cats = s.by_category || {};
-  if (Object.keys(cats).length) {
-    const catsRow = document.createElement("div");
-    catsRow.className = "cats";
-    for (const [k, v] of Object.entries(cats)) {
-      const span = document.createElement("span");
-      span.className = "cat-" + k;
-      span.textContent = `${k}=${v}`;
-      catsRow.appendChild(span);
-    }
-    host.appendChild(catsRow);
-  }
-}
-
-// Inspector helpers — build via DOM + textContent so node/edge data
-// (which can include LLM-generated text) can't inject markup.
-function _kvList(host, pairs) {
-  host.innerHTML = "";
-  const h4 = document.createElement("h4");
-  h4.textContent = pairs._title || "Detail";
-  host.appendChild(h4);
-  const dl = document.createElement("dl");
-  for (const [k, v] of pairs._rows) {
-    const dt = document.createElement("dt");
-    dt.textContent = k;
-    const dd = document.createElement("dd");
-    dd.textContent = v == null ? "—" : String(v);
-    dl.appendChild(dt);
-    dl.appendChild(dd);
-  }
-  host.appendChild(dl);
-}
-
-function _showNodeInspect(host, n) {
-  if (!n) return;
-  _kvList(host, {
-    _title: "Node",
-    _rows: [
-      ["id", n.id],
-      ["name", n.name],
-      ["category", n.category],
-      ["source", n.source_type],
-      ["importance", n.importance != null ? Number(n.importance).toFixed(2) : "—"],
-      // Render the full description. The inspector column has its
-      // own overflow / word-break so a long LLM-generated summary
-      // scrolls inside its column instead of being silently elided.
-      ["description", n.description || ""],
-    ],
-  });
-}
-
-function _showEdgeInspect(host, e) {
-  if (!e) return;
-  _kvList(host, {
-    _title: "Edge",
-    _rows: [
-      ["source", e.source],
-      ["predicate", e.predicate],
-      ["target", e.target],
-    ],
-  });
-}
-
-function _showInspectEmpty(host) {
-  host.innerHTML =
-    "<h4>Inspector</h4><p style='color:var(--muted)'>Click a node or edge.</p>";
-}
-
-function renderKBs(r) {
-  if (!r.kbs.length) return "<p>no KBs yet (Sleep hasn't run)</p>";
-  return r.kbs.map((k) => `
-    <div class="kb-card">
-      <h4>${escapeHtml(k.name)} <small style="color:var(--muted)">(${k.kb_id})</small></h4>
-      <div class="meta">${k.entry_count} entries · ${escapeHtml(k.description || "")}</div>
-      <button data-kbid="${escapeHtml(k.kb_id)}">View entries</button>
-      <div id="kb-entries-${escapeHtml(k.kb_id)}"></div>
-    </div>`).join("");
-}
-
-async function loadKBEntries(kbid) {
-  const target = document.getElementById(`kb-entries-${kbid}`);
-  if (!target) return;
-  target.innerHTML = window.t("loading");
-  try {
-    const r = await fetch(`/api/kb/${encodeURIComponent(kbid)}/entries?limit=200`).then((r) => r.json());
-    if (!r.entries.length) { target.innerHTML = "<i>(no entries)</i>"; return; }
-    target.innerHTML = r.entries.map((e) => `
-      <div class="kb-entry">
-        <span class="tags">${(e.tags || []).join(", ")}</span>
-        ${escapeHtml(e.content)}
-      </div>`).join("");
-  } catch (e) {
-    target.textContent = window.t("error_prefix") + e;
-  }
-}
-
-// Memory tab is lazy: don't fetch nodes/edges/stats on page load —
-// only when the user actually opens the tab (tab-switch handler at
-// the top of this file does that). Pre-fetching here was paying the
-// /api/gm/* round-trip + cytoscape build on every page load even
-// for users who never opened Memory, and it could pile on top of a
-// busy runtime (auto-recall + LLM thinking) and stall the dashboard.
 
 // ============== LOG — /ws/logs ==============
 //
@@ -1680,7 +1507,14 @@ function fmtTs(iso) {
 function renderPromptsList() {
   promptsList.innerHTML = "";
   if (!promptsCache.length) {
-    promptsList.textContent = window.t("prompts_empty");
+    // Surface the expected wait so a freshly-restarted user knows the
+    // panel will populate. `cfgState` is null until Settings is opened
+    // at least once, so fall back to the module-scope SECTION_DEFAULTS.
+    const interval =
+      (cfgState && cfgState.idle && cfgState.idle.default_interval) ||
+      (SECTION_DEFAULTS && SECTION_DEFAULTS.idle && SECTION_DEFAULTS.idle.default_interval) ||
+      10;
+    promptsList.textContent = window.t("prompts_empty", { secs: Math.round(interval) });
     return;
   }
   for (const p of promptsCache) {
@@ -1782,7 +1616,7 @@ let cfgState = null;
 // "unset" and mislead the user into thinking the runtime is off.
 const SECTION_DEFAULTS = {
   idle: { min_interval: 2, max_interval: 300, default_interval: 10 },
-  fatigue: { gm_node_soft_limit: 1000, force_sleep_threshold: 1200, thresholds: {} },
+  fatigue: { force_sleep_threshold: 1200, thresholds: {} },
   // `sliding_window` is back as a section (2026-05-07) carrying
   // persistence config — `state_path` + `compact_include_recall`;
   // the SIZE budget is still derived from Self role's
@@ -1841,12 +1675,38 @@ const SECTION_DEFAULTS = {
   },
 };
 
+// Single source of truth for sandbox defaults on the JS side.
+// Mirrors SandboxSection / SandboxAgentSection / SandboxResourcesSection
+// dataclass defaults in krakey/models/config/environments.py + infra.py.
+// IMPORTANT: keep in sync with the Python models; diverging here causes
+// the dashboard to pre-populate values the backend will overwrite.
+// `agent.token` and `allowlist_domains` are intentionally absent —
+// they default to empty and must never be backfilled to a non-empty value.
+const SANDBOX_DEFAULTS = {
+  allowed_plugins: [],
+  guest_os: "",
+  provider: "qemu",
+  vm_name: "krakey-vm",
+  display: "headed",
+  resources: { cpu: 2, memory_mb: 4096, disk_gb: 40 },
+  agent: { url: "http://10.0.2.10:8765", token: "" },
+  docker: {
+    image: "",
+    container_name: "krakey-sandbox",
+    host_port: 18765,
+    host_bind_dirs: [],
+    auto_start: false,
+    wait_seconds: 30.0,
+  },
+  network_mode: "nat_allowlist",
+  allowlist_domains: [],
+};
+
 // Hover tooltip text per "section.field" key.
 const HELP = {
   "idle.min_interval": "Minimum idle interval (seconds). Self uses [IDLE] N to control each beat, but it will never go below this value.",
   "idle.max_interval": "Maximum idle interval (seconds). Even if Self requests a longer idle, it will not exceed this value.",
   "idle.default_interval": "Default idle interval (seconds) when Self does not specify one.",
-  "fatigue.gm_node_soft_limit": "Soft upper bound on GM nodes. fatigue% = nodes / soft_limit * 100. Self uses fatigue% to decide whether to sleep proactively.",
   "fatigue.force_sleep_threshold": "Force-sleep threshold (fatigue%). Above this, runtime enters sleep without waiting for Self's consent.",
   "sliding_window.state_path": "JSON file mirroring the in-memory rounds buffer so working memory survives a restart. Default: workspace/data/sliding_window.json. Set to empty string to opt out (in-memory only — every restart loses the most recent uncompacted beats).",
   "sliding_window.compact_include_recall": "When ON, the per-beat recall summary (which GM/KB nodes were active) is included in the compact prompt so the compactor LLM knows what context surrounded each decision. Costs ~30 tokens/round. Default OFF.",
@@ -1884,8 +1744,14 @@ const HELP = {
   "environments.local.allowed_plugins": "Plugins permitted to use the always-on Local execution env (host-process access). Empty = no plugin can run on the host.",
   "environments.sandbox.allowed_plugins": "Plugins permitted to use the Sandbox VM env. Empty = sandbox VM is registered but no plugin can drive it.",
   "environments.sandbox.guest_os": "Sandbox guest OS: linux / macos / windows. Required when the sandbox env is enabled.",
-  "environments.sandbox.provider": "VM manager: qemu (recommended) / virtualbox / utm.",
+  "environments.sandbox.provider": "Sandbox backend: qemu / virtualbox / utm (VM) or docker (container). Switches the field set below.",
   "environments.sandbox.vm_name": "VM instance name (must be pre-provisioned).",
+  "environments.sandbox.docker.image": "Docker image for the sandbox container (e.g. krakey/sandbox:latest). The image must run the guest agent on port 8765.",
+  "environments.sandbox.docker.container_name": "Pinned container name — re-runs reuse it instead of launching duplicates.",
+  "environments.sandbox.docker.host_port": "Host port mapped to the container's agent port 8765 (docker run -p <host_port>:8765).",
+  "environments.sandbox.docker.host_bind_dirs": "Bind mounts, verbatim docker -v strings, e.g. /host/path:/guest/path or /host:/guest:ro. One per line.",
+  "environments.sandbox.docker.auto_start": "When on, Krakey runs the container at startup if the agent port isn't already up (best-effort; needs Docker running).",
+  "environments.sandbox.docker.wait_seconds": "After docker run, how long to wait for the agent port before giving up (sandbox then disables gracefully).",
   "environments.sandbox.display": "headed = VM desktop shown in a window so you can watch / intervene; headless = VM hidden, only the agent interacts. Choose by your usage preference.",
   "environments.sandbox.resources.cpu": "vCPU count assigned to the VM.",
   "environments.sandbox.resources.memory_mb": "RAM (MB) assigned to the VM.",
@@ -1935,7 +1801,6 @@ const SCHEMAS = {
     ["default_interval", "number"],
   ],
   fatigue_scalars: [
-    ["gm_node_soft_limit", "number"],
     ["force_sleep_threshold", "number"],
   ],
   sliding_window: [
@@ -1971,12 +1836,23 @@ const SCHEMAS = {
   // Schemas under `environments.sandbox.*`. The top-level sandbox
   // section is gone in the runtime (rewrites to environments.sandbox),
   // so the dashboard's sandbox UI is now a sub-block of Environments.
-  env_sandbox_scalars: [
+  // guest_os + agent apply to BOTH providers; provider itself is
+  // rendered explicitly (strict <select> with re-render on change).
+  // The remaining scalars are QEMU-only and hidden when provider=docker.
+  env_sandbox_common_scalars: [
     ["guest_os",     "combo", ["linux", "macos", "windows"]],
-    ["provider",     "combo", ["qemu", "virtualbox", "utm"]],
+  ],
+  env_sandbox_qemu_scalars: [
     ["vm_name",      "text"],
     ["display",      "combo", ["headed", "headless"]],
     ["network_mode", "combo", ["nat_allowlist", "host_only", "isolated"]],
+  ],
+  env_sandbox_docker: [
+    ["image",          "text"],
+    ["container_name", "text"],
+    ["host_port",      "number"],
+    ["auto_start",     "bool"],
+    ["wait_seconds",   "number"],
   ],
   env_sandbox_resources: [
     ["cpu", "number"],
@@ -2008,12 +1884,21 @@ async function loadSettings() {
   settingsToast.textContent = "";
   settingsForm.innerHTML = window.t("loading");
   try {
-    // Load config + plugin discovery + schema in parallel
-    const [cfgRes, pluginRes, schemaRes] = await Promise.all([
+    // Load config + plugin discovery + schema + env status in parallel.
+    // The env status seeds the Sandbox VM badge + Inner Thoughts Status
+    // panel sandbox row before any WS event arrives.
+    const [cfgRes, pluginRes, schemaRes, envStatusRes] = await Promise.all([
       fetch("/api/settings"),
       fetch("/api/plugins").catch(() => null),
       fetch("/api/config/schema").catch(() => null),
+      fetch("/api/environments/status").catch(() => null),
     ]);
+    if (envStatusRes && envStatusRes.ok) {
+      try {
+        lastStats.env_status = await envStatusRes.json();
+        if (typeof setStatus === "function") setStatus();
+      } catch {/* ignore non-JSON */}
+    }
     if (cfgRes.status === 503) {
       settingsForm.innerHTML = "<i>(config_path not provided to dashboard)</i>";
       return;
@@ -2223,23 +2108,31 @@ async function refreshInstallBanner() {
     if (!data || !data.pending) {
       banner.classList.add("success");
       text.innerHTML =
-        "<strong>All plugin dependencies are installed.</strong> " +
+        "<strong>All plugin and engine dependencies are installed.</strong> " +
         "Click <em>Install</em> to refresh the venv (e.g. after a " +
         "manual <code>pip uninstall</code> or to pull " +
         "<code>--upgrade</code>'d wheels).";
       return;
     }
-    const unsatisfied = Object.entries(data.plugins || {})
+    const pluginUnsat = Object.entries(data.plugins || {})
       .filter(([_, info]) => !info.satisfied)
       .map(([name, _]) => name);
+    // Engine keys are `engine:<slot>:<short_name>`; strip the prefix
+    // for display so users see `memory/memos` not `engine:memory:memos`.
+    const engineUnsat = Object.entries(data.engines || {})
+      .filter(([_, info]) => !info.satisfied)
+      .map(([key, _]) => key.startsWith("engine:")
+        ? key.slice("engine:".length).replace(":", "/")
+        : key);
+    const unsatisfied = [...pluginUnsat, ...engineUnsat];
     const list = unsatisfied.length
       ? unsatisfied.join(", ")
       : "(state changed; click Install to refresh)";
     text.innerHTML =
-      `<strong>Plugin dependencies pending install:</strong> ` +
+      `<strong>Plugin + engine dependencies pending install:</strong> ` +
       `${escapeHtml(list)}. ` +
       `Click <em>Install</em> to run <code>pip install</code> + each ` +
-      `plugin's <code>post_install</code> hook (e.g. ` +
+      `plugin's/engine's <code>post_install</code> hook (e.g. ` +
       `<code>playwright install chromium</code>) inside the ` +
       `runtime's venv.`;
   } catch (_) {
@@ -2618,15 +2511,20 @@ function _engineSlotBlock(slot, cfg) {
   return card;
 }
 
+// Per-engine config edits, keyed ``engineConfigEdits[slot][shortName]``.
+// Each engine impl owns its OWN settings file now (config.yaml no longer
+// has an engine_configs block); these edits are flushed on save via
+// POST /api/engines/<slot>/<impl>/config — exactly like modifierConfigEdits.
+let engineConfigEdits = {};
+
 function _renderEngineSchemaForm(slot, shortName, schema) {
-  // Reads & writes ``cfgState.engine_configs[slot][shortName]`` so
-  // saving the settings page persists the engine's tunables to
-  // config.yaml's ``engine_configs:`` section.
-  cfgState.engine_configs = cfgState.engine_configs || {};
-  cfgState.engine_configs[slot] =
-    cfgState.engine_configs[slot] || {};
-  const target = cfgState.engine_configs[slot][shortName] || {};
-  cfgState.engine_configs[slot][shortName] = target;
+  // Reads & writes ``engineConfigEdits[slot][shortName]`` and lazily loads
+  // the impl's current persisted values from its own settings file via
+  // GET /api/engines/<slot>/<impl>/config. The save handler POSTs the
+  // edits back to the same per-engine endpoint.
+  engineConfigEdits[slot] = engineConfigEdits[slot] || {};
+  const target = engineConfigEdits[slot][shortName] || {};
+  engineConfigEdits[slot][shortName] = target;
 
   const cfgBlock = document.createElement("div");
   cfgBlock.className = "engine-schema-block";
@@ -2636,6 +2534,36 @@ function _renderEngineSchemaForm(slot, shortName, schema) {
     "font-size:11px;color:var(--muted);margin-bottom:4px";
   head.textContent = `Config — ${shortName}`;
   cfgBlock.appendChild(head);
+
+  // Lazy-load persisted values once per (slot, impl) BEFORE rendering the
+  // inputs. CRITICAL ordering: we must NOT write schema defaults into
+  // ``target`` until the GET resolves — otherwise the merge below (guarded
+  // by ``target[k] == null``) would see a default already sitting there and
+  // skip the SAVED value, clobbering it on the next save. So on the very
+  // first render we show a "loading" placeholder and re-render once the
+  // persisted file is merged (or absent); only then are defaults hydrated.
+  if (!target.__loaded) {
+    target.__loaded = true;
+    const loading = document.createElement("div");
+    loading.style.cssText = "font-size:11px;color:var(--muted)";
+    loading.textContent = window.t ? window.t("loading") : "Loading…";
+    cfgBlock.appendChild(loading);
+    fetch(`/api/engines/${encodeURIComponent(slot)}/${encodeURIComponent(shortName)}/config`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (body && body.config) {
+          for (const [k, v] of Object.entries(body.config)) {
+            if (target[k] == null) target[k] = v;
+          }
+        }
+      })
+      .catch(() => {/* no persisted file yet — defaults apply on render */})
+      .finally(() => {
+        if (typeof renderSettingsForm === "function") renderSettingsForm();
+      });
+    return cfgBlock;
+  }
+
   for (const fdef of schema) {
     const fname = fdef.field;
     // Normalize `boolean` → `bool` so engine schema fields declared
@@ -3174,21 +3102,32 @@ function renderEnvironmentsSection(envs) {
   sbHead.style.alignItems = "center";
   sbHead.style.gap = "8px";
   sbHead.appendChild(document.createTextNode("Sandbox VM"));
+  // Live diagnostic badge — surfaces "ok / unconfigured / unreachable
+  // / token_mismatch / error" once a status payload has been received
+  // (either via the cold-load fetch in loadSettings or the WS event).
+  const _sbStatus = lastStats.env_status && lastStats.env_status.sandbox;
+  if (_sbStatus && _sbStatus.status) {
+    const badge = document.createElement("span");
+    badge.className = "cfg-badge " + _envStatusClass(_sbStatus.status);
+    badge.title = _sbStatus.reason || "";
+    badge.textContent = _sbStatus.status;
+    sbHead.appendChild(badge);
+  }
   const enabled = envs.sandbox != null;
   const toggle = document.createElement("span");
   toggle.className = "toggle" + (enabled ? " on" : "");
   toggle.title = "register a sandbox execution environment";
   toggle.addEventListener("click", () => {
     if (envs.sandbox == null) {
+      // Deep-clone SANDBOX_DEFAULTS so each toggle-on creates
+      // independent sub-objects (resources/agent) rather than sharing
+      // the same reference.
       envs.sandbox = {
+        ...SANDBOX_DEFAULTS,
+        resources: { ...SANDBOX_DEFAULTS.resources },
+        agent: { ...SANDBOX_DEFAULTS.agent },
+        docker: { ...SANDBOX_DEFAULTS.docker, host_bind_dirs: [] },
         allowed_plugins: [],
-        guest_os: "",
-        provider: "qemu",
-        vm_name: "",
-        display: "headed",
-        resources: { cpu: 2, memory_mb: 4096, disk_gb: 40 },
-        agent: { url: "", token: "" },
-        network_mode: "nat_allowlist",
         allowlist_domains: [],
       };
     } else {
@@ -3201,8 +3140,12 @@ function renderEnvironmentsSection(envs) {
 
   if (envs.sandbox != null) {
     const sb = envs.sandbox;
-    if (!sb.resources) sb.resources = { cpu: 2, memory_mb: 4096, disk_gb: 40 };
-    if (!sb.agent) sb.agent = { url: "", token: "" };
+    if (!sb.resources) sb.resources = { ...SANDBOX_DEFAULTS.resources };
+    if (!sb.agent) sb.agent = { ...SANDBOX_DEFAULTS.agent };
+    if (!sb.docker || typeof sb.docker !== "object") {
+      sb.docker = { ...SANDBOX_DEFAULTS.docker, host_bind_dirs: [] };
+    }
+    if (!Array.isArray(sb.docker.host_bind_dirs)) sb.docker.host_bind_dirs = [];
     if (!Array.isArray(sb.allowed_plugins)) sb.allowed_plugins = [];
     if (!Array.isArray(sb.allowlist_domains)) sb.allowlist_domains = [];
 
@@ -3214,35 +3157,94 @@ function renderEnvironmentsSection(envs) {
         suggestions: pluginSuggestions,
       },
     ));
-    for (const [f, t, choices] of SCHEMAS.env_sandbox_scalars) {
-      if (t === "combo") {
-        sbBlock.appendChild(renderComboRow(
-          f, sb, f, choices, `environments.sandbox.${f}`,
-        ));
-      } else {
-        sbBlock.appendChild(renderRow(
-          f, sb, f, t, `environments.sandbox.${f}`,
-        ));
-      }
-    }
-    sbBlock.appendChild(_renderListRow(
-      "allowlist_domains", sb.allowlist_domains,
-      "environments.sandbox.allowlist_domains",
-      { placeholder: "domain + Enter" },
-    ));
 
-    const resBlock = document.createElement("div");
-    resBlock.className = "subblock";
-    const resH = document.createElement("h4");
-    resH.textContent = "resources";
-    resBlock.appendChild(resH);
-    for (const [f, t] of SCHEMAS.env_sandbox_resources) {
-      resBlock.appendChild(renderRow(
-        f, sb.resources, f, t, `environments.sandbox.resources.${f}`,
+    // Fields shared by every provider (guest_os).
+    for (const [f, t, choices] of SCHEMAS.env_sandbox_common_scalars) {
+      sbBlock.appendChild(renderComboRow(
+        f, sb, f, choices, `environments.sandbox.${f}`,
       ));
     }
-    sbBlock.appendChild(resBlock);
 
+    // Provider selector — strict <select> so we can re-render the
+    // field set on change (docker vs VM fields are mutually exclusive).
+    const provChoices = ["qemu", "virtualbox", "utm", "docker"];
+    const provRow = document.createElement("div");
+    provRow.className = "cfg-row";
+    const provLab = document.createElement("label");
+    provLab.textContent = "provider";
+    if (tHelp("environments.sandbox.provider")) {
+      provLab.title = tHelp("environments.sandbox.provider");
+    }
+    provRow.appendChild(provLab);
+    const provSel = document.createElement("select");
+    for (const c of provChoices) {
+      const opt = document.createElement("option");
+      opt.value = c;
+      opt.textContent = c;
+      provSel.appendChild(opt);
+    }
+    provSel.value = provChoices.includes(sb.provider) ? sb.provider : "qemu";
+    provSel.addEventListener("change", () => {
+      sb.provider = provSel.value;
+      renderSettingsForm();   // swap the field set
+    });
+    provRow.appendChild(provSel);
+    sbBlock.appendChild(provRow);
+
+    const isDocker = (sb.provider || "").toLowerCase() === "docker";
+
+    if (isDocker) {
+      // Docker field set. agent (url/token) still applies — the guest
+      // agent runs in the container, reached at the host-mapped port.
+      const dockerBlock = document.createElement("div");
+      dockerBlock.className = "subblock";
+      const dH = document.createElement("h4");
+      dH.textContent = "docker";
+      dockerBlock.appendChild(dH);
+      for (const [f, t] of SCHEMAS.env_sandbox_docker) {
+        dockerBlock.appendChild(renderRow(
+          f, sb.docker, f, t, `environments.sandbox.docker.${f}`,
+        ));
+      }
+      dockerBlock.appendChild(_renderListRow(
+        "host_bind_dirs", sb.docker.host_bind_dirs,
+        "environments.sandbox.docker.host_bind_dirs",
+        { placeholder: "/host/path:/guest/path + Enter" },
+      ));
+      sbBlock.appendChild(dockerBlock);
+    } else {
+      // QEMU / virtualbox / utm field set.
+      for (const [f, t, choices] of SCHEMAS.env_sandbox_qemu_scalars) {
+        if (t === "combo") {
+          sbBlock.appendChild(renderComboRow(
+            f, sb, f, choices, `environments.sandbox.${f}`,
+          ));
+        } else {
+          sbBlock.appendChild(renderRow(
+            f, sb, f, t, `environments.sandbox.${f}`,
+          ));
+        }
+      }
+      sbBlock.appendChild(_renderListRow(
+        "allowlist_domains", sb.allowlist_domains,
+        "environments.sandbox.allowlist_domains",
+        { placeholder: "domain + Enter" },
+      ));
+
+      const resBlock = document.createElement("div");
+      resBlock.className = "subblock";
+      const resH = document.createElement("h4");
+      resH.textContent = "resources";
+      resBlock.appendChild(resH);
+      for (const [f, t] of SCHEMAS.env_sandbox_resources) {
+        resBlock.appendChild(renderRow(
+          f, sb.resources, f, t, `environments.sandbox.resources.${f}`,
+        ));
+      }
+      sbBlock.appendChild(resBlock);
+    }
+
+    // agent sub-block — shared by both providers, rendered last.
     const agentBlock = document.createElement("div");
     agentBlock.className = "subblock";
     const agH = document.createElement("h4");
@@ -3369,10 +3371,11 @@ function renderEnumRow(label, target, key, choices, helpPath) {
   return row;
 }
 
-// Combobox row — free-text <input> backed by a <datalist> of valid
-// values. Unlike renderEnumRow's strict <select>, the user can type
-// ANY value AND pick a known-good one from the dropdown. Used for the
-// sandbox enum fields (guest_os / provider / display / network_mode).
+// Combobox row — free-text <input> with a CUSTOM themed typeahead
+// dropdown (not a native <datalist>). Unlike renderEnumRow's strict
+// <select>, the user can type ANY value AND pick a known-good one
+// from the themed suggestion menu. Used for the sandbox enum fields
+// (guest_os / provider / display / network_mode).
 // Empty input keeps the key as "" (does NOT delete) — guest_os is
 // required-when-enabled and the sandbox toggle hydrates it as "".
 function renderComboRow(label, target, key, choices, helpPath) {
@@ -3382,22 +3385,47 @@ function renderComboRow(label, target, key, choices, helpPath) {
   lab.textContent = label;
   if (helpPath && tHelp(helpPath)) lab.title = tHelp(helpPath);
   row.appendChild(lab);
-  const dlId = "dl-sandbox-" + key;
+
+  // .cap-multi — themed border + focus-within accent ring (same as
+  // _renderStringList / renderCapabilitiesMulti).
+  const container = document.createElement("div");
+  container.className = "cap-multi";
+
+  // .string-list-input-host — position:relative anchor for the
+  // absolutely-positioned .dd-menu/.typeahead-menu built by
+  // _attachTypeaheadMenu.  min-width:100% so the menu spans the
+  // full .cap-multi width (via .string-list-input-host.has-typeahead
+  // .typeahead-menu { min-width:100% } in view.css).
+  const inputHost = document.createElement("span");
+  inputHost.className = "string-list-input-host";
+
   const widget = document.createElement("input");
   widget.type = "text";
-  widget.setAttribute("list", dlId);
+  widget.autocomplete = "off";
   widget.value = target[key] == null ? "" : target[key];
+  widget.style.cssText = "border:none;background:transparent;flex:1;outline:none;color:var(--text);font-family:inherit;font-size:13px;min-width:80px;width:100%";
   if (helpPath && tHelp(helpPath)) widget.title = tHelp(helpPath);
+
+  // Free-text preservation: every keystroke (including clearing the
+  // field) writes through to target[key].  Empty string is written,
+  // not a deletion, so guest_os stays present in the object.
   widget.addEventListener("input", () => { target[key] = widget.value; });
-  row.appendChild(widget);
-  const dl = document.createElement("datalist");
-  dl.id = dlId;
-  for (const c of choices) {
-    const opt = document.createElement("option");
-    opt.value = c;
-    dl.appendChild(opt);
-  }
-  row.appendChild(dl);
+
+  inputHost.appendChild(widget);
+  container.appendChild(inputHost);
+  row.appendChild(container);
+
+  // Wire themed typeahead.  getCurrent returns [] — no choice is ever
+  // excluded (single-select combobox, unlike the chip-list which
+  // excludes already-chosen values).  The commit callback sets both
+  // widget.value and target[key] in place; it does NOT clear the input
+  // or trigger a repaint (unlike the chip-list commit which pushes+clears).
+  _attachTypeaheadMenu(inputHost, widget, choices, () => [], (picked) => {
+    widget.value = picked;
+    target[key] = picked;
+    widget.blur();
+  });
+
   return row;
 }
 
@@ -4713,6 +4741,76 @@ const _TOAST_ICON = {
   pending: "arrow-clockwise",
 };
 
+// Generic pre-save backfill. Walks every top-level key of cfgState and
+// restores any empty / null / missing SCALAR field to its default from
+// SECTION_DEFAULTS (and SANDBOX_DEFAULTS for the environments.sandbox
+// sub-tree). Fields whose default is '' or [] are left as-is so security
+// and disabled-by-default invariants hold (agent.token, allowlist_domains).
+function backfillDefaults(state) {
+  if (!state || typeof state !== "object") return;
+
+  // Top-level sections from SECTION_DEFAULTS.
+  for (const [section, defaults] of Object.entries(SECTION_DEFAULTS)) {
+    if (defaults == null || typeof defaults !== "object") continue;
+    if (Array.isArray(defaults)) continue;
+    if (state[section] == null || typeof state[section] !== "object") continue;
+
+    for (const [field, dflt] of Object.entries(defaults)) {
+      // Skip complex / array defaults — only scalars are backfilled.
+      if (dflt === null || dflt === "" || Array.isArray(dflt) || typeof dflt === "object") continue;
+      const cur = state[section][field];
+      if (cur == null || cur === "") {
+        state[section][field] = dflt;
+      }
+    }
+  }
+
+  // Sandbox sub-tree: environments.sandbox scalar + nested resources/agent.
+  const sb = state.environments && state.environments.sandbox;
+  if (sb && typeof sb === "object") {
+    for (const [field, dflt] of Object.entries(SANDBOX_DEFAULTS)) {
+      if (dflt === null || dflt === "" || Array.isArray(dflt) || typeof dflt === "object") continue;
+      const cur = sb[field];
+      if (cur == null || cur === "") {
+        sb[field] = dflt;
+      }
+    }
+    // resources sub-object.
+    if (sb.resources && typeof sb.resources === "object") {
+      for (const [field, dflt] of Object.entries(SANDBOX_DEFAULTS.resources)) {
+        if (dflt === null || dflt === "") continue;
+        const cur = sb.resources[field];
+        if (cur == null || cur === "") {
+          sb.resources[field] = dflt;
+        }
+      }
+    }
+    // agent sub-object — token is intentionally skipped (default is "").
+    if (sb.agent && typeof sb.agent === "object") {
+      for (const [field, dflt] of Object.entries(SANDBOX_DEFAULTS.agent)) {
+        // token default is "" — leave it alone.
+        if (dflt === null || dflt === "") continue;
+        const cur = sb.agent[field];
+        if (cur == null || cur === "") {
+          sb.agent[field] = dflt;
+        }
+      }
+    }
+    // docker sub-object — scalar fields only (image default is ""; the
+    // host_bind_dirs list + auto_start=false are left as-is so an
+    // explicit false is never stomped).
+    if (sb.docker && typeof sb.docker === "object") {
+      for (const [field, dflt] of Object.entries(SANDBOX_DEFAULTS.docker)) {
+        if (dflt === null || dflt === "" || Array.isArray(dflt) || typeof dflt === "object") continue;
+        const cur = sb.docker[field];
+        if (cur == null || cur === "") {
+          sb.docker[field] = dflt;
+        }
+      }
+    }
+  }
+}
+
 function showToast(text, level = "ok") {
   const icon = window.biIcon(_TOAST_ICON[level] || _TOAST_ICON.info, 13);
   const t = document.createElement("span");
@@ -4731,6 +4829,13 @@ function showToast(text, level = "ok") {
 $("#settings-save").addEventListener("click", async () => {
   if (cfgState == null) { showToast("nothing to save", "err"); return; }
   try {
+    // Restore any empty / null scalar fields to their non-empty defaults
+    // before sending — prevents the backend from getting an incomplete
+    // config when the user never touched a field that the UI hydrated
+    // as "". Fields whose default is '' or [] (e.g. agent.token,
+    // allowlist_domains) are intentionally left as-is.
+    backfillDefaults(cfgState);
+
     // Central config.yaml carries the two enable lists
     // (cfgState.modifiers, cfgState.plugins); the unified panel's
     // checkboxes mutate them in-place during the session. Per-plugin
@@ -4770,8 +4875,40 @@ $("#settings-save").addEventListener("click", async () => {
       }
     }
 
-    if (pluginErrs.length) {
-      showToast(`plugin saves failed: ${pluginErrs.join(", ")}`, "err");
+    // Persist each engine impl's tunables to its OWN settings file via
+    // /api/engines/<slot>/<impl>/config. config.yaml no longer carries an
+    // engine_configs block, so these MUST be written separately (mirrors
+    // the per-plugin save above). Strip the internal __loaded marker.
+    const engineErrs = [];
+    for (const [slot, byImpl] of Object.entries(engineConfigEdits)) {
+      for (const [shortName, cfg] of Object.entries(byImpl)) {
+        const clean = {};
+        for (const [k, v] of Object.entries(cfg)) {
+          if (k !== "__loaded") clean[k] = v;
+        }
+        if (Object.keys(clean).length === 0) continue;
+        try {
+          const er = await fetch(
+            `/api/engines/${encodeURIComponent(slot)}/${encodeURIComponent(shortName)}/config`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ config: clean }),
+            },
+          );
+          if (!er.ok) {
+            const eb = await er.json().catch(() => ({}));
+            engineErrs.push(`${slot}/${shortName}: ${eb.detail || er.statusText}`);
+          }
+        } catch (e) {
+          engineErrs.push(`${slot}/${shortName}: ${e}`);
+        }
+      }
+    }
+
+    const allErrs = [...pluginErrs, ...engineErrs];
+    if (allErrs.length) {
+      showToast(`config saves failed: ${allErrs.join(", ")}`, "err");
     } else {
       showToast(`saved (backup: ${body.backup || "n/a"}). Restart for changes to take effect.`, "ok");
     }

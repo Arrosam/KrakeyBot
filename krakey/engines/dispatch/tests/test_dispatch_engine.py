@@ -1,10 +1,11 @@
 """LocalDispatchEngine — Protocol conformance + lazy DecisionDispatcher
-construction + 4-side-effect orchestration.
+construction + 3-side-effect orchestration.
 
 The Engine wraps DecisionDispatcher; tests verify the wrapper drives
-the same 4 side-effects (log_summary, dispatch_tool_calls,
-apply_memory_writes, apply_memory_updates) the orchestrator used to
-call directly. Mock the dispatcher to record calls."""
+the same 3 side-effects (log_summary, dispatch_tool_calls,
+apply_memory_writes) the orchestrator used to call directly. Node
+re-categorization is now internal to the memory engine, so dispatch no
+longer applies memory_updates. Mock the dispatcher to record calls."""
 from __future__ import annotations
 
 from typing import Any
@@ -27,7 +28,6 @@ class _RecordingDispatcher:
         self.summary_calls: list = []
         self.tool_call_batches: list = []
         self.memory_write_batches: list = []
-        self.memory_update_batches: list = []
 
     def log_summary(self, heartbeat_id, decision_result):
         self.summary_calls.append((heartbeat_id, decision_result))
@@ -39,9 +39,6 @@ class _RecordingDispatcher:
         self.memory_write_batches.append(
             (writes, recall_nodes, heartbeat_id),
         )
-
-    async def apply_memory_updates(self, updates):
-        self.memory_update_batches.append(updates)
 
 
 class _FakeRuntime:
@@ -63,9 +60,9 @@ def test_satisfies_dispatch_engine_protocol():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_runs_all_four_side_effects(monkeypatch):
+async def test_dispatch_runs_all_three_side_effects(monkeypatch):
     """One dispatch() call → log_summary + dispatch_tool_calls +
-    apply_memory_writes + apply_memory_updates, in order."""
+    apply_memory_writes, in order."""
     captured: dict[str, Any] = {}
 
     def _make(**kwargs):
@@ -81,7 +78,6 @@ async def test_dispatch_runs_all_four_side_effects(monkeypatch):
     result = DecisionResult(
         tool_calls=[ToolCall(tool="t", intent="x")],
         memory_writes=[{"content": "w"}],
-        memory_updates=[{"node_name": "n", "new_category": "FACT"}],
         sleep=False,
     )
     await eng.dispatch(
@@ -93,7 +89,6 @@ async def test_dispatch_runs_all_four_side_effects(monkeypatch):
     assert d.memory_write_batches == [
         (result.memory_writes, [{"name": "ctx"}], 7),
     ]
-    assert d.memory_update_batches == [result.memory_updates]
 
 
 @pytest.mark.asyncio

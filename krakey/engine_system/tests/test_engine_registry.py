@@ -175,24 +175,112 @@ def test_resolve_short_name_picks_from_catalog():
     assert isinstance(instance, HypothalamusDecisionEngine)
 
 
-def test_resolve_unknown_short_name_raises_with_available_list():
-    """Short name not in the catalog → ValueError listing the slot's
-    available short names so the user can fix the typo."""
+def test_resolve_unknown_short_name_falls_back_to_default_and_warns(capsys):
+    """SELF-HEAL (positive, end-to-end): an unknown catalog short-name
+    must NOT raise through the public ``resolve()`` pipeline.
+
+    When ``core_implementations.<slot>`` names a value that is neither a
+    built-in catalog entry nor a plugin catalog entry, ``resolve`` must:
+
+    1. Not raise.
+    2. Return an object satisfying the slot's runtime-checkable Protocol.
+    3. Write a warning to STDERR naming the slot, the bad value, and the
+       fallback (case-insensitive "falling back"/"fallback").
+
+    Uses the ``decision`` slot because its default engine constructs from
+    the light ``cfg``/``factory`` kwargs, so the full instantiate-and-
+    return path can be exercised. The instantiation-free proof that the
+    self-heal is slot-generic lives in the ``_resolve_class`` test below.
+
+    Technique: positive / equivalence-partition (unknown-name class).
+    """
     from krakey.interfaces.engines.decision import DecisionEngine
 
     cfg = Config(core_implementations=CoreImplementations(
         decision="not_a_real_engine",
     ))
     reg = EngineRegistry(cfg)
-    with pytest.raises(ValueError) as exc_info:
+
+    # Must NOT raise — self-heal branch fires instead.
+    instance = reg.resolve(
+        "decision", expected_protocol=DecisionEngine, cfg=None, factory=None,
+    )
+
+    assert isinstance(instance, DecisionEngine), (
+        f"resolve('decision') returned {instance!r} which does not satisfy "
+        "DecisionEngine; the FALLBACK_ENGINES entry may point at a "
+        "non-conforming class."
+    )
+
+    err = capsys.readouterr().err.lower()
+    assert "decision" in err, f"warning must name the slot; got: {err!r}"
+    assert "not_a_real_engine" in err, (
+        f"warning must name the bad value; got: {err!r}"
+    )
+    assert ("falling back" in err) or ("fallback" in err), (
+        f"warning must indicate fallback; got: {err!r}"
+    )
+
+
+@pytest.mark.parametrize("slot", ["memory", "reranker", "embedder"])
+def test_resolve_class_unknown_short_name_falls_back_for_any_slot(slot, capsys):
+    """SELF-HEAL is slot-generic — verified at the ``_resolve_class``
+    level (returns the class, no instantiation) so it does not depend on
+    each engine default's construction kwargs.
+
+    For ANY slot, an unknown catalog short-name resolves to that slot's
+    ``FALLBACK_ENGINES`` default class and emits a fallback warning.
+    Mirrors the existing ``_resolve_class``-level fallback assertion used
+    for the broken-meta case.
+
+    Technique: positive / equivalence-partition across slots.
+    """
+    from krakey.engine_system.defaults import FALLBACK_ENGINES
+
+    reg = EngineRegistry(Config(core_implementations=CoreImplementations()))
+    cls = reg._resolve_class(slot, "not_a_real_engine")
+
+    assert cls is reg._import(FALLBACK_ENGINES[slot]), (
+        f"_resolve_class('{slot}', <bad name>) must return the slot's "
+        "FALLBACK_ENGINES default class."
+    )
+    err = capsys.readouterr().err.lower()
+    assert slot in err and "not_a_real_engine" in err
+    assert ("falling back" in err) or ("fallback" in err)
+
+
+def test_resolve_unknown_short_name_dotted_path_still_raises(capsys):
+    """NEGATIVE / escape-hatch boundary: a dotted-path value
+    (containing ``:``) that cannot be imported must STILL raise
+    ``ImportError``.
+
+    Self-heal must NOT swallow errors on explicit dotted paths because
+    that branch is an intentional power-user override. Silently
+    substituting a fallback would hide serious misconfiguration.
+
+    Technique: negative / error-guessing (boundary between unknown
+    short-name path and explicit dotted-path path).
+    """
+    from krakey.interfaces.engines.decision import DecisionEngine
+
+    cfg = Config(core_implementations=CoreImplementations(
+        decision="nonexistent.module.path:NoSuchClass",
+    ))
+    reg = EngineRegistry(cfg)
+
+    with pytest.raises(ImportError):
         reg.resolve(
             "decision", expected_protocol=DecisionEngine,
             cfg=cfg, factory=None,
         )
-    msg = str(exc_info.value)
-    assert "not_a_real_engine" in msg
-    assert "tool_call_parser" in msg
-    assert "hypothalamus" in msg
+
+    # Confirm no silent substitution occurred — no fallback warning
+    # should appear on stderr (the error propagated, not healed).
+    err = capsys.readouterr().err.lower()
+    assert "falling back" not in err and "fallback" not in err, (
+        "STDERR must not show a fallback warning for a failed dotted "
+        f"path; got: {err!r}"
+    )
 
 
 # --------------------------------------------------------------------
@@ -249,11 +337,14 @@ def test_resolve_plugin_engine_short_name(monkeypatch):
     assert instance.hello() == "from-plugin"
 
 
-def test_resolve_passes_per_engine_config_kwarg(monkeypatch):
-    """``cfg.engine_configs.<slot>.<short_name>`` is threaded into the
-    resolved engine's constructor as ``config=``. Impls that don't
-    declare a ``config`` parameter ignore it via ``_filter_kwargs``
-    — pinned here separately."""
+def test_resolve_passes_per_engine_config_kwarg(monkeypatch, tmp_path):
+    """The resolved impl's OWN settings file (declared via the impl's
+    ``config_path`` in its meta) is read from ``<workspace_root>/<config_path>``
+    and threaded into the constructor as ``config=``. There is no global
+    ``engine_configs`` block anymore — config lives in the engine's own file.
+    Impls that don't declare a ``config`` parameter ignore it via
+    ``_filter_kwargs`` — pinned here separately."""
+    import yaml
     from krakey.engine_system.catalog import EngineImpl
     import krakey.engine_system.registry as reg_mod
 
@@ -266,22 +357,27 @@ def test_resolve_passes_per_engine_config_kwarg(monkeypatch):
         def hello(self):
             return "ok"
 
-    cfg = Config(
-        core_implementations=CoreImplementations(memory="custom"),
-        engine_configs={
-            "memory": {
-                "custom": {"cache_size_mb": 200},
-            },
-        },
+    # Write the engine's own settings file under the tmp workspace at the
+    # impl-declared config_path.
+    settings_rel = "data/memory/settings.yaml"
+    settings_abs = tmp_path / settings_rel
+    settings_abs.parent.mkdir(parents=True, exist_ok=True)
+    settings_abs.write_text(
+        yaml.safe_dump({"cache_size_mb": 200}), encoding="utf-8",
     )
+
+    cfg = Config(core_implementations=CoreImplementations(memory="custom"))
     monkeypatch.setattr(
         reg_mod, "_load_slot_catalog",
         lambda slot: (
-            {"custom": EngineImpl(cls=_ConfigAwareImpl, description="x")},
+            {"custom": EngineImpl(
+                cls=_ConfigAwareImpl, description="x",
+                config_path=settings_rel,
+            )},
             "custom",
         ),
     )
-    reg = EngineRegistry(cfg)
+    reg = EngineRegistry(cfg, workspace_root=tmp_path)
     instance = reg.resolve("memory", expected_protocol=_DummyProto)
     assert instance.hello() == "ok"
     assert captured["config"] == {"cache_size_mb": 200}
@@ -492,7 +588,6 @@ def test_meta_with_bad_factory_module_falls_back_to_defaults(
 
     cfg = SimpleNamespace(
         core_implementations=SimpleNamespace(get=lambda _slot: None),
-        engine_configs={},
     )
     registry = EngineRegistry(cfg)  # type: ignore[arg-type]
     # Picking "memory" — its FALLBACK_ENGINES entry points at the real

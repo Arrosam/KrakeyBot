@@ -11,6 +11,7 @@ builtin_engines:
   - name: tag_cache
     factory_module: krakey.engines.llm_factory.default
     factory_attr: DefaultLLMClientFactoryEngine
+    config_path: data/engines/llm_factory/tag_cache.yaml
     default: true
     description: |
       Per-tag client cache backed by resolve_llm_for_tag; honours

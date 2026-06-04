@@ -30,7 +30,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+import asyncio
 
 import aiohttp
 
@@ -51,7 +53,22 @@ class SandboxUnavailableError(EnvironmentUnavailableError):
     generic ``EnvironmentUnavailableError`` so callers that want to
     catch ANY env failure get this one too, while sandbox-specific
     handlers can still discriminate.
+
+    ``reason`` is a machine-readable failure-mode classifier the Router
+    records into its ``_status`` side-table so the dashboard / Self's
+    tool feedback can distinguish "guest down" from "wrong token" from
+    "other agent error". The ``message`` argument stays the
+    human-readable detail string.
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: Literal["unreachable", "token_mismatch", "error"] = "error",
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 class SandboxEnvironment:
@@ -85,14 +102,23 @@ class SandboxEnvironment:
         headers = {"X-Krakey-Token": self._cfg.agent_token}
         url = self._cfg.agent_url.rstrip("/") + "/exec"
         timeout_obj = aiohttp.ClientTimeout(total=timeout + 10)
-        async with aiohttp.ClientSession(timeout=timeout_obj) as s:
-            async with s.post(url, json=body, headers=headers) as r:
-                if r.status != 200:
-                    text = await r.text()
-                    raise SandboxUnavailableError(
-                        f"agent returned {r.status}: {text[:200]}"
-                    )
-                data = await r.json()
+        try:
+            async with aiohttp.ClientSession(timeout=timeout_obj) as s:
+                async with s.post(url, json=body, headers=headers) as r:
+                    if r.status != 200:
+                        text = await r.text()
+                        raise SandboxUnavailableError(
+                            f"agent returned {r.status}: {text[:200]}"
+                        )
+                    data = await r.json()
+        except aiohttp.ClientError as e:
+            raise SandboxUnavailableError(
+                f"agent unreachable at {self._cfg.agent_url}: {e}"
+            ) from e
+        except asyncio.TimeoutError as e:
+            raise SandboxUnavailableError(
+                f"agent timeout at {self._cfg.agent_url} (exec/timeout)"
+            ) from e
         return (
             int(data["exit"]),
             str(data.get("stdout", "")),
